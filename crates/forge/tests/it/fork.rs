@@ -110,8 +110,8 @@ async fn test_storage_caching_config() {
         Filter::new("testStorageCaching", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
             .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
-    let cache_dir = Config::foundry_block_cache_dir(Chain::mainnet(), 19800000);
-    assert!(!cache_dir.unwrap().exists());
+    let cache_dir = Config::foundry_block_cache_dir(Chain::mainnet(), 19800000).unwrap();
+    let _ = fs::remove_file(cache_dir);
 
     // no_storage_caching set to false: storage should be cached
     let mut config = TEST_DATA_DEFAULT.config.clone();

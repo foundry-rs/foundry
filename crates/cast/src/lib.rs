@@ -21,7 +21,6 @@ use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
@@ -34,15 +33,19 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
+use revm::primitives::Eof;
 use std::{
     borrow::Cow,
+    fmt::Write,
     io,
     marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 use tokio::signal::ctrl_c;
+use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -117,7 +120,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, false).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -127,6 +130,7 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        json: bool,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
@@ -166,7 +170,10 @@ where
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
-            format!("{res}\n")
+            res.to_string()
+        } else if json {
+            let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
+            serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
             decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
@@ -488,6 +495,72 @@ where
         Ok(self.provider.get_transaction_count(who).block_id(block.unwrap_or_default()).await?)
     }
 
+    /// #Example
+    ///
+    /// ```
+    /// use alloy_primitives::{Address, FixedBytes};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use cast::Cast;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
+    /// let codehash = cast.codehash(addr, slots, None).await?;
+    /// println!("{}", codehash);
+    /// # Ok(())
+    /// # }
+    pub async fn codehash(
+        &self,
+        who: Address,
+        slots: Vec<B256>,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(self
+            .provider
+            .get_proof(who, slots)
+            .block_id(block.unwrap_or_default())
+            .await?
+            .code_hash
+            .to_string())
+    }
+
+    /// #Example
+    ///
+    /// ```
+    /// use alloy_primitives::{Address, FixedBytes};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use cast::Cast;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
+    /// let storage_root = cast.storage_root(addr, slots, None).await?;
+    /// println!("{}", storage_root);
+    /// # Ok(())
+    /// # }
+    pub async fn storage_root(
+        &self,
+        who: Address,
+        slots: Vec<B256>,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(self
+            .provider
+            .get_proof(who, slots)
+            .block_id(block.unwrap_or_default())
+            .await?
+            .storage_hash
+            .to_string())
+    }
+
     /// # Example
     ///
     /// ```
@@ -598,7 +671,7 @@ where
         if disassemble {
             let code =
                 self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
-            Ok(format_operations(disassemble_bytes(code)?)?)
+            SimpleCast::disassemble(&code)
         } else {
             Ok(format!(
                 "{}",
@@ -685,7 +758,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -695,6 +768,7 @@ where
         tx_hash: String,
         field: Option<String>,
         confs: u64,
+        timeout: Option<u64>,
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
@@ -711,6 +785,7 @@ where
                     } else {
                         PendingTransactionBuilder::new(self.provider.root(), tx_hash)
                             .with_required_confirmations(confs)
+                            .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()
                             .await?
                     }
@@ -864,7 +939,7 @@ where
                 BlockId::Hash(hash) => {
                     let block =
                         self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
-                    Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
@@ -929,7 +1004,7 @@ where
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number.map_or(false, |bn| bn > to_block) {
+                        if block.header.number  > to_block {
                             break;
                         }
                     }
@@ -1035,7 +1110,7 @@ impl SimpleCast {
                 if MAX {
                     let mut max = U256::MAX;
                     if n < 255 {
-                        max &= U256::from(1).wrapping_shl(n);
+                        max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                     }
                     Ok(max.to_string())
                 } else {
@@ -1095,7 +1170,7 @@ impl SimpleCast {
     pub fn to_ascii(hex: &str) -> Result<String> {
         let bytes = hex::decode(hex)?;
         if !bytes.iter().all(u8::is_ascii) {
-            return Err(eyre::eyre!("Invalid ASCII bytes"))
+            return Err(eyre::eyre!("Invalid ASCII bytes"));
         }
         Ok(String::from_utf8(bytes).unwrap())
     }
@@ -1355,7 +1430,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::to_rlp("[]").unwrap(), "0xc0".to_string());
     /// assert_eq!(Cast::to_rlp("0x22").unwrap(), "0x22".to_string());
     /// assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    /// assert_eq!(Cast::to_rlp("[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    /// assert_eq!(Cast::to_rlp("[\"0xf1\", \"f2\"]").unwrap(), "0xc481f181f2".to_string());
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
@@ -1397,7 +1472,7 @@ impl SimpleCast {
         let base_in = Base::unwrap_or_detect(base_in, value)?;
         let base_out: Base = base_out.parse()?;
         if base_in == base_out {
-            return Ok(value.to_string())
+            return Ok(value.to_string());
         }
 
         let mut n = NumberWithBase::parse_int(value, Some(&base_in.to_string()))?;
@@ -1461,7 +1536,7 @@ impl SimpleCast {
         let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
             stripped
         } else {
-            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"))
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
         };
 
         let lowercase_address_string = format!("0x{s}");
@@ -1498,7 +1573,7 @@ impl SimpleCast {
     ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
     ///         decoded[2].as_uint().unwrap().0.to_string(),
     ///         decoded[3].as_uint().unwrap().0.to_string(),
-    ///         hex::encode(decoded[4].as_bytes().unwrap())    
+    ///         hex::encode(decoded[4].as_bytes().unwrap())
     ///     ]
     ///     .into_iter()
     ///     .collect::<Vec<_>>();
@@ -1574,12 +1649,10 @@ impl SimpleCast {
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let func = get_func(sig)?;
-        let calldata = match encode_function_args(&func, args) {
-            Ok(res) => hex::encode(res),
+        match encode_function_args(&func, args) {
+            Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
-        };
-        let encoded = &calldata[8..];
-        Ok(format!("0x{encoded}"))
+        }
     }
 
     /// Performs packed ABI encoding based off of the function signature or tuple.
@@ -1887,17 +1960,36 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::hex;
     /// use cast::SimpleCast as Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let bytecode = "0x608060405260043610603f57600035";
-    /// let opcodes = Cast::disassemble(bytecode)?;
+    /// let opcodes = Cast::disassemble(&hex::decode(bytecode)?)?;
     /// println!("{}", opcodes);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn disassemble(bytecode: &str) -> Result<String> {
-        format_operations(disassemble_str(bytecode)?)
+    pub fn disassemble(code: &[u8]) -> Result<String> {
+        let mut output = String::new();
+
+        for step in decode_instructions(code) {
+            write!(output, "{:08x}: ", step.pc)?;
+
+            if let Some(op) = step.op {
+                write!(output, "{op}")?;
+            } else {
+                write!(output, "INVALID")?;
+            }
+
+            if !step.immediate.is_empty() {
+                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
+            }
+
+            writeln!(output)?;
+        }
+
+        Ok(output)
     }
 
     /// Gets the selector for a given function signature
@@ -1917,7 +2009,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = get_func(signature)?.selector();
-            return Ok((selector.to_string(), String::from(signature)))
+            return Ok((selector.to_string(), String::from(signature)));
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("invalid function signature");
@@ -1939,7 +2031,7 @@ impl SimpleCast {
 
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, hex::encode_prefixed(selector), input))
+                        return Some((nonce, hex::encode_prefixed(selector), input));
                     }
 
                     nonce += nonce_step;
@@ -1953,7 +2045,7 @@ impl SimpleCast {
         }
     }
 
-    /// Extracts function selectors and arguments from bytecode
+    /// Extracts function selectors, arguments and state mutability from bytecode
     ///
     /// # Example
     ///
@@ -1961,16 +2053,21 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
-    /// let selectors = Cast::extract_selectors(bytecode)?;
-    /// assert_eq!(selectors, vec![("0x2125b65b".to_string(), "uint32,address,uint224".to_string())]);
+    /// let functions = Cast::extract_functions(bytecode)?;
+    /// assert_eq!(functions, vec![("0x2125b65b".to_string(), "uint32,address,uint224".to_string(), "pure")]);
     /// # Ok::<(), eyre::Report>(())
     /// ```
-    pub fn extract_selectors(bytecode: &str) -> Result<Vec<(String, String)>> {
+    pub fn extract_functions(bytecode: &str) -> Result<Vec<(String, String, &str)>> {
         let code = hex::decode(strip_0x(bytecode))?;
-        let s = evmole::function_selectors(&code, 0);
-
-        Ok(s.iter()
-            .map(|s| (hex::encode_prefixed(s), evmole::function_arguments(&code, s, 0)))
+        Ok(evmole::function_selectors(&code, 0)
+            .into_iter()
+            .map(|s| {
+                (
+                    hex::encode_prefixed(s),
+                    evmole::function_arguments(&code, &s, 0),
+                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
+                )
+            })
             .collect())
     }
 
@@ -1989,6 +2086,24 @@ impl SimpleCast {
         let tx_hex = hex::decode(strip_0x(tx))?;
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
+    }
+
+    /// Decodes EOF container bytes
+    /// Pretty prints the decoded EOF container contents
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let eof = "0xef0001010004020001005604002000008000046080806040526004361015e100035f80fd5f3560e01c63773d45e01415e1ffee6040600319360112e10028600435906024358201809211e100066020918152f3634e487b7160e01b5f52601160045260245ffd5f80fd0000000000000000000000000124189fc71496f8660db5189f296055ed757632";
+    /// let decoded = Cast::decode_eof(&eof)?;
+    /// println!("{}", decoded);
+    /// # Ok::<(), eyre::Report>(())
+    pub fn decode_eof(eof: &str) -> Result<String> {
+        let eof_hex = hex::decode(eof)?;
+        let eof = Eof::decode(eof_hex.into())?;
+        Ok(pretty_eof(&eof)?)
     }
 }
 

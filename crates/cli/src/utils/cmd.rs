@@ -17,7 +17,8 @@ use foundry_evm::{
         debug::DebugTraceIdentifier,
         decode_trace_arena,
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        Traces,
     },
 };
 use std::{
@@ -163,14 +164,22 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return matches!(
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
+            NamedChain::Acala |
+                NamedChain::AcalaMandalaTestnet |
+                NamedChain::AcalaTestnet |
+                NamedChain::Arbitrum |
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
-                NamedChain::Moonbeam |
-                NamedChain::Moonriver |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::Karura |
+                NamedChain::KaruraTestnet |
+                NamedChain::Mantle |
+                NamedChain::MantleSepolia |
+                NamedChain::MantleTestnet |
                 NamedChain::Moonbase |
-                NamedChain::MoonbeamDev
+                NamedChain::Moonbeam |
+                NamedChain::MoonbeamDev |
+                NamedChain::Moonriver
         );
     }
     false
@@ -353,6 +362,7 @@ pub async fn handle_traces(
     labels: Vec<String>,
     debug: bool,
     decode_internal: bool,
+    verbose: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -402,19 +412,23 @@ pub async fn handle_traces(
             .build();
         debugger.try_run()?;
     } else {
-        print_traces(&mut result, &decoder).await?;
+        print_traces(&mut result, &decoder, verbose).await?;
     }
 
     Ok(())
 }
 
-pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: &CallTraceDecoder,
+    verbose: bool,
+) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
     println!("Traces:");
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena(arena));
+        println!("{}", render_trace_arena_with_bytecodes(arena, verbose));
     }
     println!();
 

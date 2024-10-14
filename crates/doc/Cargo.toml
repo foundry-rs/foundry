@@ -20,12 +20,10 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 
-auto_impl.workspace = true
-derive_more = "0.99"
+derive_more.workspace = true
 eyre.workspace = true
 itertools.workspace = true
 mdbook = { version = "0.4", default-features = false, features = ["search"] }
-once_cell.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true

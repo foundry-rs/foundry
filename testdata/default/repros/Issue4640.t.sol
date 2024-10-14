@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -10,7 +10,7 @@ contract Issue4640Test is DSTest {
 
     function testArbitrumBlockNumber() public {
         // <https://arbiscan.io/block/75219831>
-        vm.createSelectFork("https://arb-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", 75219831);
+        vm.createSelectFork("arbitrum", 75219831);
         // L1 block number
         assertEq(block.number, 16939475);
     }

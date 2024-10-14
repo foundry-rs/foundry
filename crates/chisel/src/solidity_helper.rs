@@ -211,7 +211,7 @@ impl Highlighter for SolidityHelper {
         Self::highlight(line)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, _forced: bool) -> bool {
         pos == line.len()
     }
 
@@ -278,7 +278,7 @@ pub trait TokenStyle {
 }
 
 /// [TokenStyle] implementation for [Token]
-impl<'a> TokenStyle for Token<'a> {
+impl TokenStyle for Token<'_> {
     fn style(&self) -> Style {
         use Token::*;
         match self {

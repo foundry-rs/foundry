@@ -20,10 +20,10 @@ pub struct RetryArgs {
     )]
     pub retries: u32,
 
-    /// Optional delay to apply inbetween verification attempts, in seconds.
+    /// Optional delay to apply in between verification attempts, in seconds.
     #[arg(
         long,
-        value_parser = RangedU64ValueParser::<u32>::new().range(0..=30),
+        value_parser = RangedU64ValueParser::<u32>::new().range(0..=180),
         default_value = "5",
     )]
     pub delay: u32,

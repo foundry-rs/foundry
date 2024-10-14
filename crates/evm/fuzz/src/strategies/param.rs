@@ -14,9 +14,10 @@ pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
 }
 
 /// Given a parameter type and configured fixtures for param name, returns a strategy for generating
-/// values for that type. Fixtures can be currently generated for uint, int, address, bytes and
-/// string types and are defined for parameter name.
+/// values for that type.
 ///
+/// Fixtures can be currently generated for uint, int, address, bytes and
+/// string types and are defined for parameter name.
 /// For example, fixtures for parameter `owner` of type `address` can be defined in a function with
 /// a `function fixture_owner() public returns (address[] memory)` signature.
 ///
@@ -217,12 +218,12 @@ mod tests {
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
         let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default());
-        let strat = proptest::prop_oneof![
+        let strategy = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),
         ];
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
-        let _ = runner.run(&strat, |_| Ok(()));
+        let _ = runner.run(&strategy, |_| Ok(()));
     }
 }

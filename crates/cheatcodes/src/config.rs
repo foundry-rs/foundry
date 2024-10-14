@@ -1,6 +1,6 @@
 use super::Result;
 use crate::{script::ScriptWallets, Vm::Rpc};
-use alloy_primitives::Address;
+use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
@@ -10,7 +10,6 @@ use foundry_config::{
 use foundry_evm_core::opts::EvmOpts;
 use semver::Version;
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -43,17 +42,21 @@ pub struct CheatsConfig {
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
     /// Script wallets
     pub script_wallets: Option<ScriptWallets>,
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
+    /// Name of the script/test contract which is currently running.
+    pub running_contract: Option<String>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
     /// Whether to enable legacy (non-reverting) assertions.
     pub assertions_revert: bool,
+    /// Optional seed for the RNG algorithm.
+    pub seed: Option<U256>,
 }
 
 impl CheatsConfig {
@@ -63,6 +66,7 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         script_wallets: Option<ScriptWallets>,
+        running_contract: Option<String>,
         running_version: Option<Version>,
     ) -> Self {
         let mut allowed_paths = vec![config.root.0.clone()];
@@ -91,8 +95,10 @@ impl CheatsConfig {
             labels: config.labels.clone(),
             script_wallets,
             available_artifacts,
+            running_contract,
             running_version,
             assertions_revert: config.assertions_revert,
+            seed: config.fuzz.seed,
         }
     }
 
@@ -219,8 +225,10 @@ impl Default for CheatsConfig {
             labels: Default::default(),
             script_wallets: None,
             available_artifacts: Default::default(),
+            running_contract: Default::default(),
             running_version: Default::default(),
             assertions_revert: true,
+            seed: None,
         }
     }
 }
@@ -234,6 +242,7 @@ mod tests {
         CheatsConfig::new(
             &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             Default::default(),
+            None,
             None,
             None,
             None,

@@ -20,7 +20,7 @@
 //! used to determine whether it can be included in a block (transaction is ready) or whether it
 //! still _requires_ other transactions to be mined first (transaction is pending).
 //! A transaction is associated with the nonce of the account it's sent from. A unique identifying
-//! marker for a transaction is therefor the pair `(nonce + account)`. An incoming transaction with
+//! marker for a transaction is therefore the pair `(nonce + account)`. An incoming transaction with
 //! a `nonce > nonce on chain` will _require_ `(nonce -1, account)` first, before it is ready to be
 //! included in a block.
 //!

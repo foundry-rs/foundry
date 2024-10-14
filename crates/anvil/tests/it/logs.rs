@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumWallet;
-use alloy_primitives::B256;
+use alloy_primitives::{map::B256HashSet, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use anvil::{spawn, NodeConfig};
@@ -60,8 +60,7 @@ async fn get_past_events() {
         .unwrap()
         .unwrap()
         .header
-        .hash
-        .unwrap();
+        .hash;
 
     let filter = Filter::new()
         .address(simple_storage_address)
@@ -121,7 +120,7 @@ async fn get_all_events() {
     // test that logs returned from get_logs and get_transaction_receipt have
     // the same log_index, block_number, and transaction_hash
     let mut tasks = vec![];
-    let mut seen_tx_hashes = std::collections::HashSet::new();
+    let mut seen_tx_hashes = B256HashSet::default();
     for log in &logs {
         if seen_tx_hashes.contains(&log.transaction_hash.unwrap()) {
             continue;
@@ -197,8 +196,7 @@ async fn watch_events() {
             .unwrap()
             .unwrap()
             .header
-            .hash
-            .unwrap();
+            .hash;
         assert_eq!(log.1.block_hash.unwrap(), hash);
     }
 }

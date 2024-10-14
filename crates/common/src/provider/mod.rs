@@ -27,13 +27,29 @@ use std::{
 };
 use url::ParseError;
 
+/// The assumed block time for unknown chains.
+/// We assume that these are chains have a faster block time.
+const DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME: Duration = Duration::from_secs(3);
+
+/// The factor to scale the block time by to get the poll interval.
+const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
+
 /// Helper type alias for a retry provider
 pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
 
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
     JoinFill<
-        JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+        JoinFill<
+            Identity,
+            JoinFill<
+                GasFiller,
+                JoinFill<
+                    alloy_provider::fillers::BlobGasFiller,
+                    JoinFill<NonceFiller, ChainIdFiller>,
+                >,
+            >,
+        >,
         WalletFiller<EthereumWallet>,
     >,
     RootProvider<RetryBackoffService<RuntimeTransport>, N>,
@@ -229,7 +245,7 @@ impl ProviderBuilder {
     pub fn build(self) -> Result<RetryProvider> {
         let Self {
             url,
-            chain: _,
+            chain,
             max_retry,
             initial_backoff,
             timeout,
@@ -249,6 +265,15 @@ impl ProviderBuilder {
             .with_jwt(jwt)
             .build();
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+
+        if !is_local {
+            client.set_poll_interval(
+                chain
+                    .average_blocktime_hint()
+                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
+            );
+        }
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .on_provider(RootProvider::new(client));
@@ -260,7 +285,7 @@ impl ProviderBuilder {
     pub fn build_with_wallet(self, wallet: EthereumWallet) -> Result<RetryProviderWithSigner> {
         let Self {
             url,
-            chain: _,
+            chain,
             max_retry,
             initial_backoff,
             timeout,
@@ -281,6 +306,15 @@ impl ProviderBuilder {
             .build();
 
         let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+
+        if !is_local {
+            client.set_poll_interval(
+                chain
+                    .average_blocktime_hint()
+                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
+            );
+        }
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .with_recommended_fillers()

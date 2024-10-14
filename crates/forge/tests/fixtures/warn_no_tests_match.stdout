@@ -1,7 +1,0 @@
-No tests match the provided pattern:
-	match-test: `testA.*`
-	no-match-test: `testB.*`
-	match-contract: `TestC.*`
-	no-match-contract: `TestD.*`
-	match-path: `*TestE*`
-	no-match-path: `*TestF*`

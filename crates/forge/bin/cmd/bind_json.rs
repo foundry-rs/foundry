@@ -187,7 +187,7 @@ struct StructToWrite {
 }
 
 impl StructToWrite {
-    /// Returns the name of the imported item. If struct is definied at the file level, returns the
+    /// Returns the name of the imported item. If struct is defined at the file level, returns the
     /// struct name, otherwise returns the parent contract name.
     fn struct_or_contract_name(&self) -> &str {
         self.contract_name.as_deref().unwrap_or(&self.name)
@@ -309,10 +309,7 @@ impl CompiledState {
         for ((path, id), (def, contract_name)) in structs {
             // For some structs there's no schema (e.g. if they contain a mapping), so we just skip
             // those.
-            let Some(schema) = resolver.resolve_struct_eip712(id, &mut Default::default(), true)?
-            else {
-                continue
-            };
+            let Some(schema) = resolver.resolve_struct_eip712(id)? else { continue };
 
             if !include.is_empty() {
                 if !include.iter().any(|matcher| matcher.is_match(path)) {

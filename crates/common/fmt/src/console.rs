@@ -1,35 +1,175 @@
 use super::UIfmt;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
+use std::fmt::{self, Write};
+
+/// A piece is a portion of the format string which represents the next part to emit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Piece<'a> {
+    /// A literal string which should directly be emitted.
+    String(&'a str),
+    /// A format specifier which should be replaced with the next argument.
+    NextArgument(FormatSpec),
+}
 
 /// A format specifier.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum FormatSpec {
-    /// %s format spec
+    /// `%s`
     #[default]
     String,
-    /// %d format spec
+    /// `%d`
     Number,
-    /// %i format spec
+    /// `%i`
     Integer,
-    /// %o format spec
+    /// `%o`
     Object,
-    /// %e format spec
-    Exponential,
-    /// %x format spec
+    /// `%e`, `%18e`
+    Exponential(Option<usize>),
+    /// `%x`
     Hexadecimal,
 }
 
-impl FormatSpec {
-    fn from_char(ch: char) -> Option<Self> {
-        match ch {
-            's' => Some(Self::String),
-            'd' => Some(Self::Number),
-            'i' => Some(Self::Integer),
-            'o' => Some(Self::Object),
-            'e' => Some(Self::Exponential),
-            'x' => Some(Self::Hexadecimal),
-            _ => None,
+impl fmt::Display for FormatSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("%")?;
+        match *self {
+            Self::String => f.write_str("s"),
+            Self::Number => f.write_str("d"),
+            Self::Integer => f.write_str("i"),
+            Self::Object => f.write_str("o"),
+            Self::Exponential(Some(n)) => write!(f, "{n}e"),
+            Self::Exponential(None) => f.write_str("e"),
+            Self::Hexadecimal => f.write_str("x"),
         }
+    }
+}
+
+enum ParseArgError {
+    /// Failed to parse the argument.
+    Err,
+    /// Escape `%%`.
+    Skip,
+}
+
+/// Parses a format string into a sequence of [pieces][Piece].
+#[derive(Debug)]
+pub struct Parser<'a> {
+    input: &'a str,
+    chars: std::str::CharIndices<'a>,
+}
+
+impl<'a> Parser<'a> {
+    /// Creates a new parser for the given input.
+    pub fn new(input: &'a str) -> Self {
+        Self { input, chars: input.char_indices() }
+    }
+
+    /// Parses a string until the next format specifier.
+    ///
+    /// `skip` is the number of format specifier characters (`%`) to ignore before returning the
+    /// string.
+    fn string(&mut self, start: usize, mut skip: usize) -> &'a str {
+        while let Some((pos, c)) = self.peek() {
+            if c == '%' {
+                if skip == 0 {
+                    return &self.input[start..pos];
+                }
+                skip -= 1;
+            }
+            self.chars.next();
+        }
+        &self.input[start..]
+    }
+
+    /// Parses a format specifier.
+    ///
+    /// If `Err` is returned, the internal iterator may have been advanced and it may be in an
+    /// invalid state.
+    fn argument(&mut self) -> Result<FormatSpec, ParseArgError> {
+        let (start, ch) = self.peek().ok_or(ParseArgError::Err)?;
+        let simple_spec = match ch {
+            's' => Some(FormatSpec::String),
+            'd' => Some(FormatSpec::Number),
+            'i' => Some(FormatSpec::Integer),
+            'o' => Some(FormatSpec::Object),
+            'e' => Some(FormatSpec::Exponential(None)),
+            'x' => Some(FormatSpec::Hexadecimal),
+            // "%%" is a literal '%'.
+            '%' => return Err(ParseArgError::Skip),
+            _ => None,
+        };
+        if let Some(spec) = simple_spec {
+            self.chars.next();
+            return Ok(spec);
+        }
+
+        // %<n>e
+        if ch.is_ascii_digit() {
+            let n = self.integer(start);
+            if let Some((_, 'e')) = self.peek() {
+                self.chars.next();
+                return Ok(FormatSpec::Exponential(n));
+            }
+        }
+
+        Err(ParseArgError::Err)
+    }
+
+    fn integer(&mut self, start: usize) -> Option<usize> {
+        let mut end = start;
+        while let Some((pos, ch)) = self.peek() {
+            if !ch.is_ascii_digit() {
+                end = pos;
+                break;
+            }
+            self.chars.next();
+        }
+        self.input[start..end].parse().ok()
+    }
+
+    fn current_pos(&mut self) -> usize {
+        self.peek().map(|(n, _)| n).unwrap_or(self.input.len())
+    }
+
+    fn peek(&mut self) -> Option<(usize, char)> {
+        self.peek_n(0)
+    }
+
+    fn peek_n(&mut self, n: usize) -> Option<(usize, char)> {
+        self.chars.clone().nth(n)
+    }
+}
+
+impl<'a> Iterator for Parser<'a> {
+    type Item = Piece<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (mut start, ch) = self.peek()?;
+        let mut skip = 0;
+        if ch == '%' {
+            let prev = self.chars.clone();
+            self.chars.next();
+            match self.argument() {
+                Ok(arg) => {
+                    debug_assert_eq!(arg.to_string(), self.input[start..self.current_pos()]);
+                    return Some(Piece::NextArgument(arg));
+                }
+
+                // Skip the argument if we encountered "%%".
+                Err(ParseArgError::Skip) => {
+                    start = self.current_pos();
+                    skip += 1;
+                }
+
+                // Reset the iterator if we failed to parse the argument, and include any
+                // parsed and unparsed specifier in `String`.
+                Err(ParseArgError::Err) => {
+                    self.chars = prev;
+                    skip += 1;
+                }
+            }
+        }
+        Some(Piece::String(self.string(start, skip)))
     }
 }
 
@@ -46,7 +186,7 @@ impl ConsoleFmt for String {
             FormatSpec::Object => format!("'{}'", self.clone()),
             FormatSpec::Number |
             FormatSpec::Integer |
-            FormatSpec::Exponential |
+            FormatSpec::Exponential(_) |
             FormatSpec::Hexadecimal => Self::from("NaN"),
         }
     }
@@ -58,7 +198,7 @@ impl ConsoleFmt for bool {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number => (*self as i32).to_string(),
-            FormatSpec::Integer | FormatSpec::Exponential | FormatSpec::Hexadecimal => {
+            FormatSpec::Integer | FormatSpec::Exponential(_) | FormatSpec::Hexadecimal => {
                 String::from("NaN")
             }
         }
@@ -75,7 +215,7 @@ impl ConsoleFmt for U256 {
                 let hex = format!("{self:x}");
                 format!("0x{}", hex.trim_start_matches('0'))
             }
-            FormatSpec::Exponential => {
+            FormatSpec::Exponential(None) => {
                 let log = self.pretty().len() - 1;
                 let exp10 = Self::from(10).pow(Self::from(log));
                 let amount = *self;
@@ -86,6 +226,18 @@ impl ConsoleFmt for U256 {
                     format!("{integer}.{decimal}e{log}")
                 } else {
                     format!("{integer}e{log}")
+                }
+            }
+            FormatSpec::Exponential(Some(precision)) => {
+                let exp10 = Self::from(10).pow(Self::from(precision));
+                let amount = *self;
+                let integer = amount / exp10;
+                let decimal = (amount % exp10).to_string();
+                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                if !decimal.is_empty() {
+                    format!("{integer}.{decimal}")
+                } else {
+                    format!("{integer}")
                 }
             }
         }
@@ -102,7 +254,7 @@ impl ConsoleFmt for I256 {
                 let hex = format!("{self:x}");
                 format!("0x{}", hex.trim_start_matches('0'))
             }
-            FormatSpec::Exponential => {
+            FormatSpec::Exponential(None) => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
                 let log = if amount.is_negative() {
@@ -117,7 +269,20 @@ impl ConsoleFmt for I256 {
                 if !decimal.is_empty() {
                     format!("{sign}{integer}.{decimal}e{log}")
                 } else {
-                    format!("{integer}e{log}")
+                    format!("{sign}{integer}e{log}")
+                }
+            }
+            FormatSpec::Exponential(Some(precision)) => {
+                let amount = *self;
+                let sign = if amount.is_negative() { "-" } else { "" };
+                let exp10 = Self::exp10(precision);
+                let integer = (amount / exp10).twos_complement();
+                let decimal = (amount % exp10).twos_complement().to_string();
+                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                if !decimal.is_empty() {
+                    format!("{sign}{integer}.{decimal}")
+                } else {
+                    format!("{sign}{integer}")
                 }
             }
         }
@@ -129,7 +294,7 @@ impl ConsoleFmt for Address {
         match spec {
             FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential(_) => {
                 String::from("NaN")
             }
         }
@@ -165,7 +330,7 @@ impl ConsoleFmt for [u8] {
         match spec {
             FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential(_) => {
                 String::from("NaN")
             }
         }
@@ -202,25 +367,21 @@ pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
     let mut result = String::with_capacity(spec.len());
 
     // for the first space
-    let mut write_space = true;
-    let last_value = if spec.is_empty() {
-        // we still want to print any remaining values
-        write_space = false;
-        values.next()
+    let mut write_space = if spec.is_empty() {
+        false
     } else {
-        format_spec(spec, &mut values, &mut result)
+        format_spec(spec, &mut values, &mut result);
+        true
     };
 
     // append any remaining values with the standard format
-    if let Some(v) = last_value {
-        for v in std::iter::once(v).chain(values) {
-            let fmt = v.fmt(FormatSpec::String);
-            if write_space {
-                result.push(' ');
-            }
-            result.push_str(&fmt);
-            write_space = true;
+    for v in values {
+        let fmt = v.fmt(FormatSpec::String);
+        if write_space {
+            result.push(' ');
         }
+        result.push_str(&fmt);
+        write_space = true;
     }
 
     result
@@ -228,40 +389,22 @@ pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
 
 fn format_spec<'a>(
     s: &str,
-    values: &mut impl Iterator<Item = &'a dyn ConsoleFmt>,
+    mut values: impl Iterator<Item = &'a dyn ConsoleFmt>,
     result: &mut String,
-) -> Option<&'a dyn ConsoleFmt> {
-    let mut expect_fmt = false;
-    let mut current_value = values.next();
-
-    for (i, ch) in s.char_indices() {
-        // no more values
-        if current_value.is_none() {
-            result.push_str(&s[i..].replace("%%", "%"));
-            break
-        }
-
-        if expect_fmt {
-            expect_fmt = false;
-            if let Some(spec) = FormatSpec::from_char(ch) {
-                // format and write the value
-                let string = current_value.unwrap().fmt(spec);
-                result.push_str(&string);
-                current_value = values.next();
-            } else {
-                // invalid specifier or a second `%`, in both cases we ignore
-                result.push(ch);
-            }
-        } else {
-            expect_fmt = ch == '%';
-            // push when not a `%` or it's the last char
-            if !expect_fmt || i == s.len() - 1 {
-                result.push(ch);
+) {
+    for piece in Parser::new(s) {
+        match piece {
+            Piece::String(s) => result.push_str(s),
+            Piece::NextArgument(spec) => {
+                if let Some(value) = values.next() {
+                    result.push_str(&value.fmt(spec));
+                } else {
+                    // Write the format specifier as-is if there are no more values.
+                    write!(result, "{spec}").unwrap();
+                }
             }
         }
     }
-
-    current_value
 }
 
 #[cfg(test)]
@@ -388,10 +531,20 @@ mod tests {
         assert_eq!("100", fmt_1("%d", &I256::try_from(100).unwrap()));
         assert_eq!("100", fmt_1("%i", &I256::try_from(100).unwrap()));
         assert_eq!("1e2", fmt_1("%e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1e2", fmt_1("%e", &I256::try_from(-100).unwrap()));
         assert_eq!("-1.0023e6", fmt_1("%e", &I256::try_from(-1002300).unwrap()));
         assert_eq!("-1.23e5", fmt_1("%e", &I256::try_from(-123000).unwrap()));
         assert_eq!("1.0023e6", fmt_1("%e", &I256::try_from(1002300).unwrap()));
         assert_eq!("1.23e5", fmt_1("%e", &I256::try_from(123000).unwrap()));
+
+        // %ne
+        assert_eq!("10", fmt_1("%1e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1", fmt_1("%2e", &I256::try_from(-100).unwrap()));
+        assert_eq!("123000", fmt_1("%0e", &I256::try_from(123000).unwrap()));
+        assert_eq!("12300", fmt_1("%1e", &I256::try_from(123000).unwrap()));
+        assert_eq!("0.0123", fmt_1("%7e", &I256::try_from(123000).unwrap()));
+        assert_eq!("-0.0123", fmt_1("%7e", &I256::try_from(-123000).unwrap()));
+
         assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
         assert_eq!(
             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
@@ -402,6 +555,13 @@ mod tests {
             fmt_1("%x", &I256::try_from(-100000000000i64).unwrap())
         );
         assert_eq!("100", fmt_1("%o", &I256::try_from(100).unwrap()));
+
+        // make sure that %byte values are not consumed when there are no values
+        assert_eq!("%333d%3e%5F", console_format("%333d%3e%5F", &[]));
+        assert_eq!(
+            "%5d123456.789%2f%3f%e1",
+            console_format("%5d%3e%2f%3f%e1", &[&U256::from(123456789)])
+        );
     }
 
     #[test]
@@ -430,6 +590,17 @@ mod tests {
             "foo 0xdEADBEeF00000000000000000000000000000000 %s true and 21 foo %",
             logf3!(log3)
         );
+
+        // %ne
+        let log4 = Log1 { p_0: String::from("%5e"), p_1: U256::from(123456789) };
+        assert_eq!("1234.56789", logf1!(log4));
+
+        let log5 = Log1 { p_0: String::from("foo %3e bar"), p_1: U256::from(123456789) };
+        assert_eq!("foo 123456.789 bar", logf1!(log5));
+
+        let log6 =
+            Log2 { p_0: String::from("%e and %12e"), p_1: false, p_2: U256::from(123456789) };
+        assert_eq!("NaN and 0.000123456789", logf2!(log6));
     }
 
     #[test]

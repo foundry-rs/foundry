@@ -8,7 +8,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    find_project_root_path, remappings_from_env_var, Config,
+    find_project_root, remappings_from_env_var, Config,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -66,15 +66,13 @@ pub struct ProjectPathsArgs {
 impl ProjectPathsArgs {
     /// Returns the root directory to use for configuring the project.
     ///
-    /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
+    /// This will be the `--root` argument if provided, otherwise see [`find_project_root`].
     ///
     /// # Panics
     ///
-    /// If the project root directory cannot be found: [find_project_root_path()]
+    /// Panics if the project root directory cannot be found. See [`find_project_root`].
     pub fn project_root(&self) -> PathBuf {
-        self.root
-            .clone()
-            .unwrap_or_else(|| find_project_root_path(None).expect("Failed to find project root"))
+        self.root.clone().unwrap_or_else(|| find_project_root(None))
     }
 
     /// Returns the remappings to add to the config

@@ -34,7 +34,7 @@ pub const TEST_CONTRACT_ADDRESS: Address = address!("b4c79daB8f259C7Aee6E5b2Aa72
 /// Magic return value returned by the `assume` cheatcode.
 pub const MAGIC_ASSUME: &[u8] = b"FOUNDRY::ASSUME";
 
-/// Magic return value returned by the `skip` cheatcode.
+/// Magic return value returned by the `skip` cheatcode. Optionally appended with a reason.
 pub const MAGIC_SKIP: &[u8] = b"FOUNDRY::SKIP";
 
 /// The address that deploys the default CREATE2 deployer contract.

@@ -14,7 +14,6 @@ use foundry_evm::{
         EvmContext,
     },
     traces::TracingInspectorConfig,
-    InspectorExt,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -41,14 +40,14 @@ impl Inspector {
         self
     }
 
-    pub fn with_config(mut self, config: TracingInspectorConfig) -> Self {
+    pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
         self
     }
 
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 
@@ -78,9 +77,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         });
     }
 
-    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interp: &mut Interpreter, ecx: &mut EvmContext<DB>, log: &Log) {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
-            inspector.log(ecx, log);
+            inspector.log(interp, ecx, log);
         });
     }
 
@@ -167,8 +166,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         }
     }
 }
-
-impl<DB: Database> InspectorExt<DB> for Inspector {}
 
 /// Prints all the logs
 pub fn print_logs(logs: &[Log]) {

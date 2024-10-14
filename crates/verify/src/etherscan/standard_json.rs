@@ -2,7 +2,7 @@ use super::{EtherscanSourceProvider, VerifyArgs};
 use crate::provider::VerificationContext;
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
-use foundry_compilers::artifacts::StandardJsonCompilerInput;
+use foundry_compilers::{artifacts::StandardJsonCompilerInput, solc::SolcLanguage};
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;
@@ -29,7 +29,7 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             .collect();
 
         // remove all incompatible settings
-        input.settings.sanitize(&context.compiler_version);
+        input.settings.sanitize(&context.compiler_version, SolcLanguage::Solidity);
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;

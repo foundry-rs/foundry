@@ -1,11 +1,11 @@
-use super::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs};
+use super::{build::BuildArgs, doc::DocArgs, snapshot::GasSnapshotArgs, test::TestArgs};
+use alloy_primitives::map::HashSet;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
-    collections::HashSet,
     path::PathBuf,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -249,7 +249,7 @@ pub async fn watch_build(args: BuildArgs) -> Result<()> {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// snapshot`
-pub async fn watch_snapshot(args: SnapshotArgs) -> Result<()> {
+pub async fn watch_gas_snapshot(args: GasSnapshotArgs) -> Result<()> {
     let config = args.watchexec_config()?;
     run(config).await
 }
@@ -260,12 +260,12 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build_args().into();
     let filter = args.filter(&config);
     // Marker to check whether to override the command.
-    let _no_reconfigure = filter.args().test_pattern.is_some() ||
+    let no_reconfigure = filter.args().test_pattern.is_some() ||
         filter.args().path_pattern.is_some() ||
         filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
 
-    let last_test_files = Mutex::new(HashSet::<String>::new());
+    let last_test_files = Mutex::new(HashSet::<String>::default());
     let project_root = config.root.0.to_string_lossy().into_owned();
     let config = args.watch.watchexec_config_with_override(
         || [&config.test, &config.src],
@@ -303,9 +303,21 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
 
             trace!(?file, "reconfigure test command");
 
-            command.arg("--match-path").arg(&file);
+            // Before appending `--match-path`, check if it already exists
+            if !no_reconfigure {
+                command.arg("--match-path").arg(file);
+            }
         },
     )?;
+    run(config).await?;
+
+    Ok(())
+}
+
+/// Executes a [`Watchexec`] that listens for changes in the project's sources directory
+pub async fn watch_doc(args: DocArgs) -> Result<()> {
+    let src_path = args.config()?.src;
+    let config = args.watch.watchexec_config(|| [src_path])?;
     run(config).await?;
 
     Ok(())

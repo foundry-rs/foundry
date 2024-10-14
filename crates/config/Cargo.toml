@@ -31,7 +31,7 @@ globset = "0.4"
 glob = "0.3"
 Inflector = "0.11"
 number_prefix = "0.4"
-once_cell.workspace = true
+mesc.workspace = true
 regex = "1"
 reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
@@ -43,6 +43,7 @@ toml = { version = "0.8", features = ["preserve_order"] }
 toml_edit = "0.22.4"
 tracing.workspace = true
 walkdir.workspace = true
+yansi.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2.1"

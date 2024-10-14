@@ -1,3 +1,6 @@
+use alloy_primitives::Bytes;
+use revm::interpreter::opcode;
+
 /// Named parameter of an EVM opcode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OpcodeParam {
@@ -8,10 +11,35 @@ pub(crate) struct OpcodeParam {
 }
 
 impl OpcodeParam {
-    /// Returns the list of named parameters for the given opcode.
+    /// Returns the list of named parameters for the given opcode, accounts for special opcodes
+    /// requiring immediate bytes to determine stack items.
     #[inline]
-    pub(crate) fn of(op: u8) -> &'static [Self] {
-        MAP[op as usize]
+    pub(crate) fn of(op: u8, immediate: Option<&Bytes>) -> Option<Vec<Self>> {
+        match op {
+            // Handle special cases requiring immediate bytes
+            opcode::DUPN => immediate
+                .and_then(|i| i.first().copied())
+                .map(|i| vec![Self { name: "dup_value", index: i as usize }]),
+            opcode::SWAPN => immediate.and_then(|i| {
+                i.first().map(|i| {
+                    vec![
+                        Self { name: "a", index: 1 },
+                        Self { name: "swap_value", index: *i as usize },
+                    ]
+                })
+            }),
+            opcode::EXCHANGE => immediate.and_then(|i| {
+                i.first().map(|imm| {
+                    let n = (imm >> 4) + 1;
+                    let m = (imm & 0xf) + 1;
+                    vec![
+                        Self { name: "value1", index: n as usize },
+                        Self { name: "value2", index: m as usize },
+                    ]
+                })
+            }),
+            _ => Some(MAP[op as usize].to_vec()),
+        }
     }
 }
 
@@ -41,11 +69,12 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
 
     // https://www.evm.codes
     // https://github.com/smlxl/evm.codes
-    // https://github.com/smlxl/evm.codes/blob/HEAD/opcodes.json
+    // https://github.com/klkvr/evm.codes
+    // https://github.com/klkvr/evm.codes/blob/HEAD/opcodes.json
     // jq -rf opcodes.jq opcodes.json
     /*
     def mkargs(input):
-        input | split(" | ") | to_entries | map("\(.key): \(.value)") | join(", ");
+        input | split(" | ") | to_entries | map("\(.key): \"\(.value)\"") | join(", ");
 
     to_entries[] | "0x\(.key)(\(mkargs(.value.input))),"
     */
@@ -265,10 +294,10 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xcd(),
         0xce(),
         0xcf(),
-        0xd0(),
+        0xd0(0: "offset"),
         0xd1(),
         0xd2(),
-        0xd3(),
+        0xd3(0: "memOffset", 1: "offset", 2: "size"),
         0xd4(),
         0xd5(),
         0xd6(),
@@ -282,8 +311,8 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xde(),
         0xdf(),
         0xe0(),
-        0xe1(),
-        0xe2(),
+        0xe1(0: "condition"),
+        0xe2(0: "case"),
         0xe3(),
         0xe4(),
         0xe5(),
@@ -293,9 +322,9 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xe9(),
         0xea(),
         0xeb(),
-        0xec(),
+        0xec(0: "value", 1: "salt", 2: "offset", 3: "size"),
         0xed(),
-        0xee(),
+        0xee(0: "offset", 1: "size"),
         0xef(),
         0xf0(0: "value", 1: "offset", 2: "size"),
         0xf1(0: "gas", 1: "address", 2: "value", 3: "argsOffset", 4: "argsSize", 5: "retOffset", 6: "retSize"),
@@ -304,11 +333,11 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xf4(0: "gas", 1: "address", 2: "argsOffset", 3: "argsSize", 4: "retOffset", 5: "retSize"),
         0xf5(0: "value", 1: "offset", 2: "size", 3: "salt"),
         0xf6(),
-        0xf7(),
-        0xf8(),
-        0xf9(),
+        0xf7(0: "offset"),
+        0xf8(0: "address", 1: "argsOffset", 2: "argsSize", 3: "value"),
+        0xf9(0: "address", 1: "argsOffset", 2: "argsSize"),
         0xfa(0: "gas", 1: "address", 2: "argsOffset", 3: "argsSize", 4: "retOffset", 5: "retSize"),
-        0xfb(),
+        0xfb(0: "address", 1: "argsOffset", 2: "argsSize"),
         0xfc(),
         0xfd(0: "offset", 1: "size"),
         0xfe(),

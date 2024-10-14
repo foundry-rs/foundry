@@ -7,7 +7,7 @@ use forge::{
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
 };
-use foundry_test_utils::Filter;
+use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -155,24 +155,83 @@ async fn test_persist_fuzz_failure() {
     assert_ne!(initial_calldata, new_calldata);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_scrape_bytecode() {
-    let filter = Filter::new(".*", ".*", ".*fuzz/FuzzScrapeBytecode.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options.fuzz.runs = 2000;
-    runner.test_options.fuzz.seed = Some(U256::from(6u32));
-    let suite_result = runner.test_collect(&filter);
+forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
+    prj.add_source(
+        "FuzzerDict.sol",
+        r#"
+// https://github.com/foundry-rs/foundry/issues/1168
+contract FuzzerDict {
+    // Immutables should get added to the dictionary.
+    address public immutable immutableOwner;
+    // Regular storage variables should also get added to the dictionary.
+    address public storageOwner;
 
-    assert!(!suite_result.is_empty());
-
-    for (_, SuiteResult { test_results, .. }) in suite_result {
-        for (test_name, result) in test_results {
-            match test_name.as_str() {
-                "testImmutableOwner(address)" | "testStorageOwner(address)" => {
-                    assert_eq!(result.status, TestStatus::Failure)
-                }
-                _ => {}
-            }
-        }
+    constructor(address _immutableOwner, address _storageOwner) {
+        immutableOwner = _immutableOwner;
+        storageOwner = _storageOwner;
     }
 }
+   "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "FuzzerDictTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/FuzzerDict.sol";
+
+contract FuzzerDictTest is Test {
+    FuzzerDict fuzzerDict;
+
+    function setUp() public {
+        fuzzerDict = new FuzzerDict(address(100), address(200));
+    }
+
+    /// forge-config: default.fuzz.runs = 2000
+    function testImmutableOwner(address who) public {
+        assertTrue(who != fuzzerDict.immutableOwner());
+    }
+
+    /// forge-config: default.fuzz.runs = 2000
+    function testStorageOwner(address who) public {
+        assertTrue(who != fuzzerDict.storageOwner());
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Test that immutable address is used as fuzzed input, causing test to fail.
+    cmd.args(["test", "--fuzz-seed", "100", "--mt", "testImmutableOwner"]).assert_failure();
+    // Test that storage address is used as fuzzed input, causing test to fail.
+    cmd.forge_fuse()
+        .args(["test", "--fuzz-seed", "100", "--mt", "testStorageOwner"])
+        .assert_failure();
+});
+
+// tests that inline max-test-rejects config is properly applied
+forgetest_init!(test_inline_max_test_rejects, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InlineMaxRejectsTest is Test {
+    /// forge-config: default.fuzz.max-test-rejects = 1
+    function test_fuzz_bound(uint256 a) public {
+        vm.assume(a == 0);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
+...
+"#]]);
+});

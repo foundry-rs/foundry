@@ -23,7 +23,7 @@ async fn test_sub_new_heads() {
     api.anvil_set_interval_mining(1).unwrap();
 
     let blocks = blocks.into_stream().take(3).collect::<Vec<_>>().await;
-    let block_numbers = blocks.into_iter().map(|b| b.header.number.unwrap()).collect::<Vec<_>>();
+    let block_numbers = blocks.into_iter().map(|b| b.header.number).collect::<Vec<_>>();
 
     assert_eq!(block_numbers, vec![1, 2, 3]);
 }
@@ -233,7 +233,7 @@ async fn test_subscriptions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(std::time::Duration::from_secs(1)))).await;
     let provider = connect_pubsub(&handle.ws_endpoint()).await;
-    let sub_id: U256 = provider.raw_request("eth_subscribe".into(), ["newHeads"]).await.unwrap();
+    let sub_id = provider.raw_request("eth_subscribe".into(), ["newHeads"]).await.unwrap();
     let stream: Subscription<AlloyBlock> = provider.get_subscription(sub_id).await.unwrap();
     let blocks = stream
         .into_stream()
@@ -241,7 +241,7 @@ async fn test_subscriptions() {
         .collect::<Vec<_>>()
         .await
         .into_iter()
-        .map(|b| b.header.number.unwrap())
+        .map(|b| b.header.number)
         .collect::<Vec<_>>();
 
     assert_eq!(blocks, vec![1, 2, 3])
@@ -261,7 +261,7 @@ async fn test_sub_new_heads_fast() {
     let mut block_numbers = Vec::new();
     for _ in 0..num {
         api.mine_one().await;
-        let block_number = blocks.next().await.unwrap().header.number.unwrap();
+        let block_number = blocks.next().await.unwrap().header.number;
         block_numbers.push(block_number);
     }
 

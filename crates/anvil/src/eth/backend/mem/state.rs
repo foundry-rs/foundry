@@ -83,7 +83,7 @@ where
         let mut account_info = cache_db.basic_ref(*account)?.unwrap_or_default();
 
         if let Some(nonce) = account_overrides.nonce {
-            account_info.nonce = nonce.to::<u64>();
+            account_info.nonce = nonce;
         }
         if let Some(code) = &account_overrides.code {
             account_info.code = Some(Bytecode::new_raw(code.to_vec().into()));

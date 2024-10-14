@@ -4,18 +4,22 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
-use alloy_primitives::{Address, Log};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Log,
+};
 use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
+    decode::SkipReason,
     executors::{EvmError, RawCallResult},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{self, Write},
     time::Duration,
 };
@@ -53,17 +57,17 @@ impl TestOutcome {
 
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+        self.tests().filter(|(_, t)| t.status.is_success())
     }
 
     /// Returns an iterator over all individual skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+        self.tests().filter(|(_, t)| t.status.is_failure())
     }
 
     /// Returns an iterator over all individual tests and their names.
@@ -184,6 +188,18 @@ impl TestOutcome {
         // TODO: Avoid process::exit
         std::process::exit(1);
     }
+
+    /// Removes first test result, if any.
+    pub fn remove_first(&mut self) -> Option<(String, String, TestResult)> {
+        self.results.iter_mut().find_map(|(suite_name, suite)| {
+            if let Some(test_name) = suite.test_results.keys().next().cloned() {
+                let result = suite.test_results.remove(&test_name).unwrap();
+                Some((suite_name.clone(), test_name, result))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
@@ -202,24 +218,42 @@ impl SuiteResult {
     pub fn new(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        warnings: Vec<String>,
+        mut warnings: Vec<String>,
     ) -> Self {
+        // Add deprecated cheatcodes warning, if any of them used in current test suite.
+        let mut deprecated_cheatcodes = HashMap::new();
+        for test_result in test_results.values() {
+            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+        }
+        if !deprecated_cheatcodes.is_empty() {
+            let mut warning =
+                "the following cheatcode(s) are deprecated and will be removed in future versions:"
+                    .to_string();
+            for (cheatcode, reason) in deprecated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+                if let Some(reason) = reason {
+                    write!(warning, ": {reason}").unwrap();
+                }
+            }
+            warnings.push(warning);
+        }
+
         Self { duration, test_results, warnings }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+        self.tests().filter(|(_, t)| t.status.is_success())
     }
 
     /// Returns an iterator over all individual skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+        self.tests().filter(|(_, t)| t.status.is_failure())
     }
 
     /// Returns the number of tests that passed.
@@ -355,11 +389,14 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
+    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    /// Used for json output.
+    pub decoded_logs: Vec<String>,
+
     /// What kind of test this was
     pub kind: TestKind,
 
     /// Traces
-    #[serde(skip)]
     pub traces: Traces,
 
     /// Additional traces to use for gas report.
@@ -371,41 +408,58 @@ pub struct TestResult {
     pub coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
 
     pub duration: Duration,
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Any captured gas snapshots along the test's execution which should be accumulated.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
+    /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
+    #[serde(skip)]
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
             TestStatus::Success => "[PASS]".green().fmt(f),
-            TestStatus::Skipped => "[SKIP]".yellow().fmt(f),
+            TestStatus::Skipped => {
+                let mut s = String::from("[SKIP");
+                if let Some(reason) = &self.reason {
+                    write!(s, ": {reason}").unwrap();
+                }
+                s.push(']');
+                s.yellow().fmt(f)
+            }
             TestStatus::Failure => {
-                let mut s = String::from("[FAIL. Reason: ");
+                let mut s = String::from("[FAIL");
+                if self.reason.is_some() || self.counterexample.is_some() {
+                    if let Some(reason) = &self.reason {
+                        write!(s, ": {reason}").unwrap();
+                    }
 
-                let reason = self.reason.as_deref().unwrap_or("assertion failed");
-                s.push_str(reason);
-
-                if let Some(counterexample) = &self.counterexample {
-                    match counterexample {
-                        CounterExample::Single(ex) => {
-                            write!(s, "; counterexample: {ex}]").unwrap();
-                        }
-                        CounterExample::Sequence(sequence) => {
-                            s.push_str("]\n\t[Sequence]\n");
-                            for ex in sequence {
-                                writeln!(s, "\t\t{ex}").unwrap();
+                    if let Some(counterexample) = &self.counterexample {
+                        match counterexample {
+                            CounterExample::Single(ex) => {
+                                write!(s, "; counterexample: {ex}]").unwrap();
+                            }
+                            CounterExample::Sequence(sequence) => {
+                                s.push_str("]\n\t[Sequence]\n");
+                                for ex in sequence {
+                                    writeln!(s, "\t\t{ex}").unwrap();
+                                }
                             }
                         }
+                    } else {
+                        s.push(']');
                     }
                 } else {
                     s.push(']');
                 }
-
                 s.red().fmt(f)
             }
         }
@@ -443,15 +497,16 @@ impl TestResult {
     }
 
     /// Returns the skipped result for single test (used in skipped fuzz test too).
-    pub fn single_skip(mut self) -> Self {
+    pub fn single_skip(mut self, reason: SkipReason) -> Self {
         self.status = TestStatus::Skipped;
+        self.reason = reason.0;
         self
     }
 
     /// Returns the failed result with reason for single test.
-    pub fn single_fail(mut self, err: EvmError) -> Self {
+    pub fn single_fail(mut self, reason: Option<String>) -> Self {
         self.status = TestStatus::Failure;
-        self.reason = Some(err.to_string());
+        self.reason = reason;
         self
     }
 
@@ -477,9 +532,15 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
+
+        if let Some(cheatcodes) = raw_call_result.cheatcodes {
+            self.breakpoints = cheatcodes.breakpoints;
+            self.gas_snapshots = cheatcodes.gas_snapshots;
+            self.deprecated_cheatcodes = cheatcodes.deprecated;
+        }
+
         self
     }
 
@@ -499,22 +560,28 @@ impl TestResult {
         self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
         self.merge_coverages(result.coverage);
 
-        self.status = match result.success {
-            true => TestStatus::Success,
-            false => TestStatus::Failure,
+        self.status = if result.skipped {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
         };
         self.reason = result.reason;
         self.counterexample = result.counterexample;
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+
         self
     }
 
     /// Returns the skipped result for invariant test.
-    pub fn invariant_skip(mut self) -> Self {
+    pub fn invariant_skip(mut self, reason: SkipReason) -> Self {
         self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
         self.status = TestStatus::Skipped;
+        self.reason = reason.0;
         self
     }
 
@@ -577,6 +644,14 @@ impl TestResult {
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
         format!("{self} {name} {}", self.kind.report())
+    }
+
+    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
+    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
+        self.logs.extend(call_result.logs.clone());
+        self.labeled_addresses.extend(call_result.labels.clone());
+        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage.clone());
     }
 
     /// Function to merge given coverage in current test result coverage.
@@ -673,7 +748,7 @@ pub struct TestSetup {
     /// Call traces of the setup
     pub traces: Traces,
     /// Addresses labeled during setup
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
     /// The reason the setup failed, if it did
     pub reason: Option<String>,
     /// Coverage info during setup
@@ -687,7 +762,7 @@ impl TestSetup {
         error: EvmError,
         mut logs: Vec<Log>,
         mut traces: Traces,
-        mut labeled_addresses: HashMap<Address, String>,
+        mut labeled_addresses: AddressHashMap<String>,
     ) -> Self {
         match error {
             EvmError::Execution(err) => {
@@ -710,7 +785,7 @@ impl TestSetup {
         address: Address,
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: HashMap<Address, String>,
+        labeled_addresses: AddressHashMap<String>,
         coverage: Option<HitMaps>,
         fuzz_fixtures: FuzzFixtures,
     ) -> Self {
@@ -720,7 +795,7 @@ impl TestSetup {
     pub fn failed_with(
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: HashMap<Address, String>,
+        labeled_addresses: AddressHashMap<String>,
         reason: String,
     ) -> Self {
         Self {

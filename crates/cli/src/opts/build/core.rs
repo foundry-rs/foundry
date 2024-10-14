@@ -58,7 +58,12 @@ pub struct CoreBuildArgs {
     /// Specify the solc version, or a path to a local solc, to build with.
     ///
     /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
+    #[arg(
+        long = "use",
+        alias = "compiler-version",
+        help_heading = "Compiler options",
+        value_name = "SOLC_VERSION"
+    )]
     #[serde(skip)]
     pub use_solc: Option<String>,
 
@@ -121,6 +126,15 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
+    /// Use EOF-enabled solc binary. Enables via-ir and sets EVM version to Prague. Requires Docker
+    /// to be installed.
+    ///
+    /// Note that this is a temporary solution until the EOF support is merged into the main solc
+    /// release.
+    #[arg(long)]
+    #[serde(skip)]
+    pub eof: bool,
+
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
@@ -141,7 +155,7 @@ impl CoreBuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// `find_project_root_path` and merges the cli `BuildArgs` into it before returning
+    /// `find_project_root` and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.try_load_config_emit_warnings()?;
@@ -252,8 +266,8 @@ impl Provider for CoreBuildArgs {
             dict.insert("ast".to_string(), true.into());
         }
 
-        if self.compiler.optimize {
-            dict.insert("optimizer".to_string(), self.compiler.optimize.into());
+        if let Some(optimize) = self.compiler.optimize {
+            dict.insert("optimizer".to_string(), optimize.into());
         }
 
         if !self.compiler.extra_output.is_empty() {
@@ -270,6 +284,10 @@ impl Provider for CoreBuildArgs {
 
         if let Some(ref revert) = self.revert_strings {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
+        }
+
+        if self.eof {
+            dict.insert("eof".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

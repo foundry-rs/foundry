@@ -1,13 +1,13 @@
 use crate::cmd::{
-    bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs, config,
-    coverage, create::CreateArgs, debug::DebugArgs, doc::DocArgs, eip712, flatten, fmt::FmtArgs,
-    geiger, generate, init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs,
-    remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot, solc::SolcSubcommands, soldeer,
-    test, tree, update,
+    bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
+    compiler::CompilerSubcommands, config, coverage, create::CreateArgs, debug::DebugArgs,
+    doc::DocArgs, eip712, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs, inspect,
+    install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
+    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
-use forge_verify::{bytecode::VerifyBytecodeArgs, VerifyArgs, VerifyCheckArgs};
+use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -88,6 +88,10 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 
+    /// Verify the deployed bytecode against its source on Etherscan.
+    #[clap(visible_alias = "vb")]
+    VerifyBytecode(VerifyBytecodeArgs),
+
     /// Deploy a smart contract.
     #[command(visible_alias = "c")]
     Create(CreateArgs),
@@ -120,9 +124,9 @@ pub enum ForgeSubcommand {
     /// Manage the Foundry cache.
     Cache(CacheArgs),
 
-    /// Create a snapshot of each test's gas usage.
+    /// Create a gas snapshot of each test's gas usage.
     #[command(visible_alias = "s")]
-    Snapshot(snapshot::SnapshotArgs),
+    Snapshot(snapshot::GasSnapshotArgs),
 
     /// Display the current config.
     #[command(visible_alias = "co")]
@@ -159,14 +163,10 @@ pub enum ForgeSubcommand {
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
 
-    /// Verify the deployed bytecode against its source.
-    #[clap(visible_alias = "vb")]
-    VerifyBytecode(VerifyBytecodeArgs),
-
-    /// Function solc utilities
-    Solc {
+    /// Compiler utilities
+    Compiler {
         #[command(subcommand)]
-        command: SolcSubcommands,
+        command: CompilerSubcommands,
     },
 
     /// Soldeer dependency manager.

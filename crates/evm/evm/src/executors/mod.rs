@@ -11,7 +11,10 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, U256,
+};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
@@ -19,11 +22,11 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
-    decode::RevertDecoder,
+    decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{CallTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
@@ -32,7 +35,7 @@ use revm::{
         SpecId, TxEnv, TxKind,
     },
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -50,6 +53,9 @@ sol! {
     interface ITest {
         function setUp() external;
         function failed() external view returns (bool failed);
+
+        #[derive(Default)]
+        function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
     }
 }
 
@@ -392,7 +398,7 @@ impl Executor {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result, backend.has_snapshot_failure())
+        convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
     }
 
     /// Execute the transaction configured in `env.tx`.
@@ -402,7 +408,7 @@ impl Executor {
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
         let mut result =
-            convert_executed_result(env, inspector, result, backend.has_snapshot_failure())?;
+            convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
         Ok(result)
     }
@@ -421,9 +427,13 @@ impl Executor {
         if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
+            cheats.ignored_traces.ignored.clear();
 
-            // corrected_nonce value is needed outside of this context (setUp), so we don't
-            // reset it.
+            // if tracing was paused but never unpaused, we should begin next frame with tracing
+            // still paused
+            if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
+                *last_pause_call = (0, 0);
+            }
         }
 
         // Persist the changed environment.
@@ -458,7 +468,7 @@ impl Executor {
         call_result: &RawCallResult,
         should_fail: bool,
     ) -> bool {
-        if call_result.has_snapshot_failure {
+        if call_result.has_state_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return should_fail;
         }
@@ -510,7 +520,7 @@ impl Executor {
         }
 
         // A failure occurred in a reverted snapshot, which is considered a failed test.
-        if self.backend().has_snapshot_failure() {
+        if self.backend().has_state_snapshot_failure() {
             return false;
         }
 
@@ -569,7 +579,7 @@ impl Executor {
     /// Creates the environment to use when executing a transaction in a test context
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
-    /// the cheatcode state inbetween calls.
+    /// the cheatcode state in between calls.
     fn build_test_env(
         &self,
         caller: Address,
@@ -602,6 +612,16 @@ impl Executor {
 
         EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
     }
+
+    pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
+    where
+        C::Return: Default,
+    {
+        self.call_sol(CALLER, to, args, U256::ZERO, None)
+            .map(|c| c.decoded_result)
+            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
+            .unwrap_or_default()
+    }
 }
 
 /// Represents the context after an execution error occurred.
@@ -632,15 +652,15 @@ impl std::ops::DerefMut for ExecutionErr {
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvmError {
-    /// Error which occurred during execution of a transaction
+    /// Error which occurred during execution of a transaction.
     #[error(transparent)]
     Execution(#[from] Box<ExecutionErr>),
-    /// Error which occurred during ABI encoding/decoding
+    /// Error which occurred during ABI encoding/decoding.
     #[error(transparent)]
-    AbiError(#[from] alloy_dyn_abi::Error),
-    /// Error caused which occurred due to calling the skip() cheatcode.
-    #[error("Skipped")]
-    SkipError,
+    Abi(#[from] alloy_dyn_abi::Error),
+    /// Error caused which occurred due to calling the `skip` cheatcode.
+    #[error("{_0}")]
+    Skip(SkipReason),
     /// Any other error.
     #[error(transparent)]
     Eyre(#[from] eyre::Error),
@@ -654,7 +674,7 @@ impl From<ExecutionErr> for EvmError {
 
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
-        Self::AbiError(err.into())
+        Self::Abi(err.into())
     }
 }
 
@@ -694,7 +714,7 @@ pub struct RawCallResult {
     ///
     /// This is tracked separately from revert because a snapshot failure can occur without a
     /// revert, since assert failures are stored in a global variable (ds-test legacy)
-    pub has_snapshot_failure: bool,
+    pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
     /// The gas used for the call
@@ -706,9 +726,9 @@ pub struct RawCallResult {
     /// The logs emitted during the call
     pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
     /// The traces of the call
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
     /// Scripted transactions generated from this call
@@ -730,13 +750,13 @@ impl Default for RawCallResult {
         Self {
             exit_reason: InstructionResult::Continue,
             reverted: false,
-            has_snapshot_failure: false,
+            has_state_snapshot_failure: false,
             result: Bytes::new(),
             gas_used: 0,
             gas_refunded: 0,
             stipend: 0,
             logs: Vec::new(),
-            labels: HashMap::new(),
+            labels: HashMap::default(),
             traces: None,
             coverage: None,
             transactions: None,
@@ -752,8 +772,8 @@ impl Default for RawCallResult {
 impl RawCallResult {
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
-        if self.result[..] == crate::constants::MAGIC_SKIP[..] {
-            return EvmError::SkipError;
+        if let Some(reason) = SkipReason::decode(&self.result) {
+            return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
@@ -825,7 +845,7 @@ fn convert_executed_result(
     env: EnvWithHandlerCfg,
     inspector: InspectorStack,
     ResultAndState { result, state: state_changeset }: ResultAndState,
-    has_snapshot_failure: bool,
+    has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
@@ -844,6 +864,7 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
+        0,
     );
 
     let result = match &out {
@@ -866,7 +887,7 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
-        has_snapshot_failure,
+        has_state_snapshot_failure,
         result,
         gas_used,
         gas_refunded,

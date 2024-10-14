@@ -4,6 +4,7 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
+use alloy_primitives::map::HashMap;
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
@@ -15,7 +16,7 @@ use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::{diagnostics::Diagnostic, pt};
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 use yansi::Paint;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -105,16 +106,6 @@ impl SessionSourceConfig {
 
         match solc_req {
             SolcReq::Version(version) => {
-                // Validate that the requested evm version is supported by the solc version
-                let req_evm_version = self.foundry_config.evm_version;
-                if let Some(compat_evm_version) = req_evm_version.normalize_version_solc(&version) {
-                    if req_evm_version > compat_evm_version {
-                        eyre::bail!(
-                            "The set evm version, {req_evm_version}, is not supported by solc {version}. Upgrade to a newer solc version."
-                        );
-                    }
-                }
-
                 let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
                     solc
                 } else {
@@ -321,7 +312,11 @@ impl SessionSource {
 
         let settings = Settings {
             remappings,
-            evm_version: Some(self.config.foundry_config.evm_version),
+            evm_version: self
+                .config
+                .foundry_config
+                .evm_version
+                .normalize_version_solc(&self.solc.version),
             ..Default::default()
         };
 
@@ -349,7 +344,7 @@ impl SessionSource {
     ///
     /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
     pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
-        let mut res_map = HashMap::new();
+        let mut res_map = HashMap::default();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
             Self::get_intermediate_contract(&source.content, &mut res_map);

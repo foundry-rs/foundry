@@ -11,7 +11,7 @@ use foundry_compilers::{
     },
     CompilerSettings,
 };
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
 
 foundry_config::impl_figment_convert!(Eip712Args, opts);
 
@@ -62,9 +62,7 @@ impl Eip712Args {
         };
 
         for (id, _) in structs_in_target {
-            if let Some(resolved) =
-                resolver.resolve_struct_eip712(id, &mut Default::default(), true)?
-            {
+            if let Some(resolved) = resolver.resolve_struct_eip712(id)? {
                 println!("{resolved}");
                 println!();
             }
@@ -128,14 +126,19 @@ impl Resolver {
     ///
     /// Returns `None` if struct contains any fields that are not supported by EIP-712 (e.g.
     /// mappings or function pointers).
-    pub fn resolve_struct_eip712(
+    pub fn resolve_struct_eip712(&self, id: usize) -> Result<Option<String>> {
+        self.resolve_eip712_inner(id, &mut Default::default(), true, None)
+    }
+
+    fn resolve_eip712_inner(
         &self,
         id: usize,
         subtypes: &mut BTreeMap<String, usize>,
         append_subtypes: bool,
+        rename: Option<&str>,
     ) -> Result<Option<String>> {
         let def = &self.structs[&id];
-        let mut result = format!("{}(", def.name);
+        let mut result = format!("{}(", rename.unwrap_or(&def.name));
 
         for (idx, member) in def.members.iter().enumerate() {
             let Some(ty) = self.resolve_type(
@@ -146,9 +149,7 @@ impl Resolver {
                 return Ok(None)
             };
 
-            result.push_str(&ty);
-            result.push(' ');
-            result.push_str(&member.name);
+            write!(result, "{ty} {name}", name = member.name)?;
 
             if idx < def.members.len() - 1 {
                 result.push(',');
@@ -161,11 +162,14 @@ impl Resolver {
             return Ok(Some(result))
         }
 
-        for subtype_id in subtypes.values().copied().collect::<Vec<_>>() {
+        for (subtype_name, subtype_id) in
+            subtypes.iter().map(|(name, id)| (name.clone(), *id)).collect::<Vec<_>>()
+        {
             if subtype_id == id {
                 continue
             }
-            let Some(encoded_subtype) = self.resolve_struct_eip712(subtype_id, subtypes, false)?
+            let Some(encoded_subtype) =
+                self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?
             else {
                 return Ok(None)
             };
@@ -204,6 +208,17 @@ impl Resolver {
                             name.clone()
                         // Otherwise, try assigning a new name.
                         } else {
+                            // iterate over members to check if they are resolvable and to populate subtypes
+                            for member in &def.members {
+                                if self.resolve_type(
+                                    member.type_name.as_ref().ok_or_eyre("missing type name")?,
+                                    subtypes,
+                                )?
+                                .is_none()
+                                {
+                                    return Ok(None)
+                                }
+                            }
                             let mut i = 0;
                             let mut name = def.name.clone();
                             while subtypes.contains_key(&name) {

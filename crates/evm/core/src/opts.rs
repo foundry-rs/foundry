@@ -2,7 +2,7 @@ use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::Block;
+use alloy_rpc_types::AnyNetworkBlock;
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
@@ -63,6 +63,9 @@ pub struct EvmOpts {
 
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
+
+    /// whether to enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl EvmOpts {
@@ -83,7 +86,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block)> {
+    ) -> eyre::Result<(revm::primitives::Env, AnyNetworkBlock)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())

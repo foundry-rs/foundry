@@ -144,6 +144,14 @@ impl Cheatcode for indexOfCall {
     }
 }
 
+// contains
+impl Cheatcode for containsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { subject, search } = self;
+        Ok(subject.contains(search).abi_encode())
+    }
+}
+
 pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
     parse_value(s, ty).map(|v| v.abi_encode())
 }
@@ -186,9 +194,7 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
                 "0" => false,
                 s if s.eq_ignore_ascii_case("true") => true,
                 s if s.eq_ignore_ascii_case("false") => false,
-                _ => {
-                    return None;
-                }
+                _ => return None,
             };
             return Some(Ok(DynSolValue::Bool(b)));
         }

@@ -21,7 +21,7 @@ use foundry_evm_fuzz::{
     strategies::{invariant_strat, override_call_strat, EvmFuzzState},
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
@@ -199,7 +199,9 @@ impl InvariantTest {
 
         let mut invariant_data = self.execution_data.borrow_mut();
         if invariant_data.gas_report_traces.len() < gas_samples {
-            invariant_data.gas_report_traces.push(run.run_traces);
+            invariant_data
+                .gas_report_traces
+                .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
         }
         invariant_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
 
@@ -219,7 +221,7 @@ pub struct InvariantTestRun {
     // Contracts created during current invariant run.
     pub created_contracts: Vec<Address>,
     // Traces of each call of the invariant run call sequence.
-    pub run_traces: Vec<CallTraceArena>,
+    pub run_traces: Vec<SparsedTraceArena>,
     // Current depth of invariant run.
     pub depth: u32,
     // Current assume rejects of the invariant run.
@@ -241,7 +243,7 @@ impl InvariantTestRun {
     }
 }
 
-/// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`].
+/// Wrapper around any [`Executor`] implementer which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `invariant_fuzz` will proceed to hammer the deployed smart
 /// contracts with inputs, until it finds a counterexample sequence. The provided [`TestRunner`]
@@ -315,10 +317,11 @@ impl<'a> InvariantExecutor<'a> {
                     TestCaseError::fail("No input generated to call fuzzed target.")
                 })?;
 
-                // Execute call from the randomly generated sequence and commit state changes.
-                let call_result = current_run
+                // Execute call from the randomly generated sequence without committing state.
+                // State is committed only if call is not a magic assume.
+                let mut call_result = current_run
                     .executor
-                    .transact_raw(
+                    .call_raw(
                         tx.sender,
                         tx.call_details.target,
                         tx.call_details.calldata.clone(),
@@ -341,9 +344,11 @@ impl<'a> InvariantExecutor<'a> {
                         return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
                     }
                 } else {
+                    // Commit executed call result.
+                    current_run.executor.commit(&mut call_result);
+
                     // Collect data for fuzzing from the state changeset.
                     let mut state_changeset = call_result.state_changeset.clone();
-
                     if !call_result.reverted {
                         collect_data(
                             &invariant_test,
@@ -367,13 +372,13 @@ impl<'a> InvariantExecutor<'a> {
                     {
                         warn!(target: "forge::test", "{error}");
                     }
-
                     current_run.fuzz_runs.push(FuzzCase {
                         calldata: tx.call_details.calldata.clone(),
                         gas: call_result.gas_used,
                         stipend: call_result.stipend,
                     });
 
+                    // Determine if test can continue or should exit.
                     let result = can_continue(
                         &invariant_contract,
                         &invariant_test,
@@ -383,11 +388,9 @@ impl<'a> InvariantExecutor<'a> {
                         &state_changeset,
                     )
                     .map_err(|e| TestCaseError::fail(e.to_string()))?;
-
                     if !result.can_continue || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
-
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
                         return Err(TestCaseError::fail("Test cannot continue."))
@@ -461,7 +464,7 @@ impl<'a> InvariantExecutor<'a> {
             EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary);
 
         // Creates the invariant strategy.
-        let strat = invariant_strat(
+        let strategy = invariant_strat(
             fuzz_state.clone(),
             targeted_senders,
             targeted_contracts.clone(),
@@ -517,7 +520,7 @@ impl<'a> InvariantExecutor<'a> {
                 last_call_results,
                 self.runner.clone(),
             ),
-            strat,
+            strategy,
         ))
     }
 
@@ -532,6 +535,7 @@ impl<'a> InvariantExecutor<'a> {
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
     pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> Result<()> {
         let result = self
+            .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
@@ -542,10 +546,12 @@ impl<'a> InvariantExecutor<'a> {
             self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 
-        let selected =
-            self.call_sol_default(invariant_address, &IInvariantTest::targetArtifactsCall {});
-        let excluded =
-            self.call_sol_default(invariant_address, &IInvariantTest::excludeArtifactsCall {});
+        let selected = self
+            .executor
+            .call_sol_default(invariant_address, &IInvariantTest::targetArtifactsCall {});
+        let excluded = self
+            .executor
+            .call_sol_default(invariant_address, &IInvariantTest::excludeArtifactsCall {});
 
         // Insert `excludeArtifacts` into the executor `excluded_abi`.
         for contract in excluded.excludedArtifacts {
@@ -620,10 +626,14 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         to: Address,
     ) -> Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
-        let targeted_senders =
-            self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
-        let mut excluded_senders =
-            self.call_sol_default(to, &IInvariantTest::excludeSendersCall {}).excludedSenders;
+        let targeted_senders = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::targetSendersCall {})
+            .targetedSenders;
+        let mut excluded_senders = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::excludeSendersCall {})
+            .excludedSenders;
         // Extend with default excluded addresses - https://github.com/foundry-rs/foundry/issues/4163
         excluded_senders.extend([
             CHEATCODE_ADDRESS,
@@ -634,10 +644,14 @@ impl<'a> InvariantExecutor<'a> {
         excluded_senders.extend(PRECOMPILES);
         let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
 
-        let selected =
-            self.call_sol_default(to, &IInvariantTest::targetContractsCall {}).targetedContracts;
-        let excluded =
-            self.call_sol_default(to, &IInvariantTest::excludeContractsCall {}).excludedContracts;
+        let selected = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::targetContractsCall {})
+            .targetedContracts;
+        let excluded = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::excludeContractsCall {})
+            .excludedContracts;
 
         let contracts = self
             .setup_contracts
@@ -678,6 +692,7 @@ impl<'a> InvariantExecutor<'a> {
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
         let interfaces = self
+            .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {})
             .targetedInterfaces;
 
@@ -727,21 +742,20 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<()> {
         for (address, (identifier, _)) in self.setup_contracts.iter() {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
-                if selectors.is_empty() {
-                    continue;
-                }
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
         }
 
         // Collect contract functions marked as target for fuzzing campaign.
-        let selectors = self.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
+        let selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
             self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
 
         // Collect contract functions excluded from fuzzing campaign.
-        let selectors = self.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
+        let selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.excludedSelectors {
             self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
@@ -757,6 +771,11 @@ impl<'a> InvariantExecutor<'a> {
         should_exclude: bool,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
+        // Do not add address in target contracts if no function selected.
+        if selectors.is_empty() {
+            return Ok(())
+        }
+
         let contract = match targeted_contracts.entry(address) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -772,17 +791,6 @@ impl<'a> InvariantExecutor<'a> {
         };
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
-    }
-
-    fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
-    where
-        C::Return: Default,
-    {
-        self.executor
-            .call_sol(CALLER, to, args, U256::ZERO, None)
-            .map(|c| c.decoded_result)
-            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
-            .unwrap_or_default()
     }
 }
 

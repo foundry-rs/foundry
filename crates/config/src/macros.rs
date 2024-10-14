@@ -61,9 +61,8 @@ macro_rules! impl_figment_convert {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
                 let root = args.root.clone()
-                    .unwrap_or_else(|| $crate::find_project_root_path(None)
-                        .unwrap_or_else(|e| panic!("could not find project root: {e}")));
-                $crate::Config::figment_with_root(root).merge(args)
+                    .unwrap_or_else(|| $crate::find_project_root(None));
+                $crate::Config::figment_with_root(&root).merge(args)
             }
         }
 
@@ -194,7 +193,7 @@ macro_rules! impl_figment_convert_cast {
     ($name:ty) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
-                $crate::Config::with_root($crate::find_project_root_path(None).unwrap())
+                $crate::Config::with_root(&$crate::find_project_root(None))
                     .to_figment($crate::FigmentProviders::Cast)
                     .merge(args)
             }

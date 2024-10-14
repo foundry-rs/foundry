@@ -69,6 +69,7 @@ impl std::error::Error for InsertProfileError {}
 impl TomlFile {
     /// Insert a name as `[profile.name]`. Creating the `[profile]` table where necessary and
     /// throwing an error if there exists a conflict
+    #[allow(clippy::result_large_err)]
     fn insert_profile(
         &mut self,
         profile_str: &str,

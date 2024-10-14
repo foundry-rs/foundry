@@ -1,5 +1,5 @@
-use crate::tx::CastTxBuilder;
-use alloy_primitives::{TxKind, U256};
+use crate::tx::{CastTxBuilder, SenderKind};
+use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
@@ -71,13 +71,7 @@ impl EstimateArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let sender = eth.wallet.sender().await;
-
-        let tx_kind = if let Some(to) = to {
-            TxKind::Call(to.resolve(&provider).await?)
-        } else {
-            TxKind::Create
-        };
+        let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
@@ -98,7 +92,8 @@ impl EstimateArgs {
 
         let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
             .await?
-            .with_tx_kind(tx_kind)
+            .with_to(to)
+            .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
             .build_raw(sender)

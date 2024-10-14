@@ -56,6 +56,17 @@ pub enum SelectorsSubcommands {
         #[command(flatten)]
         project_paths: ProjectPathsArgs,
     },
+
+    /// Find if a selector is present in the project
+    #[command(visible_alias = "f")]
+    Find {
+        /// The selector to search for
+        #[arg(help = "The selector to search for (with or without 0x prefix)")]
+        selector: String,
+
+        #[command(flatten)]
+        project_paths: ProjectPathsArgs,
+    },
 }
 
 impl SelectorsSubcommands {
@@ -258,6 +269,83 @@ impl SelectorsSubcommands {
                     if artifacts.peek().is_some() {
                         println!()
                     }
+                }
+            }
+
+            Self::Find { selector, project_paths } => {
+                println!("Searching for selector {selector:?} in the project...");
+
+                let build_args = CoreBuildArgs {
+                    project_paths,
+                    compiler: CompilerArgs {
+                        extra_output: vec![ContractOutputSelection::Abi],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+
+                let project = build_args.project()?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let artifacts = outcome
+                    .into_artifacts_with_files()
+                    .filter(|(file, _, _)| {
+                        let is_sources_path = file.starts_with(&project.paths.sources);
+                        let is_test = file.is_sol_test();
+                        is_sources_path && !is_test
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut table = Table::new();
+
+                table.set_header(["Type", "Signature", "Selector", "Contract"]);
+
+                for (_file, contract, artifact) in artifacts {
+                    let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
+
+                    let selector_bytes =
+                        hex::decode(selector.strip_prefix("0x").unwrap_or(&selector))?;
+
+                    for func in abi.functions() {
+                        if func.selector().as_slice().starts_with(selector_bytes.as_slice()) {
+                            table.add_row([
+                                "Function",
+                                &func.signature(),
+                                &hex::encode_prefixed(func.selector()),
+                                contract.as_str(),
+                            ]);
+                        }
+                    }
+
+                    for event in abi.events() {
+                        if event.selector().as_slice().starts_with(selector_bytes.as_slice()) {
+                            table.add_row([
+                                "Event",
+                                &event.signature(),
+                                &hex::encode_prefixed(event.selector()),
+                                contract.as_str(),
+                            ]);
+                        }
+                    }
+
+                    for error in abi.errors() {
+                        if error.selector().as_slice().starts_with(selector_bytes.as_slice()) {
+                            table.add_row([
+                                "Error",
+                                &error.signature(),
+                                &hex::encode_prefixed(error.selector()),
+                                contract.as_str(),
+                            ]);
+                        }
+                    }
+                }
+
+                if table.row_count() > 0 {
+                    println!();
+                    println!("Found {} instance(s)...", table.row_count());
+                    println!("{table}");
+                } else {
+                    println!();
+                    return Err(eyre::eyre!("Selector not found in the project."));
                 }
             }
         }

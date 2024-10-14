@@ -1,4 +1,4 @@
-use crate::opts::parse_slot;
+use crate::args::parse_slot;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;

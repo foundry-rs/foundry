@@ -28,6 +28,7 @@ impl From<AnyTransactionReceipt> for TxStatus {
 pub async fn check_tx_status(
     provider: &RetryProvider,
     hash: TxHash,
+    timeout: u64,
 ) -> (TxHash, Result<TxStatus, eyre::Report>) {
     // We use the inner future so that we can use ? operator in the future, but
     // still neatly return the tuple
@@ -40,7 +41,7 @@ pub async fn check_tx_status(
 
         loop {
             if let Ok(receipt) = PendingTransactionBuilder::new(provider, hash)
-                .with_timeout(Some(Duration::from_secs(120)))
+                .with_timeout(Some(Duration::from_secs(timeout)))
                 .get_receipt()
                 .await
             {

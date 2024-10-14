@@ -6,7 +6,7 @@ use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{anvil::Forking, Block};
+use alloy_rpc_types::{anvil::Forking, AnyNetworkBlock};
 use alloy_transport::Transport;
 use futures::StreamExt;
 use std::{fmt, future::Future};
@@ -77,7 +77,7 @@ impl TaskManager {
                     let _ = api
                         .anvil_reset(Some(Forking {
                             json_rpc_url: None,
-                            block_number: block.header.number,
+                            block_number: Some(block.header.number),
                         }))
                         .await;
                 }
@@ -135,7 +135,7 @@ impl TaskManager {
                 let _ = api
                     .anvil_reset(Some(Forking {
                         json_rpc_url: None,
-                        block_number: block.header.number,
+                        block_number: Some(block.header.number),
                     }))
                     .await;
             }
@@ -149,7 +149,7 @@ impl TaskManager {
     where
         P: Provider<T, AnyNetwork> + 'static,
         T: Transport + Clone,
-        F: Fn(Block) -> Fut + Unpin + Send + Sync + 'static,
+        F: Fn(AnyNetworkBlock) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
         let shutdown = self.on_shutdown.clone();

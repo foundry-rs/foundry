@@ -1,10 +1,8 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{hex, Address, Bytes, TxKind, B256};
-use alloy_rpc_types::request::TransactionRequest;
-use alloy_serde::WithOtherFields;
-use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
+use eyre::{Result, WrapErr};
+use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -20,7 +18,7 @@ pub struct AdditionalContract {
     pub init_code: Bytes,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<B256>,
@@ -36,7 +34,7 @@ pub struct TransactionWithMetadata {
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
     pub rpc: String,
-    pub transaction: WithOtherFields<TransactionRequest>,
+    pub transaction: TransactionMaybeSigned,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
 }
@@ -54,60 +52,80 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 }
 
 impl TransactionWithMetadata {
-    pub fn from_tx_request(transaction: TransactionRequest) -> Self {
-        Self { transaction: WithOtherFields::new(transaction), ..Default::default() }
+    pub fn from_tx_request(transaction: TransactionMaybeSigned) -> Self {
+        Self {
+            transaction,
+            hash: Default::default(),
+            opcode: Default::default(),
+            contract_name: Default::default(),
+            contract_address: Default::default(),
+            function: Default::default(),
+            arguments: Default::default(),
+            is_fixed_gas_limit: Default::default(),
+            additional_contracts: Default::default(),
+            rpc: Default::default(),
+        }
     }
 
     pub fn new(
-        transaction: TransactionRequest,
+        transaction: TransactionMaybeSigned,
         rpc: String,
-        result: &ScriptResult,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
-        additional_contracts: Vec<AdditionalContract>,
-        is_fixed_gas_limit: bool,
     ) -> Result<Self> {
         let mut metadata = Self::from_tx_request(transaction);
         metadata.rpc = rpc;
-        metadata.is_fixed_gas_limit = is_fixed_gas_limit;
+        // If tx.gas is already set that means it was specified in script
+        metadata.is_fixed_gas_limit = metadata.tx().gas().is_some();
 
-        // Specify if any contract was directly created with this transaction
-        if let Some(TxKind::Call(to)) = metadata.transaction.to {
+        if let Some(TxKind::Call(to)) = metadata.transaction.to() {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                metadata.set_create(
-                    true,
-                    Address::from_slice(&result.returned),
-                    local_contracts,
-                )?;
+                if let Some(input) = metadata.transaction.input() {
+                    let (salt, init_code) = input.split_at(32);
+                    metadata.set_create(
+                        true,
+                        DEFAULT_CREATE2_DEPLOYER
+                            .create2_from_code(B256::from_slice(salt), init_code),
+                        local_contracts,
+                    )?;
+                }
             } else {
                 metadata
                     .set_call(to, local_contracts, decoder)
                     .wrap_err("Could not decode transaction type.")?;
             }
         } else {
-            metadata.set_create(
-                false,
-                result.address.wrap_err("There should be a contract address from CREATE.")?,
-                local_contracts,
-            )?;
-        }
-
-        // Add the additional contracts created in this transaction, so we can verify them later.
-        if let Some(tx_address) = metadata.contract_address {
-            metadata.additional_contracts = additional_contracts
-                .into_iter()
-                .filter_map(|contract| {
-                    // Filter out the transaction contract repeated init_code.
-                    if contract.address != tx_address {
-                        Some(contract)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let sender =
+                metadata.transaction.from().expect("all transactions should have a sender");
+            let nonce = metadata.transaction.nonce().expect("all transactions should have a nonce");
+            metadata.set_create(false, sender.create(nonce), local_contracts)?;
         }
 
         Ok(metadata)
+    }
+
+    /// Populates additional data from the transaction execution result.
+    pub fn with_execution_result(
+        mut self,
+        result: &ScriptResult,
+        gas_estimate_multiplier: u64,
+    ) -> Self {
+        let mut created_contracts = result.get_created_contracts();
+
+        // Add the additional contracts created in this transaction, so we can verify them later.
+        created_contracts.retain(|contract| {
+            // Filter out the contract that was created by the transaction itself.
+            self.contract_address.map_or(true, |addr| addr != contract.address)
+        });
+
+        if !self.is_fixed_gas_limit {
+            if let Some(unsigned) = self.transaction.as_unsigned_mut() {
+                // We inflate the gas used by the user specified percentage
+                unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
+            }
+        }
+
+        self
     }
 
     /// Populate the transaction as CREATE tx
@@ -130,7 +148,7 @@ impl TransactionWithMetadata {
         self.contract_name = info.map(|info| info.name.clone());
         self.contract_address = Some(address);
 
-        let Some(data) = self.transaction.input.input() else { return Ok(()) };
+        let Some(data) = self.transaction.input() else { return Ok(()) };
         let Some(info) = info else { return Ok(()) };
         let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
@@ -177,7 +195,7 @@ impl TransactionWithMetadata {
         self.opcode = CallKind::Call;
         self.contract_address = Some(target);
 
-        let Some(data) = self.transaction.input.input() else { return Ok(()) };
+        let Some(data) = self.transaction.input() else { return Ok(()) };
         if data.len() < SELECTOR_LEN {
             return Ok(());
         }
@@ -208,11 +226,11 @@ impl TransactionWithMetadata {
         Ok(())
     }
 
-    pub fn tx(&self) -> &WithOtherFields<TransactionRequest> {
+    pub fn tx(&self) -> &TransactionMaybeSigned {
         &self.transaction
     }
 
-    pub fn tx_mut(&mut self) -> &mut WithOtherFields<TransactionRequest> {
+    pub fn tx_mut(&mut self) -> &mut TransactionMaybeSigned {
         &mut self.transaction
     }
 

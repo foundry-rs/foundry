@@ -8,12 +8,12 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{map::HashMap, Bytes, B256};
 use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
     path::{Path, PathBuf},
@@ -294,6 +294,8 @@ pub enum CoverageItemKind {
         ///
         /// The first path has ID 0, the next ID 1, and so on.
         path_id: usize,
+        /// If true, then the branch anchor is the first opcode within the branch source range.
+        is_first_opcode: bool,
     },
     /// A function in the code.
     Function {
@@ -321,7 +323,7 @@ impl Display for CoverageItem {
             CoverageItemKind::Statement => {
                 write!(f, "Statement")?;
             }
-            CoverageItemKind::Branch { branch_id, path_id } => {
+            CoverageItemKind::Branch { branch_id, path_id, .. } => {
                 write!(f, "Branch (branch: {branch_id}, path: {path_id})")?;
             }
             CoverageItemKind::Function { name } => {

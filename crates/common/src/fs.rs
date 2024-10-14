@@ -43,9 +43,8 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
 pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     // read the file into a byte array first
     // https://github.com/serde-rs/json/issues/160
-    let bytes = read(path)?;
-    serde_json::from_slice(&bytes)
-        .map_err(|source| FsPathError::ReadJson { source, path: path.into() })
+    let s = read_to_string(path)?;
+    serde_json::from_str(&s).map_err(|source| FsPathError::ReadJson { source, path: path.into() })
 }
 
 /// Writes the object as a JSON object.
@@ -53,6 +52,15 @@ pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let file = create_file(path)?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, obj)
+        .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+    writer.flush().map_err(|e| FsPathError::write(e, path))
+}
+
+/// Writes the object as a pretty JSON object.
+pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
+    let file = create_file(path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, obj)
         .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
     writer.flush().map_err(|e| FsPathError::write(e, path))
 }

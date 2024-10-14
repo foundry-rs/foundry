@@ -25,6 +25,8 @@ alloy-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
+revm-primitives.workspace = true
+comfy-table.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true

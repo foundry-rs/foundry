@@ -3,13 +3,15 @@ use foundry_compilers::{
     artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
-use once_cell::sync::Lazy;
 use semver::Version;
 use std::{
     io,
     io::{prelude::*, IsTerminal},
     path::{Path, PathBuf},
-    sync::mpsc::{self, TryRecvError},
+    sync::{
+        mpsc::{self, TryRecvError},
+        LazyLock,
+    },
     thread,
     time::Duration,
 };
@@ -25,7 +27,7 @@ pub static SPINNERS: &[&[&str]] = &[
     &[" ", "▘", "▀", "▜", "█", "▟", "▄", "▖"],
 ];
 
-static TERM_SETTINGS: Lazy<TermSettings> = Lazy::new(TermSettings::from_env);
+static TERM_SETTINGS: LazyLock<TermSettings> = LazyLock::new(TermSettings::from_env);
 
 /// Helper type to determine the current tty
 pub struct TermSettings {

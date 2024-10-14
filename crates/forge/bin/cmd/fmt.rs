@@ -125,17 +125,22 @@ impl FmtArgs {
                 )
             })?;
 
+            let diff = TextDiff::from_lines(&source, &output);
+            let new_format = diff.ratio() < 1.0;
             if self.check || path.is_none() {
                 if self.raw {
                     print!("{output}");
                 }
 
-                let diff = TextDiff::from_lines(&source, &output);
-                if diff.ratio() < 1.0 {
+                // If new format then compute diff summary.
+                if new_format {
                     return Ok(Some(format_diff_summary(&name, &diff)))
                 }
             } else if let Some(path) = path {
-                fs::write(path, output)?;
+                // If new format then write it on disk.
+                if new_format {
+                    fs::write(path, output)?;
+                }
             }
             Ok(None)
         };

@@ -10,7 +10,7 @@ use crate::{
     },
     session_source::SessionSource,
 };
-use alloy_json_abi::JsonAbi;
+use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use forge_fmt::FormatterConfig;
 use foundry_config::{Config, RpcEndpoint};
@@ -22,7 +22,6 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -33,6 +32,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    sync::LazyLock,
 };
 use strum::IntoEnumIterator;
 use tracing::debug;
@@ -48,11 +48,11 @@ pub static COMMAND_LEADER: char = '!';
 pub static CHISEL_CHAR: &str = "⚒️";
 
 /// Matches Solidity comments
-static COMMENT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
+static COMMENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
 
 /// Matches Ethereum addresses that are not strings
-static ADDRESS_RE: Lazy<Regex> = Lazy::new(|| {
+static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)(([^"']\s*)|^)(?P<address>0x[a-fA-F0-9]{40})((\s*[^"'\w])|$)"#).unwrap()
 });
 
@@ -514,8 +514,7 @@ impl ChiselDispatcher {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
                         if json.status == "1" && json.result.is_some() {
                             let abi = json.result.unwrap();
-                            let abi: serde_json::Result<JsonAbi> =
-                                serde_json::from_slice(abi.as_bytes());
+                            let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
                             if let Ok(abi) = abi {
                                 let mut interface = format!(
                                     "// Interface of {}\ninterface {} {{\n",
@@ -529,7 +528,22 @@ impl ChiselDispatcher {
                                         err.name,
                                         err.inputs
                                             .iter()
-                                            .map(|input| format_param!(input))
+                                            .map(|input| {
+                                                let mut param_type = &input.ty;
+                                                // If complex type then add the name of custom type.
+                                                // see <https://github.com/foundry-rs/foundry/issues/6618>.
+                                                if input.is_complex_type() {
+                                                    if let Some(
+                                                        InternalType::Enum { contract: _, ty } |
+                                                        InternalType::Struct { contract: _, ty } |
+                                                        InternalType::Other { contract: _, ty },
+                                                    ) = &input.internal_type
+                                                    {
+                                                        param_type = ty;
+                                                    }
+                                                }
+                                                format!("{} {}", param_type, input.name)
+                                            })
                                             .collect::<Vec<_>>()
                                             .join(",")
                                     ));

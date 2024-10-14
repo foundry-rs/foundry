@@ -38,7 +38,7 @@ ethers-contract-abigen = { workspace = true, features = ["providers"] }
 
 revm-inspectors.workspace = true
 
-comfy-table = "7"
+comfy-table.workspace = true
 eyre.workspace = true
 proptest.workspace = true
 rayon.workspace = true
@@ -46,6 +46,7 @@ serde.workspace = true
 tracing.workspace = true
 yansi.workspace = true
 humantime-serde = "1.1.1"
+chrono.workspace = true
 
 # bin
 forge-doc.workspace = true
@@ -78,8 +79,8 @@ dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
+inferno = { version = "0.11.19", default-features = false }
 itertools.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 regex = { version = "1", default-features = false }
 reqwest = { workspace = true, features = ["json"] }
@@ -97,7 +98,6 @@ watchexec-events = "3.0"
 watchexec-signals = "3.0"
 clearscreen = "3.0"
 evm-disassembler.workspace = true
-rustc-hash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -106,7 +106,8 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.7"
 
 # soldeer
-soldeer.workspace = true
+soldeer-commands.workspace = true
+quick-junit = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
@@ -115,8 +116,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
-mockall = "0.12"
-criterion = "0.5"
+mockall = "0.13"
 globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
@@ -142,7 +142,3 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
-
-[[bench]]
-name = "test"
-harness = false

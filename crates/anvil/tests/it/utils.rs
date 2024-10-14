@@ -38,7 +38,16 @@ use alloy_transport::BoxTransport;
 
 type PubsubSigner = FillProvider<
     JoinFill<
-        JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+        JoinFill<
+            Identity,
+            JoinFill<
+                GasFiller,
+                JoinFill<
+                    alloy_provider::fillers::BlobGasFiller,
+                    JoinFill<NonceFiller, ChainIdFiller>,
+                >,
+            >,
+        >,
         WalletFiller<EthereumWallet>,
     >,
     RootProvider<BoxTransport>,

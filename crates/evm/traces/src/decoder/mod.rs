@@ -7,7 +7,10 @@ use crate::{
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
-use alloy_primitives::{Address, LogData, Selector, B256};
+use alloy_primitives::{
+    map::{hash_map::Entry, HashMap},
+    Address, LogData, Selector, B256,
+};
 use foundry_common::{
     abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
@@ -24,10 +27,8 @@ use foundry_evm_core::{
     },
 };
 use itertools::Itertools;
-use once_cell::sync::OnceCell;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
-use rustc_hash::FxHashMap;
-use std::collections::{hash_map::Entry, BTreeMap, HashMap};
+use std::{collections::BTreeMap, sync::OnceLock};
 
 mod precompiles;
 
@@ -122,7 +123,7 @@ pub struct CallTraceDecoder {
     pub receive_contracts: Vec<Address>,
 
     /// All known functions.
-    pub functions: FxHashMap<Selector, Vec<Function>>,
+    pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.
@@ -145,7 +146,7 @@ impl CallTraceDecoder {
     pub fn new() -> &'static Self {
         // If you want to take arguments in this function, assign them to the fields of the cloned
         // lazy instead of removing it
-        static INIT: OnceCell<CallTraceDecoder> = OnceCell::new();
+        static INIT: OnceLock<CallTraceDecoder> = OnceLock::new();
         INIT.get_or_init(Self::init)
     }
 
@@ -169,7 +170,7 @@ impl CallTraceDecoder {
 
         Self {
             contracts: Default::default(),
-            labels: [
+            labels: HashMap::from_iter([
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
@@ -185,8 +186,7 @@ impl CallTraceDecoder {
                 (EC_PAIRING, "ECPairing".to_string()),
                 (BLAKE_2F, "Blake2F".to_string()),
                 (POINT_EVALUATION, "PointEvaluation".to_string()),
-            ]
-            .into(),
+            ]),
             receive_contracts: Default::default(),
 
             functions: hh_funcs()
@@ -516,6 +516,24 @@ impl CallTraceDecoder {
                     Some(decoded.iter().map(format_token).collect())
                 }
             }
+            "createFork" |
+            "createSelectFork" |
+            "rpc" => {
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+
+                // Redact RPC URL except if referenced by an alias
+                if !decoded.is_empty() && func.inputs[0].ty == "string" {
+                    let url_or_alias = decoded[0].as_str().unwrap_or_default();
+
+                    if url_or_alias.starts_with("http") || url_or_alias.starts_with("ws") {
+                        decoded[0] = DynSolValue::String("<rpc url>".to_string());
+                    }
+                } else {
+                    return None;
+                }
+
+                Some(decoded.iter().map(format_token).collect())
+            }
             _ => None,
         }
     }
@@ -558,6 +576,7 @@ impl CallTraceDecoder {
             "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
+            "rpcUrl" | "rpcUrls" | "rpcUrlStructs" => Some("<rpc url>"),
             _ => None,
         }
         .map(Into::into)
@@ -670,7 +689,7 @@ mod tests {
     use alloy_primitives::hex;
 
     #[test]
-    fn test_should_redact_pk() {
+    fn test_should_redact() {
         let decoder = CallTraceDecoder::new();
 
         // [function_signature, data, expected]
@@ -726,6 +745,275 @@ mod tests {
                         .to_string(),
                 ]),
             ),
+            (
+                // cast calldata "createFork(string)" "https://eth-mainnet.g.alchemy.com/v2/api_key"
+                "createFork(string)",
+                hex!(
+                    "
+                    31ba3498
+                    0000000000000000000000000000000000000000000000000000000000000020
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                    "
+                )
+                .to_vec(),
+                Some(vec!["\"<rpc url>\"".to_string()]),
+            ),
+            (
+                // cast calldata "createFork(string)" "wss://eth-mainnet.g.alchemy.com/v2/api_key"
+                "createFork(string)",
+                hex!(
+                    "
+                    31ba3498
+                    0000000000000000000000000000000000000000000000000000000000000020
+                    000000000000000000000000000000000000000000000000000000000000002a
+                    7773733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f6d2f
+                    76322f6170695f6b657900000000000000000000000000000000000000000000
+                    "
+                )
+                .to_vec(),
+                Some(vec!["\"<rpc url>\"".to_string()]),
+            ),
+            (
+                // cast calldata "createFork(string)" "mainnet"
+                "createFork(string)",
+                hex!(
+                    "
+                    31ba3498
+                    0000000000000000000000000000000000000000000000000000000000000020
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                    "
+                )
+                .to_vec(),
+                Some(vec!["\"mainnet\"".to_string()]),
+            ),
+            (
+                // cast calldata "createFork(string,uint256)" "https://eth-mainnet.g.alchemy.com/v2/api_key" 1
+                "createFork(string,uint256)",
+                hex!(
+                    "
+                    6ba3ba2b
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec!["\"<rpc url>\"".to_string(), "1".to_string()]),
+            ),
+            (
+                // cast calldata "createFork(string,uint256)" "mainnet" 1
+                "createFork(string,uint256)",
+                hex!(
+                    "
+                    6ba3ba2b
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec!["\"mainnet\"".to_string(), "1".to_string()]),
+            ),
+            (
+                // cast calldata "createFork(string,bytes32)" "https://eth-mainnet.g.alchemy.com/v2/api_key" 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                "createFork(string,bytes32)",
+                hex!(
+                    "
+                    7ca29682
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<rpc url>\"".to_string(),
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "createFork(string,bytes32)" "mainnet"
+                // 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                "createFork(string,bytes32)",
+                hex!(
+                    "
+                    7ca29682
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"mainnet\"".to_string(),
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "createSelectFork(string)" "https://eth-mainnet.g.alchemy.com/v2/api_key"
+                "createSelectFork(string)",
+                hex!(
+                    "
+                    98680034
+                    0000000000000000000000000000000000000000000000000000000000000020
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                    "
+                )
+                .to_vec(),
+                Some(vec!["\"<rpc url>\"".to_string()]),
+            ),
+            (
+                // cast calldata "createSelectFork(string)" "mainnet"
+                "createSelectFork(string)",
+                hex!(
+                    "
+                    98680034
+                    0000000000000000000000000000000000000000000000000000000000000020
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                    "
+                )
+                .to_vec(),
+                Some(vec!["\"mainnet\"".to_string()]),
+            ),
+            (
+                // cast calldata "createSelectFork(string,uint256)" "https://eth-mainnet.g.alchemy.com/v2/api_key" 1
+                "createSelectFork(string,uint256)",
+                hex!(
+                    "
+                    71ee464d
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec!["\"<rpc url>\"".to_string(), "1".to_string()]),
+            ),
+            (
+                // cast calldata "createSelectFork(string,uint256)" "mainnet" 1
+                "createSelectFork(string,uint256)",
+                hex!(
+                    "
+                    71ee464d
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    0000000000000000000000000000000000000000000000000000000000000001
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec!["\"mainnet\"".to_string(), "1".to_string()]),
+            ),
+            (
+                // cast calldata "createSelectFork(string,bytes32)" "https://eth-mainnet.g.alchemy.com/v2/api_key" 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                "createSelectFork(string,bytes32)",
+                hex!(
+                    "
+                    84d52b7a
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<rpc url>\"".to_string(),
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "createSelectFork(string,bytes32)" "mainnet"
+                // 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                "createSelectFork(string,bytes32)",
+                hex!(
+                    "
+                    84d52b7a
+                    0000000000000000000000000000000000000000000000000000000000000040
+                    ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"mainnet\"".to_string(),
+                    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "rpc(string,string,string)" "https://eth-mainnet.g.alchemy.com/v2/api_key" "eth_getBalance" "[\"0x551e7784778ef8e048e495df49f2614f84a4f1dc\",\"0x0\"]"
+                "rpc(string,string,string)",
+                hex!(
+                    "
+                    0199a220
+                    0000000000000000000000000000000000000000000000000000000000000060
+                    00000000000000000000000000000000000000000000000000000000000000c0
+                    0000000000000000000000000000000000000000000000000000000000000100
+                    000000000000000000000000000000000000000000000000000000000000002c
+                    68747470733a2f2f6574682d6d61696e6e65742e672e616c6368656d792e636f
+                    6d2f76322f6170695f6b65790000000000000000000000000000000000000000
+                    000000000000000000000000000000000000000000000000000000000000000e
+                    6574685f67657442616c616e6365000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000034
+                    5b22307835353165373738343737386566386530343865343935646634396632
+                    363134663834613466316463222c22307830225d000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"<rpc url>\"".to_string(),
+                    "\"eth_getBalance\"".to_string(),
+                    "\"[\\\"0x551e7784778ef8e048e495df49f2614f84a4f1dc\\\",\\\"0x0\\\"]\""
+                        .to_string(),
+                ]),
+            ),
+            (
+                // cast calldata "rpc(string,string,string)" "mainnet" "eth_getBalance"
+                // "[\"0x551e7784778ef8e048e495df49f2614f84a4f1dc\",\"0x0\"]"
+                "rpc(string,string,string)",
+                hex!(
+                    "
+                    0199a220
+                    0000000000000000000000000000000000000000000000000000000000000060
+                    00000000000000000000000000000000000000000000000000000000000000a0
+                    00000000000000000000000000000000000000000000000000000000000000e0
+                    0000000000000000000000000000000000000000000000000000000000000007
+                    6d61696e6e657400000000000000000000000000000000000000000000000000
+                    000000000000000000000000000000000000000000000000000000000000000e
+                    6574685f67657442616c616e6365000000000000000000000000000000000000
+                    0000000000000000000000000000000000000000000000000000000000000034
+                    5b22307835353165373738343737386566386530343865343935646634396632
+                    363134663834613466316463222c22307830225d000000000000000000000000
+                "
+                )
+                .to_vec(),
+                Some(vec![
+                    "\"mainnet\"".to_string(),
+                    "\"eth_getBalance\"".to_string(),
+                    "\"[\\\"0x551e7784778ef8e048e495df49f2614f84a4f1dc\\\",\\\"0x0\\\"]\""
+                        .to_string(),
+                ]),
+            ),
         ];
 
         // [function_signature, expected]
@@ -733,6 +1021,10 @@ mod tests {
             // Should redact private key on output in all cases:
             ("createWallet(string)", Some("<pk>".to_string())),
             ("deriveKey(string,uint32)", Some("<pk>".to_string())),
+            // Should redact RPC URL if defined, except if referenced by an alias:
+            ("rpcUrl(string)", Some("<rpc url>".to_string())),
+            ("rpcUrls()", Some("<rpc url>".to_string())),
+            ("rpcUrlStructs()", Some("<rpc url>".to_string())),
         ];
 
         for (function_signature, data, expected) in cheatcode_input_test_cases {

@@ -9,7 +9,10 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{address, b256, Address, U256};
-use forge::{decode::decode_console_logs, result::TestStatus};
+use forge::{
+    decode::decode_console_logs,
+    result::{TestKind, TestStatus},
+};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -19,32 +22,35 @@ use foundry_test_utils::Filter;
 
 /// Creates a test that runs `testdata/repros/Issue{issue}.t.sol`.
 macro_rules! test_repro {
-    ($issue_number:literal $(,)?) => {
-        test_repro!($issue_number, false, None);
+    ($(#[$attr:meta])* $issue_number:literal $(,)?) => {
+        test_repro!($(#[$attr])* $issue_number, false, None);
     };
-    ($issue_number:literal, $should_fail:expr $(,)?) => {
-        test_repro!($issue_number, $should_fail, None);
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr $(,)?) => {
+        test_repro!($(#[$attr])* $issue_number, $should_fail, None);
     };
-    ($issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.run().await;
             }
         }
     };
-    ($issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 let mut $res = repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.test();
                 $e
             }
         }
     };
-    ($issue_number:literal; |$config:ident| $e:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal; |$config:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 let mut $config = repro_config($issue_number, false, None, &*TEST_DATA_DEFAULT).await;
                 $e
@@ -164,7 +170,10 @@ test_repro!(3674, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 test_repro!(3685);
 
 // https://github.com/foundry-rs/foundry/issues/3703
-test_repro!(3703);
+test_repro!(
+    #[ignore = "flaky polygon RPCs"]
+    3703
+);
 
 // https://github.com/foundry-rs/foundry/issues/3708
 test_repro!(3708);
@@ -242,7 +251,7 @@ test_repro!(6355, false, None, |res| {
     let test = res.test_results.remove("test_shouldFail()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 
-    let test = res.test_results.remove("test_shouldFailWithRevertTo()").unwrap();
+    let test = res.test_results.remove("test_shouldFailWithRevertToState()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 });
 
@@ -261,7 +270,7 @@ test_repro!(6501, false, None, |res| {
     );
 
     let (kind, traces) = test.traces.last().unwrap().clone();
-    let nodes = traces.into_nodes();
+    let nodes = traces.arena.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
     let test_call = nodes.first().unwrap();
@@ -358,3 +367,30 @@ test_repro!(8277);
 
 // https://github.com/foundry-rs/foundry/issues/8287
 test_repro!(8287);
+
+// https://github.com/foundry-rs/foundry/issues/8168
+test_repro!(8168);
+
+// https://github.com/foundry-rs/foundry/issues/8383
+test_repro!(8383, false, None, |res| {
+    let mut res = res.remove("default/repros/Issue8383.t.sol:Issue8383Test").unwrap();
+    let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
+    assert_eq!(test.status, TestStatus::Success);
+    match test.kind {
+        TestKind::Unit { gas } => assert_eq!(gas, 3103),
+        _ => panic!("not a unit test kind"),
+    }
+});
+
+// https://github.com/foundry-rs/foundry/issues/1543
+test_repro!(1543);
+
+// https://github.com/foundry-rs/foundry/issues/6643
+test_repro!(6643);
+
+// https://github.com/foundry-rs/foundry/issues/8971
+test_repro!(8971; |config| {
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.isolate = true;
+  config.runner.config = Arc::new(prj_config);
+});

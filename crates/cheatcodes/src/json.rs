@@ -569,6 +569,9 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
         Value::String(string) => {
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s;
+                if val.len() == 39 {
+                    return Err(format!("Cannot parse \"{val}\" as an address. If you want to specify address, prepend zero to the value.").into())
+                }
                 if val.len() % 2 != 0 {
                     s = format!("0{val}");
                     val = &s[..];
@@ -591,7 +594,7 @@ fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
     match value {
         DynSolValue::Bool(b) => Ok(Value::Bool(b)),
         DynSolValue::String(s) => {
-            // Strings are allowed to contain strigified JSON objects, so we try to parse it like
+            // Strings are allowed to contain stringified JSON objects, so we try to parse it like
             // one first.
             if let Ok(map) = serde_json::from_str(&s) {
                 Ok(Value::Object(map))
@@ -651,7 +654,7 @@ fn serialize_json(
 }
 
 /// Resolves a [DynSolType] from user input.
-fn resolve_type(type_description: &str) -> Result<DynSolType> {
+pub(super) fn resolve_type(type_description: &str) -> Result<DynSolType> {
     if let Ok(ty) = DynSolType::parse(type_description) {
         return Ok(ty);
     };

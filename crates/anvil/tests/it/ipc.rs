@@ -54,7 +54,7 @@ async fn test_sub_new_heads_ipc() {
     let blocks = provider.subscribe_blocks().await.unwrap().into_stream();
 
     let blocks = blocks.take(3).collect::<Vec<_>>().await;
-    let block_numbers = blocks.into_iter().map(|b| b.header.number.unwrap()).collect::<Vec<_>>();
+    let block_numbers = blocks.into_iter().map(|b| b.header.number).collect::<Vec<_>>();
 
     assert_eq!(block_numbers, vec![1, 2, 3]);
 }

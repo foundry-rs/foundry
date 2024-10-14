@@ -1,12 +1,11 @@
 //! Helper for resolving env vars
 
-use once_cell::sync::Lazy;
 use regex::Regex;
-use std::{env, env::VarError, fmt};
+use std::{env, env::VarError, fmt, sync::LazyLock};
 
 /// A regex that matches `${val}` placeholders
-pub static RE_PLACEHOLDER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)(?P<outer>\$\{\s*(?P<inner>.*?)\s*})").unwrap());
+pub static RE_PLACEHOLDER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?P<outer>\$\{\s*(?P<inner>.*?)\s*})").unwrap());
 
 /// Error when we failed to resolve an env var
 #[derive(Clone, Debug, PartialEq, Eq)]

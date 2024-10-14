@@ -1,22 +1,23 @@
+use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use eyre::Result;
+use eyre::{Context, Result};
+use forge::revm::primitives::Eof;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof};
 use foundry_compilers::{
     artifacts::{
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection,
         },
-        StorageLayout,
+        CompactBytecode, StorageLayout,
     },
     info::ContractInfo,
     utils::canonicalize,
 };
-use once_cell::sync::Lazy;
 use regex::Regex;
-use std::fmt;
+use std::{fmt, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -39,7 +40,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { mut contract, field, build, pretty } = self;
+        let Self { contract, field, build, pretty } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -51,7 +52,7 @@ impl InspectArgs {
 
         // Run Optimized?
         let optimized = if field == ContractArtifactField::AssemblyOptimized {
-            true
+            Some(true)
         } else {
             build.compiler.optimize
         };
@@ -64,16 +65,16 @@ impl InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let mut compiler = ProjectCompiler::new().quiet(true);
-        if let Some(contract_path) = &mut contract.path {
-            let target_path = canonicalize(&*contract_path)?;
-            *contract_path = target_path.to_string_lossy().to_string();
-            compiler = compiler.files([target_path]);
-        }
-        let output = compiler.compile(&project)?;
+        let compiler = ProjectCompiler::new().quiet(true);
+        let target_path = if let Some(path) = &contract.path {
+            canonicalize(project.root().join(path))?
+        } else {
+            project.find_contract_path(&contract.name)?
+        };
+        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
-        let artifact = output.find_contract(&contract).ok_or_else(|| {
+        let artifact = output.remove(&target_path, &contract.name).ok_or_else(|| {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
@@ -99,6 +100,9 @@ impl InspectArgs {
             }
             ContractArtifactField::Assembly | ContractArtifactField::AssemblyOptimized => {
                 print_json_str(&artifact.assembly, None)?;
+            }
+            ContractArtifactField::LegacyAssembly => {
+                print_json_str(&artifact.legacy_assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
                 print_json(&artifact.method_identifiers)?;
@@ -131,7 +135,7 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-                    // Print the signature of all errors
+                    // Print the signature of all errors.
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
                         let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         let sig = format!("{:x}", er.selector());
@@ -148,17 +152,23 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-
-                    // print the signature of all events including anonymous
+                    // Print the topic of all events including anonymous.
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                        let topic = hex::encode(keccak256(ev.signature()));
                         out.insert(
                             format!("{}({})", ev.name, types.join(",")),
-                            format!("{:?}", ev.signature()).into(),
+                            format!("0x{topic}").into(),
                         );
                     }
                 }
                 print_json(&out)?;
+            }
+            ContractArtifactField::Eof => {
+                print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
+            }
+            ContractArtifactField::EofInit => {
+                print_eof(artifact.bytecode)?;
             }
         };
 
@@ -203,6 +213,7 @@ pub enum ContractArtifactField {
     DeployedBytecode,
     Assembly,
     AssemblyOptimized,
+    LegacyAssembly,
     MethodIdentifiers,
     GasEstimates,
     StorageLayout,
@@ -214,6 +225,8 @@ pub enum ContractArtifactField {
     Ewasm,
     Errors,
     Events,
+    Eof,
+    EofInit,
 }
 
 macro_rules! impl_value_enum {
@@ -283,6 +296,7 @@ impl_value_enum! {
         DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
                              | "deployed" | "deployedbytecode",
         Assembly          => "assembly" | "asm",
+        LegacyAssembly    => "legacyAssembly" | "legacyassembly" | "legacy_assembly",
         AssemblyOptimized => "assemblyOptimized" | "asmOptimized" | "assemblyoptimized"
                              | "assembly_optimized" | "asmopt" | "assembly-optimized"
                              | "asmo" | "asm-optimized" | "asmoptimized" | "asm_optimized",
@@ -300,6 +314,8 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
+        Eof               => "eof" | "eof-container" | "eof-deployed",
+        EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
     }
 }
 
@@ -313,6 +329,7 @@ impl From<ContractArtifactField> for ContractOutputSelection {
                 DeployedBytecodeOutputSelection::All,
             )),
             Caf::Assembly | Caf::AssemblyOptimized => Self::Evm(EvmOutputSelection::Assembly),
+            Caf::LegacyAssembly => Self::Evm(EvmOutputSelection::LegacyAssembly),
             Caf::MethodIdentifiers => Self::Evm(EvmOutputSelection::MethodIdentifiers),
             Caf::GasEstimates => Self::Evm(EvmOutputSelection::GasEstimates),
             Caf::StorageLayout => Self::StorageLayout,
@@ -324,6 +341,10 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
             Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
+            Caf::Eof => Self::Evm(EvmOutputSelection::DeployedByteCode(
+                DeployedBytecodeOutputSelection::All,
+            )),
+            Caf::EofInit => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
         }
     }
 }
@@ -339,6 +360,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
                 (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
                 (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
+                (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly)) |
                 (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers)) |
                 (Self::GasEstimates, Cos::Evm(Eos::GasEstimates)) |
                 (Self::StorageLayout, Cos::StorageLayout) |
@@ -347,7 +369,9 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::IrOptimized, Cos::IrOptimized) |
                 (Self::Metadata, Cos::Metadata) |
                 (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_))
+                (Self::Ewasm, Cos::Ewasm(_)) |
+                (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_))) |
+                (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
         )
     }
 }
@@ -380,8 +404,8 @@ fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
         eyre::bail!("Could not get IR output");
     };
 
-    static YUL_COMMENTS: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
+    static YUL_COMMENTS: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
 
     if pretty {
         println!("{}", YUL_COMMENTS.replace_all(yul, ""));
@@ -405,6 +429,30 @@ fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String
         None => format!("{value_ref:#}"),
     };
     Ok(s)
+}
+
+/// Pretty-prints bytecode decoded EOF.
+fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
+    let Some(mut bytecode) = bytecode else { eyre::bail!("No bytecode") };
+
+    // Replace link references with zero address.
+    if bytecode.object.is_unlinked() {
+        for (file, references) in bytecode.link_references.clone() {
+            for (name, _) in references {
+                bytecode.link(&file, &name, Address::ZERO);
+            }
+        }
+    }
+
+    let Some(bytecode) = bytecode.object.into_bytes() else {
+        eyre::bail!("Failed to link bytecode");
+    };
+
+    let eof = Eof::decode(bytecode).wrap_err("Failed to decode EOF")?;
+
+    println!("{}", pretty_eof(&eof)?);
+
+    Ok(())
 }
 
 #[cfg(test)]

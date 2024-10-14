@@ -50,6 +50,10 @@ pub struct SendTxArgs {
     #[arg(long, requires = "from")]
     unlocked: bool,
 
+    /// Timeout for sending the transaction.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
     tx: TransactionOpts,
 
@@ -57,7 +61,13 @@ pub struct SendTxArgs {
     eth: EthereumOpts,
 
     /// The path of blob data to be sent.
-    #[arg(long, value_name = "BLOB_DATA_PATH", conflicts_with = "legacy", requires = "blob")]
+    #[arg(
+        long,
+        value_name = "BLOB_DATA_PATH",
+        conflicts_with = "legacy",
+        requires = "blob",
+        help_heading = "Transaction options"
+    )]
     path: Option<PathBuf>,
 }
 
@@ -92,6 +102,7 @@ impl SendTxArgs {
             command,
             unlocked,
             path,
+            timeout,
         } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
@@ -111,14 +122,16 @@ impl SendTxArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let tx_kind = tx::resolve_tx_kind(&provider, &code, &to).await?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
-            .with_tx_kind(tx_kind)
+            .with_to(to)
+            .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+
+        let timeout = timeout.unwrap_or(config.transaction_timeout);
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
@@ -146,7 +159,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -158,14 +171,14 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
+            let (tx, _) = builder.build(&signer).await?;
+
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
                 .on_provider(&provider);
 
-            let (tx, _) = builder.build(from).await?;
-
-            cast_send(provider, tx, cast_async, confirmations, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
         }
     }
 }
@@ -175,6 +188,7 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,
     confs: u64,
+    timeout: u64,
     to_json: bool,
 ) -> Result<()> {
     let cast = Cast::new(provider);
@@ -185,7 +199,9 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     if cast_async {
         println!("{tx_hash:#x}");
     } else {
-        let receipt = cast.receipt(format!("{tx_hash:#x}"), None, confs, false, to_json).await?;
+        let receipt = cast
+            .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false, to_json)
+            .await?;
         println!("{receipt}");
     }
 
