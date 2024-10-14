@@ -57,9 +57,9 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![
         r#"
 ...
-| Contract | Size (B) | Margin (B) |
-|----------|----------|------------|
-| Counter  |      247 |     24,329 |
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  |              247 |               277 |             24,329 |              48,875 |
 ...
 "#
     ]);
