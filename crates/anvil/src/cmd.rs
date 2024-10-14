@@ -581,7 +581,7 @@ pub struct AnvilEvmArgs {
     pub memory_limit: Option<u64>,
 
     /// Enable Alphanet features
-    #[arg(long, visible_alias = "alphanet")]
+    #[arg(long, visible_alias = "odyssey")]
     pub alphanet: bool,
 }
 

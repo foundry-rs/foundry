@@ -488,6 +488,42 @@
           "description": "The amount of gas remaining."
         }
       ]
+    },
+    {
+      "name": "DebugStep",
+      "description": "The result of the `stopDebugTraceRecording` call",
+      "fields": [
+        {
+          "name": "stack",
+          "ty": "uint256[]",
+          "description": "The stack before executing the step of the run.\n stack\\[0\\] represents the top of the stack.\n and only stack data relevant to the opcode execution is contained."
+        },
+        {
+          "name": "memoryInput",
+          "ty": "bytes",
+          "description": "The memory input data before executing the step of the run.\n only input data relevant to the opcode execution is contained.\n e.g. for MLOAD, it will have memory\\[offset:offset+32\\] copied here.\n the offset value can be get by the stack data."
+        },
+        {
+          "name": "opcode",
+          "ty": "uint8",
+          "description": "The opcode that was accessed."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "The call depth of the step."
+        },
+        {
+          "name": "isOutOfGas",
+          "ty": "bool",
+          "description": "Whether the call end up with out of gas error."
+        },
+        {
+          "name": "contractAddr",
+          "ty": "address",
+          "description": "The contract address where the opcode is running"
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -3313,6 +3349,26 @@
     },
     {
       "func": {
+        "id": "contains",
+        "description": "Returns true if `search` is found in `subject`, false otherwise.",
+        "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "contains(string,string)",
+        "selector": "0x3fb18aec",
+        "selectorBytes": [
+          63,
+          177,
+          138,
+          236
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "cool",
         "description": "Marks the slots of an account and the account address as cold.",
         "declaration": "function cool(address target) external;",
@@ -5397,6 +5453,26 @@
     },
     {
       "func": {
+        "id": "getScriptWallets",
+        "description": "Returns addresses of available unlocked wallets in the script environment.",
+        "declaration": "function getScriptWallets() external returns (address[] memory wallets);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getScriptWallets()",
+        "selector": "0x7c49aa1f",
+        "selectorBytes": [
+          124,
+          73,
+          170,
+          31
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "indexOf",
         "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
         "declaration": "function indexOf(string calldata input, string calldata key) external pure returns (uint256);",
@@ -7459,6 +7535,46 @@
     },
     {
       "func": {
+        "id": "rememberKeys_0",
+        "description": "Derive a set number of wallets from a mnemonic at the derivation path `m/44'/60'/0'/0/{0..count}`.\nThe respective private keys are saved to the local forge wallet for later use and their addresses are returned.",
+        "declaration": "function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rememberKeys(string,string,uint32)",
+        "selector": "0x97cb9189",
+        "selectorBytes": [
+          151,
+          203,
+          145,
+          137
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rememberKeys_1",
+        "description": "Derive a set number of wallets from a mnemonic in the specified language at the derivation path `m/44'/60'/0'/0/{0..count}`.\nThe respective private keys are saved to the local forge wallet for later use and their addresses are returned.",
+        "declaration": "function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rememberKeys(string,string,string,uint32)",
+        "selector": "0xf8d58eaf",
+        "selectorBytes": [
+          248,
+          213,
+          142,
+          175
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "removeDir",
         "description": "Removes a directory at the provided path.\nThis cheatcode will revert in the following situations, but is not limited to just these cases:\n- `path` doesn't exist.\n- `path` isn't a directory.\n- User lacks permissions to modify `path`.\n- The directory is not empty and `recursive` is false.\n`path` is relative to the project root.",
         "declaration": "function removeDir(string calldata path, bool recursive) external;",
@@ -8845,6 +8961,26 @@
     },
     {
       "func": {
+        "id": "startDebugTraceRecording",
+        "description": "Records the debug trace during the run.",
+        "declaration": "function startDebugTraceRecording() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startDebugTraceRecording()",
+        "selector": "0x419c8832",
+        "selectorBytes": [
+          65,
+          156,
+          136,
+          50
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "startMappingRecording",
         "description": "Starts recording all map SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
@@ -8957,6 +9093,26 @@
           34,
           227,
           201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopAndReturnDebugTraceRecording",
+        "description": "Stop debug trace recording and returns the recorded debug trace.",
+        "declaration": "function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopAndReturnDebugTraceRecording()",
+        "selector": "0xced398a2",
+        "selectorBytes": [
+          206,
+          211,
+          152,
+          162
         ]
       },
       "group": "evm",

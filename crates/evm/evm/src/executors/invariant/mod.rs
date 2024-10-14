@@ -317,10 +317,11 @@ impl<'a> InvariantExecutor<'a> {
                     TestCaseError::fail("No input generated to call fuzzed target.")
                 })?;
 
-                // Execute call from the randomly generated sequence and commit state changes.
-                let call_result = current_run
+                // Execute call from the randomly generated sequence without committing state.
+                // State is committed only if call is not a magic assume.
+                let mut call_result = current_run
                     .executor
-                    .transact_raw(
+                    .call_raw(
                         tx.sender,
                         tx.call_details.target,
                         tx.call_details.calldata.clone(),
@@ -343,9 +344,11 @@ impl<'a> InvariantExecutor<'a> {
                         return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
                     }
                 } else {
+                    // Commit executed call result.
+                    current_run.executor.commit(&mut call_result);
+
                     // Collect data for fuzzing from the state changeset.
                     let mut state_changeset = call_result.state_changeset.clone();
-
                     if !call_result.reverted {
                         collect_data(
                             &invariant_test,
@@ -369,13 +372,13 @@ impl<'a> InvariantExecutor<'a> {
                     {
                         warn!(target: "forge::test", "{error}");
                     }
-
                     current_run.fuzz_runs.push(FuzzCase {
                         calldata: tx.call_details.calldata.clone(),
                         gas: call_result.gas_used,
                         stipend: call_result.stipend,
                     });
 
+                    // Determine if test can continue or should exit.
                     let result = can_continue(
                         &invariant_contract,
                         &invariant_test,
@@ -385,11 +388,9 @@ impl<'a> InvariantExecutor<'a> {
                         &state_changeset,
                     )
                     .map_err(|e| TestCaseError::fail(e.to_string()))?;
-
                     if !result.can_continue || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
-
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
                         return Err(TestCaseError::fail("Test cannot continue."))
@@ -741,9 +742,6 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<()> {
         for (address, (identifier, _)) in self.setup_contracts.iter() {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
-                if selectors.is_empty() {
-                    continue;
-                }
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
         }
@@ -773,6 +771,11 @@ impl<'a> InvariantExecutor<'a> {
         should_exclude: bool,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
+        // Do not add address in target contracts if no function selected.
+        if selectors.is_empty() {
+            return Ok(())
+        }
+
         let contract = match targeted_contracts.entry(address) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {

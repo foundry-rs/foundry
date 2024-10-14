@@ -276,6 +276,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 const SIMPLE_CONTRACT: &str = r#"
 import "./test.sol";
+import "./console.sol";
 
 contract SimpleContract {
     uint256 public num;
@@ -289,12 +290,14 @@ contract SimpleContractTest is DSTest {
     function test() public {
         SimpleContract c = new SimpleContract();
         c.setValues(100);
+        console.log("Value set: ", 100);
     }
 }
    "#;
 
 forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
+    prj.insert_console();
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
 
@@ -306,6 +309,7 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
 
 forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     prj.insert_ds_test();
+    prj.insert_console();
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
 
@@ -644,7 +648,6 @@ forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.add_test(
         "Contract.t.sol",
         r#"
-pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract TransientTester {
@@ -2214,5 +2217,60 @@ forgetest_init!(deprecated_regex_arg, |prj, cmd| {
     cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
 warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
 
+"#]]);
+});
+
+// Test a script that calls vm.rememberKeys
+forgetest_init!(script_testing, |prj, cmd| {
+    prj
+    .add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
+
+contract WalletScript is Script {
+function run() public {
+    string memory mnemonic = "test test test test test test test test test test test junk";
+    string memory derivationPath = "m/44'/60'/0'/0/";
+    address[] memory wallets = Vm(address(vm)).rememberKeys(mnemonic, derivationPath, 3);
+    for (uint256 i = 0; i < wallets.length; i++) {
+        console.log(wallets[i]);
+    }
+}
+}
+
+contract FooTest {
+    WalletScript public script;
+
+
+    function setUp() public {
+        script = new WalletScript();
+    }
+
+    function testWalletScript() public {
+        script.run();
+    }
+}
+
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "testWalletScript", "-vvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Foo.sol:FooTest
+[PASS] testWalletScript() ([GAS])
+Logs:
+  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+...
 "#]]);
 });
