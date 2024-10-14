@@ -1,6 +1,6 @@
 use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_rpc_types::BlockId;
-use cast::CastInstance;
+use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -63,7 +63,7 @@ impl AccessListArgs {
             .build_raw(sender)
             .await?;
 
-        let cast = CastInstance::new(&provider);
+        let cast = Cast::new(&provider);
 
         let access_list: String = cast.access_list(&tx, block, to_json).await?;
 

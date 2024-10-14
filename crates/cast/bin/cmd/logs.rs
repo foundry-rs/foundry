@@ -3,7 +3,7 @@ use alloy_json_abi::Event;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{hex::FromHex, Address, B256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
-use cast::CastInstance;
+use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
@@ -73,7 +73,7 @@ impl LogsArgs {
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
 
-        let cast = CastInstance::new(&provider);
+        let cast = Cast::new(&provider);
 
         let address = match address {
             Some(address) => Some(address.resolve(&provider).await?),
@@ -102,7 +102,7 @@ impl LogsArgs {
         let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
             .on_builtin(url.as_ref())
             .await?;
-        let cast = CastInstance::new(&provider);
+        let cast = Cast::new(&provider);
         let mut stdout = io::stdout();
         cast.subscribe(filter, &mut stdout, json).await?;
 

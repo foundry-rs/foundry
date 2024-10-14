@@ -1,5 +1,5 @@
 use alloy_provider::Provider;
-use cast::CastInstance;
+use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils};
@@ -25,7 +25,7 @@ impl FindBlockArgs {
         let provider = utils::get_provider(&config)?;
 
         let last_block_num = provider.get_block_number().await?;
-        let cast_provider = CastInstance::new(provider);
+        let cast_provider = Cast::new(provider);
 
         let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
         let ts_block_latest: u64 = res.0?.to();

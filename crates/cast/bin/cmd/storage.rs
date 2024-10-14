@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use alloy_transport::Transport;
-use cast::CastInstance;
+use cast::Cast;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::Result;
@@ -91,7 +91,7 @@ impl StorageArgs {
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
-            let cast = CastInstance::new(provider);
+            let cast = Cast::new(provider);
             println!("{}", cast.storage(address, slot, block).await?);
             return Ok(());
         }

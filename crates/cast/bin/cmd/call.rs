@@ -1,7 +1,7 @@
 use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
-use cast::{traces::TraceKind, CastInstance};
+use cast::{traces::TraceKind, Cast};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -205,7 +205,7 @@ impl CallArgs {
             return Ok(());
         }
 
-        println!("{}", CastInstance::new(provider).call(&tx, func.as_ref(), block, json).await?);
+        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?);
 
         Ok(())
     }
