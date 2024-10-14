@@ -61,7 +61,7 @@ impl ResolveArgs {
             &project.compiler,
         )?;
 
-        let mut output = BTreeMap::new();
+        let mut output: BTreeMap<String, Vec<(Version, Vec<String>)>> = BTreeMap::new();
 
         for (language, sources) in sources {
             let mut versions_with_paths: Vec<(Version, Vec<String>)> = sources
@@ -83,15 +83,9 @@ impl ResolveArgs {
                 })
                 .collect();
 
-            // Sort the versions based on semantic versioning.
-            versions_with_paths.sort_by(|(v1, _), (v2, _)| v1.cmp(v2));
+            versions_with_paths.sort_by(|(v1, _), (v2, _)| Version::cmp(v1, v2));
 
-            let sorted_versions: BTreeMap<String, Vec<String>> = versions_with_paths
-                .into_iter()
-                .map(|(version, paths)| (version.to_string(), paths))
-                .collect();
-
-            output.insert(language.to_string(), sorted_versions);
+            output.insert(language.to_string(), versions_with_paths);
         }
 
         if json {
@@ -195,7 +189,7 @@ Solidity:
         cmd.args(["compiler", "resolve", "--json"])
             .assert_success()
             .stdout_eq(str![[r#"
-{"Solidity":{"0.8.27":["lib/forge-std/src/Base.sol","lib/forge-std/src/Script.sol","lib/forge-std/src/StdAssertions.sol","lib/forge-std/src/StdChains.sol","lib/forge-std/src/StdCheats.sol","lib/forge-std/src/StdError.sol","lib/forge-std/src/StdInvariant.sol","lib/forge-std/src/StdJson.sol","lib/forge-std/src/StdMath.sol","lib/forge-std/src/StdStorage.sol","lib/forge-std/src/StdStyle.sol","lib/forge-std/src/StdToml.sol","lib/forge-std/src/StdUtils.sol","lib/forge-std/src/Test.sol","lib/forge-std/src/Vm.sol","lib/forge-std/src/console.sol","lib/forge-std/src/console2.sol","lib/forge-std/src/interfaces/IERC165.sol","lib/forge-std/src/interfaces/IERC20.sol","lib/forge-std/src/interfaces/IERC721.sol","lib/forge-std/src/interfaces/IMulticall3.sol","lib/forge-std/src/mocks/MockERC20.sol","lib/forge-std/src/mocks/MockERC721.sol","lib/forge-std/src/safeconsole.sol","script/Counter.s.sol","src/Counter.sol","test/Counter.t.sol"]}}"#]].is_jsonlines());
+{"Solidity":[["0.8.27",["lib/forge-std/src/Base.sol","lib/forge-std/src/Script.sol","lib/forge-std/src/StdAssertions.sol","lib/forge-std/src/StdChains.sol","lib/forge-std/src/StdCheats.sol","lib/forge-std/src/StdError.sol","lib/forge-std/src/StdInvariant.sol","lib/forge-std/src/StdJson.sol","lib/forge-std/src/StdMath.sol","lib/forge-std/src/StdStorage.sol","lib/forge-std/src/StdStyle.sol","lib/forge-std/src/StdToml.sol","lib/forge-std/src/StdUtils.sol","lib/forge-std/src/Test.sol","lib/forge-std/src/Vm.sol","lib/forge-std/src/console.sol","lib/forge-std/src/console2.sol","lib/forge-std/src/interfaces/IERC165.sol","lib/forge-std/src/interfaces/IERC20.sol","lib/forge-std/src/interfaces/IERC721.sol","lib/forge-std/src/interfaces/IMulticall3.sol","lib/forge-std/src/mocks/MockERC20.sol","lib/forge-std/src/mocks/MockERC721.sol","lib/forge-std/src/safeconsole.sol","script/Counter.s.sol","src/Counter.sol","test/Counter.t.sol"]]]}"#]].is_jsonlines());
     });
 
     const CONTRACT_A: &str = r#"
@@ -216,11 +210,57 @@ contract ContractB {}
         prj.add_source("ContractA", CONTRACT_A).unwrap();
         prj.add_source("ContractB", CONTRACT_B).unwrap();
 
-        cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
+        cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Solidity:
+- 0.8.4
 - 0.8.11
 - 0.8.27
-- 0.8.4
+
+
+"#]]);
+    });
+
+    forgetest_init!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
+        prj.add_source("ContractA", CONTRACT_A).unwrap();
+        prj.add_source("ContractB", CONTRACT_B).unwrap();
+
+        cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
+Solidity:
+
+0.8.4:
+└── src/ContractA.sol
+
+0.8.11:
+└── src/ContractB.sol
+
+0.8.27:
+├── lib/forge-std/src/Base.sol
+├── lib/forge-std/src/Script.sol
+├── lib/forge-std/src/StdAssertions.sol
+├── lib/forge-std/src/StdChains.sol
+├── lib/forge-std/src/StdCheats.sol
+├── lib/forge-std/src/StdError.sol
+├── lib/forge-std/src/StdInvariant.sol
+├── lib/forge-std/src/StdJson.sol
+├── lib/forge-std/src/StdMath.sol
+├── lib/forge-std/src/StdStorage.sol
+├── lib/forge-std/src/StdStyle.sol
+├── lib/forge-std/src/StdToml.sol
+├── lib/forge-std/src/StdUtils.sol
+├── lib/forge-std/src/Test.sol
+├── lib/forge-std/src/Vm.sol
+├── lib/forge-std/src/console.sol
+├── lib/forge-std/src/console2.sol
+├── lib/forge-std/src/interfaces/IERC165.sol
+├── lib/forge-std/src/interfaces/IERC20.sol
+├── lib/forge-std/src/interfaces/IERC721.sol
+├── lib/forge-std/src/interfaces/IMulticall3.sol
+├── lib/forge-std/src/mocks/MockERC20.sol
+├── lib/forge-std/src/mocks/MockERC721.sol
+├── lib/forge-std/src/safeconsole.sol
+├── script/Counter.s.sol
+├── src/Counter.sol
+└── test/Counter.t.sol
 
 
 "#]]);
