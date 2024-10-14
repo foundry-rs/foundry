@@ -144,6 +144,14 @@ impl Cheatcode for indexOfCall {
     }
 }
 
+// contains
+impl Cheatcode for containsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { subject, search } = self;
+        Ok(subject.contains(search).abi_encode())
+    }
+}
+
 pub(super) fn parse(s: &str, ty: &DynSolType) -> Result {
     parse_value(s, ty).map(|v| v.abi_encode())
 }
