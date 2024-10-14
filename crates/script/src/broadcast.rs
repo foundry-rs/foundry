@@ -26,7 +26,7 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 pub async fn estimate_gas<P, T>(
     tx: &mut WithOtherFields<TransactionRequest>,
@@ -67,11 +67,25 @@ pub async fn send_transaction(
         if sequential_broadcast {
             let from = tx.from.expect("no sender");
 
-            let nonce = provider.get_transaction_count(from).await?;
-
             let tx_nonce = tx.nonce.expect("no nonce");
-            if nonce != tx_nonce {
-                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            for attempt in 0..5 {
+                let nonce = provider.get_transaction_count(from).await?;
+                match nonce.cmp(&tx_nonce) {
+                    Ordering::Greater => {
+                        bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+                    }
+                    Ordering::Less => {
+                        if attempt == 4 {
+                            bail!("After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce}).")
+                        }
+                        warn!("Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second...");
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    }
+                    Ordering::Equal => {
+                        // Nonces are equal, we can proceed
+                        break;
+                    }
+                }
             }
         }
 
