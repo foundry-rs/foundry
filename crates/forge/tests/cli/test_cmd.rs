@@ -2274,3 +2274,102 @@ Logs:
 ...
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/8995>
+forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
+    prj.add_source(
+        "ParentProxy.sol",
+        r#"
+import {Counter} from "./Counter.sol";
+
+abstract contract ParentProxy {
+    Counter impl;
+    bytes data;
+
+    constructor(Counter _implementation, bytes memory _data) {
+        impl = _implementation;
+        data = _data;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Proxy.sol",
+        r#"
+import {ParentProxy} from "./ParentProxy.sol";
+import {Counter} from "./Counter.sol";
+
+contract Proxy is ParentProxy {
+    constructor(Counter _implementation, bytes memory _data)
+        ParentProxy(_implementation, _data)
+    {}
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "MetadataTraceTest.t.sol",
+        r#"
+import {Counter} from "src/Counter.sol";
+import {Proxy} from "src/Proxy.sol";
+
+import {Test} from "forge-std/Test.sol";
+
+contract MetadataTraceTest is Test {
+    function test_proxy_trace() public {
+        Counter counter = new Counter();
+        new Proxy(counter, "");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
+[PASS] test_proxy_trace() ([GAS])
+Traces:
+  [152142] MetadataTraceTest::test_proxy_trace()
+    ├─ [49499] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 247 bytes of code
+    ├─ [37978] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 63 bytes of code
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Check consistent traces for running with no metadata.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-metadata"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
+[PASS] test_proxy_trace() ([GAS])
+Traces:
+  [130521] MetadataTraceTest::test_proxy_trace()
+    ├─ [38693] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 193 bytes of code
+    ├─ [27175] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 9 bytes of code
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
