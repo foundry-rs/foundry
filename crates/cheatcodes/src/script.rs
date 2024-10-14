@@ -91,24 +91,24 @@ pub struct Broadcast {
 
 /// Contains context for wallet management.
 #[derive(Debug)]
-pub struct ScriptWalletsInner {
+pub struct WalletsInner {
     /// All signers in scope of the script.
     pub multi_wallet: MultiWallet,
     /// Optional signer provided as `--sender` flag.
     pub provided_sender: Option<Address>,
 }
 
-/// Clonable wrapper around [`ScriptWalletsInner`].
+/// Clonable wrapper around [`WalletsInner`].
 #[derive(Debug, Clone)]
-pub struct ScriptWallets {
+pub struct Wallets {
     /// Inner data.
-    pub inner: Arc<Mutex<ScriptWalletsInner>>,
+    pub inner: Arc<Mutex<WalletsInner>>,
 }
 
-impl ScriptWallets {
+impl Wallets {
     #[allow(missing_docs)]
     pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
-        Self { inner: Arc::new(Mutex::new(ScriptWalletsInner { multi_wallet, provided_sender })) }
+        Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
 
     /// Consumes [ScriptWallets] and returns [MultiWallet].

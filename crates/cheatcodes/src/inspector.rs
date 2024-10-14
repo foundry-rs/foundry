@@ -8,7 +8,7 @@ use crate::{
         DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
-    script::{Broadcast, ScriptWallets},
+    script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
         expect::{
@@ -477,7 +477,7 @@ pub struct Cheatcodes {
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
-    pub wallets: Option<ScriptWallets>,
+    pub wallets: Option<Wallets>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -530,12 +530,12 @@ impl Cheatcodes {
     }
 
     /// Returns the configured script wallets.
-    pub fn script_wallets(&self) -> Option<&ScriptWallets> {
+    pub fn script_wallets(&self) -> Option<&Wallets> {
         self.wallets.as_ref()
     }
 
     /// Sets the unlocked wallets.
-    pub fn set_wallets(&mut self, wallets: ScriptWallets) {
+    pub fn set_wallets(&mut self, wallets: Wallets) {
         self.wallets = Some(wallets);
     }
 

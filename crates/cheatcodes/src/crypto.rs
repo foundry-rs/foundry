@@ -1,6 +1,6 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, ScriptWallets, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*, Wallets};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -133,7 +133,7 @@ fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Add
         script_wallets.add_local_signer(wallet);
     } else {
         // This is needed in case of testing scripts, wherein script wallets are not set on setup.
-        let script_wallets = ScriptWallets::new(MultiWallet::default(), None);
+        let script_wallets = Wallets::new(MultiWallet::default(), None);
         script_wallets.add_local_signer(wallet);
         state.set_wallets(script_wallets);
     }

@@ -3,7 +3,7 @@ use super::{
     TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
-use foundry_cheatcodes::{CheatcodesExecutor, ScriptWallets};
+use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -58,7 +58,7 @@ pub struct InspectorStackBuilder {
     /// Whether to enable Alphanet features.
     pub alphanet: bool,
     /// Wallets
-    pub wallets: Option<ScriptWallets>,
+    pub wallets: Option<Wallets>,
 }
 
 impl InspectorStackBuilder {
@@ -91,7 +91,7 @@ impl InspectorStackBuilder {
 
     /// Set the wallets.
     #[inline]
-    pub fn wallets(mut self, wallets: ScriptWallets) -> Self {
+    pub fn wallets(mut self, wallets: Wallets) -> Self {
         self.wallets = Some(wallets);
         self
     }
