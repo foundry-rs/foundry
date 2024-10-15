@@ -2384,8 +2384,6 @@ impl EthApi {
 impl EthApi {
     /// Get the capabilities of the wallet.
     ///
-    /// Currently the only capability is [`DelegationCapability`].
-    ///
     /// See also [EIP-5792][eip-5792].
     ///
     /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
