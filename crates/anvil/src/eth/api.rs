@@ -33,7 +33,9 @@ use crate::{
 use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{eip2718::Decodable2718, BlockResponse, TransactionBuilder};
+use alloy_network::{
+    eip2718::Decodable2718, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
+};
 use alloy_primitives::{
     map::{HashMap, HashSet},
     Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64,
@@ -2462,6 +2464,12 @@ impl EthApi {
 
         request.chain_id = Some(chain_id);
 
+        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
+
+        let from = NetworkWallet::<Ethereum>::default_signer_address(wallet);
+
+        request.from = Some(from);
+
         let gas_limit_fut = self.estimate_gas(request.clone(), Some(BlockId::latest()), None);
 
         let fees_fut = self.fee_history(
@@ -2485,13 +2493,7 @@ impl EthApi {
         request.max_priority_fee_per_gas = Some(estimation.max_priority_fee_per_gas);
         request.gas_price = None;
 
-        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
-        let envelope = request.build(wallet).await.map_err(|e| {
-            tracing::error!("Failed to build transaction envelope: {:?}", e);
-            WalletError::InternalError
-        })?;
-
-        tracing::info!("Prepared Tx Envelope: {:#?}", envelope);
+        let envelope = request.build(wallet).await.map_err(|_| WalletError::InternalError)?;
 
         self.send_raw_transaction(envelope.encoded_2718().into()).await
     }
