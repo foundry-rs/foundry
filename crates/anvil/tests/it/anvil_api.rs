@@ -19,16 +19,18 @@ use alloy_serde::WithOtherFields;
 use anvil::{
     eth::{
         api::CLIENT_VERSION,
-        backend::mem::{ODYSSEY_SPONSOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
+        backend::mem::{EXECUTOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
     },
     spawn, EthereumHardfork, NodeConfig,
 };
 use anvil_core::{
-    eth::EthRequest,
+    eth::{
+        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+        EthRequest,
+    },
     types::{ReorgOptions, TransactionData},
 };
 use foundry_evm::revm::primitives::SpecId;
-use foundry_test_utils::rpc::next_http_rpc_endpoint;
 use std::{
     str::FromStr,
     time::{Duration, SystemTime},
@@ -804,14 +806,11 @@ async fn test_reorg() {
 // === wallet endpoints === //
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_wallet_capabilities() {
-    use anvil::eth::backend::mem::{
-        ODYSSEY_SPONSOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE,
-    };
     let (api, handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
 
     let provider = handle.http_provider();
 
-    let init_sponsor_bal = provider.get_balance(ODYSSEY_SPONSOR).await.unwrap();
+    let init_sponsor_bal = provider.get_balance(EXECUTOR).await.unwrap();
 
     let expected_bal = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
     assert_eq!(init_sponsor_bal, expected_bal);
@@ -822,5 +821,11 @@ async fn can_get_wallet_capabilities() {
 
     let capabilities = api.get_capabilities().unwrap();
 
-    println!("{:?}", capabilities);
+    let mut expect_caps = WalletCapabilities::default();
+    let cap = Capabilities {
+        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
+    };
+    expect_caps.0.insert(api.chain_id(), cap);
+
+    assert_eq!(capabilities, expect_caps);
 }

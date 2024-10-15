@@ -86,6 +86,7 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
+use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
@@ -453,8 +454,10 @@ impl EthApi {
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
-            EthRequest::WalletGetCapabilities(_) => self.get_capabilities().to_rpc_result(),
-            EthRequest::WalletSendTransaction(_tx) => todo!("wallet_sendTransaction"),
+            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
+            EthRequest::WalletSendTransaction(tx) => {
+                self.wallet_send_transaction(*tx).await.to_rpc_result()
+            }
         }
     }
 
@@ -2411,10 +2414,10 @@ impl EthApi {
             return Err(WalletError::NonceSet.into());
         }
 
-        let capabilities = self.get_capabilities()?;
-        let valid_delegations = capabilities
+        let capabilities = self.backend.get_capabilities();
+        let valid_delegations: &[Address] = capabilities
             .get(self.chain_id())
-            .map(|caps| caps.delegation.addresses.clone())
+            .map(|caps| caps.delegation.addresses.as_ref())
             .unwrap_or_default();
 
         if let Some(authorizations) = &request.authorization_list {
@@ -2423,26 +2426,33 @@ impl EthApi {
             }
         }
 
-        // match (request.authorization_list.is_some(), request.to) {
-        //     // if this is an eip-1559 tx, ensure that it is an account that delegates to a
-        //     // whitelisted address
-        //     (false, Some(TxKind::Call(addr))) => {
-        //         let acc =
-        //             self.get_account(addr,
-        // Some(BlockId::latest())).await.ok().unwrap_or_default();
+        // validate the destination address
+        match (request.authorization_list.is_some(), request.to) {
+            // if this is an eip-1559 tx, ensure that it is an account that delegates to a
+            // whitelisted address
+            (false, Some(TxKind::Call(addr))) => {
+                let acc = self.backend.get_account(addr).await?;
 
-        //         // not a whitelisted address, or not an eip-7702 bytecode
-        //         // if delegated_address == Address::ZERO ||
-        //         //     !valid_delegations.contains(&delegated_address)
-        //         // {
-        //         //     return Err(WalletError::IllegalDestination.into());
-        //         // }
-        //     }
-        //     // if it's an eip-7702 tx, let it through
-        //     (true, _) => (),
-        //     // create tx's disallowed
-        //     _ => return Err(WalletError::IllegalDestination.into()),
-        // };
+                let delegated_address = acc
+                    .code
+                    .map(|code| match code {
+                        Bytecode::Eip7702(c) => c.address(),
+                        _ => Address::ZERO,
+                    })
+                    .unwrap_or_default();
+
+                // not a whitelisted address, or not an eip-7702 bytecode
+                if delegated_address == Address::ZERO ||
+                    !valid_delegations.contains(&delegated_address)
+                {
+                    return Err(WalletError::IllegalDestination.into());
+                }
+            }
+            // if it's an eip-7702 tx, let it through
+            (true, _) => (),
+            // create tx's disallowed
+            _ => return Err(WalletError::IllegalDestination.into()),
+        }
 
         let nonce = self.get_transaction_count(EXECUTOR, Some(BlockId::latest())).await?;
 
@@ -2452,17 +2462,20 @@ impl EthApi {
 
         request.chain_id = Some(chain_id);
 
-        let gas_limit = self.estimate_gas(request.clone(), Some(BlockId::latest()), None).await?;
+        let gas_limit_fut = self.estimate_gas(request.clone(), Some(BlockId::latest()), None);
+
+        let fees_fut = self.fee_history(
+            U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
+            BlockNumber::Latest,
+            vec![EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
+        );
+
+        let (gas_limit, fees) = tokio::join!(gas_limit_fut, fees_fut);
+
+        let gas_limit = gas_limit?;
+        let fees = fees?;
 
         request.gas = Some(gas_limit.to());
-
-        let fees = self
-            .fee_history(
-                U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
-                BlockNumber::Latest,
-                vec![EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
-            )
-            .await?;
 
         let base_fee = fees.latest_block_base_fee().unwrap_or_default();
 
