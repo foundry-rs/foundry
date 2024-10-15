@@ -2077,12 +2077,12 @@ forgetest_init!(can_get_script_wallets, |prj, cmd| {
 import "forge-std/Script.sol";
 
 interface Vm {
-    function getScriptWallets() external returns (address[] memory wallets);
+    function getWallets() external returns (address[] memory wallets);
 }
 
 contract WalletScript is Script {
     function run() public {
-        address[] memory wallets = Vm(address(vm)).getScriptWallets();
+        address[] memory wallets = Vm(address(vm)).getWallets();
         console.log(wallets[0]);
     }
 }"#,
