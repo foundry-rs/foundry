@@ -1,6 +1,7 @@
-use super::sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_cli::utils::now;
+use forge_script_sequence::{
+    now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
+};
 use foundry_common::fs;
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
