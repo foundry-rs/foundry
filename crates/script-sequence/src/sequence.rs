@@ -74,13 +74,13 @@ impl ScriptSequence {
     ) -> Result<Self> {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, chain_id, dry_run)?;
 
-        let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
+        let mut script_sequence: Self = fs::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
 
-        let sensitive_script_sequence: SensitiveScriptSequence =
-            foundry_compilers::utils::read_json_file(&sensitive_path).wrap_err(format!(
-                "Deployment's sensitive details not found for chain `{chain_id}`."
-            ))?;
+        let sensitive_script_sequence: SensitiveScriptSequence = fs::read_json_file(
+            &sensitive_path,
+        )
+        .wrap_err(format!("Deployment's sensitive details not found for chain `{chain_id}`."))?;
 
         script_sequence.fill_sensitive(&sensitive_script_sequence);
 

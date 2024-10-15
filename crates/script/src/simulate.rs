@@ -1,9 +1,6 @@
 use super::{
-    multi_sequence::MultiChainSequence,
-    providers::ProvidersManager,
-    runner::ScriptRunner,
-    sequence::ScriptSequenceKind,
-    transaction::{with_execution_result, ScriptTransactionBuilder},
+    multi_sequence::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner,
+    sequence::ScriptSequenceKind, transaction::ScriptTransactionBuilder,
 };
 use crate::{
     broadcast::{estimate_gas, BundledState},
@@ -61,11 +58,14 @@ impl PreSimulationState {
             .into_iter()
             .map(|tx| {
                 let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
-                ScriptTransactionBuilder::new(tx.transaction).build(
-                    rpc,
-                    &address_to_abi,
-                    &self.execution_artifacts.decoder,
-                )
+                let sender = tx.transaction.from().expect("all transactions should have a sender");
+                let nonce = tx.transaction.nonce().expect("all transactions should have a sender");
+
+                let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
+                builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;
+                builder.set_create(false, sender.create(nonce), &address_to_abi)?;
+
+                Ok(builder.build())
             })
             .collect::<Result<VecDeque<_>>>()?;
 
@@ -138,8 +138,9 @@ impl PreSimulationState {
                     false
                 };
 
-                let transaction =
-                    with_execution_result(transaction, &result, self.args.gas_estimate_multiplier);
+                let transaction = ScriptTransactionBuilder::from(transaction)
+                    .with_execution_result(&result, self.args.gas_estimate_multiplier)
+                    .build();
 
                 eyre::Ok((Some(transaction), is_noop_tx, result.traces))
             })
