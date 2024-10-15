@@ -3478,6 +3478,7 @@ dependencies = [
  "dialoguer",
  "dunce",
  "eyre",
+ "forge-script-sequence",
  "forge-verify",
  "foundry-cheatcodes",
  "foundry-cli",
@@ -3500,6 +3501,22 @@ dependencies = [
  "tokio",
  "tracing",
  "yansi",
+]
+
+[[package]]
+name = "forge-script-sequence"
+version = "0.2.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "eyre",
+ "foundry-common",
+ "foundry-compilers",
+ "foundry-config",
+ "revm-inspectors",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
