@@ -263,7 +263,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, shell::is_json())
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
                     .await?
             );
         }
@@ -424,7 +424,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, None, cast_async, shell::is_json())
+                    .receipt(tx_hash, field, confirmations, None, cast_async)
                     .await?
             );
         }
@@ -437,10 +437,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            println!(
-                "{}",
-                Cast::new(&provider).transaction(tx_hash, field, raw, shell::is_json()).await?
-            )
+            println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw).await?)
         }
 
         // 4Byte

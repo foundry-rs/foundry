@@ -7,7 +7,7 @@ use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};
@@ -76,7 +76,7 @@ impl LogsArgs {
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs(filter, shell::is_json()).await?;
+            let logs = cast.filter_logs(filter).await?;
 
             println!("{logs}");
 
@@ -92,7 +92,7 @@ impl LogsArgs {
             .await?;
         let cast = Cast::new(&provider);
         let mut stdout = io::stdout();
-        cast.subscribe(filter, &mut stdout, shell::is_json()).await?;
+        cast.subscribe(filter, &mut stdout).await?;
 
         Ok(())
     }

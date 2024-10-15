@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
@@ -154,7 +154,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, shell::is_json()).await
+            cast_send(provider, tx, cast_async, confirmations, timeout).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -173,7 +173,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .on_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, shell::is_json()).await
+            cast_send(provider, tx, cast_async, confirmations, timeout).await
         }
     }
 }
@@ -184,7 +184,6 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     cast_async: bool,
     confs: u64,
     timeout: u64,
-    to_json: bool,
 ) -> Result<()> {
     let cast = Cast::new(provider);
     let pending_tx = cast.send(tx).await?;
@@ -194,9 +193,8 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     if cast_async {
         println!("{tx_hash:#x}");
     } else {
-        let receipt = cast
-            .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false, to_json)
-            .await?;
+        let receipt =
+            cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
         println!("{receipt}");
     }
 
