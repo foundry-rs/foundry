@@ -650,7 +650,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
 
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
-warning: Found unknown config section in foundry.toml: [default]
+Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
 

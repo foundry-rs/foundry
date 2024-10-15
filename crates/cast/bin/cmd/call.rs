@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::ens::NameOrAddress;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -200,10 +200,7 @@ impl CallArgs {
             return Ok(());
         }
 
-        println!(
-            "{}",
-            Cast::new(provider).call(&tx, func.as_ref(), block, shell::is_json()).await?
-        );
+        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block).await?);
 
         Ok(())
     }

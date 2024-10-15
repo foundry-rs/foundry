@@ -7,7 +7,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::str::FromStr;
 
@@ -61,7 +61,7 @@ impl AccessListArgs {
 
         let cast = Cast::new(&provider);
 
-        let access_list: String = cast.access_list(&tx, block, shell::is_json()).await?;
+        let access_list: String = cast.access_list(&tx, block).await?;
 
         println!("{access_list}");
 

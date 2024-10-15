@@ -2,7 +2,7 @@ use super::build::BuildArgs;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{evm::EvmArgs, shell, term::cli_warn};
+use foundry_common::{evm::EvmArgs, shell};
 use foundry_config::fix::fix_tomls;
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
@@ -30,7 +30,7 @@ impl ConfigArgs {
     pub fn run(self) -> Result<()> {
         if self.fix {
             for warning in fix_tomls() {
-                cli_warn!("{warning}");
+                sh_warn!("{warning}");
             }
             return Ok(())
         }

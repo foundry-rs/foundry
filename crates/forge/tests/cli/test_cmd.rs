@@ -2212,7 +2212,7 @@ Use --match-contract and --match-path to further limit the search.
 
 forgetest_init!(deprecated_regex_arg, |prj, cmd| {
     cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
-warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
+Warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
 
 "#]]);
 });

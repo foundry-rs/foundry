@@ -421,7 +421,7 @@ impl ScriptArgs {
 
                 if deployment_size > max_size {
                     prompt_user = self.should_broadcast();
-                    sh_warn!(
+                    sh_err!(
                         "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
                     );
                 }
