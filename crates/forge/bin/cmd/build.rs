@@ -61,7 +61,7 @@ pub struct BuildArgs {
     pub sizes: bool,
 
     /// Ignore initcode contract bytecode size limit introduced by EIP-3860
-    #[arg(long)]
+    #[arg(long, alias = "ignore-initcode-size")]
     #[serde(skip)]
     pub ignore_eip_3860: bool,
 
