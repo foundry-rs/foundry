@@ -63,15 +63,8 @@ impl Cheatcode for stopBroadcastCall {
 
 impl Cheatcode for getWalletsCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let script_wallets =
-            ccx.state.script_wallets().cloned().map(|sw| sw.signers().unwrap_or_default());
-
-        if let Some(script_wallets) = script_wallets {
-            let script_wallets: Vec<Address> = script_wallets.into_iter().collect();
-            Ok(script_wallets.abi_encode())
-        } else {
-            Ok(Default::default())
-        }
+        let wallets = ccx.state.wallets().signers().unwrap_or_default();
+        Ok(wallets.abi_encode())
     }
 }
 
@@ -135,6 +128,21 @@ impl Wallets {
     pub fn signers(&self) -> Result<Vec<Address>> {
         Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
     }
+
+    /// Number of signers in the [MultiWallet].
+    pub fn len(&self) -> usize {
+        let mut inner = self.inner.lock();
+        let signers = inner.multi_wallet.signers();
+        if signers.is_err() {
+            return 0;
+        }
+        signers.unwrap().len()
+    }
+
+    /// Whether the [MultiWallet] is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
@@ -148,16 +156,14 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
     let mut new_origin = new_origin.cloned();
 
     if new_origin.is_none() {
-        if let Some(script_wallets) = ccx.state.script_wallets() {
-            let mut script_wallets = script_wallets.inner.lock();
-            if let Some(provided_sender) = script_wallets.provided_sender {
-                new_origin = Some(provided_sender);
-            } else {
-                let signers = script_wallets.multi_wallet.signers()?;
-                if signers.len() == 1 {
-                    let address = signers.keys().next().unwrap();
-                    new_origin = Some(*address);
-                }
+        let mut wallets = ccx.state.wallets().inner.lock();
+        if let Some(provided_sender) = wallets.provided_sender {
+            new_origin = Some(provided_sender);
+        } else {
+            let signers = wallets.multi_wallet.signers()?;
+            if signers.len() == 1 {
+                let address = signers.keys().next().unwrap();
+                new_origin = Some(*address);
             }
         }
     }
@@ -175,7 +181,7 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
 }
 
 /// Sets up broadcasting from a script with the sender derived from `private_key`.
-/// Adds this private key to `state`'s `script_wallets` vector to later be used for signing
+/// Adds this private key to `state`'s `wallets` vector to later be used for signing
 /// if broadcast is successful.
 fn broadcast_key(ccx: &mut CheatsCtxt, private_key: &U256, single_call: bool) -> Result {
     let wallet = super::crypto::parse_wallet(private_key)?;
@@ -183,9 +189,8 @@ fn broadcast_key(ccx: &mut CheatsCtxt, private_key: &U256, single_call: bool) ->
 
     let result = broadcast(ccx, Some(&new_origin), single_call);
     if result.is_ok() {
-        if let Some(script_wallets) = ccx.state.script_wallets() {
-            script_wallets.add_local_signer(wallet);
-        }
+        let wallets = ccx.state.wallets();
+        wallets.add_local_signer(wallet);
     }
     result
 }
