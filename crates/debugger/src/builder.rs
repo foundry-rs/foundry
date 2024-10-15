@@ -1,4 +1,4 @@
-//! TUI debugger builder.
+//! Debugger builder.
 
 use crate::{node::flatten_call_trace, DebugNode, Debugger};
 use alloy_primitives::{map::AddressHashMap, Address};
