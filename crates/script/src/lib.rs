@@ -43,7 +43,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     executors::ExecutorBuilder,
     inspectors::{
-        cheatcodes::{BroadcastableTransactions, ScriptWallets},
+        cheatcodes::{BroadcastableTransactions, Wallets},
         CheatsConfig,
     },
     opts::EvmOpts,
@@ -207,7 +207,7 @@ pub struct ScriptArgs {
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
-            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -560,7 +560,7 @@ impl ScriptConfig {
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
-        script_wallets: ScriptWallets,
+        script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
     ) -> Result<ScriptRunner> {
@@ -569,7 +569,7 @@ impl ScriptConfig {
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(ContractsByArtifact, ScriptWallets, ArtifactId)>,
+        cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -611,12 +611,12 @@ impl ScriptConfig {
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),
-                            Some(script_wallets),
                             Some(target.name),
                             Some(target.version),
                         )
                         .into(),
                     )
+                    .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });
         }
