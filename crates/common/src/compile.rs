@@ -333,7 +333,7 @@ impl Display for SizeReport {
             Cell::new("Initcode Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
-        // Filters out dev contracts
+        // Filters out dev contracts (Test or Script)
         let contracts = self
             .contracts
             .iter()
