@@ -49,6 +49,11 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     cmd.args(["build", "--sizes"]).assert_failure();
 });
 
+forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
+    prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
+    cmd.args(["build", "--sizes", "--ignore-eip-3860"]).assert_success();
+});
+
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
