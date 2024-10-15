@@ -243,8 +243,8 @@ impl ProjectCompiler {
                 .collect();
 
             for (name, artifact) in artifacts {
-                let runtime_size = deployed_contract_size(artifact).unwrap_or_default();
-                let init_size = initcode_size(artifact).unwrap_or_default();
+                let runtime_size = contract_size(artifact, false).unwrap_or_default();
+                let init_size = contract_size(artifact, true).unwrap_or_default();
 
                 let is_dev_contract = artifact
                     .abi
@@ -378,37 +378,25 @@ impl Display for SizeReport {
     }
 }
 
-/// Returns the size of the deployed contract
-pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
-    let bytecode = artifact.get_deployed_bytecode_object()?;
+/// Returns the deployed or init size of the contract.
+fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
+    let bytecode = if initcode {
+        artifact.get_bytecode_object()?
+    } else {
+        artifact.get_deployed_bytecode_object()?
+    };
+
     let size = match bytecode.as_ref() {
         BytecodeObject::Bytecode(bytes) => bytes.len(),
         BytecodeObject::Unlinked(unlinked) => {
-            // we don't need to account for placeholders here, because library placeholders take up
-            // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
             let mut size = unlinked.as_bytes().len();
             if unlinked.starts_with("0x") {
                 size -= 2;
             }
-            // hex -> bytes
             size / 2
         }
     };
-    Some(size)
-}
 
-pub fn initcode_size<T: Artifact>(artifact: &T) -> Option<usize> {
-    let initcode = artifact.get_bytecode_object()?;
-    let size = match initcode.as_ref() {
-        BytecodeObject::Bytecode(bytes) => bytes.len(),
-        BytecodeObject::Unlinked(unlinked) => {
-            let mut size = unlinked.as_bytes().len();
-            if unlinked.starts_with("0x") {
-                size -= 2;
-            }
-            size / 2
-        }
-    };
     Some(size)
 }
 
