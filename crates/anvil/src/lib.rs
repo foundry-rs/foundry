@@ -131,7 +131,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// ```
 pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
-    logger.set_enabled(!shell::verbosity().is_quiet());
+    logger.set_enabled(!shell::is_quiet());
 
     let backend = Arc::new(config.setup().await);
 

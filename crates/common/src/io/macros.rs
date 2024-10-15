@@ -29,6 +29,8 @@ macro_rules! prompt {
 }
 
 /// Prints a formatted error to stderr.
+///
+/// **Note**: will log regardless of the verbosity level.
 #[macro_export]
 macro_rules! sh_err {
     ($($args:tt)*) => {
@@ -37,6 +39,8 @@ macro_rules! sh_err {
 }
 
 /// Prints a formatted warning to stderr.
+///
+/// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
 #[macro_export]
 macro_rules! sh_warn {
     ($($args:tt)*) => {
@@ -44,15 +48,9 @@ macro_rules! sh_warn {
     };
 }
 
-/// Prints a formatted note to stderr.
-#[macro_export]
-macro_rules! sh_note {
-    ($($args:tt)*) => {
-        $crate::__sh_dispatch!(note $($args)*).expect("failed to write note")
-    };
-}
-
 /// Prints a raw formatted message to stdout.
+///
+/// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
 #[macro_export]
 macro_rules! sh_print {
     ($($args:tt)*) => {
@@ -65,6 +63,8 @@ macro_rules! sh_print {
 }
 
 /// Prints a raw formatted message to stderr.
+///
+/// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
 #[macro_export]
 macro_rules! sh_eprint {
     ($($args:tt)*) => {
@@ -77,6 +77,8 @@ macro_rules! sh_eprint {
 }
 
 /// Prints a raw formatted message to stdout, with a trailing newline.
+///
+/// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
 #[macro_export]
 macro_rules! sh_println {
     () => {
@@ -101,6 +103,8 @@ macro_rules! sh_println {
 }
 
 /// Prints a raw formatted message to stderr, with a trailing newline.
+///
+/// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
 #[macro_export]
 macro_rules! sh_eprintln {
     () => {
@@ -121,18 +125,6 @@ macro_rules! sh_eprintln {
 
     ($($args:tt)*) => {
         $crate::sh_eprint!("{}\n", ::core::format_args!($($args)*)).expect("failed to write line")
-    };
-}
-
-/// Prints a justified status header with an optional message.
-#[macro_export]
-macro_rules! sh_status {
-    ($header:expr) => {
-        $crate::Shell::status_header(&mut *$crate::Shell::get(), $header).expect("failed to write status header")
-    };
-
-    ($header:expr => $($args:tt)*) => {
-        $crate::Shell::status(&mut *$crate::Shell::get(), $header, ::core::format_args!($($args)*)).expect("failed to write status")
     };
 }
 
@@ -175,9 +167,6 @@ mod tests {
         sh_eprintln!();
         sh_eprintln!("eprintln");
         sh_eprintln!("eprintln {}", "arg");
-
-        sh_status!("status");
-        sh_status!("status" => "status {}", "arg");
     }
 
     #[test]

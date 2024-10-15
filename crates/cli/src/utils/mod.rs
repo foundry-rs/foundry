@@ -268,7 +268,7 @@ pub struct Git<'a> {
 impl<'a> Git<'a> {
     #[inline]
     pub fn new(root: &'a Path) -> Self {
-        Self { root, quiet: shell::verbosity().is_quiet(), shallow: false }
+        Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
     #[inline]

@@ -32,7 +32,12 @@ pub fn format() -> Format {
     Shell::get().format()
 }
 
-/// Returns whether the output format is JSON.
+/// Returns whether the verbosity level is [`Verbosity::Quiet`].
+pub fn is_quiet() -> bool {
+    verbosity().is_quiet()
+}
+
+/// Returns whether the output format is [`Format::Json`].
 pub fn is_json() -> bool {
     format() == Format::Json
 }
@@ -349,32 +354,6 @@ impl Shell {
         }
     }
 
-    /// Shortcut to right-align and color green a status message.
-    #[inline]
-    pub fn status<T, U>(&mut self, status: T, message: U) -> Result<()>
-    where
-        T: fmt::Display,
-        U: fmt::Display,
-    {
-        self.print(&status, Some(&message), &HEADER, true)
-    }
-
-    /// Shortcut to right-align and color cyan a status without a message.
-    #[inline]
-    pub fn status_header(&mut self, status: impl fmt::Display) -> Result<()> {
-        self.print(&status, None, &NOTE, true)
-    }
-
-    /// Shortcut to right-align a status message.
-    #[inline]
-    pub fn status_with_color<T, U>(&mut self, status: T, message: U, color: &Style) -> Result<()>
-    where
-        T: fmt::Display,
-        U: fmt::Display,
-    {
-        self.print(&status, Some(&message), color, true)
-    }
-
     /// Runs the callback only if we are in verbose mode.
     #[inline]
     pub fn verbose(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
@@ -394,6 +373,8 @@ impl Shell {
     }
 
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
+    ///
+    /// **Note**: will log regardless of the verbosity level.
     #[inline]
     pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
         self.maybe_err_erase_line();

@@ -14,7 +14,7 @@ pub struct ShellOpts {
     #[clap(short, long, global = true, alias = "silent", conflicts_with = "verbose")]
     pub quiet: bool,
 
-    /// Format log messages as JSON.
+    /// Format output as JSON.
     #[clap(long, global = true)]
     pub json: bool,
 

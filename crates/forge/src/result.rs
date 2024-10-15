@@ -158,7 +158,7 @@ impl TestOutcome {
             return Ok(());
         }
 
-        if !shell::verbosity().is_normal() {
+        if shell::is_quiet() {
             // TODO: Avoid process::exit
             std::process::exit(1);
         }

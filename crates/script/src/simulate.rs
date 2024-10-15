@@ -16,7 +16,7 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, shell, ContractData};
+use foundry_common::{get_contract_name, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -219,11 +219,10 @@ impl PreSimulationState {
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
     async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
-        if !shell::verbosity().is_quiet() {
-            let n = rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
-            println!("\n## Setting up {n} EVM{s}.");
-        }
+
+        let n = rpcs.len();
+        let s = if n != 1 { "s" } else { "" };
+        sh_println!("\n## Setting up {n} EVM{s}.");
 
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
