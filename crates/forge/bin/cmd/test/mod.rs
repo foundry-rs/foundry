@@ -1065,7 +1065,6 @@ contract FooBarTest is DSTest {
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
-            "--silent",
         ]);
 
         let outcome = args.run().await.unwrap();

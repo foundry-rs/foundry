@@ -568,6 +568,7 @@ mod tests {
 
         cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
+...
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
