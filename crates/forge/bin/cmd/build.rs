@@ -2,7 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
     utils::source_files_iter,
@@ -95,7 +95,9 @@ impl BuildArgs {
 
         let output = compiler.compile(&project)?;
 
-        sh_eprintln!("{}", serde_json::to_string_pretty(&output.output())?);
+        if shell::is_json() {
+            sh_eprintln!("{}", serde_json::to_string_pretty(&output.output())?);
+        }
 
         Ok(output)
     }
