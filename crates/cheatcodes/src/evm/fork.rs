@@ -385,6 +385,16 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
             DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
         }
         DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
+        DynSolValue::Tuple(mut vals) => {
+            vals.iter_mut().for_each(|val| {
+                // Convert fixed bytes to bytes in tuple to prevent encoding issues.
+                // See: <https://github.com/foundry-rs/foundry/issues/7858>
+                if let DynSolValue::FixedBytes(bytes, size) = *val {
+                    *val = DynSolValue::Bytes(bytes.as_slice()[..size].to_vec());
+                }
+            });
+            DynSolValue::Tuple(vals)
+        }
         val => val,
     };
 
