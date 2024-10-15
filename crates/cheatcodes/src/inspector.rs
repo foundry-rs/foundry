@@ -37,6 +37,7 @@ use foundry_evm_core::{
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
+use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
@@ -529,9 +530,9 @@ impl Cheatcodes {
         }
     }
 
-    /// Returns the configured script wallets.
-    pub fn script_wallets(&self) -> Option<&Wallets> {
-        self.wallets.as_ref()
+    /// Returns the configured wallets if available, else creates a new instance.
+    pub fn wallets(&mut self) -> &Wallets {
+        self.wallets.get_or_insert(Wallets::new(MultiWallet::default(), None))
     }
 
     /// Sets the unlocked wallets.
