@@ -22,10 +22,12 @@ foundry-wallets.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
 
+alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
+alloy-rlp.workspace = true
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 
@@ -43,6 +45,7 @@ tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
 yansi.workspace = true
+serde_json.workspace = true
 
 tracing-tracy = { version = "0.11", optional = true }
 
