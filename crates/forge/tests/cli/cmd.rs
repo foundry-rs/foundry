@@ -30,7 +30,31 @@ Commands:
 ...
 
 Options:
-...
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Display options:
+      --color <COLOR>
+          Log messages coloring
+
+          Possible values:
+          - auto:   Intelligently guess whether to use color output (default)
+          - always: Force color output
+          - never:  Force disable color output
+
+      --json
+          Format output as JSON
+
+  -q, --quiet
+          Do not print log messages
+
+      --verbose
+          Use verbose output
+
+Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
 
 "#]]);
 });

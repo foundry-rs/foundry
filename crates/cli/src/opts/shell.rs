@@ -7,19 +7,26 @@ use foundry_common::shell::{ColorChoice, Shell, Verbosity};
 #[derive(Clone, Copy, Debug, Parser)]
 pub struct ShellOpts {
     /// Use verbose output.
-    #[clap(long, global = true, conflicts_with = "quiet")]
+    #[clap(long, global = true, conflicts_with = "quiet", help_heading = "Display options")]
     pub verbose: bool,
 
     /// Do not print log messages.
-    #[clap(short, long, global = true, alias = "silent", conflicts_with = "verbose")]
+    #[clap(
+        short,
+        long,
+        global = true,
+        alias = "silent",
+        conflicts_with = "verbose",
+        help_heading = "Display options"
+    )]
     pub quiet: bool,
 
     /// Format output as JSON.
-    #[clap(long, global = true)]
+    #[clap(long, global = true, help_heading = "Display options")]
     pub json: bool,
 
     /// Log messages coloring.
-    #[clap(long, global = true, value_enum)]
+    #[clap(long, global = true, value_enum, help_heading = "Display options")]
     pub color: Option<ColorChoice>,
 }
 
