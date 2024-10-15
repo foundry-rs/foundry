@@ -278,7 +278,7 @@ impl CompiledState {
                     &self.build_data.target,
                 )?;
 
-                sequence.save(true)?;
+                sequence.save(true, true)?;
                 sequence
             }
         };

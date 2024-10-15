@@ -198,7 +198,7 @@ impl BundledState {
 
         let errors = join_all(futs).await.into_iter().filter_map(Result::err).collect::<Vec<_>>();
 
-        self.sequence.save(false)?;
+        self.sequence.save(true, false)?;
 
         if !errors.is_empty() {
             return Err(eyre::eyre!("{}", errors.iter().format("\n")));
@@ -379,7 +379,7 @@ impl BundledState {
                             sequence.add_pending(index, tx_hash);
 
                             // Checkpoint save
-                            self.sequence.save(false)?;
+                            self.sequence.save(true, false)?;
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
@@ -387,7 +387,7 @@ impl BundledState {
                         }
 
                         // Checkpoint save
-                        self.sequence.save(false)?;
+                        self.sequence.save(true, false)?;
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                         progress
@@ -400,7 +400,7 @@ impl BundledState {
                             .await?
                     }
                     // Checkpoint save
-                    self.sequence.save(false)?;
+                    self.sequence.save(true, false)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }

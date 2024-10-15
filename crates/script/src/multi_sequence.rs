@@ -109,7 +109,7 @@ impl MultiChainSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self, save_ts: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
         self.timestamp = now().as_secs();
@@ -144,8 +144,10 @@ impl MultiChainSequence {
             fs::copy(&self.sensitive_path, &file)?;
         }
 
-        sh_println!("\nTransactions saved to: {}\n", self.path.display());
-        sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+        if !silent {
+            sh_println!("\nTransactions saved to: {}\n", self.path.display());
+            sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+        }
 
         Ok(())
     }

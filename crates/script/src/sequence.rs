@@ -30,10 +30,10 @@ pub enum ScriptSequenceKind {
 }
 
 impl ScriptSequenceKind {
-    pub fn save(&mut self, save_ts: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         match self {
-            Self::Single(sequence) => sequence.save(save_ts),
-            Self::Multi(sequence) => sequence.save(save_ts),
+            Self::Single(sequence) => sequence.save(silent, save_ts),
+            Self::Multi(sequence) => sequence.save(silent, save_ts),
         }
     }
 
@@ -74,7 +74,7 @@ impl ScriptSequenceKind {
 
 impl Drop for ScriptSequenceKind {
     fn drop(&mut self) {
-        if let Err(err) = self.save(true) {
+        if let Err(err) = self.save(false, true) {
             error!(?err, "could not save deployment sequence");
         }
     }
@@ -153,7 +153,7 @@ impl ScriptSequence {
     /// Saves the transactions as file if it's a standalone deployment.
     /// `save_ts` should be set to true for checkpoint updates, which might happen many times and
     /// could result in us saving many identical files.
-    pub fn save(&mut self, save_ts: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.sort_receipts();
 
         if self.transactions.is_empty() {
@@ -187,8 +187,10 @@ impl ScriptSequence {
             fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
         }
 
-        sh_println!("\nTransactions saved to: {}\n", path.display());
-        sh_println!("Sensitive values saved to: {}\n", sensitive_path.display());
+        if !silent {
+            sh_println!("\nTransactions saved to: {}\n", path.display());
+            sh_println!("Sensitive values saved to: {}\n", sensitive_path.display());
+        }
 
         Ok(())
     }

@@ -1740,7 +1740,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
-Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
+
 
 ==========================
 
@@ -1763,6 +1763,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 
