@@ -60,10 +60,15 @@ impl PreSimulationState {
                 let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
                 let sender = tx.transaction.from().expect("all transactions should have a sender");
                 let nonce = tx.transaction.nonce().expect("all transactions should have a sender");
+                let to = tx.transaction.to();
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
-                builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;
-                builder.set_create(false, sender.create(nonce), &address_to_abi)?;
+
+                if let Some(TxKind::Call(_)) = to {
+                    builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;
+                } else {
+                    builder.set_create(false, sender.create(nonce), &address_to_abi)?;
+                }
 
                 Ok(builder.build())
             })
