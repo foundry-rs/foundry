@@ -5,15 +5,13 @@ use alloy_network::{
 };
 use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
-use alloy_rlp::Decodable;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
-use cast::revm::primitives::SignedAuthorization;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::TransactionOpts,
+    opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
 };
 use foundry_common::ens::NameOrAddress;
@@ -134,7 +132,7 @@ pub struct CastTxBuilder<T, P, S> {
     tx: WithOtherFields<TransactionRequest>,
     legacy: bool,
     blob: bool,
-    auth: Option<String>,
+    auth: Option<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
     access_list: Option<Option<String>>,
@@ -319,10 +317,6 @@ where
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
 
-        if !fill {
-            return Ok((self.tx, self.state.func));
-        }
-
         if let Some(access_list) = match self.access_list {
             None => None,
             // --access-list provided with no value, call the provider to create it
@@ -335,6 +329,22 @@ where
             ),
         } {
             self.tx.set_access_list(access_list);
+        }
+
+        let tx_nonce = if let Some(nonce) = self.tx.nonce {
+            nonce
+        } else {
+            let nonce = self.provider.get_transaction_count(from).await?;
+            if fill {
+                self.tx.nonce = Some(nonce);
+            }
+            nonce
+        };
+
+        self.resolve_auth(sender, tx_nonce).await?;
+
+        if !fill {
+            return Ok((self.tx, self.state.func));
         }
 
         if self.legacy && self.tx.gas_price.is_none() {
@@ -361,16 +371,6 @@ where
             }
         }
 
-        let nonce = if let Some(nonce) = self.tx.nonce {
-            nonce
-        } else {
-            let nonce = self.provider.get_transaction_count(from).await?;
-            self.tx.nonce = Some(nonce);
-            nonce
-        };
-
-        self.resolve_auth(sender, nonce).await?;
-
         if self.tx.gas.is_none() {
             self.tx.gas = Some(self.provider.estimate_gas(&self.tx).await?);
         }
@@ -379,25 +379,27 @@ where
     }
 
     /// Parses the passed --auth value and sets the authorization list on the transaction.
-    async fn resolve_auth(&mut self, sender: SenderKind<'_>, nonce: u64) -> Result<()> {
-        let Some(auth) = &self.auth else { return Ok(()) };
+    async fn resolve_auth(&mut self, sender: SenderKind<'_>, tx_nonce: u64) -> Result<()> {
+        let Some(auth) = self.auth.take() else { return Ok(()) };
 
-        let auth = hex::decode(auth)?;
-        let auth = if let Ok(address) = Address::try_from(auth.as_slice()) {
-            let auth =
-                Authorization { chain_id: U256::from(self.chain.id()), nonce: nonce + 1, address };
+        let auth = match auth {
+            CliAuthorizationList::Address(address) => {
+                let auth = Authorization {
+                    chain_id: U256::from(self.chain.id()),
+                    nonce: tx_nonce + 1,
+                    address,
+                };
 
-            let Some(signer) = sender.as_signer() else {
-                eyre::bail!("No signer available to sign authorization");
-            };
-            let signature = signer.sign_hash(&auth.signature_hash()).await?;
+                let Some(signer) = sender.as_signer() else {
+                    eyre::bail!("No signer available to sign authorization");
+                };
+                let signature = signer.sign_hash(&auth.signature_hash()).await?;
 
-            auth.into_signed(signature)
-        } else if let Ok(auth) = SignedAuthorization::decode(&mut auth.as_ref()) {
-            auth
-        } else {
-            eyre::bail!("Failed to decode authorization");
+                auth.into_signed(signature)
+            }
+            CliAuthorizationList::Signed(auth) => auth,
         };
+
         self.tx.set_authorization_list(vec![auth]);
 
         Ok(())
