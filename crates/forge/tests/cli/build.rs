@@ -1,3 +1,5 @@
+use crate::test_helpers::generate_large_contract;
+
 use foundry_config::Config;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
@@ -40,6 +42,11 @@ contract Dummy {
   "build_infos": "{...}"
 }
 "#]].is_json());
+});
+
+forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
+    prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
+    cmd.args(["build", "--sizes"]).assert_failure();
 });
 
 // tests build output is as expected
