@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
-use crate::utils::parse_ether_value;
-use alloy_eips::eip7702::SignedAuthorization;
+use crate::utils::{parse_ether_value, parse_json};
+use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{hex, Address, U256, U64};
 use alloy_rlp::Decodable;
 use clap::Parser;
@@ -95,8 +95,8 @@ pub struct TransactionOpts {
     /// Accepts either a JSON-encoded access list or an empty value to create the access list
     /// via an RPC call to `eth_createAccessList`. To retrieve only the access list portion, use
     /// the `cast access-list` command.
-    #[arg(long)]
-    pub access_list: Option<Option<String>>,
+    #[arg(long, value_parser = parse_json::<AccessList>)]
+    pub access_list: Option<Option<AccessList>>,
 }
 
 #[cfg(test)]

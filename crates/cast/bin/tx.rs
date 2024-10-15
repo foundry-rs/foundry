@@ -9,7 +9,7 @@ use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRe
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
@@ -17,7 +17,6 @@ use foundry_cli::{
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
-use serde_json;
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -135,7 +134,7 @@ pub struct CastTxBuilder<T, P, S> {
     auth: Option<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
-    access_list: Option<Option<String>>,
+    access_list: Option<Option<AccessList>>,
     state: S,
     _t: std::marker::PhantomData<T>,
 }
@@ -317,20 +316,6 @@ where
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
 
-        if let Some(access_list) = match self.access_list {
-            None => None,
-            // --access-list provided with no value, call the provider to create it
-            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
-            // Access list provided as a string, attempt to parse it
-            Some(Some(ref s)) => Some(
-                serde_json::from_str::<AccessList>(s)
-                    .map(AccessList::from)
-                    .wrap_err("Failed to parse access list from string")?,
-            ),
-        } {
-            self.tx.set_access_list(access_list);
-        }
-
         let tx_nonce = if let Some(nonce) = self.tx.nonce {
             nonce
         } else {
@@ -342,6 +327,16 @@ where
         };
 
         self.resolve_auth(sender, tx_nonce).await?;
+
+        if let Some(access_list) = match self.access_list.take() {
+            None => None,
+            // --access-list provided with no value, call the provider to create it
+            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
+            // Access list provided as a string, attempt to parse it
+            Some(Some(access_list)) => Some(access_list),
+        } {
+            self.tx.set_access_list(access_list);
+        }
 
         if !fill {
             return Ok((self.tx, self.state.func));
