@@ -262,7 +262,7 @@ impl CallTraceDecoder {
     pub fn trace_addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
-    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
+    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone + 'a {
         arena
             .nodes()
             .iter()
@@ -270,9 +270,10 @@ impl CallTraceDecoder {
                 (
                     &node.trace.address,
                     node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
+                    node.trace.kind.is_any_create().then_some(&node.trace.data[..]),
                 )
             })
-            .filter(|&(address, _)| {
+            .filter(|&(address, _, _)| {
                 !self.labels.contains_key(address) || !self.contracts.contains_key(address)
             })
     }
