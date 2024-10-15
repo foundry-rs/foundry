@@ -1,4 +1,4 @@
-/// Prints a message to [`stdout`][io::stdout] and [reads a line from stdin into a String](read).
+/// Prints a message to [`stdout`][std::io::stdout] and reads a line from stdin into a String.
 ///
 /// Returns `Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
 ///

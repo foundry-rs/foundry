@@ -108,7 +108,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
+    #[arg(long, conflicts_with_all(["gas_report"]), help_heading = "Display options")]
     junit: bool,
 
     /// Stop running tests after the first failure.
@@ -179,6 +179,12 @@ impl TestArgs {
         // Set verbosity to quiet if junit is enabled.
         if self.junit {
             shell::set_verbosity(shell::Verbosity::Quiet);
+
+            // Ensure that junit is the only output format.
+            // This is a workaround for
+            if shell::is_json() {
+                eyre::bail!("Cannot use --junit and --json at the same time");
+            }
         }
 
         trace!(target: "forge::test", "executing test command");
