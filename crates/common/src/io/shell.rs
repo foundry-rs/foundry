@@ -22,6 +22,11 @@ pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
 }
 
+/// Sets the verbosity level of the output.
+pub fn set_verbosity(verbosity: Verbosity) {
+    Shell::get().set_verbosity(verbosity);
+}
+
 /// Returns the currently set output format.
 pub fn format() -> Format {
     Shell::get().format()
@@ -233,6 +238,12 @@ impl Shell {
             panic!("attempted to set global shell twice");
         }
         GLOBAL_SHELL.get_or_init(|| Mutex::new(self));
+    }
+
+    /// Sets the verbosity level of the shell.
+    #[inline]
+    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+        self.verbosity = verbosity;
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.

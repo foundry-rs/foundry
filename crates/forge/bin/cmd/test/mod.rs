@@ -176,6 +176,11 @@ impl TestArgs {
     }
 
     pub async fn run(self) -> Result<TestOutcome> {
+        // Set verbosity to quiet if junit is enabled.
+        if self.junit {
+            shell::set_verbosity(shell::Verbosity::Quiet);
+        }
+
         trace!(target: "forge::test", "executing test command");
         self.execute_tests().await
     }
@@ -292,7 +297,8 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler = ProjectCompiler::new().files(sources_to_compile);
+        let compiler =
+            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -466,7 +472,7 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json();
+        let silent = self.gas_report && shell::is_json() || self.junit;
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {

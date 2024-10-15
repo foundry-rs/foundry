@@ -3,7 +3,7 @@ use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
 
 // tests that json is printed when --json is passed
-forgetest!(compile_json, |prj, cmd| {
+forgetest!(can_compile_json, |prj, cmd| {
     prj.add_source(
         "jsonError",
         r"

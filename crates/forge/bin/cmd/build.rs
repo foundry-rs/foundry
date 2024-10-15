@@ -90,8 +90,11 @@ impl BuildArgs {
             }
         }
 
-        let compiler =
-            ProjectCompiler::new().files(files).print_names(self.names).print_sizes(self.sizes);
+        let compiler = ProjectCompiler::new()
+            .files(files)
+            .print_names(self.names)
+            .print_sizes(self.sizes)
+            .bail(!shell::is_json());
 
         let output = compiler.compile(&project)?;
 
