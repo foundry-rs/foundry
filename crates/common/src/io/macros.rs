@@ -53,8 +53,6 @@ macro_rules! sh_note {
 }
 
 /// Prints a raw formatted message to stdout.
-///
-/// **Note**: This macro is **not** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_print {
     ($($args:tt)*) => {
@@ -67,8 +65,6 @@ macro_rules! sh_print {
 }
 
 /// Prints a raw formatted message to stderr.
-///
-/// **Note**: This macro **is** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_eprint {
     ($($args:tt)*) => {
@@ -81,8 +77,6 @@ macro_rules! sh_eprint {
 }
 
 /// Prints a raw formatted message to stdout, with a trailing newline.
-///
-/// **Note**: This macro is **not** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_println {
     () => {
@@ -107,8 +101,6 @@ macro_rules! sh_println {
 }
 
 /// Prints a raw formatted message to stderr, with a trailing newline.
-///
-/// **Note**: This macro **is** affected by the `--quiet` flag.
 #[macro_export]
 macro_rules! sh_eprintln {
     () => {

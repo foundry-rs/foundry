@@ -31,7 +31,7 @@ use anvil_server::ServerConfig;
 use eyre::Result;
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
-    sh_eprintln, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -907,7 +907,7 @@ impl NodeConfig {
             .expect("Failed writing json");
         }
 
-        sh_eprintln!("{}", self.as_string(fork))
+        sh_println!("{}", self.as_string(fork))
     }
 
     /// Returns the path where the cache file should be stored

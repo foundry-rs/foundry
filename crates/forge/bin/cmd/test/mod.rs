@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -106,10 +106,6 @@ pub struct TestArgs {
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
-
-    /// Output test results in JSON format.
-    #[arg(long, help_heading = "Display options")]
-    json: bool,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
@@ -464,13 +460,13 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
-            return list(runner, filter, self.json);
+            return list(runner, filter);
         }
 
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && self.json;
+        let silent = self.gas_report && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -498,7 +494,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && self.json {
+        if !self.gas_report && shell::is_json() {
             let mut results = runner.test_collect(filter);
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
@@ -567,7 +563,7 @@ impl TestArgs {
             GasReport::new(
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
-                if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
+                if shell::is_json() { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
 
@@ -884,14 +880,10 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(
-    runner: MultiContractRunner,
-    filter: &ProjectPathsAwareFilter,
-    json: bool,
-) -> Result<TestOutcome> {
+fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
-    if json {
+    if shell::is_json() {
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {

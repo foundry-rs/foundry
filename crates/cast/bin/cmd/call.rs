@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -69,10 +69,6 @@ pub struct CallArgs {
     #[arg(long, short)]
     block: Option<BlockId>,
 
-    /// Print the decoded output as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
-
     /// Enable Alphanet features.
     #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
@@ -131,7 +127,6 @@ impl CallArgs {
             decode_internal,
             labels,
             data,
-            json,
             ..
         } = self;
 
@@ -205,7 +200,10 @@ impl CallArgs {
             return Ok(());
         }
 
-        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?);
+        println!(
+            "{}",
+            Cast::new(provider).call(&tx, func.as_ref(), block, shell::is_json()).await?
+        );
 
         Ok(())
     }

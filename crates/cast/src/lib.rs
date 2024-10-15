@@ -214,11 +214,11 @@ where
         &self,
         req: &WithOtherFields<TransactionRequest>,
         block: Option<BlockId>,
-        to_json: bool,
+        json: bool,
     ) -> Result<String> {
         let access_list =
             self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
-        let res = if to_json {
+        let res = if json {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =

@@ -25,10 +25,7 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
-
-Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
+...
 
 "#]]);
 });

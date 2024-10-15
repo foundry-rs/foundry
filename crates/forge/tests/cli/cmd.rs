@@ -30,10 +30,7 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
-
-Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
+...
 
 "#]]);
 });
@@ -225,12 +222,19 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -353,12 +357,18 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -387,14 +397,21 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
 
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
 "#]]);
+
     assert!(root.join("lib/forge-std").exists());
 });
 
@@ -422,14 +439,21 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
 
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
 "#]]);
+
     assert!(root.join("lib/forge-std").exists());
 
     // not overwritten

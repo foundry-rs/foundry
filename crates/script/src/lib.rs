@@ -30,7 +30,7 @@ use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
-    ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
@@ -170,10 +170,6 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Output results in JSON format.
-    #[arg(long)]
-    pub json: bool,
-
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
     /// specified in wei, or as a string with a unit type.
     ///
@@ -249,7 +245,7 @@ impl ScriptArgs {
                 return pre_simulation.run_debugger()
             }
 
-            if pre_simulation.args.json {
+            if shell::is_json() {
                 pre_simulation.show_json()?;
             } else {
                 pre_simulation.show_traces().await?;
@@ -268,7 +264,7 @@ impl ScriptArgs {
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                sh_warn!("\nIf you wish to simulate on-chain transactions pass a RPC URL.");
+                sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.");
                 return Ok(());
             }
 

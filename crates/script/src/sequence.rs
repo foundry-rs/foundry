@@ -187,8 +187,8 @@ impl ScriptSequence {
             fs::copy(&sensitive_path, sensitive_path.with_file_name(&ts_name))?;
         }
 
-        sh_eprintln!("\nTransactions saved to: {}\n", path.display());
-        sh_eprintln!("Sensitive values saved to: {}\n", sensitive_path.display());
+        sh_println!("\nTransactions saved to: {}\n", path.display());
+        sh_println!("Sensitive values saved to: {}\n", sensitive_path.display());
 
         Ok(())
     }

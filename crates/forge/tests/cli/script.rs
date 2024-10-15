@@ -1010,12 +1010,19 @@ struct Transaction {
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1132,12 +1139,19 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1299,12 +1313,19 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
 });
 
 forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1380,12 +1401,19 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1613,12 +1641,19 @@ Error: Multiple functions with the same name `run` found in the ABI
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 

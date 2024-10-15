@@ -26,7 +26,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -83,10 +82,10 @@ impl CoverageArgs {
         config.ast = true;
 
         let (project, output) = self.build(&config)?;
-        sh_eprintln!("Analysing contracts...");
+        sh_println!("Analysing contracts...");
         let report = self.prepare(&project, &output)?;
 
-        sh_eprintln!("Running tests...");
+        sh_println!("Running tests...");
         self.collect(project, &output, report, Arc::new(config), evm_opts).await
     }
 
@@ -107,14 +106,13 @@ impl CoverageArgs {
             }
 
             // print warning message
-            let msg = concat!(
+            sh_warn!("{}", concat!(
                 "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
                  which can result in inaccurate source mappings.\n",
                 "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
                 "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
                 "See more: https://github.com/foundry-rs/foundry/issues/3357",
-            ).yellow();
-            sh_eprintln!("{}", msg);
+            ));
 
             // Enable viaIR with minimum optimization
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350

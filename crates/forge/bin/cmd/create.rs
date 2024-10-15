@@ -18,6 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self},
     fmt::parse_tokens,
+    shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use foundry_config::{
@@ -55,10 +56,6 @@ pub struct CreateArgs {
         value_name = "PATH",
     )]
     constructor_args_path: Option<PathBuf>,
-
-    /// Print the deployment information as JSON.
-    #[arg(long, help_heading = "Display options")]
-    json: bool,
 
     /// Verify contract after creation.
     #[arg(long)]
@@ -315,7 +312,7 @@ impl CreateArgs {
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         let address = deployed_contract;
-        if self.json {
+        if shell::is_json() {
             let output = json!({
                 "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),

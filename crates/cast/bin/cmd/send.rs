@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{cli_warn, ens::NameOrAddress};
+use foundry_common::{cli_warn, ens::NameOrAddress, shell};
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
@@ -38,10 +38,6 @@ pub struct SendTxArgs {
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
     confirmations: u64,
-
-    /// Print the transaction receipt as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
 
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
@@ -98,7 +94,6 @@ impl SendTxArgs {
             mut args,
             tx,
             confirmations,
-            json: to_json,
             command,
             unlocked,
             path,
@@ -159,7 +154,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout, shell::is_json()).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -178,7 +173,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .on_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout, shell::is_json()).await
         }
     }
 }

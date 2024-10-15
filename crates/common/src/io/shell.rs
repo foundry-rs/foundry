@@ -390,18 +390,14 @@ impl Shell {
     }
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
+    ///
+    /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     #[inline]
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
             _ => self.print(&"Warning", Some(&message), &WARN, false),
         }
-    }
-
-    /// Prints a cyan 'note' message. Use the [`sh_note!`] macro instead.
-    #[inline]
-    pub fn note(&mut self, message: impl fmt::Display) -> Result<()> {
-        self.print(&"Note", Some(&message), &NOTE, false)
     }
 
     /// Write a styled fragment.
@@ -414,10 +410,14 @@ impl Shell {
 
     /// Write a styled fragment with the default color. Use the [`sh_print!`] macro instead.
     ///
-    /// **Note**: `verbosity` is ignored.
+    /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     #[inline]
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        self.write_stdout(fragment, &Style::new())
+        if self.verbosity == Verbosity::Quiet {
+            Ok(())
+        } else {
+            self.write_stdout(fragment, &Style::new())
+        }
     }
 
     /// Write a styled fragment
@@ -438,16 +438,6 @@ impl Shell {
         } else {
             self.write_stderr(fragment, &Style::new())
         }
-    }
-
-    /// Serializes an object to JSON and prints it to `stdout`.
-    #[inline]
-    pub fn print_json(&mut self, obj: &impl serde::Serialize) -> Result<()> {
-        // Path may fail to serialize to JSON ...
-        let encoded = serde_json::to_string(&obj)?;
-        // ... but don't fail due to a closed pipe.
-        let _ = writeln!(self.out(), "{encoded}");
-        Ok(())
     }
 
     /// Prints a message, where the status will have `color` color, and can be justified. The

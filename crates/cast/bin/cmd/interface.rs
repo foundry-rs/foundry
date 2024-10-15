@@ -4,7 +4,7 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::opts::EtherscanOpts;
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::{compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{info::ContractInfo, utils::canonicalize};
 use foundry_config::{load_config_with_root, try_find_project_root, Config};
 use itertools::Itertools;
@@ -44,17 +44,13 @@ pub struct InterfaceArgs {
     )]
     output: Option<PathBuf>,
 
-    /// If specified, the interface will be output as JSON rather than Solidity.
-    #[arg(long, short)]
-    json: bool,
-
     #[command(flatten)]
     etherscan: EtherscanOpts,
 }
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, name, pragma, output: output_location, etherscan, json } = self;
+        let Self { contract, name, pragma, output: output_location, etherscan } = self;
 
         // Determine if the target contract is an ABI file, a local contract or an Ethereum address.
         let abis = if Path::new(&contract).is_file() &&
@@ -75,7 +71,7 @@ impl InterfaceArgs {
         let interfaces = get_interfaces(abis)?;
 
         // Print result or write to file.
-        let res = if json {
+        let res = if shell::is_json() {
             // Format as JSON.
             interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
         } else {
