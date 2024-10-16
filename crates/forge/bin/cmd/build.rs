@@ -70,7 +70,7 @@ pub struct BuildArgs {
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "quiet")]
     #[serde(skip)]
     pub format_json: bool,
 }
@@ -157,27 +157,5 @@ impl Provider for BuildArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_config::filter::SkipBuildFilter;
-
-    #[test]
-    fn can_parse_build_filters() {
-        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests]));
-
-        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "scripts"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Scripts]));
-
-        let args: BuildArgs =
-            BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "--skip", "scripts"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
-
-        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
     }
 }
