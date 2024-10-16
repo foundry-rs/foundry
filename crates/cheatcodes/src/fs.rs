@@ -5,6 +5,7 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_provider::network::ReceiptResponse;
 use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
@@ -629,28 +630,43 @@ fn prompt(
     }
 }
 
-impl Cheatcode for getDeploymentCall {
+impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { contractName, chainId } = self;
+        let Self { contractName, chainId, txType } = self;
 
-        let broadcast = BroadcastReader::new(contractName.clone(), *chainId);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, *txType);
 
-        let deployment = broadcast.find_latest(&state.config.root)?;
+        let broadcast = reader.find_latest(&state.config.root)?;
 
-        let (_tx, receipt) = broadcast.parse_deployment(deployment)?;
+        let (tx, receipt) = reader.parse_broadcast(broadcast)?;
 
-        Ok(receipt.transaction_hash.abi_encode())
+        let summary = BroadcastTxSummary {
+            txHash: receipt.transaction_hash,
+            blockNumber: receipt.block_number.unwrap_or_default(),
+            txType: *txType,
+            contractAddress: tx.contract_address.unwrap_or_default(),
+            success: receipt.status(),
+        };
+
+        Ok(summary.abi_encode())
     }
 }
 
 struct BroadcastReader {
     contract_name: String,
     chain_id: u64,
+    tx_type: CallKind,
 }
 
 impl BroadcastReader {
-    fn new(contract_name: String, chain_id: u64) -> Self {
-        Self { contract_name, chain_id }
+    fn new(contract_name: String, chain_id: u64, tx_type: BroadcastTxType) -> Self {
+        let tx_type = match tx_type {
+            BroadcastTxType::Call => CallKind::Call,
+            BroadcastTxType::Create => CallKind::Create,
+            BroadcastTxType::Create2 => CallKind::Create2,
+            _ => unreachable!("invalid tx type"),
+        };
+        Self { contract_name, chain_id, tx_type }
     }
 
     fn read_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
@@ -665,31 +681,6 @@ impl BroadcastReader {
 
         fs::read_json_file(&broadcast_path.join("run-latest.json"))
             .map_err(|e| fmt_err!("failed reading deployment: {e}"))
-    }
-
-    fn parse_deployment(
-        &self,
-        deployment: ScriptSequence,
-    ) -> Result<(TransactionWithMetadata, AnyTransactionReceipt)> {
-        let tx = deployment.transactions.into_iter().find(|tx| {
-            tx.contract_name.clone().is_some_and(|cn| {
-                cn == self.contract_name &&
-                    (tx.opcode == CallKind::Create || tx.opcode == CallKind::Create2)
-            })
-        });
-
-        if let Some(tx) = tx {
-            let receipt = deployment
-                .receipts
-                .into_iter()
-                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
-
-            if let Some(receipt) = receipt {
-                return Ok((tx, receipt));
-            }
-        }
-
-        bail!("deployment not found");
     }
 
     fn find_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
@@ -730,6 +721,30 @@ impl BroadcastReader {
             .ok_or_else(|| fmt_err!("no deployments found"))?;
 
         Ok(target)
+    }
+
+    fn parse_broadcast(
+        &self,
+        broadcast: ScriptSequence,
+    ) -> Result<(TransactionWithMetadata, AnyTransactionReceipt)> {
+        let tx = broadcast.transactions.into_iter().find(|tx| {
+            tx.contract_name
+                .clone()
+                .is_some_and(|cn| cn == self.contract_name && tx.opcode == self.tx_type)
+        });
+
+        if let Some(tx) = tx {
+            let receipt = broadcast
+                .receipts
+                .into_iter()
+                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
+
+            if let Some(receipt) = receipt {
+                return Ok((tx, receipt));
+            }
+        }
+
+        bail!("deployment not found");
     }
 }
 
