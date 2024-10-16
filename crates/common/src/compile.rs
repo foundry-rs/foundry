@@ -351,8 +351,9 @@ pub struct ContractInfo {
 pub fn compile_target<C: Compiler>(
     target_path: &Path,
     project: &Project<C>,
+    quiet: bool,
 ) -> Result<ProjectCompileOutput<C>> {
-    ProjectCompiler::new().files([target_path.into()]).compile(project)
+    ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
 /// Creates a [Project] from an Etherscan source.

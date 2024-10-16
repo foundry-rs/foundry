@@ -85,7 +85,7 @@ impl SelectorsSubcommands {
                 let project = build_args.project()?;
                 let output = if let Some(name) = &contract {
                     let target_path = project.find_contract_path(name)?;
-                    compile_target(&target_path, &project)?
+                    compile_target(&target_path, &project, false)?
                 } else {
                     ProjectCompiler::new().compile(&project)?
                 };

@@ -180,7 +180,7 @@ impl TestArgs {
     }
 
     pub async fn run(self) -> Result<TestOutcome> {
-        // Set verbosity to quiet if junit is enabled.
+        // Set verbosity to quiet if JUnit is enabled to avoid logging test summary.
         if self.junit {
             shell::set_verbosity(shell::Verbosity::Quiet);
         }

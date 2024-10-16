@@ -56,13 +56,13 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    /// Verify contract after creation.
-    #[arg(long)]
-    verify: bool,
-
     /// Print the deployment information as JSON.
     #[arg(long, help_heading = "Display options")]
     json: bool,
+
+    /// Verify contract after creation.
+    #[arg(long)]
+    verify: bool,
 
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[arg(long, requires = "from")]
@@ -108,7 +108,7 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output = compile::compile_target(&target_path, &project)?;
+        let mut output = compile::compile_target(&target_path, &project, self.json)?;
 
         let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 
