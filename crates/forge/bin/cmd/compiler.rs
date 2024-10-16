@@ -33,10 +33,11 @@ pub enum CompilerSubcommands {
 struct ResolvedCompiler {
     /// Compiler version.
     version: Version,
-    #[serde(skip_serializing_if = "Option::is_none")]
     /// Max supported EVM version of compiler.
+    #[serde(skip_serializing_if = "Option::is_none")]
     evm_version: Option<EvmVersion>,
     /// Source paths.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     paths: Vec<String>,
 }
 
@@ -56,7 +57,9 @@ pub struct ResolveArgs {
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
     ///
     /// Verbosity levels:
-    /// - 2: Print source paths.
+    /// - 0: Print compiler versions.
+    /// - 1: Print compiler version and source paths.
+    /// - 2: Print compiler version, source paths and max supported EVM version of the compiler.
     #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count, help_heading = "Display options")]
     pub verbosity: u8,
 
@@ -127,6 +130,12 @@ impl ResolveArgs {
 
             // Skip language if no paths are found after filtering.
             if !versions_with_paths.is_empty() {
+                // Clear paths if verbosity is 0, performed only after filtering to avoid being
+                // skipped.
+                if verbosity == 0 {
+                    versions_with_paths.iter_mut().for_each(|version| version.paths.clear());
+                }
+
                 output.insert(language.to_string(), versions_with_paths);
             }
         }

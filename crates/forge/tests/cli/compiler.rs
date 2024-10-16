@@ -87,6 +87,23 @@ Solidity:
 "#]]);
 });
 
+forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
+    prj.add_source("ContractA", CONTRACT_A).unwrap();
+
+    cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+   "Solidity":[
+      {
+         "version":"0.8.4"
+      }
+   ]
+}
+"#]]
+        .is_json(),
+    );
+});
+
 forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
@@ -102,11 +119,11 @@ Solidity:
 "#]]);
 });
 
-forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
+forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
 
-    cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
+    cmd.args(["compiler", "resolve", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
 {
   "Solidity": [
@@ -174,7 +191,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
     prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
-    cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json"])
+    cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json", "-v"])
         .assert_success()
         .stdout_eq(
             str![[r#"
@@ -197,7 +214,6 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
     }
   ]
 }
-
 "#]]
             .is_json(),
         );
@@ -234,7 +250,7 @@ Vyper:
 "#]]);
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
+forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A).unwrap();
     prj.add_source("ContractB", CONTRACT_B).unwrap();
     prj.add_source("ContractC", CONTRACT_C).unwrap();
