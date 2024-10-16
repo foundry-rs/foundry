@@ -220,13 +220,13 @@ Solidity:
 0.8.11 (<= london):
 └── src/ContractB.sol
 
-0.8.27 (<= cancun):
+0.8.27 (<= [..]):
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
 Vyper:
 
-0.4.0 (<= cancun):
+0.4.0 (<= [..]):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -262,7 +262,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
     },
     {
       "version": "0.8.27",
-      "evm_version": "Cancun",
+      "evm_version": "[..]",
       "paths": [
         "src/ContractC.sol",
         "src/ContractD.sol"
@@ -272,7 +272,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
   "Vyper": [
     {
       "version": "0.4.0",
-      "evm_version": "Cancun",
+      "evm_version": "[..]",
       "paths": [
         "src/Counter.vy",
         "src/ICounter.vyi"
