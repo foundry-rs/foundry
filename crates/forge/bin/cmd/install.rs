@@ -206,7 +206,7 @@ impl DependencyInstallOpts {
 }
 
 pub fn install_missing_dependencies(config: &mut Config) -> bool {
-    DependencyInstallOpts { ..Default::default() }.install_missing_dependencies(config)
+    DependencyInstallOpts::default().install_missing_dependencies(config)
 }
 
 #[derive(Clone, Copy, Debug)]
