@@ -1,5 +1,5 @@
 use super::Result;
-use crate::{script::ScriptWallets, Vm::Rpc};
+use crate::Vm::Rpc;
 use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -43,8 +43,6 @@ pub struct CheatsConfig {
     pub evm_opts: EvmOpts,
     /// Address labels from config
     pub labels: AddressHashMap<String>,
-    /// Script wallets
-    pub script_wallets: Option<ScriptWallets>,
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
@@ -65,7 +63,6 @@ impl CheatsConfig {
         config: &Config,
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
-        script_wallets: Option<ScriptWallets>,
         running_contract: Option<String>,
         running_version: Option<Version>,
     ) -> Self {
@@ -93,7 +90,6 @@ impl CheatsConfig {
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
-            script_wallets,
             available_artifacts,
             running_contract,
             running_version,
@@ -223,7 +219,6 @@ impl Default for CheatsConfig {
             allowed_paths: vec![],
             evm_opts: Default::default(),
             labels: Default::default(),
-            script_wallets: None,
             available_artifacts: Default::default(),
             running_contract: Default::default(),
             running_version: Default::default(),
@@ -242,7 +237,6 @@ mod tests {
         CheatsConfig::new(
             &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             Default::default(),
-            None,
             None,
             None,
             None,

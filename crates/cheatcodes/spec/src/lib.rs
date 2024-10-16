@@ -85,6 +85,7 @@ impl Cheatcodes<'static> {
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
                 Vm::Gas::STRUCT.clone(),
+                Vm::DebugStep::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),

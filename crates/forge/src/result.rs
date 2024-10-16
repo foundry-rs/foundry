@@ -389,6 +389,10 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
+    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    /// Used for json output.
+    pub decoded_logs: Vec<String>,
+
     /// What kind of test this was
     pub kind: TestKind,
 

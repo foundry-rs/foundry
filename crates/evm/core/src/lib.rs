@@ -21,6 +21,7 @@ pub mod abi {
 mod ic;
 
 pub mod backend;
+pub mod buffer;
 pub mod constants;
 pub mod decode;
 pub mod fork;

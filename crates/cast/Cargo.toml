@@ -1,5 +1,5 @@
 [package]
-name = "foundry-cast"
+name = "cast"
 description = "Command-line tool for performing Ethereum RPC calls"
 
 version.workspace = true
@@ -54,7 +54,6 @@ alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 
 chrono.workspace = true
-evm-disassembler.workspace = true
 eyre.workspace = true
 futures.workspace = true
 rand.workspace = true
@@ -90,8 +89,9 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
+
 async-trait.workspace = true
-criterion = "0.5"
+divan.workspace = true
 
 [features]
 default = ["rustls", "jemalloc"]
