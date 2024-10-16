@@ -533,8 +533,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::HashMessage { message } => {
             let message = stdin::unwrap_line(message)?;
-            let input = message.as_bytes().to_vec();
-            println!("{}", eip191_hash_message(input));
+            println!("{}", eip191_hash_message(message));
         }
         CastSubcommand::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
