@@ -5293,6 +5293,26 @@
     },
     {
       "func": {
+        "id": "getDeployment",
+        "description": "Returns the most recent deployment for the given contract on `chainId`",
+        "declaration": "function getDeployment(string memory contractName, uint64 chainId) external returns (bytes32 txHash);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getDeployment(string,uint64)",
+        "selector": "0x0debd5d6",
+        "selectorBytes": [
+          13,
+          235,
+          213,
+          214
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getFoundryVersion",
         "description": "Returns the Foundry version.\nFormat: <cargo_version>+<git_sha>+<build_timestamp>\nSample output: 0.2.0+faa94c384+202407110019\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)\nto compare timestamps while ignoring minor time differences.",
         "declaration": "function getFoundryVersion() external view returns (string memory version);",
