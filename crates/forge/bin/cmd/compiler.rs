@@ -13,9 +13,9 @@ pub struct CompilerArgs {
 }
 
 impl CompilerArgs {
-    pub async fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         match self.sub {
-            CompilerSubcommands::Resolve(args) => args.run().await,
+            CompilerSubcommands::Resolve(args) => args.run(),
         }
     }
 }
@@ -53,7 +53,7 @@ pub struct ResolveArgs {
 }
 
 impl ResolveArgs {
-    pub async fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         let Self { root, skip, verbosity, json } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
