@@ -45,7 +45,7 @@ pub struct ProjectCompiler {
     bail: Option<bool>,
 
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
-    ignore_eip_3860: Option<bool>,
+    ignore_eip_3860: bool,
 
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
@@ -68,7 +68,7 @@ impl ProjectCompiler {
             print_sizes: None,
             quiet: Some(crate::shell::verbosity().is_silent()),
             bail: None,
-            ignore_eip_3860: None,
+            ignore_eip_3860: false,
             files: Vec::new(),
         }
     }
@@ -121,7 +121,7 @@ impl ProjectCompiler {
     /// Sets whether to ignore EIP-3860 initcode size limits.
     #[inline]
     pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
-        self.ignore_eip_3860 = Some(yes);
+        self.ignore_eip_3860 = yes;
         self
     }
 
@@ -270,7 +270,7 @@ impl ProjectCompiler {
             }
 
             // Check size limits only if not ignoring EIP-3860
-            if !self.ignore_eip_3860.unwrap_or(false) && size_report.exceeds_initcode_size_limit() {
+            if !self.ignore_eip_3860 && size_report.exceeds_initcode_size_limit() {
                 std::process::exit(1);
             }
         }
