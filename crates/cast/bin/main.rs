@@ -533,10 +533,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::HashMessage { message } => {
             let message = stdin::unwrap_line(message)?;
-            let input = match message.strip_prefix("0x") {
-                Some(hex_str) => hex::decode(hex_str)?,
-                None => message.as_bytes().to_vec(),
-            };
+            let input = message.as_bytes().to_vec();
             println!("{}", eip191_hash_message(input));
         }
         CastSubcommand::SigEvent { event_string } => {
