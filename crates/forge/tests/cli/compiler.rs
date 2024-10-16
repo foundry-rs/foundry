@@ -109,7 +109,7 @@ forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
     cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {"Solidity":[["0.8.27",["src/ContractC.sol","src/ContractD.sol"]]]}"#]]
-        .is_jsonlines(),
+        .is_json(),
     );
 });
 
@@ -167,7 +167,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
             .assert_success()
             .stdout_eq(str![[r#"
 {"Solidity":[["0.8.27",["src/ContractD.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vyi"]]]}
-"#]].is_jsonlines());
+"#]].is_json());
 });
 
 forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
@@ -213,6 +213,6 @@ forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
         str![[r#"
 {"Solidity":[["0.8.4",["src/ContractA.sol"]],["0.8.11",["src/ContractB.sol"]],["0.8.27",["src/ContractC.sol","src/ContractD.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vyi"]]]}
 "#]]
-        .is_jsonlines(),
+        .is_json(),
     );
 });
