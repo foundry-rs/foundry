@@ -1,4 +1,4 @@
-use crate::test_helpers::generate_large_contract;
+use crate::utils::generate_large_contract;
 
 use foundry_config::Config;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str};
@@ -46,12 +46,12 @@ contract Dummy {
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
-    cmd.args(["build", "--sizes"]).assert_failure();
+    cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#""#]]);
 });
 
 forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
     prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
-    cmd.args(["build", "--sizes", "--ignore-eip-3860"]).assert_success();
+    cmd.args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(str![[r#""#]]);
 });
 
 // tests build output is as expected

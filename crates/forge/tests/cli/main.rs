@@ -21,7 +21,6 @@ mod script;
 mod soldeer;
 mod svm;
 mod test_cmd;
-mod test_helpers;
 mod verify;
 mod verify_bytecode;
 
