@@ -275,13 +275,17 @@ impl Backend {
             // Insert EXP ERC20 contract
             let _ = db.set_code(EXP_ERC20_CONTRACT, Bytes::from_static(EXP_ERC20_RUNTIME_CODE));
 
-            let init_balance = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
-            let _ = db.set_balance(EXECUTOR, init_balance); // 10K ETH
+            let init_balance = Unit::ETHER.wei().saturating_mul(U256::from(10_000)); // 10K ETH
+
+            // Add ETH
+            let _ = db.set_balance(EXP_ERC20_CONTRACT, init_balance);
+            let _ = db.set_balance(EXECUTOR, init_balance);
 
             let mut capabilities = WalletCapabilities::default();
 
+            let chain_id = env.read().cfg.chain_id;
             capabilities.0.insert(
-                31337,
+                chain_id,
                 Capabilities {
                     delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
                 },
