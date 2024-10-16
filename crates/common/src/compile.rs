@@ -344,8 +344,8 @@ impl Display for SizeReport {
             let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
 
             let runtime_color = match contract.runtime_size {
-                0..=17999 => Color::Reset,
-                18000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
+                ..=18_000 => Color::Reset,
+                ..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
                 _ => Color::Red,
             };
 
