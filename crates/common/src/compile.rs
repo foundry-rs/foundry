@@ -350,8 +350,8 @@ impl Display for SizeReport {
             };
 
             let init_color = match contract.init_size {
-                0..=35999 => Color::Reset,
-                36000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
+                ..=36_000 => Color::Reset,
+                ..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
                 _ => Color::Red,
             };
 
