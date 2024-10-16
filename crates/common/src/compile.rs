@@ -63,7 +63,7 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: Some(crate::shell::is_quiet() || crate::shell::is_json()),
+            quiet: Some(crate::shell::is_quiet()),
             bail: None,
             files: Vec::new(),
         }

@@ -11,7 +11,7 @@ use cast::revm::primitives::{Authorization, U256};
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{opts::RpcOpts, utils};
-use foundry_common::{fs, shell};
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
@@ -49,6 +49,10 @@ pub enum WalletSubcommands {
         /// Number of wallets to generate.
         #[arg(long, short, default_value = "1")]
         number: u32,
+
+        /// Output generated wallets as JSON.
+        #[arg(long, short, default_value = "false")]
+        json: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -211,10 +215,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, .. } => {
+            Self::New { path, unsafe_password, number, json, .. } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
+                let mut json_values = if json { Some(vec![]) } else { None };
                 if let Some(path) = path {
                     let path = match dunce::canonicalize(path.clone()) {
                         Ok(path) => path,

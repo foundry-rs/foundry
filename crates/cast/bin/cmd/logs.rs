@@ -49,14 +49,26 @@ pub struct LogsArgs {
     #[arg(long)]
     subscribe: bool,
 
+    /// Print the logs as JSON.s
+    #[arg(long, short, help_heading = "Display options")]
+    json: bool,
+
     #[command(flatten)]
     eth: EthereumOpts,
 }
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
-            self;
+        let Self {
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            json,
+            eth,
+        } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -76,7 +88,7 @@ impl LogsArgs {
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs(filter).await?;
+            let logs = cast.filter_logs(filter, json).await?;
 
             println!("{logs}");
 
@@ -92,7 +104,7 @@ impl LogsArgs {
             .await?;
         let cast = Cast::new(&provider);
         let mut stdout = io::stdout();
-        cast.subscribe(filter, &mut stdout).await?;
+        cast.subscribe(filter, &mut stdout, json).await?;
 
         Ok(())
     }

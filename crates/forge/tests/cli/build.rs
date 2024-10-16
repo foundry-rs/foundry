@@ -2,8 +2,8 @@ use foundry_config::Config;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
 
-// tests that json is printed when --json is passed
-forgetest!(can_compile_json, |prj, cmd| {
+// tests that json is printed when --format-json is passed
+forgetest!(compile_json, |prj, cmd| {
     prj.add_source(
         "jsonError",
         r"
@@ -18,7 +18,7 @@ contract Dummy {
     .unwrap();
 
     // set up command
-    cmd.args(["compile", "--json"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["compile", "--format-json"]).assert_success().stdout_eq(str![[r#"
 {
   "errors": [
     {

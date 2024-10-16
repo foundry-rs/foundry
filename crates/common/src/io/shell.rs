@@ -27,19 +27,9 @@ pub fn set_verbosity(verbosity: Verbosity) {
     Shell::get().set_verbosity(verbosity);
 }
 
-/// Returns the currently set output format.
-pub fn format() -> Format {
-    Shell::get().format()
-}
-
 /// Returns whether the verbosity level is [`Verbosity::Quiet`].
 pub fn is_quiet() -> bool {
     verbosity().is_quiet()
-}
-
-/// Returns whether the output format is [`Format::Json`].
-pub fn is_json() -> bool {
-    format() == Format::Json
 }
 
 /// The global shell instance.
@@ -121,9 +111,6 @@ pub struct Shell {
     /// How verbose messages should be.
     verbosity: Verbosity,
 
-    /// The format to use for output.
-    format: Format,
-
     /// Flag that indicates the current line needs to be cleared before
     /// printing. Used when a progress bar is currently displayed.
     needs_clear: AtomicBool,
@@ -153,16 +140,6 @@ enum ShellOut {
     Empty(std::io::Empty),
 }
 
-/// The format to use for output.
-#[derive(Debug, Default, PartialEq, Clone, Copy, ValueEnum)]
-pub enum Format {
-    /// Format output as text.
-    #[default]
-    Text,
-    /// Format output as JSON.
-    Json,
-}
-
 /// Whether messages should use color output.
 #[derive(Debug, Default, PartialEq, Clone, Copy, ValueEnum)]
 pub enum ColorChoice {
@@ -187,12 +164,12 @@ impl Shell {
     /// output.
     #[inline]
     pub fn new() -> Self {
-        Self::new_with(ColorChoice::Auto, Verbosity::Verbose, Format::Text)
+        Self::new_with(ColorChoice::Auto, Verbosity::Verbose)
     }
 
     /// Creates a new shell with the given color choice and verbosity.
     #[inline]
-    pub fn new_with(color: ColorChoice, verbosity: Verbosity, format: Format) -> Self {
+    pub fn new_with(color: ColorChoice, verbosity: Verbosity) -> Self {
         Self {
             output: ShellOut::Stream {
                 stdout: AutoStream::new(std::io::stdout(), color.to_anstream_color_choice()),
@@ -201,7 +178,6 @@ impl Shell {
                 stderr_tty: std::io::stderr().is_terminal(),
             },
             verbosity,
-            format,
             needs_clear: AtomicBool::new(false),
         }
     }
@@ -212,7 +188,6 @@ impl Shell {
         Self {
             output: ShellOut::Empty(std::io::empty()),
             verbosity: Verbosity::Quiet,
-            format: Format::Text,
             needs_clear: AtomicBool::new(false),
         }
     }
@@ -282,12 +257,6 @@ impl Shell {
     #[inline]
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
-    }
-
-    /// Gets the output format of the shell.
-    #[inline]
-    pub fn format(&self) -> Format {
-        self.format
     }
 
     /// Gets the current color choice.

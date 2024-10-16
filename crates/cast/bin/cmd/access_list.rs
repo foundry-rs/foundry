@@ -35,6 +35,10 @@ pub struct AccessListArgs {
     #[arg(long, short = 'B')]
     block: Option<BlockId>,
 
+    /// Print the access list as JSON.
+    #[arg(long, short, help_heading = "Display options")]
+    json: bool,
+
     #[command(flatten)]
     tx: TransactionOpts,
 
@@ -44,7 +48,7 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, sig, args, tx, eth, block } = self;
+        let Self { to, sig, args, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -61,7 +65,7 @@ impl AccessListArgs {
 
         let cast = Cast::new(&provider);
 
-        let access_list: String = cast.access_list(&tx, block).await?;
+        let access_list: String = cast.access_list(&tx, block, to_json).await?;
 
         println!("{access_list}");
 

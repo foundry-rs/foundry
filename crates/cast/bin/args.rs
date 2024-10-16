@@ -332,6 +332,10 @@ pub enum CastSubcommand {
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,
 
+        /// Print the block as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
+
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -423,6 +427,10 @@ pub enum CastSubcommand {
         #[arg(long, conflicts_with = "field")]
         raw: bool,
 
+        /// Print as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
+
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -443,6 +451,10 @@ pub enum CastSubcommand {
         /// Exit immediately if the transaction was not found.
         #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
         cast_async: bool,
+
+        /// Print as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -481,6 +493,10 @@ pub enum CastSubcommand {
 
         /// The ABI-encoded calldata.
         calldata: String,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// Decode ABI-encoded input or output data.
@@ -499,6 +515,10 @@ pub enum CastSubcommand {
         /// Whether to decode the input or output data.
         #[arg(long, short, help_heading = "Decode input data instead of output data")]
         input: bool,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// ABI encode the given function argument, excluding the selector.
@@ -585,6 +605,10 @@ pub enum CastSubcommand {
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.

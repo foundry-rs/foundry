@@ -21,10 +21,6 @@ pub struct ShellOpts {
     )]
     pub quiet: bool,
 
-    /// Format output as JSON.
-    #[clap(long, global = true, help_heading = "Display options")]
-    pub json: bool,
-
     /// Log messages coloring.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
     pub color: Option<ColorChoice>,
@@ -38,10 +34,6 @@ impl ShellOpts {
             (false, false) => Verbosity::Normal,
             (true, true) => unreachable!(),
         };
-        let format = match self.json {
-            true => foundry_common::shell::Format::Json,
-            false => foundry_common::shell::Format::Text,
-        };
-        Shell::new_with(self.color.unwrap_or_default(), verbosity, format)
+        Shell::new_with(self.color.unwrap_or_default(), verbosity)
     }
 }

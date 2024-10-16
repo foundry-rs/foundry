@@ -107,8 +107,12 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
+    /// Output test results in JSON format.
+    #[arg(long, help_heading = "Display options")]
+    json: bool,
+
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with_all(["gas_report"]), help_heading = "Display options")]
+    #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
     junit: bool,
 
     /// Stop running tests after the first failure.
@@ -179,12 +183,6 @@ impl TestArgs {
         // Set verbosity to quiet if junit is enabled.
         if self.junit {
             shell::set_verbosity(shell::Verbosity::Quiet);
-
-            // Ensure that junit is the only output format.
-            // This is a workaround for
-            if shell::is_json() {
-                eyre::bail!("Cannot use --junit and --json at the same time");
-            }
         }
 
         trace!(target: "forge::test", "executing test command");
@@ -304,7 +302,7 @@ impl TestArgs {
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
         let compiler =
-            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
+            ProjectCompiler::new().quiet(self.json || self.junit).files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -472,13 +470,13 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
-            return list(runner, filter);
+            return list(runner, filter, self.json);
         }
 
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.junit;
+        let silent = self.gas_report && self.json;
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -506,7 +504,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && shell::is_json() {
+        if !self.gas_report && self.json {
             let mut results = runner.test_collect(filter);
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
@@ -575,7 +573,7 @@ impl TestArgs {
             GasReport::new(
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
-                if shell::is_json() { GasReportKind::JSON } else { GasReportKind::Markdown },
+                if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
 
@@ -892,10 +890,14 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
+fn list(
+    runner: MultiContractRunner,
+    filter: &ProjectPathsAwareFilter,
+    json: bool,
+) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
-    if shell::is_json() {
+    if json {
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {

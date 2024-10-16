@@ -27,7 +27,7 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, TransactionReceiptWithRevertReason,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
@@ -120,7 +120,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, false).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -130,6 +130,7 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        json: bool,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
@@ -170,7 +171,7 @@ where
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             res.to_string()
-        } else if shell::is_json() {
+        } else if json {
             let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
@@ -204,7 +205,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(&provider);
-    /// let access_list = cast.access_list(&tx, None).await?;
+    /// let access_list = cast.access_list(&tx, None, false).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
@@ -213,10 +214,11 @@ where
         &self,
         req: &WithOtherFields<TransactionRequest>,
         block: Option<BlockId>,
+        to_json: bool,
     ) -> Result<String> {
         let access_list =
             self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
-        let res = if shell::is_json() {
+        let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =
@@ -324,7 +326,7 @@ where
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None).await?;
+    /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -334,6 +336,7 @@ where
         block: B,
         full: bool,
         field: Option<String>,
+        to_json: bool,
     ) -> Result<String> {
         let block = block.into();
         if let Some(ref field) = field {
@@ -351,7 +354,7 @@ where
         let block = if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
-        } else if shell::is_json() {
+        } else if to_json {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
             block.pretty()
@@ -368,6 +371,7 @@ where
             false,
             // Select only select field
             Some(field),
+            false,
         )
         .await?;
 
@@ -401,12 +405,14 @@ where
             false,
             // Select only block hash
             Some(String::from("hash")),
+            false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
+                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -444,7 +450,7 @@ where
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash"))).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -709,7 +715,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// let tx = cast.transaction(tx_hash.to_string(), None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -719,6 +725,7 @@ where
         tx_hash: String,
         field: Option<String>,
         raw: bool,
+        to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let tx = self
@@ -732,7 +739,7 @@ where
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
-        } else if shell::is_json() {
+        } else if to_json {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
         } else {
@@ -751,7 +758,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -763,6 +770,7 @@ where
         confs: u64,
         timeout: Option<u64>,
         cast_async: bool,
+        to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
@@ -791,7 +799,7 @@ where
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
                 .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if shell::is_json() {
+        } else if to_json {
             // to_value first to sort json object keys
             serde_json::to_value(&receipt)?.to_string()
         } else {
@@ -867,10 +875,10 @@ where
         ))
     }
 
-    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
+    pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
         let logs = self.provider.get_logs(&filter).await?;
 
-        let res = if shell::is_json() {
+        let res = if to_json {
             serde_json::to_string(&logs)?
         } else {
             let mut s = vec![];
@@ -958,11 +966,16 @@ where
     /// let filter =
     ///     Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
     /// let mut output = io::stdout();
-    /// cast.subscribe(filter, &mut output).await?;
+    /// cast.subscribe(filter, &mut output, false).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe(&self, filter: Filter, output: &mut dyn io::Write) -> Result<()> {
+    pub async fn subscribe(
+        &self,
+        filter: Filter,
+        output: &mut dyn io::Write,
+        to_json: bool,
+    ) -> Result<()> {
         // Initialize the subscription stream for logs
         let mut subscription = self.provider.subscribe_logs(&filter).await?.into_stream();
 
@@ -976,7 +989,7 @@ where
         let to_block_number = filter.get_to_block();
 
         // If output should be JSON, start with an opening bracket
-        if shell::is_json() {
+        if to_json {
             write!(output, "[")?;
         }
 
@@ -998,7 +1011,7 @@ where
                 },
                 // Process incoming log
                 log = subscription.next() => {
-                    if shell::is_json() {
+                    if to_json {
                         if !first {
                             write!(output, ",")?;
                         }
@@ -1021,7 +1034,7 @@ where
         }
 
         // If output was JSON, end with a closing bracket
-        if shell::is_json() {
+        if to_json {
             write!(output, "]")?;
         }
 
