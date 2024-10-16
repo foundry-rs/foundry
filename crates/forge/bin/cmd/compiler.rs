@@ -125,8 +125,15 @@ impl ResolveArgs {
             }
 
             for (version, evm_version, paths) in versions {
-                if verbosity >= 1 {
-                    println!("{version} [Max supported EVM version: {evm_version}]:");
+                if verbosity == 0 {
+                    println!("- {version}");
+                } else {
+                    if verbosity == 1 {
+                        println!("{version}:");
+                    } else {
+                        println!("{version} (<= {evm_version}):")
+                    }
+
                     for (idx, path) in paths.iter().enumerate() {
                         if idx == paths.len() - 1 {
                             println!("└── {path}\n");
@@ -134,12 +141,10 @@ impl ResolveArgs {
                             println!("├── {path}");
                         }
                     }
-                } else {
-                    println!("- {version}");
                 }
             }
 
-            if verbosity < 1 {
+            if verbosity == 0 {
                 println!();
             }
         }
