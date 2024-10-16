@@ -1,4 +1,7 @@
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{
+    json::json_value_to_token, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt,
+    Result, Vm::*,
+};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
@@ -375,18 +378,25 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
     let result =
         foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
-
-    let result_as_tokens = match crate::json::json_value_to_token(&result)
-        .map_err(|err| fmt_err!("failed to parse result: {err}"))?
-    {
-        // Convert fixed bytes to bytes to prevent encoding issues.
-        // See: <https://github.com/foundry-rs/foundry/issues/8287>
-        DynSolValue::FixedBytes(bytes, size) => {
-            DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
-        }
-        DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
-        val => val,
-    };
+    let result_as_tokens = convert_to_bytes(
+        &json_value_to_token(&result).map_err(|err| fmt_err!("failed to parse result: {err}"))?,
+    );
 
     Ok(result_as_tokens.abi_encode())
+}
+
+/// Convert fixed bytes and address values to bytes in order to prevent encoding issues.
+fn convert_to_bytes(token: &DynSolValue) -> DynSolValue {
+    match token {
+        // Convert fixed bytes to prevent encoding issues.
+        // See: <https://github.com/foundry-rs/foundry/issues/8287>
+        DynSolValue::FixedBytes(bytes, size) => {
+            DynSolValue::Bytes(bytes.as_slice()[..*size].to_vec())
+        }
+        DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
+        //  Convert tuple values to prevent encoding issues.
+        // See: <https://github.com/foundry-rs/foundry/issues/7858>
+        DynSolValue::Tuple(vals) => DynSolValue::Tuple(vals.iter().map(convert_to_bytes).collect()),
+        val => val.clone(),
+    }
 }
