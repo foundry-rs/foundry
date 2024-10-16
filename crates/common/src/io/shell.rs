@@ -11,7 +11,6 @@ use std::{
     fmt,
     io::{prelude::*, IsTerminal},
     ops::DerefMut,
-    os::fd::BorrowedFd,
     sync::{
         atomic::{AtomicBool, Ordering},
         Mutex, OnceLock, PoisonError,
@@ -52,7 +51,9 @@ impl TtyWidth {
         // use stderr
         #[cfg(unix)]
         #[allow(clippy::useless_conversion)]
-        let opt = terminal_size::terminal_size_of(unsafe { BorrowedFd::borrow_raw(2.into()) });
+        let opt = terminal_size::terminal_size_of(unsafe {
+            std::os::fd::BorrowedFd::borrow_raw(2.into())
+        });
         #[cfg(not(unix))]
         let opt = terminal_size::terminal_size();
         match opt {

@@ -70,7 +70,7 @@ pub struct BuildArgs {
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[arg(long, conflicts_with = "quiet")]
+    #[arg(long)]
     #[serde(skip)]
     pub format_json: bool,
 }
