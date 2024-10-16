@@ -118,22 +118,19 @@ impl ResolveArgs {
         }
 
         for (language, versions) in &output {
-            if verbosity < 1 {
-                println!("{language}:");
-            } else {
-                println!("{language}:\n");
+            match verbosity {
+                0 => println!("{language}:"),
+                _ => println!("{language}:\n"),
             }
 
             for (version, evm_version, paths) in versions {
-                if verbosity == 0 {
-                    println!("- {version}");
-                } else {
-                    if verbosity == 1 {
-                        println!("{version}:");
-                    } else {
-                        println!("{version} (<= {evm_version}):")
-                    }
+                match verbosity {
+                    0 => println!("- {version}"),
+                    1 => println!("{version}:"),
+                    _ => println!("{version} (<= {evm_version}):"),
+                }
 
+                if verbosity > 0 {
                     for (idx, path) in paths.iter().enumerate() {
                         if idx == paths.len() - 1 {
                             println!("└── {path}\n");
