@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{ens::NameOrAddress, sh_warn};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
