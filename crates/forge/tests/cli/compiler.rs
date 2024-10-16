@@ -31,7 +31,7 @@ contract ContractD {}
 "#;
 
 const VYPER_INTERFACE: &str = r#"
-# pragma version 0.4.0
+# pragma version >=0.4.0
 
 @external
 @view
@@ -94,7 +94,7 @@ forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.27:
+0.8.27 [Max supported EVM version: [..]]:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -108,7 +108,7 @@ forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
 
     cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
         str![[r#"
-{"Solidity":[["0.8.27",["src/ContractC.sol","src/ContractD.sol"]]]}"#]]
+{"Solidity":[["0.8.27","[..]",["src/ContractC.sol","src/ContractD.sol"]]]}"#]]
         .is_json(),
     );
 });
@@ -146,7 +146,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
         r#"
 Vyper:
 
-0.4.0:
+0.4.0 [Max supported EVM version: [..]]:
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -166,7 +166,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
     cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json"])
             .assert_success()
             .stdout_eq(str![[r#"
-{"Solidity":[["0.8.27",["src/ContractD.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vyi"]]]}
+{"Solidity":[["0.8.27","[..]",["src/ContractD.sol"]]],"Vyper":[["0.4.0","[..]",["src/Counter.vy","src/ICounter.vyi"]]]}
 "#]].is_json());
 });
 
@@ -181,19 +181,19 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.4:
+0.8.4 [Max supported EVM version: istanbul]:
 └── src/ContractA.sol
 
-0.8.11:
+0.8.11 [Max supported EVM version: london]:
 └── src/ContractB.sol
 
-0.8.27:
+0.8.27 [Max supported EVM version: [..]]:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
 Vyper:
 
-0.4.0:
+0.4.0 [Max supported EVM version: [..]]:
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -211,7 +211,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
 
     cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
         str![[r#"
-{"Solidity":[["0.8.4",["src/ContractA.sol"]],["0.8.11",["src/ContractB.sol"]],["0.8.27",["src/ContractC.sol","src/ContractD.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vyi"]]]}
+{"Solidity":[["0.8.4","Istanbul",["src/ContractA.sol"]],["0.8.11","London",["src/ContractB.sol"]],["0.8.27","[..]",["src/ContractC.sol","src/ContractD.sol"]]],"Vyper":[["0.4.0","Cancun",["src/Counter.vy","src/ICounter.vyi"]]]}
 "#]]
         .is_json(),
     );

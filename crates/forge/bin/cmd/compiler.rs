@@ -1,6 +1,6 @@
 use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_compilers::Graph;
+use foundry_compilers::{artifacts::EvmVersion, Graph};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -67,10 +67,10 @@ impl ResolveArgs {
             &project.compiler,
         )?;
 
-        let mut output: BTreeMap<String, Vec<(Version, Vec<String>)>> = BTreeMap::new();
+        let mut output: BTreeMap<String, Vec<(Version, EvmVersion, Vec<String>)>> = BTreeMap::new();
 
         for (language, sources) in sources {
-            let mut versions_with_paths: Vec<(Version, Vec<String>)> = sources
+            let mut versions_with_paths: Vec<(Version, EvmVersion, Vec<String>)> = sources
                 .iter()
                 .map(|(version, sources)| {
                     let paths: Vec<String> = sources
@@ -94,13 +94,17 @@ impl ResolveArgs {
                         })
                         .collect();
 
-                    (version.clone(), paths)
+                    (
+                        version.clone(),
+                        EvmVersion::default().normalize_version_solc(version).unwrap_or_default(),
+                        paths,
+                    )
                 })
-                .filter(|(_, paths)| !paths.is_empty())
+                .filter(|(_, _, paths)| !paths.is_empty())
                 .collect();
 
             // Sort by SemVer version.
-            versions_with_paths.sort_by(|(v1, _), (v2, _)| Version::cmp(v1, v2));
+            versions_with_paths.sort_by(|(v1, _, _), (v2, _, _)| Version::cmp(v1, v2));
 
             // Skip language if no paths are found after filtering.
             if !versions_with_paths.is_empty() {
@@ -120,9 +124,9 @@ impl ResolveArgs {
                 println!("{language}:\n");
             }
 
-            for (version, paths) in versions {
+            for (version, evm_version, paths) in versions {
                 if verbosity >= 1 {
-                    println!("{version}:");
+                    println!("{version} [Max supported EVM version: {evm_version}]:");
                     for (idx, path) in paths.iter().enumerate() {
                         if idx == paths.len() - 1 {
                             println!("└── {path}\n");
