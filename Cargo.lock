@@ -3754,8 +3754,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.11.4"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=b7005a3#b7005a35f790db40df32d4aaac8f78d91bdbebe1"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cabcc146459af3ef3c7d05bfd1cca1450b065aaa0c168d567b3fe25d8530558"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3791,8 +3792,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.11.4"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=b7005a3#b7005a35f790db40df32d4aaac8f78d91bdbebe1"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0217f21ad9c0aa8127fcca23e69bda25101b0849027e3cf949f04252b22810fd"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3800,8 +3802,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.11.4"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=b7005a3#b7005a35f790db40df32d4aaac8f78d91bdbebe1"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e35255af997575a4aac46d86259fb43c222edfbcf48230ed929fa7c92ece6277"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3823,8 +3826,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.11.4"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=b7005a3#b7005a35f790db40df32d4aaac8f78d91bdbebe1"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "626fdc9a2ba83240d1b5ebbe3d8d50d794f231aa652abf27289119e71f6e774b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3837,8 +3841,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.11.4"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=b7005a3#b7005a35f790db40df32d4aaac8f78d91bdbebe1"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51486ab73194212079801418f6cc66ba05275467c80241a7f05bb7ef0475774a"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
