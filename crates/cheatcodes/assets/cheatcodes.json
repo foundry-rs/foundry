@@ -5253,6 +5253,46 @@
     },
     {
       "func": {
+        "id": "getBroadcast",
+        "description": "Returns the most recent broadcast for the given contract on `chainId` matching `txType`.\nFor example:\nThe most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.\nThe most recent call can be fetched by passing `txType` as `CALL`.",
+        "declaration": "function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBroadcast(string,uint64,uint8)",
+        "selector": "0x3dc90cb3",
+        "selectorBytes": [
+          61,
+          201,
+          12,
+          179
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBroadcasts",
+        "description": "Returns all broadcasts for the given contract on `chainId`.",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBroadcasts(string,uint64)",
+        "selector": "0xf2fa4a26",
+        "selectorBytes": [
+          242,
+          250,
+          74,
+          38
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getCode",
         "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
@@ -5285,26 +5325,6 @@
           191,
           115,
           180
-        ]
-      },
-      "group": "filesystem",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getDeployment",
-        "description": "Returns the most recent deployment for the given contract on `chainId`",
-        "declaration": "function getDeployment(string memory contractName, uint64 chainId) external returns (bytes32 txHash);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "getDeployment(string,uint64)",
-        "selector": "0x0debd5d6",
-        "selectorBytes": [
-          13,
-          235,
-          213,
-          214
         ]
       },
       "group": "filesystem",

@@ -1706,6 +1706,10 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);
 
+    /// Returns all broadcasts for the given contract on `chainId`.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);
+
     // -------- Foreign Function Interface --------
 
     /// Performs a foreign function call via the terminal.

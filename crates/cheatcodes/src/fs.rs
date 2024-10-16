@@ -634,39 +634,64 @@ impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, *txType);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId).with_tx_type(*txType);
 
         let broadcast = reader.find_latest(&state.config.root)?;
 
-        let (tx, receipt) = reader.parse_broadcast(broadcast)?;
+        let results = reader.search_broadcast(broadcast)?;
 
-        let summary = BroadcastTxSummary {
-            txHash: receipt.transaction_hash,
-            blockNumber: receipt.block_number.unwrap_or_default(),
-            txType: *txType,
-            contractAddress: tx.contract_address.unwrap_or_default(),
-            success: receipt.status(),
-        };
+        let summaries = reader.parse_results(results);
 
-        Ok(summary.abi_encode())
+        if let Some(summary) = summaries.first() {
+            return Ok(summary.abi_encode());
+        }
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getBroadcastsCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId);
+
+        let broadcasts = reader.read_all(&state.config.root)?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
+                let results = reader.search_broadcast(broadcast)?;
+                Ok(reader.parse_results(results))
+            })
+            .flatten()
+            .collect::<Vec<BroadcastTxSummary>>();
+
+        Ok(summaries.abi_encode())
     }
 }
 
 struct BroadcastReader {
     contract_name: String,
     chain_id: u64,
-    tx_type: CallKind,
+    tx_type: Option<CallKind>,
 }
 
 impl BroadcastReader {
-    fn new(contract_name: String, chain_id: u64, tx_type: BroadcastTxType) -> Self {
+    fn new(contract_name: String, chain_id: u64) -> Self {
+        Self { contract_name, chain_id, tx_type: None }
+    }
+
+    fn with_tx_type(mut self, tx_type: BroadcastTxType) -> Self {
         let tx_type = match tx_type {
             BroadcastTxType::Call => CallKind::Call,
             BroadcastTxType::Create => CallKind::Create,
             BroadcastTxType::Create2 => CallKind::Create2,
             _ => unreachable!("invalid tx type"),
         };
-        Self { contract_name, chain_id, tx_type }
+
+        self.tx_type = Some(tx_type);
+        self
     }
 
     fn read_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
@@ -676,18 +701,49 @@ impl BroadcastReader {
             .join(self.chain_id.to_string());
 
         if !broadcast_path.exists() {
-            bail!("deployment not found");
+            bail!("broadcast not found");
         }
 
         fs::read_json_file(&broadcast_path.join("run-latest.json"))
-            .map_err(|e| fmt_err!("failed reading deployment: {e}"))
+            .map_err(|e| fmt_err!("failed reading broadcast: {e}"))
+    }
+
+    fn read_all(&self, root: &Path) -> eyre::Result<Vec<ScriptSequence>, crate::error::Error> {
+        let broadcast_path = root
+            .join("broadcast")
+            .join(format!("{}.s.sol", self.contract_name))
+            .join(self.chain_id.to_string());
+
+        if !broadcast_path.exists() {
+            bail!("broadcast not found");
+        }
+
+        let files = std::fs::read_dir(&broadcast_path)?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                if path.file_name()?.to_string_lossy() == "run-latest.json" {
+                    return None;
+                }
+                Some(path)
+            })
+            .collect::<Vec<_>>();
+
+        let broadcasts = files
+            .iter()
+            .map(|path| {
+                fs::read_json_file(path).map_err(|e| fmt_err!("failed reading broadcast: {e}"))
+            })
+            .collect::<Result<Vec<ScriptSequence>>>()?;
+
+        Ok(broadcasts)
     }
 
     fn find_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
-        let latest_deployment: Result<ScriptSequence> = self.read_latest(root);
+        let latest_broadcast: Result<ScriptSequence> = self.read_latest(root);
 
-        if let Ok(latest_deployment) = latest_deployment {
-            return Ok(latest_deployment);
+        if let Ok(latest_broadcast) = latest_broadcast {
+            return Ok(latest_broadcast);
         }
 
         let broadcast_path = root
@@ -707,44 +763,75 @@ impl BroadcastReader {
             })
             .collect::<Vec<_>>();
 
-        let deployments = files
+        let broadcasts = files
             .iter()
             .map(|path| {
-                fs::read_json_file(path).map_err(|e| fmt_err!("failed reading deployment: {e}"))
+                fs::read_json_file(path).map_err(|e| fmt_err!("failed reading broadcast: {e}"))
             })
             .collect::<Result<Vec<ScriptSequence>>>()?;
 
-        // Find the deployment with the latest timestamp
-        let target = deployments
+        // Find the broadcast with the latest timestamp
+        let target = broadcasts
             .into_iter()
-            .max_by_key(|deployment| deployment.timestamp)
-            .ok_or_else(|| fmt_err!("no deployments found"))?;
+            .max_by_key(|broadcast| broadcast.timestamp)
+            .ok_or_else(|| fmt_err!("no broadcasts found"))?;
 
         Ok(target)
     }
 
-    fn parse_broadcast(
+    fn search_broadcast(
         &self,
         broadcast: ScriptSequence,
-    ) -> Result<(TransactionWithMetadata, AnyTransactionReceipt)> {
-        let tx = broadcast.transactions.into_iter().find(|tx| {
-            tx.contract_name
-                .clone()
-                .is_some_and(|cn| cn == self.contract_name && tx.opcode == self.tx_type)
-        });
+    ) -> Result<Vec<(TransactionWithMetadata, AnyTransactionReceipt)>> {
+        let transactions = broadcast.transactions.clone();
+        let receipts = broadcast.receipts.clone();
+        let txs = transactions
+            .into_iter()
+            .filter(|tx| {
+                let name_filter =
+                    tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
 
-        if let Some(tx) = tx {
-            let receipt = broadcast
-                .receipts
-                .into_iter()
-                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
+                let type_filter = self.tx_type.map_or(true, |kind| tx.opcode == kind);
 
-            if let Some(receipt) = receipt {
-                return Ok((tx, receipt));
-            }
+                name_filter && type_filter
+            })
+            .collect::<Vec<_>>();
+
+        let mut targets = Vec::new();
+        for tx in txs.into_iter() {
+            receipts.iter().for_each(|receipt| {
+                if tx.hash.is_some_and(|hash| hash == receipt.transaction_hash) {
+                    targets.push((tx.clone(), receipt.clone()));
+                }
+            });
         }
 
-        bail!("deployment not found");
+        if !targets.is_empty() {
+            return Ok(targets);
+        }
+
+        bail!("broadcast not found");
+    }
+
+    fn parse_results(
+        &self,
+        results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+    ) -> Vec<BroadcastTxSummary> {
+        results
+            .into_iter()
+            .map(|(tx, receipt)| BroadcastTxSummary {
+                txHash: receipt.transaction_hash,
+                blockNumber: receipt.block_number.unwrap_or_default(),
+                txType: match tx.opcode {
+                    CallKind::Call => BroadcastTxType::Call,
+                    CallKind::Create => BroadcastTxType::Create,
+                    CallKind::Create2 => BroadcastTxType::Create2,
+                    _ => unreachable!("invalid tx type"),
+                },
+                contractAddress: tx.contract_address.unwrap_or_default(),
+                success: receipt.status(),
+            })
+            .collect()
     }
 }
 
