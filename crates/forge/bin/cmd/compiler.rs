@@ -22,8 +22,8 @@ impl CompilerArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CompilerSubcommands {
-    #[command(visible_alias = "r")]
     /// Retrieves the resolved version(s) of the compiler within the project.
+    #[command(visible_alias = "r")]
     Resolve(ResolveArgs),
 }
 
