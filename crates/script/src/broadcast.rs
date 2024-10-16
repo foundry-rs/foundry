@@ -163,8 +163,8 @@ impl SendTransactionsKind {
 }
 
 /// State after we have bundled all
-/// [`TransactionWithMetadata`](crate::transaction::TransactionWithMetadata) objects into a single
-/// [`ScriptSequenceKind`] object containing one or more script sequences.
+/// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
+/// single [`ScriptSequenceKind`] object containing one or more script sequences.
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,

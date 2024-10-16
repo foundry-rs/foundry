@@ -1,6 +1,6 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*, Wallets};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -11,7 +11,6 @@ use alloy_signer_local::{
     LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
-use foundry_wallets::multi_wallet::MultiWallet;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
@@ -98,11 +97,7 @@ impl Cheatcode for rememberKeyCall {
 impl Cheatcode for rememberKeys_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
-        tracing::info!("Remembering {} keys", count);
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
-
-        tracing::info!("Adding {} keys to script wallets", count);
-
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
         for wallet in wallets {
             let addr = inject_wallet(state, wallet);
@@ -129,14 +124,7 @@ impl Cheatcode for rememberKeys_1Call {
 
 fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Address {
     let address = wallet.address();
-    if let Some(script_wallets) = state.script_wallets() {
-        script_wallets.add_local_signer(wallet);
-    } else {
-        // This is needed in case of testing scripts, wherein script wallets are not set on setup.
-        let script_wallets = Wallets::new(MultiWallet::default(), None);
-        script_wallets.add_local_signer(wallet);
-        state.set_wallets(script_wallets);
-    }
+    state.wallets().add_local_signer(wallet);
     address
 }
 
@@ -256,13 +244,13 @@ fn sign_with_wallet(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
-    let Some(script_wallets) = state.script_wallets() else {
-        bail!("no wallets are available");
-    };
+    if state.wallets().is_empty() {
+        bail!("no wallets available");
+    }
 
-    let mut script_wallets = script_wallets.inner.lock();
-    let maybe_provided_sender = script_wallets.provided_sender;
-    let signers = script_wallets.multi_wallet.signers()?;
+    let mut wallets = state.wallets().inner.lock();
+    let maybe_provided_sender = wallets.provided_sender;
+    let signers = wallets.multi_wallet.signers()?;
 
     let signer = if let Some(signer) = signer {
         signer

@@ -8,7 +8,6 @@
 #[macro_use]
 extern crate tracing;
 
-use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
@@ -22,6 +21,7 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
+use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
@@ -50,7 +50,7 @@ use foundry_evm::{
     traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use yansi::Paint;
 
 mod broadcast;
@@ -514,12 +514,6 @@ struct JsonResult<'a> {
     returns: &'a HashMap<String, NestedValue>,
     #[serde(flatten)]
     result: &'a ScriptResult,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
 }
 
 #[derive(Clone, Debug)]
