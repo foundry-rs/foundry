@@ -695,8 +695,8 @@ impl BroadcastReader {
     fn find_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
         let latest_deployment: Result<ScriptSequence> = self.read_latest(root);
 
-        if latest_deployment.is_ok() {
-            return Ok(latest_deployment.unwrap());
+        if let Ok(latest_deployment) = latest_deployment {
+            return Ok(latest_deployment);
         }
 
         let broadcast_path = root

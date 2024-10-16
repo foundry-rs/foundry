@@ -1,9 +1,6 @@
 use super::{
-    multi_sequence::MultiChainSequence,
-    providers::ProvidersManager,
-    runner::ScriptRunner,
-    sequence::ScriptSequenceKind,
-    transaction::{with_execution_result, ScriptTransactionBuilder},
+    multi_sequence::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner,
+    sequence::ScriptSequenceKind, transaction::ScriptTransactionBuilder,
 };
 use crate::{
     broadcast::{estimate_gas, BundledState},
@@ -17,7 +14,7 @@ use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
-use foundry_cheatcodes::ScriptWallets;
+use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
@@ -37,7 +34,7 @@ use yansi::Paint;
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -61,11 +58,19 @@ impl PreSimulationState {
             .into_iter()
             .map(|tx| {
                 let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
-                ScriptTransactionBuilder::new(tx.transaction).build(
-                    rpc,
-                    &address_to_abi,
-                    &self.execution_artifacts.decoder,
-                )
+                let sender = tx.transaction.from().expect("all transactions should have a sender");
+                let nonce = tx.transaction.nonce().expect("all transactions should have a sender");
+                let to = tx.transaction.to();
+
+                let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
+
+                if let Some(TxKind::Call(_)) = to {
+                    builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;
+                } else {
+                    builder.set_create(false, sender.create(nonce), &address_to_abi)?;
+                }
+
+                Ok(builder.build())
             })
             .collect::<Result<VecDeque<_>>>()?;
 
@@ -138,8 +143,9 @@ impl PreSimulationState {
                     false
                 };
 
-                let transaction =
-                    with_execution_result(transaction, &result, self.args.gas_estimate_multiplier);
+                let transaction = ScriptTransactionBuilder::from(transaction)
+                    .with_execution_result(&result, self.args.gas_estimate_multiplier)
+                    .build();
 
                 eyre::Ok((Some(transaction), is_noop_tx, result.traces))
             })
@@ -234,7 +240,7 @@ impl PreSimulationState {
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata>,

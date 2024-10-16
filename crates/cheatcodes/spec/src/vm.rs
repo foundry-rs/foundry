@@ -1916,7 +1916,7 @@ interface Vm {
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
-    function getScriptWallets() external returns (address[] memory wallets);
+    function getWallets() external returns (address[] memory wallets);
 
     // ======== Utilities ========
 
