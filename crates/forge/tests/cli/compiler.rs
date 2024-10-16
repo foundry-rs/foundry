@@ -108,7 +108,18 @@ forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
 
     cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
         str![[r#"
-{"Solidity":[["0.8.27","[..]",["src/ContractC.sol","src/ContractD.sol"]]]}"#]]
+{
+  "Solidity": [
+    {
+      "version": "0.8.27",
+      "paths": [
+        "src/ContractC.sol",
+        "src/ContractD.sol"
+      ]
+    }
+  ]
+}
+"#]]
         .is_json(),
     );
 });
@@ -164,10 +175,32 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
     cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-{"Solidity":[["0.8.27","[..]",["src/ContractD.sol"]]],"Vyper":[["0.4.0","[..]",["src/Counter.vy","src/ICounter.vyi"]]]}
-"#]].is_json());
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "Solidity": [
+    {
+      "version": "0.8.27",
+      "paths": [
+        "src/ContractD.sol"
+      ]
+    }
+  ],
+  "Vyper": [
+    {
+      "version": "0.4.0",
+      "paths": [
+        "src/Counter.vy",
+        "src/ICounter.vyi"
+      ]
+    }
+  ]
+}
+
+"#]]
+            .is_json(),
+        );
 });
 
 forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
@@ -209,9 +242,44 @@ forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
     prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
-    cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
+    cmd.args(["compiler", "resolve", "--json", "-vv"]).assert_success().stdout_eq(
         str![[r#"
-{"Solidity":[["0.8.4","Istanbul",["src/ContractA.sol"]],["0.8.11","London",["src/ContractB.sol"]],["0.8.27","[..]",["src/ContractC.sol","src/ContractD.sol"]]],"Vyper":[["0.4.0","Cancun",["src/Counter.vy","src/ICounter.vyi"]]]}
+{
+  "Solidity": [
+    {
+      "version": "0.8.4",
+      "evm_version": "Istanbul",
+      "paths": [
+        "src/ContractA.sol"
+      ]
+    },
+    {
+      "version": "0.8.11",
+      "evm_version": "London",
+      "paths": [
+        "src/ContractB.sol"
+      ]
+    },
+    {
+      "version": "0.8.27",
+      "evm_version": "Cancun",
+      "paths": [
+        "src/ContractC.sol",
+        "src/ContractD.sol"
+      ]
+    }
+  ],
+  "Vyper": [
+    {
+      "version": "0.4.0",
+      "evm_version": "Cancun",
+      "paths": [
+        "src/Counter.vy",
+        "src/ICounter.vyi"
+      ]
+    }
+  ]
+}
 "#]]
         .is_json(),
     );
