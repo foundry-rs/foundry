@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{address, fixed_bytes, Address, Bytes, TxKind, U256};
+use alloy_primitives::{address, fixed_bytes, utils::Unit, Address, Bytes, TxKind, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{
     anvil::{
@@ -16,9 +16,18 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, NodeConfig};
+use anvil::{
+    eth::{
+        api::CLIENT_VERSION,
+        backend::mem::{EXECUTOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
+    },
+    spawn, EthereumHardfork, NodeConfig,
+};
 use anvil_core::{
-    eth::EthRequest,
+    eth::{
+        wallet::{Capabilities, DelegationCapability, WalletCapabilities},
+        EthRequest,
+    },
     types::{ReorgOptions, TransactionData},
 };
 use foundry_evm::revm::primitives::SpecId;
@@ -792,4 +801,73 @@ async fn test_reorg() {
         })
         .await;
     assert!(res.is_err());
+}
+
+// === wallet endpoints === //
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_wallet_capabilities() {
+    let (api, handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+
+    let provider = handle.http_provider();
+
+    let init_sponsor_bal = provider.get_balance(EXECUTOR).await.unwrap();
+
+    let expected_bal = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
+    assert_eq!(init_sponsor_bal, expected_bal);
+
+    let p256_code = provider.get_code_at(P256_DELEGATION_CONTRACT).await.unwrap();
+
+    assert_eq!(p256_code, Bytes::from_static(P256_DELEGATION_RUNTIME_CODE));
+
+    let capabilities = api.get_capabilities().unwrap();
+
+    let mut expect_caps = WalletCapabilities::default();
+    let cap: Capabilities = Capabilities {
+        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
+    };
+    expect_caps.insert(api.chain_id(), cap);
+
+    assert_eq!(capabilities, expect_caps);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_add_capability() {
+    let (api, _handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+
+    let init_capabilities = api.get_capabilities().unwrap();
+
+    let mut expect_caps = WalletCapabilities::default();
+    let cap: Capabilities = Capabilities {
+        delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
+    };
+    expect_caps.insert(api.chain_id(), cap);
+
+    assert_eq!(init_capabilities, expect_caps);
+
+    let new_cap_addr = Address::with_last_byte(1);
+
+    api.anvil_add_capability(new_cap_addr).unwrap();
+
+    let capabilities = api.get_capabilities().unwrap();
+
+    let cap: Capabilities = Capabilities {
+        delegation: DelegationCapability {
+            addresses: vec![P256_DELEGATION_CONTRACT, new_cap_addr],
+        },
+    };
+    expect_caps.insert(api.chain_id(), cap);
+
+    assert_eq!(capabilities, expect_caps);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_executor() {
+    let (api, _handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+
+    let expected_addr = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+
+    let executor = api.anvil_set_executor(pk).unwrap();
+
+    assert_eq!(executor, expected_addr);
 }
