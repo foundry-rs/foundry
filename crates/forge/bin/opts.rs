@@ -1,8 +1,9 @@
 use crate::cmd::{
-    bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs, config,
-    coverage, create::CreateArgs, debug::DebugArgs, doc::DocArgs, eip712, flatten, fmt::FmtArgs,
-    geiger, generate, init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs,
-    remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
+    bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, debug::DebugArgs, doc::DocArgs,
+    eip712, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
+    soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -156,7 +157,7 @@ pub enum ForgeSubcommand {
     /// Generate documentation for the project.
     Doc(DocArgs),
 
-    /// Function selector utilities
+    /// Function selector utilities.
     #[command(visible_alias = "se")]
     Selectors {
         #[command(subcommand)]
@@ -165,6 +166,9 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Compiler utilities.
+    Compiler(CompilerArgs),
 
     /// Soldeer dependency manager.
     Soldeer(soldeer::SoldeerArgs),

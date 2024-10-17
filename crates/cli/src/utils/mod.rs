@@ -8,6 +8,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config};
+use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -134,6 +135,11 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
             .wrap_err("Could not parse ether value from string")?
             .0
     })
+}
+
+/// Parses a `T` from a string using [`serde_json::from_str`].
+pub fn parse_json<T: DeserializeOwned>(value: &str) -> serde_json::Result<T> {
+    serde_json::from_str(value)
 }
 
 /// Parses a `Duration` from a &str

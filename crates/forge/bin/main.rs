@@ -122,6 +122,7 @@ fn run() -> Result<()> {
         ForgeSubcommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
+        ForgeSubcommand::Compiler(cmd) => cmd.run(),
         ForgeSubcommand::Soldeer(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
