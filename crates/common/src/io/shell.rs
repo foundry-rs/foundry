@@ -345,21 +345,27 @@ impl Shell {
 
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
     ///
+    /// This will render a message in [ERROR](crate::io::style::ERROR) style with a bold `Error: `
+    /// prefix. The message will be styled with [ERROR_MESSAGE](crate::io::style::ERROR_MESSAGE).
+    ///
     /// **Note**: will log regardless of the verbosity level.
     #[inline]
     pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
         self.maybe_err_erase_line();
-        self.output.message_stderr(&"Error", Some(&message), &ERROR, false)
+        self.output.message_stderr(&"Error", &ERROR, Some(&message), Some(&ERROR_MESSAGE), false)
     }
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
+    ///
+    /// This will render a message in [WARN](crate::io::style::WARN) style with a bold `Warning: `
+    /// prefix. The message will be styled with [WARN_MESSAGE](crate::io::style::WARN_MESSAGE).
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     #[inline]
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
-            _ => self.print(&"Warning", Some(&message), &WARN, false),
+            _ => self.print(&"Warning", &WARN, Some(&message), Some(&WARN_MESSAGE), false),
         }
     }
 
@@ -408,15 +414,16 @@ impl Shell {
     fn print(
         &mut self,
         status: &dyn fmt::Display,
+        style: &Style,
         message: Option<&dyn fmt::Display>,
-        color: &Style,
+        message_style: Option<&Style>,
         justified: bool,
     ) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
             _ => {
                 self.maybe_err_erase_line();
-                self.output.message_stderr(status, message, color, justified)
+                self.output.message_stderr(status, style, message, message_style, justified)
             }
         }
     }
@@ -429,11 +436,12 @@ impl ShellOut {
     fn message_stderr(
         &mut self,
         status: &dyn fmt::Display,
-        message: Option<&dyn fmt::Display>,
         style: &Style,
+        message: Option<&dyn fmt::Display>,
+        message_style: Option<&Style>,
         justified: bool,
     ) -> Result<()> {
-        let buffer = Self::format_message(status, message, style, justified)?;
+        let buffer = Self::format_message(status, message, style, message_style, justified)?;
         self.stderr().write_all(&buffer)?;
         Ok(())
     }
@@ -483,6 +491,7 @@ impl ShellOut {
         status: &dyn fmt::Display,
         message: Option<&dyn fmt::Display>,
         style: &Style,
+        message_style: Option<&Style>,
         justified: bool,
     ) -> Result<Vec<u8>> {
         let style = style.render();
@@ -496,7 +505,13 @@ impl ShellOut {
             write!(&mut buffer, "{style}{status}{reset}{bold}:{reset}")?;
         }
         match message {
-            Some(message) => writeln!(buffer, " {message}")?,
+            Some(message) => {
+                if let Some(message_style) = message_style {
+                    writeln!(&mut buffer, " {message_style}{message}{reset}")?;
+                } else {
+                    writeln!(&mut buffer, " {message}")?;
+                }
+            }
             None => write!(buffer, " ")?,
         }
 
