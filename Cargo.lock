@@ -932,6 +932,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
