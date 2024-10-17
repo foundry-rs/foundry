@@ -2416,7 +2416,7 @@ impl Backend {
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
-            state_root: Some(block.header.state_root),
+            state_root: None,
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used: blob_gas_used.map(|g| g as u128),
             authorization_list: None,
