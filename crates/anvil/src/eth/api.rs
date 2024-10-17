@@ -460,9 +460,7 @@ impl EthApi {
             EthRequest::WalletSendTransaction(tx) => {
                 self.wallet_send_transaction(*tx).await.to_rpc_result()
             }
-            EthRequest::AnvilAddCapability(addr) => {
-                self.anvil_add_capability(addr).to_rpc_result()
-            }
+            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
         }
     }
 
