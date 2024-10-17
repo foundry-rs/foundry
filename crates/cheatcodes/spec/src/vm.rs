@@ -1670,6 +1670,46 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
 
+
+    /// The transaction type (`txType`) of the broadcast.
+    enum BroadcastTxType {
+        /// Represents a CALL broadcast tx.
+        Call,
+        /// Represents a CREATE broadcast tx.
+        Create,
+        /// Represents a CREATE2 broadcast tx.
+        Create2
+    }
+
+    /// Represents a transaction's broadcast details.
+    struct BroadcastTxSummary {
+        /// The hash of the transaction that was broadcasted
+        bytes32 txHash;
+        /// Represent the type of transaction among CALL, CREATE, CREATE2
+        BroadcastTxType txType;
+        /// The address of the contract that was called or created.
+        /// This is address of the contract that is created if the txType is CREATE or CREATE2.
+        address contractAddress;
+        /// The block number the transaction landed in.
+        uint64 blockNumber;
+        /// Status of the transaction, retrieved from the transaction receipt.
+        bool success;
+    }
+
+    /// Returns the most recent broadcast for the given contract on `chainId` matching `txType`.
+    ///
+    /// For example:
+    ///
+    /// The most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.
+    ///
+    /// The most recent call can be fetched by passing `txType` as `CALL`.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);
+
+    /// Returns all broadcasts for the given contract on `chainId`.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);
+
     // -------- Foreign Function Interface --------
 
     /// Performs a foreign function call via the terminal.
