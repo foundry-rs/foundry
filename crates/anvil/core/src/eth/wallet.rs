@@ -1,4 +1,4 @@
-use alloy_primitives::{map::HashMap, Address, ChainId};
+use alloy_primitives::{map::HashMap, Address, ChainId, U64};
 use serde::{Deserialize, Serialize};
 
 /// The capability to perform [EIP-7702][eip-7702] delegations, sponsored by the sequencer.
@@ -22,16 +22,16 @@ pub struct Capabilities {
 
 /// A map of wallet capabilities per chain ID.
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize, Default)]
-pub struct WalletCapabilities(HashMap<ChainId, Capabilities>);
+pub struct WalletCapabilities(HashMap<U64, Capabilities>);
 
 impl WalletCapabilities {
     /// Get the capabilities of the wallet API for the specified chain ID.
     pub fn get(&self, chain_id: ChainId) -> Option<&Capabilities> {
-        self.0.get(&chain_id)
+        self.0.get(&U64::from(chain_id))
     }
 
     pub fn insert(&mut self, chain_id: ChainId, capabilities: Capabilities) {
-        self.0.insert(chain_id, capabilities);
+        self.0.insert(U64::from(chain_id), capabilities);
     }
 }
 
