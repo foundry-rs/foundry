@@ -307,7 +307,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             println!("Computed Address: {}", computed.to_checksum(None));
         }
         CastSubcommand::Disassemble { bytecode } => {
-            println!("{}", SimpleCast::disassemble(&bytecode)?);
+            println!("{}", SimpleCast::disassemble(&hex::decode(bytecode)?)?);
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
             let functions = SimpleCast::extract_functions(&bytecode)?;
@@ -533,11 +533,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::HashMessage { message } => {
             let message = stdin::unwrap_line(message)?;
-            let input = match message.strip_prefix("0x") {
-                Some(hex_str) => hex::decode(hex_str)?,
-                None => message.as_bytes().to_vec(),
-            };
-            println!("{}", eip191_hash_message(input));
+            println!("{}", eip191_hash_message(message));
         }
         CastSubcommand::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;

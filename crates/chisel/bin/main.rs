@@ -92,6 +92,12 @@ pub enum ChiselSubcommand {
 
     /// Clear all cached chisel sessions from the cache directory
     ClearCache,
+
+    /// Simple evaluation of a command without entering the REPL
+    Eval {
+        /// The command to be evaluated.
+        command: String,
+    },
 }
 
 fn main() -> eyre::Result<()> {
@@ -166,6 +172,10 @@ async fn main_args(args: Chisel) -> eyre::Result<()> {
                 DispatchResult::CommandFailed(e) => eprintln!("{e}"),
                 _ => panic!("Unexpected result! Please report this bug."),
             }
+            return Ok(())
+        }
+        Some(ChiselSubcommand::Eval { command }) => {
+            dispatch_repl_line(&mut dispatcher, command).await;
             return Ok(())
         }
         None => { /* No chisel subcommand present; Continue */ }

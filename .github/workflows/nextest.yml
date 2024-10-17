@@ -67,12 +67,10 @@ jobs:
         with:
           bun-version: latest
       - name: Setup Python
-        if: contains(matrix.name, 'external')
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
       - name: Install Vyper
-        if: contains(matrix.name, 'external')
         run: pip install vyper~=0.4.0
 
       - name: Forge RPC cache

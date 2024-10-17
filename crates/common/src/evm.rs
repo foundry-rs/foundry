@@ -1,5 +1,6 @@
-//! cli arguments for configuring the evm settings
-use alloy_primitives::{Address, B256, U256};
+//! CLI arguments for configuring the EVM settings.
+
+use alloy_primitives::{map::HashMap, Address, B256, U256};
 use clap::{ArgAction, Parser};
 use eyre::ContextCompat;
 use foundry_config::{
@@ -11,11 +12,10 @@ use foundry_config::{
     },
     Chain, Config,
 };
-use rustc_hash::FxHashMap;
 use serde::Serialize;
 
 /// Map keyed by breakpoints char to their location (contract address, pc)
-pub type Breakpoints = FxHashMap<char, (Address, usize)>;
+pub type Breakpoints = HashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///
@@ -147,7 +147,7 @@ pub struct EvmArgs {
     pub isolate: bool,
 
     /// Whether to enable Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     #[serde(skip)]
     pub alphanet: bool,
 }

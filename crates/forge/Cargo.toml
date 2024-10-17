@@ -98,7 +98,6 @@ watchexec-events = "3.0"
 watchexec-signals = "3.0"
 clearscreen = "3.0"
 evm-disassembler.workspace = true
-rustc-hash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -107,7 +106,7 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.7"
 
 # soldeer
-soldeer.workspace = true
+soldeer-commands.workspace = true
 quick-junit = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]
@@ -118,7 +117,6 @@ anvil.workspace = true
 foundry-test-utils.workspace = true
 
 mockall = "0.13"
-criterion = "0.5"
 globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
@@ -144,7 +142,3 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
-
-[[bench]]
-name = "test"
-harness = false

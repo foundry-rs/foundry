@@ -20,6 +20,7 @@ members = [
     "crates/evm/traces/",
     "crates/fmt/",
     "crates/forge/",
+    "crates/script-sequence/",
     "crates/macros/",
     "crates/test-utils/",
 ]
@@ -147,6 +148,7 @@ forge-fmt = { path = "crates/fmt" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }
 forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
+forge-script-sequence = { path = "crates/script-sequence" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -167,7 +169,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.7.3", default-features = false }
-foundry-compilers = { version = "0.11.4", default-features = false }
+foundry-compilers = { version = "0.11.6", default-features = false }
 foundry-fork-db = "0.4.0"
 solang-parser = "=0.3.3"
 
@@ -208,7 +210,7 @@ alloy-json-abi = "0.8.5"
 alloy-primitives = { version = "0.8.5", features = [
     "getrandom",
     "rand",
-    "map-fxhash",
+    "map-foldhash",
 ] }
 alloy-sol-macro-expander = "0.8.5"
 alloy-sol-macro-input = "0.8.5"
@@ -219,16 +221,24 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
-## op-alloy for tests in anvil
-op-alloy-rpc-types = "0.2.9"
+## op-alloy 
+op-alloy-rpc-types = "0.3.3"
+op-alloy-consensus = "0.3.3"
 
-## misc
-async-trait = "0.1"
-auto_impl = "1"
-walkdir = "2"
+# macros
 proc-macro2 = "1.0.82"
 quote = "1.0"
 syn = "2.0"
+async-trait = "0.1"
+derive_more = { version = "1.0", features = ["full"] }
+thiserror = "1"
+
+# bench
+divan = "0.1"
+
+# misc
+auto_impl = "1"
+walkdir = "2"
 prettyplease = "0.2.20"
 ahash = "0.8"
 base64 = "0.22"
@@ -236,50 +246,46 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
+axum = "0.7"
 color-eyre = "0.6"
-derive_more = { version = "1.0", features = ["full"] }
+comfy-table = "7"
 dunce = "1"
 evm-disassembler = "0.5"
+evmole = "0.5"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
+hyper = "1.0"
+indexmap = "2.2"
 itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"
-parking_lot = "0.12"
 mesc = "0.3"
+num-format = "0.4.4"
+parking_lot = "0.12"
+proptest = "1"
 rand = "0.8"
-rustc-hash = "2.0"
+rayon = "1"
+reqwest = { version = "0.12", default-features = false }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.5"
+soldeer-commands = "=0.4.1"
 strum = "0.26"
-thiserror = "1"
-toml = "0.8"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-vergen = { version = "8", default-features = false }
-indexmap = "2.2"
-tikv-jemallocator = "0.6"
-url = "2"
-num-format = "0.4.4"
-yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 tempfile = "3.10"
+tikv-jemallocator = "0.6"
 tokio = "1"
-rayon = "1"
-evmole = "0.5"
-axum = "0.7"
-hyper = "1.0"
-reqwest = { version = "0.12", default-features = false }
+toml = "0.8"
 tower = "0.4"
 tower-http = "0.5"
-# soldeer
-soldeer = "=0.3.4"
-proptest = "1"
-comfy-table = "7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+url = "2"
+vergen = { version = "8", default-features = false }
+yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
-# [patch.crates-io]
+[patch.crates-io]
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

@@ -262,9 +262,8 @@ impl DatabaseRef for ForkDbStateSnapshot {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use super::*;
     use crate::backend::BlockchainDbMeta;
     use foundry_common::provider::get_http_provider;

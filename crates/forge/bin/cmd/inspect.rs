@@ -52,7 +52,7 @@ impl InspectArgs {
 
         // Run Optimized?
         let optimized = if field == ContractArtifactField::AssemblyOptimized {
-            true
+            Some(true)
         } else {
             build.compiler.optimize
         };
