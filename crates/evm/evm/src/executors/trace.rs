@@ -18,15 +18,18 @@ impl TracingExecutor {
         version: Option<EvmVersion>,
         debug: bool,
         decode_internal: bool,
+        with_state_changes: bool,
         alphanet: bool,
     ) -> Self {
         let db = Backend::spawn(fork);
-        let trace_mode =
-            TraceMode::Call.with_debug(debug).with_decode_internal(if decode_internal {
+        let trace_mode = TraceMode::Call
+            .with_debug(debug)
+            .with_decode_internal(if decode_internal {
                 InternalTraceMode::Full
             } else {
                 InternalTraceMode::None
-            });
+            })
+            .with_state_changes(with_state_changes);
         Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
