@@ -345,8 +345,8 @@ impl Shell {
 
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
     ///
-    /// This will render a message in [ERROR](crate::io::style::ERROR) style with a bold `Error: `
-    /// prefix. The message will be styled with [ERROR_MESSAGE](crate::io::style::ERROR_MESSAGE).
+    /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
+    /// The message will be styled with [ERROR_MESSAGE].
     ///
     /// **Note**: will log regardless of the verbosity level.
     #[inline]
@@ -357,8 +357,8 @@ impl Shell {
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
     ///
-    /// This will render a message in [WARN](crate::io::style::WARN) style with a bold `Warning: `
-    /// prefix. The message will be styled with [WARN_MESSAGE](crate::io::style::WARN_MESSAGE).
+    /// This will render a message in [WARN] style with a bold `Warning: `prefix.
+    /// The message will be styled with [WARN_MESSAGE]).
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     #[inline]
