@@ -247,7 +247,7 @@ impl CoverageArgs {
         let outcome =
             self.test.run_tests(runner, config.clone(), verbosity, &filter, output).await?;
 
-        outcome.ensure_ok()?;
+        outcome.ensure_ok(false)?;
 
         // Add hit data to the coverage report
         let data = outcome.results.iter().flat_map(|(_, suite)| {

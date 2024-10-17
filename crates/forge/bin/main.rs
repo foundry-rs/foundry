@@ -42,8 +42,9 @@ fn run() -> Result<()> {
             if cmd.is_watch() {
                 utils::block_on(watch::watch_test(cmd))
             } else {
+                let silent = cmd.junit || cmd.json;
                 let outcome = utils::block_on(cmd.run())?;
-                outcome.ensure_ok()
+                outcome.ensure_ok(silent)
             }
         }
         ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),

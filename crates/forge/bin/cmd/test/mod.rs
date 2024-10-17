@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -109,11 +109,11 @@ pub struct TestArgs {
 
     /// Output test results in JSON format.
     #[arg(long, help_heading = "Display options")]
-    json: bool,
+    pub json: bool,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
-    junit: bool,
+    pub junit: bool,
 
     /// Stop running tests after the first failure.
     #[arg(long)]
@@ -180,11 +180,6 @@ impl TestArgs {
     }
 
     pub async fn run(self) -> Result<TestOutcome> {
-        // Set verbosity to quiet if JUnit is enabled to avoid logging test summary.
-        if self.junit {
-            shell::set_verbosity(shell::Verbosity::Quiet);
-        }
-
         trace!(target: "forge::test", "executing test command");
         self.execute_tests().await
     }

@@ -151,14 +151,14 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
         if outcome.allow_failure || failures == 0 {
             return Ok(());
         }
 
-        if shell::is_quiet() {
+        if shell::is_quiet() || silent {
             // TODO: Avoid process::exit
             std::process::exit(1);
         }
