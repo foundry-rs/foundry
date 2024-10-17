@@ -22,11 +22,6 @@ pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
 }
 
-/// Sets the verbosity level of the output.
-pub fn set_verbosity(verbosity: Verbosity) {
-    Shell::get().set_verbosity(verbosity);
-}
-
 /// Returns whether the verbosity level is [`Verbosity::Quiet`].
 pub fn is_quiet() -> bool {
     verbosity().is_quiet()
@@ -220,12 +215,6 @@ impl Shell {
             panic!("attempted to set global shell twice");
         }
         GLOBAL_SHELL.get_or_init(|| Mutex::new(self));
-    }
-
-    /// Sets the verbosity level of the shell.
-    #[inline]
-    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
-        self.verbosity = verbosity;
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
