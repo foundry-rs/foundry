@@ -105,11 +105,6 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
 
-    /// Don't print anything on startup.
-    #[arg(long, help_heading = "Compiler options")]
-    #[serde(skip)]
-    pub silent: bool,
-
     /// Generate build info files.
     #[arg(long, help_heading = "Project options")]
     #[serde(skip)]

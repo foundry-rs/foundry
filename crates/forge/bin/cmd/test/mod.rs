@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -109,11 +109,11 @@ pub struct TestArgs {
 
     /// Output test results in JSON format.
     #[arg(long, help_heading = "Display options")]
-    json: bool,
+    pub json: bool,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
-    junit: bool,
+    pub junit: bool,
 
     /// Stop running tests after the first failure.
     #[arg(long)]
@@ -181,7 +181,6 @@ impl TestArgs {
 
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json || self.junit))?;
         self.execute_tests().await
     }
 
@@ -286,9 +285,7 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
             project = config.project()?;
@@ -299,9 +296,8 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler = ProjectCompiler::new()
-            .quiet_if(self.json || self.junit || self.opts.silent)
-            .files(sources_to_compile);
+        let compiler =
+            ProjectCompiler::new().quiet(self.json || self.junit).files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -368,7 +364,7 @@ impl TestArgs {
 
         let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {
             if let Some(Some(regex)) = maybe_regex {
-                cli_warn!(
+                sh_warn!(
                     "specifying argument for --{flag} is deprecated and will be removed in the future, \
                      use --match-test instead"
                 );
@@ -610,7 +606,7 @@ impl TestArgs {
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
                 if !silent {
-                    shell::println(result.short_result(name))?;
+                    sh_println!("{}", result.short_result(name));
 
                     // We only display logs at level 2 and above
                     if verbosity >= 2 {
@@ -665,9 +661,9 @@ impl TestArgs {
                 }
 
                 if !silent && !decoded_traces.is_empty() {
-                    shell::println("Traces:")?;
+                    sh_println!("Traces:");
                     for trace in &decoded_traces {
-                        shell::println(trace)?;
+                        sh_println!("{trace}");
                     }
                 }
 
@@ -772,7 +768,7 @@ impl TestArgs {
 
             // Print suite summary.
             if !silent {
-                shell::println(suite_result.summary())?;
+                sh_println!("{}", suite_result.summary());
             }
 
             // Add the suite result to the outcome.
@@ -790,16 +786,16 @@ impl TestArgs {
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
-            shell::println(&finalized)?;
+            sh_println!("{}", &finalized);
             outcome.gas_report = Some(finalized);
         }
 
         if !silent && !outcome.results.is_empty() {
-            shell::println(outcome.summary(duration))?;
+            sh_println!("{}", outcome.summary(duration));
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
-                shell::println("\n\nTest Summary:")?;
+                sh_println!("\n\nTest Summary:");
                 summary_table.print_summary(&outcome);
             }
         }
@@ -1066,7 +1062,6 @@ contract FooBarTest is DSTest {
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
-            "--silent",
         ]);
 
         let outcome = args.run().await.unwrap();

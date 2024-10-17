@@ -16,7 +16,6 @@ workspace = true
 [dependencies]
 alloy-primitives.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["eip712"] }
-yansi.workspace = true
 
 # ui
 alloy-consensus.workspace = true
@@ -27,6 +26,7 @@ serde_json.workspace = true
 chrono.workspace = true
 revm-primitives.workspace = true
 comfy-table.workspace = true
+yansi.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true

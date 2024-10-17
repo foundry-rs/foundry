@@ -198,21 +198,6 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     report::with_scoped(&reporter, f)
 }
 
-#[macro_export]
-/// Displays warnings on the cli
-macro_rules! cli_warn {
-    ($($arg:tt)*) => {
-        eprintln!(
-            "{}{} {}",
-            yansi::Painted::new("warning").yellow().bold(),
-            yansi::Painted::new(":").bold(),
-            format_args!($($arg)*)
-        )
-    }
-}
-
-pub use cli_warn;
-
 #[cfg(test)]
 mod tests {
     use super::*;
