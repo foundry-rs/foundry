@@ -204,7 +204,7 @@ pub struct Backend {
     mining: Arc<tokio::sync::Mutex<()>>,
     // === wallet === //
     capabilities: Arc<RwLock<WalletCapabilities>>,
-    executor_wallet: Option<EthereumWallet>,
+    executor_wallet: Arc<RwLock<Option<EthereumWallet>>>,
 }
 
 impl Backend {
@@ -322,7 +322,7 @@ impl Backend {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             capabilities: Arc::new(RwLock::new(capabilities)),
-            executor_wallet,
+            executor_wallet: Arc::new(RwLock::new(executor_wallet)),
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -355,8 +355,8 @@ impl Backend {
         self.states.write().update_interval_mine_block_time(block_time)
     }
 
-    pub(crate) fn executor_wallet(&self) -> Option<&EthereumWallet> {
-        self.executor_wallet.as_ref()
+    pub(crate) fn executor_wallet(&self) -> Option<EthereumWallet> {
+        self.executor_wallet.read().clone()
     }
 
     /// Adds an address to the [`DelegationCapability`] of the wallet.
@@ -366,6 +366,18 @@ impl Backend {
         let mut capability = capabilities.get(chain_id).cloned().unwrap_or_default();
         capability.delegation.addresses.push(address);
         capabilities.insert(chain_id, capability);
+    }
+
+    pub(crate) fn set_executor(&self, executor_pk: String) -> Result<Address, BlockchainError> {
+        let signer: PrivateKeySigner =
+            executor_pk.parse().map_err(|_| RpcError::invalid_params("Invalid private key"))?;
+
+        let executor = signer.address();
+        let wallet = EthereumWallet::new(signer);
+
+        *self.executor_wallet.write() = Some(wallet);
+
+        Ok(executor)
     }
 
     /// Applies the configured genesis settings

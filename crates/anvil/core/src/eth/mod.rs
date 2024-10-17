@@ -784,6 +784,10 @@ pub enum EthRequest {
     /// [`DelegationCapability`]: wallet::DelegationCapability  
     #[cfg_attr(feature = "serde", serde(rename = "anvil_addCapability", with = "sequence"))]
     AnvilAddCapability(Address),
+
+    /// Set the executor (sponsor) wallet
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_setExecutor", with = "sequence"))]
+    AnvilSetExecutor(String),
 }
 
 /// Represents ethereum JSON-RPC API

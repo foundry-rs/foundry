@@ -7,7 +7,7 @@ use crate::{
         backend::{
             self,
             db::SerializableState,
-            mem::{EXECUTOR, MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
+            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
             notifications::NewBlockNotifications,
             validate::TransactionValidator,
         },
@@ -461,6 +461,9 @@ impl EthApi {
                 self.wallet_send_transaction(*tx).await.to_rpc_result()
             }
             EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
+            EthRequest::AnvilSetExecutor(executor_pk) => {
+                self.anvil_set_executor(executor_pk).to_rpc_result()
+            }
         }
     }
 
@@ -2455,17 +2458,17 @@ impl EthApi {
             _ => return Err(WalletError::IllegalDestination.into()),
         }
 
-        let nonce = self.get_transaction_count(EXECUTOR, Some(BlockId::latest())).await?;
+        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
+
+        let from = NetworkWallet::<Ethereum>::default_signer_address(&wallet);
+
+        let nonce = self.get_transaction_count(from, Some(BlockId::latest())).await?;
 
         request.nonce = Some(nonce);
 
         let chain_id = self.chain_id();
 
         request.chain_id = Some(chain_id);
-
-        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
-
-        let from = NetworkWallet::<Ethereum>::default_signer_address(wallet);
 
         request.from = Some(from);
 
@@ -2492,7 +2495,7 @@ impl EthApi {
         request.max_priority_fee_per_gas = Some(estimation.max_priority_fee_per_gas);
         request.gas_price = None;
 
-        let envelope = request.build(wallet).await.map_err(|_| WalletError::InternalError)?;
+        let envelope = request.build(&wallet).await.map_err(|_| WalletError::InternalError)?;
 
         self.send_raw_transaction(envelope.encoded_2718().into()).await
     }
@@ -2504,6 +2507,11 @@ impl EthApi {
         node_info!("anvil_addCapability");
         self.backend.add_capability(address);
         Ok(())
+    }
+
+    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
+        node_info!("anvil_setExecutor");
+        self.backend.set_executor(executor_pk)
     }
 }
 
