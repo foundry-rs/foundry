@@ -1,7 +1,9 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
+use foundry_compilers::artifacts::{
+    remappings::Remapping, ConfigurableContractArtifact, EvmVersion, Metadata,
+};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
 };
@@ -1521,8 +1523,9 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
-    // report for all
+    // report for all, pin test to Paris EVM version.
     prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
         gas_reports: (vec!["*".to_string()]),
         gas_reports_ignore: (vec![]),
         ..Default::default()
@@ -1566,46 +1569,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
 "#]].is_jsonlines());
 
-    prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
-    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
-...
-| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
-|----------------------------------------|-----------------|-------|--------|-------|---------|
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-| 103375                                 | 255             |       |        |       |         |
-| Function Name                          | min             | avg   | median | max   | # calls |
-| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
-
-
-| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
-|------------------------------------------|-----------------|--------|--------|--------|---------|
-| Deployment Cost                          | Deployment Size |        |        |        |         |
-| 103591                                   | 256             |        |        |        |         |
-| Function Name                            | min             | avg    | median | max    | # calls |
-| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
-
-
-| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
-|----------------------------------------|-----------------|-------|--------|-------|---------|
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-| 103375                                 | 255             |       |        |       |         |
-| Function Name                          | min             | avg   | median | max   | # calls |
-| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
-...
-
-"#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
-
-    prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
+    prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
+        gas_reports: (vec![]),
+        ..Default::default()
+    });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
 | src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
@@ -1645,6 +1613,50 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 "#]].is_jsonlines());
 
     prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
+        gas_reports: (vec!["*".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .arg("--json")
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
+{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
+{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
+"#]].is_jsonlines());
+
+    prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
         gas_reports: (vec![
             "ContractOne".to_string(),
             "ContractTwo".to_string(),
@@ -1696,7 +1708,11 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for One
-    prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
+    prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
+        gas_reports: vec!["ContractOne".to_string()],
+        ..Default::default()
+    });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -1719,7 +1735,11 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 "#]].is_jsonlines());
 
     // report for Two
-    prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
+    prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
+        gas_reports: vec!["ContractTwo".to_string()],
+        ..Default::default()
+    });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -1740,6 +1760,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 
     // report for Three
     prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
         gas_reports: vec!["ContractThree".to_string()],
         ..Default::default()
     });
@@ -1769,8 +1790,9 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
-    // ignore ContractOne
+    // ignore ContractOne, pin test to Paris EVM version.
     prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
         gas_reports: (vec!["*".to_string()]),
         gas_reports_ignore: (vec!["ContractOne".to_string()]),
         ..Default::default()
@@ -1805,9 +1827,10 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
 "#]].is_jsonlines());
 
-    // ignore ContractTwo
+    // ignore ContractTwo, pin test to Paris EVM version.
     cmd.forge_fuse();
     prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
         gas_reports: (vec![]),
         gas_reports_ignore: (vec!["ContractTwo".to_string()]),
         ..Default::default()
@@ -1842,9 +1865,10 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 "#]].is_jsonlines());
 
-    // ignore ContractThree
+    // ignore ContractThree, pin test to Paris EVM version.
     cmd.forge_fuse();
     prj.write_config(Config {
+        evm_version: EvmVersion::Paris,
         gas_reports: (vec![
             "ContractOne".to_string(),
             "ContractTwo".to_string(),
@@ -2180,6 +2204,9 @@ Compiler run successful!
 
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
+    // Pin test to Paris EVM version.
+    let config = Config { evm_version: EvmVersion::Paris, ..Default::default() };
+    prj.write_config(config);
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"

@@ -89,6 +89,7 @@ fn stringutils() {
 fn lootloose() {
     ExtTester::new("gakonst", "lootloose", "7b639efe97836155a6a6fc626bf1018d4f8b2495")
         .install_command(&["make", "install"])
+        .args(["--evm-version", "paris"])
         .run();
 }
 
