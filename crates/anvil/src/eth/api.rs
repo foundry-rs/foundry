@@ -460,6 +460,9 @@ impl EthApi {
             EthRequest::WalletSendTransaction(tx) => {
                 self.wallet_send_transaction(*tx).await.to_rpc_result()
             }
+            EthRequest::AnvilAddCapability(addr) => {
+                self.anvil_add_capability(addr).to_rpc_result()
+            }
         }
     }
 
@@ -2494,6 +2497,15 @@ impl EthApi {
         let envelope = request.build(wallet).await.map_err(|_| WalletError::InternalError)?;
 
         self.send_raw_transaction(envelope.encoded_2718().into()).await
+    }
+
+    /// Add an address to the delegation capability of wallet.
+    ///
+    /// This entails that the executor will now be able to sponsor transactions to this address.
+    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
+        node_info!("anvil_addCapability");
+        self.backend.add_capability(address);
+        Ok(())
     }
 }
 

@@ -825,7 +825,7 @@ async fn can_get_wallet_capabilities() {
     let cap = Capabilities {
         delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
     };
-    expect_caps.0.insert(api.chain_id(), cap);
+    expect_caps.insert(api.chain_id(), cap);
 
     assert_eq!(capabilities, expect_caps);
 }

@@ -203,7 +203,7 @@ pub struct Backend {
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
     // === wallet === //
-    capabilities: WalletCapabilities,
+    capabilities: Arc<RwLock<WalletCapabilities>>,
     executor_wallet: Option<EthereumWallet>,
 }
 
@@ -284,7 +284,7 @@ impl Backend {
             let mut capabilities = WalletCapabilities::default();
 
             let chain_id = env.read().cfg.chain_id;
-            capabilities.0.insert(
+            capabilities.insert(
                 chain_id,
                 Capabilities {
                     delegation: DelegationCapability { addresses: vec![P256_DELEGATION_CONTRACT] },
@@ -321,7 +321,7 @@ impl Backend {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
-            capabilities,
+            capabilities: Arc::new(RwLock::new(capabilities)),
             executor_wallet,
         };
 
@@ -347,7 +347,7 @@ impl Backend {
     ///
     /// [`DelegationCapability`]: anvil_core::eth::wallet::DelegationCapability
     pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
-        self.capabilities.clone()
+        self.capabilities.read().clone()
     }
 
     /// Updates memory limits that should be more strict when auto-mine is enabled
@@ -357,6 +357,15 @@ impl Backend {
 
     pub(crate) fn executor_wallet(&self) -> Option<&EthereumWallet> {
         self.executor_wallet.as_ref()
+    }
+
+    /// Adds an address to the [`DelegationCapability`] of the wallet.
+    pub(crate) fn add_capability(&self, address: Address) {
+        let chain_id = self.env.read().cfg.chain_id;
+        let mut capabilities = self.capabilities.write();
+        let mut capability = capabilities.get(chain_id).cloned().unwrap_or_default();
+        capability.delegation.addresses.push(address);
+        capabilities.insert(chain_id, capability);
     }
 
     /// Applies the configured genesis settings

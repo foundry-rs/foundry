@@ -778,6 +778,12 @@ pub enum EthRequest {
     /// Wallet send_tx
     #[cfg_attr(feature = "serde", serde(rename = "wallet_sendTransaction", with = "sequence"))]
     WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
+
+    /// Add an address to the [`DelegationCapability`] of the wallet
+    ///
+    /// [`DelegationCapability`]: wallet::DelegationCapability  
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_addCapability", with = "sequence"))]
+    AnvilAddCapability(Address),
 }
 
 /// Represents ethereum JSON-RPC API
