@@ -44,6 +44,9 @@ pub struct ProjectCompiler {
     /// Whether to bail on compiler errors.
     bail: Option<bool>,
 
+    /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
+    ignore_eip_3860: bool,
+
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
 }
@@ -65,6 +68,7 @@ impl ProjectCompiler {
             print_sizes: None,
             quiet: Some(crate::shell::verbosity().is_silent()),
             bail: None,
+            ignore_eip_3860: false,
             files: Vec::new(),
         }
     }
@@ -111,6 +115,13 @@ impl ProjectCompiler {
     #[inline]
     pub fn bail(mut self, yes: bool) -> Self {
         self.bail = Some(yes);
+        self
+    }
+
+    /// Sets whether to ignore EIP-3860 initcode size limits.
+    #[inline]
+    pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
+        self.ignore_eip_3860 = yes;
         self
     }
 
@@ -232,7 +243,8 @@ impl ProjectCompiler {
                 .collect();
 
             for (name, artifact) in artifacts {
-                let size = deployed_contract_size(artifact).unwrap_or_default();
+                let runtime_size = contract_size(artifact, false).unwrap_or_default();
+                let init_size = contract_size(artifact, true).unwrap_or_default();
 
                 let is_dev_contract = artifact
                     .abi
@@ -244,14 +256,21 @@ impl ProjectCompiler {
                         })
                     })
                     .unwrap_or(false);
-                size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
+                size_report
+                    .contracts
+                    .insert(name, ContractInfo { runtime_size, init_size, is_dev_contract });
             }
 
             println!("{size_report}");
 
             // TODO: avoid process::exit
             // exit with error if any contract exceeds the size limit, excluding test contracts.
-            if size_report.exceeds_size_limit() {
+            if size_report.exceeds_runtime_size_limit() {
+                std::process::exit(1);
+            }
+
+            // Check size limits only if not ignoring EIP-3860
+            if !self.ignore_eip_3860 && size_report.exceeds_initcode_size_limit() {
                 std::process::exit(1);
             }
         }
@@ -259,7 +278,10 @@ impl ProjectCompiler {
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_SIZE_LIMIT: usize = 24576;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
+
+// https://eips.ethereum.org/EIPS/eip-3860
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
@@ -268,20 +290,34 @@ pub struct SizeReport {
 }
 
 impl SizeReport {
-    /// Returns the size of the largest contract, excluding test contracts.
-    pub fn max_size(&self) -> usize {
-        let mut max_size = 0;
-        for contract in self.contracts.values() {
-            if !contract.is_dev_contract && contract.size > max_size {
-                max_size = contract.size;
-            }
-        }
-        max_size
+    /// Returns the maximum runtime code size, excluding dev contracts.
+    pub fn max_runtime_size(&self) -> usize {
+        self.contracts
+            .values()
+            .filter(|c| !c.is_dev_contract)
+            .map(|c| c.runtime_size)
+            .max()
+            .unwrap_or(0)
     }
 
-    /// Returns true if any contract exceeds the size limit, excluding test contracts.
-    pub fn exceeds_size_limit(&self) -> bool {
-        self.max_size() > CONTRACT_SIZE_LIMIT
+    /// Returns the maximum initcode size, excluding dev contracts.
+    pub fn max_init_size(&self) -> usize {
+        self.contracts
+            .values()
+            .filter(|c| !c.is_dev_contract)
+            .map(|c| c.init_size)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Returns true if any contract exceeds the runtime size limit, excluding dev contracts.
+    pub fn exceeds_runtime_size_limit(&self) -> bool {
+        self.max_runtime_size() > CONTRACT_RUNTIME_SIZE_LIMIT
+    }
+
+    /// Returns true if any contract exceeds the initcode size limit, excluding dev contracts.
+    pub fn exceeds_initcode_size_limit(&self) -> bool {
+        self.max_init_size() > CONTRACT_INITCODE_SIZE_LIMIT
     }
 }
 
@@ -291,29 +327,49 @@ impl Display for SizeReport {
         table.load_preset(ASCII_MARKDOWN);
         table.set_header([
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Runtime Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Initcode Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Runtime Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Initcode Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
-        // filters out non dev contracts (Test or Script)
-        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
+        // Filters out dev contracts (Test or Script)
+        let contracts = self
+            .contracts
+            .iter()
+            .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0));
         for (name, contract) in contracts {
-            let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
-            let color = match contract.size {
-                0..=17999 => Color::Reset,
-                18000..=CONTRACT_SIZE_LIMIT => Color::Yellow,
+            let runtime_margin =
+                CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize;
+            let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
+
+            let runtime_color = match contract.runtime_size {
+                ..18_000 => Color::Reset,
+                18_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
+                _ => Color::Red,
+            };
+
+            let init_color = match contract.init_size {
+                ..36_000 => Color::Reset,
+                36_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
                 _ => Color::Red,
             };
 
             let locale = &Locale::en;
             table.add_row([
-                Cell::new(name).fg(color),
-                Cell::new(contract.size.to_formatted_string(locale))
+                Cell::new(name).fg(Color::Blue),
+                Cell::new(contract.runtime_size.to_formatted_string(locale))
                     .set_alignment(CellAlignment::Right)
-                    .fg(color),
-                Cell::new(margin.to_formatted_string(locale))
+                    .fg(runtime_color),
+                Cell::new(contract.init_size.to_formatted_string(locale))
                     .set_alignment(CellAlignment::Right)
-                    .fg(color),
+                    .fg(init_color),
+                Cell::new(runtime_margin.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(runtime_color),
+                Cell::new(init_margin.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(init_color),
             ]);
         }
 
@@ -322,9 +378,14 @@ impl Display for SizeReport {
     }
 }
 
-/// Returns the size of the deployed contract
-pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
-    let bytecode = artifact.get_deployed_bytecode_object()?;
+/// Returns the deployed or init size of the contract.
+fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
+    let bytecode = if initcode {
+        artifact.get_bytecode_object()?
+    } else {
+        artifact.get_deployed_bytecode_object()?
+    };
+
     let size = match bytecode.as_ref() {
         BytecodeObject::Bytecode(bytes) => bytes.len(),
         BytecodeObject::Unlinked(unlinked) => {
@@ -338,14 +399,17 @@ pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
             size / 2
         }
     };
+
     Some(size)
 }
 
 /// How big the contract is and whether it is a dev contract where size limits can be neglected
 #[derive(Clone, Copy, Debug)]
 pub struct ContractInfo {
-    /// size of the contract in bytes
-    pub size: usize,
+    /// Size of the runtime code in bytes
+    pub runtime_size: usize,
+    /// Size of the initcode in bytes
+    pub init_size: usize,
     /// A development contract is either a Script or a Test contract.
     pub is_dev_contract: bool,
 }
