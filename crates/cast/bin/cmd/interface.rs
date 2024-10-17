@@ -139,7 +139,7 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
 }
 
 /// Fetches the ABI of a contract from Etherscan.
-async fn fetch_abi_from_etherscan(
+pub async fn fetch_abi_from_etherscan(
     address: Address,
     etherscan: &EtherscanOpts,
 ) -> Result<Vec<(JsonAbi, String)>> {
