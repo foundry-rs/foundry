@@ -1322,7 +1322,7 @@ casttest!(hash_message, |_prj, cmd| {
 "#]]);
 
     cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
-0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
+0x83a0870b6c63a71efdd3b2749ef700653d97454152c4b53fa9b102dc430c7c32
 
 "#]]);
 });
