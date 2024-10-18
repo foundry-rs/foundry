@@ -1,12 +1,15 @@
 //! Support for forking off another client
 
+use super::db::{
+    SerializableAccountRecord, SerializableBlock, SerializableState, SerializableTransaction,
+};
 use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
 use alloy_consensus::Account;
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::BlockResponse;
 use alloy_primitives::{
-    map::{FbHashMap, HashMap},
-    Address, Bytes, StorageValue, B256, U256,
+    map::{AddressHashMap, FbHashMap, HashMap},
+    Address, Bytes, StorageValue, B256, B64, U256,
 };
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
@@ -18,19 +21,21 @@ use alloy_rpc_types::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace as Trace,
     },
-    AnyNetworkBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
+    AnyNetworkBlock, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse, FeeHistory, Filter, Header, Log, Transaction,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use anvil_core::eth::transaction::{convert_to_anvil_receipt, ReceiptResponse};
+use anvil_core::eth::transaction::{
+    convert_to_anvil_receipt, to_alloy_transaction_with_hash_and_sender, ReceiptResponse,
+};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
-use revm::primitives::BlobExcessGasAndPrice;
-use std::{sync::Arc, time::Duration};
+use revm::primitives::{AccountInfo, BlobExcessGasAndPrice, Bytecode, KECCAK_EMPTY};
+use std::{collections::BTreeMap, future::IntoFuture, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
 /// Represents a fork of a remote client
@@ -601,6 +606,75 @@ impl ClientFork {
 
         block
     }
+
+    /// Loads `ForkedStorage`
+    pub async fn load_storage(&self, state: SerializableState) {
+        let mut storage = self.storage_write();
+
+        // 1. Load accounts
+        // TODO: Discard default anvil accounts.
+        let accounts = storage.accounts.keys().map(|k| *k).collect::<Vec<_>>();
+
+        trace!(target: "backend::fork", "fork_block_number={}, state_block_number={}", self.block_number(), state.best_block_number.unwrap_or_default());
+
+        if state.best_block_number.is_some_and(|b| self.block_number() > b.to()) {
+            let mut sync_accs = Vec::new();
+            // For each account query code, balance and nonce councurrently.
+            for acc in accounts {
+                let code_fut = self
+                    .provider()
+                    .get_code_at(acc)
+                    .block_id(self.block_number().into())
+                    .into_future();
+
+                let balance_fut = self
+                    .provider()
+                    .get_balance(acc)
+                    .block_id(self.block_number().into())
+                    .into_future();
+
+                let nonce_fut = self
+                    .provider()
+                    .get_transaction_count(acc)
+                    .block_id(self.block_number().into())
+                    .into_future();
+
+                let address_fut = async move { acc };
+
+                let acc_fut = futures::future::join4(address_fut, code_fut, balance_fut, nonce_fut);
+
+                sync_accs.push(acc_fut);
+            }
+
+            let latest_acc_state: AddressHashMap<(Bytes, U256, u64)> =
+                futures::future::join_all(sync_accs)
+                    .await
+                    .into_iter()
+                    .filter_map(|(address, code, balance, nonce)| {
+                        let code = code.ok()?;
+                        let balance = balance.ok()?;
+                        let nonce = nonce.ok()?;
+                        Some((address, (code, balance, nonce)))
+                    })
+                    .collect();
+
+            // Merge the accounts with the latest state
+            for (address, (code, balance, nonce)) in latest_acc_state {
+                let account = state.accounts.get_mut(&address).unwrap(); // safe to unwrap
+                account.balance = balance;
+                account.nonce = nonce;
+                account.code = Some(Bytecode::new_raw(code));
+            }
+        }
+
+        storage.load_accounts(state.accounts);
+
+        // 2. Load blocks
+        storage.load_blocks(state.blocks);
+
+        // TODO: 3. Load transactions
+        // storage.load_transactions(state.transactions);
+    }
 }
 
 /// Contains all fork metadata
@@ -695,6 +769,8 @@ pub struct ForkedStorage {
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
+    pub account: AddressHashMap<AccountInfo>,
+    pub storage: AddressHashMap<HashMap<U256, U256>>,
 }
 
 impl ForkedStorage {
@@ -702,5 +778,102 @@ impl ForkedStorage {
     pub fn clear(&mut self) {
         // simply replace with a completely new, empty instance
         *self = Self::default()
+    }
+
+    /// Load Blocks
+    pub fn load_blocks(&mut self, blocks: Vec<SerializableBlock>) {
+        for block in blocks {
+            let block_hash = block.header.hash_slow();
+
+            let block_number = block.header.number;
+            self.hashes.insert(block_number, block_hash);
+
+            let header = convert_header(&block.header);
+
+            let uncles = block.ommers.iter().map(|uncle| uncle.hash_slow()).collect::<Vec<_>>();
+
+            // `let transactions =
+            //     block.transactions.into_iter().map(|tx| convert_tx(tx)).collect::<Vec<_>>();`
+
+            let rpc_block = WithOtherFields {
+                inner: Block {
+                    header,
+                    // transactions: BlockTransactions::Full(transactions),
+                    uncles,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            self.blocks.insert(block_hash, rpc_block);
+        }
+    }
+
+    /// Load accounts
+    pub fn load_accounts(&mut self, accounts: BTreeMap<Address, SerializableAccountRecord>) {
+        for (address, account) in accounts {
+            let SerializableAccountRecord { nonce, balance, code, storage } = account;
+
+            let account_info = AccountInfo {
+                nonce,
+                balance,
+                code_hash: KECCAK_EMPTY,
+                code: if code.is_empty() { None } else { Some(Bytecode::new_raw(code)) },
+            };
+
+            self.accounts.insert(address, account_info);
+
+            let storage = storage.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+
+            self.storage.insert(address, storage);
+        }
+    }
+
+    /// Load Transactions
+    pub fn load_transactions(&mut self, transactions: Vec<SerializableTransaction>) {
+        todo!()
+        // for tx in transactions {
+        //     let tx = convert_tx(tx);
+        //     self.transactions.insert(tx.inner.hash, tx);
+        // }
+    }
+}
+
+fn convert_tx(tx: SerializableTransaction) -> WithOtherFields<Transaction> {
+    todo!()
+    // let hash = typed_tx.hash();
+    // let sender = typed_tx.recover().unwrap_or_default();
+
+    // WithOtherFields {
+    //     inner: to_alloy_transaction_with_hash_and_sender(typed_tx, hash, sender),
+    //     ..Default::default()
+    // }
+}
+
+fn convert_header(header: &alloy_consensus::Header) -> Header {
+    Header {
+        hash: header.hash_slow(),
+        parent_hash: header.parent_hash,
+        number: header.number,
+        timestamp: header.timestamp,
+        gas_limit: header.gas_limit,
+        gas_used: header.gas_used,
+        base_fee_per_gas: header.base_fee_per_gas,
+        total_difficulty: None,
+        transactions_root: header.transactions_root,
+        state_root: header.state_root,
+        receipts_root: header.receipts_root,
+        logs_bloom: header.logs_bloom,
+        mix_hash: Some(header.mix_hash),
+        nonce: Some(B64::from(header.nonce)),
+        extra_data: header.extra_data.clone(),
+        difficulty: header.difficulty,
+        uncles_hash: header.ommers_hash,
+        miner: header.beneficiary,
+        withdrawals_root: header.withdrawals_root,
+        blob_gas_used: header.blob_gas_used,
+        excess_blob_gas: header.excess_blob_gas,
+        requests_root: header.requests_root,
+        parent_beacon_block_root: header.parent_beacon_block_root,
     }
 }

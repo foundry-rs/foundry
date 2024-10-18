@@ -898,39 +898,52 @@ impl Backend {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage
-        self.blockchain.storage.write().load_blocks(state.blocks.clone());
-        self.blockchain.storage.write().load_transactions(state.transactions.clone());
-        // reset the block env
-        if let Some(block) = state.block.clone() {
-            self.env.write().block = block.clone();
+        tracing::info!("Loading state to backend");
 
-            // Set the current best block number.
-            // Defaults to block number for compatibility with existing state files.
+        if let Some(fork) = self.get_fork() {
+            if let Some(block) = state.block.clone() {
+                self.env.write().block = block.clone();
+            }
 
-            let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
-            self.blockchain.storage.write().best_number = best_number;
+            fork.load_storage(state);
 
-            // Set the current best block hash;
-            let best_hash =
-                self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
-                    BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                        "Best hash not found for best number {best_number}",
-                    )))
-                })?;
+            // TODO: Load historical states to state_snapshots.
+        } else {
+            // load the blocks and transactions into the storage
+            self.blockchain.storage.write().load_blocks(state.blocks.clone());
+            self.blockchain.storage.write().load_transactions(state.transactions.clone());
+            // reset the block env
+            if let Some(block) = state.block.clone() {
+                self.env.write().block = block.clone();
 
-            self.blockchain.storage.write().best_hash = best_hash;
-        }
+                // Set the current best block number.
+                // Defaults to block number for compatibility with existing state files.
 
-        if !self.db.write().await.load_state(state.clone())? {
-            return Err(RpcError::invalid_params(
-                "Loading state not supported with the current configuration",
-            )
-            .into());
-        }
+                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                self.blockchain.storage.write().best_number = best_number;
 
-        if let Some(historical_states) = state.historical_states {
-            self.states.write().load_states(historical_states);
+                // Set the current best block hash;
+
+                let best_hash =
+                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                        BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                            "Best hash not found for best number {best_number}",
+                        )))
+                    })?;
+
+                self.blockchain.storage.write().best_hash = best_hash;
+            }
+
+            if !self.db.write().await.load_state(state.clone())? {
+                return Err(RpcError::invalid_params(
+                    "Loading state not supported with the current configuration",
+                )
+                .into());
+            }
+
+            if let Some(historical_states) = state.historical_states {
+                self.states.write().load_states(historical_states);
+            }
         }
 
         Ok(true)
@@ -2026,7 +2039,7 @@ impl Backend {
                 }
             }
 
-            warn!(target: "backend", "Not historic state found for block={}", block_number);
+            warn!(target: "backend", "No historic state found for block={}", block_number);
             return Err(BlockchainError::BlockOutOfRange(
                 self.env.read().block.number.to::<u64>(),
                 block_number.to::<u64>(),
@@ -2121,6 +2134,8 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
+
+        tracing::info!("get balance for {:?} at db state", address);
         Ok(state.basic_ref(address)?.unwrap_or_default().balance)
     }
 
