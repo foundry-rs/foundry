@@ -4,7 +4,7 @@ use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{hex, Bytes, U256};
+use alloy_primitives::{hex, map::Entry, Bytes, U256};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use foundry_common::fs;
@@ -12,7 +12,6 @@ use foundry_config::fs_permissions::FsAccessKind;
 use revm::interpreter::CreateInputs;
 use semver::Version;
 use std::{
-    collections::hash_map::Entry,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,

@@ -1,12 +1,13 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    inspector::InnerEcx, BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor,
-    CheatsCtxt, Result, Vm::*,
+    inspector::{InnerEcx, RecordDebugStepInfo},
+    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
+    Vm::*,
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
@@ -14,12 +15,13 @@ use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
+use foundry_evm_traces::StackSnapshotType;
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
+
+mod record_debug_step;
+use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 
 mod fork;
 pub(crate) mod mapping;
@@ -159,6 +161,22 @@ impl Cheatcode for loadAllocsCall {
     }
 }
 
+impl Cheatcode for cloneAccountCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { source, target } = self;
+
+        let account = ccx.ecx.journaled_state.load_account(*source, &mut ccx.ecx.db)?;
+        ccx.ecx.db.clone_account(
+            &genesis_account(account.data),
+            target,
+            &mut ccx.ecx.journaled_state,
+        )?;
+        // Cloned account should persist in forked envs.
+        ccx.ecx.db.add_persistent_account(*target);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for dumpStateCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { pathToStateJson } = self;
@@ -181,23 +199,7 @@ impl Cheatcode for dumpStateCall {
             .state()
             .iter_mut()
             .filter(|(key, val)| !skip(key, val))
-            .map(|(key, val)| {
-                (
-                    key,
-                    GenesisAccount {
-                        nonce: Some(val.info.nonce),
-                        balance: val.info.balance,
-                        code: val.info.code.as_ref().map(|o| o.original_bytes()),
-                        storage: Some(
-                            val.storage
-                                .iter()
-                                .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
-                                .collect(),
-                        ),
-                        private_key: None,
-                    },
-                )
-            })
+            .map(|(key, val)| (key, genesis_account(val)))
             .collect::<BTreeMap<_, _>>();
 
         write_json_file(path, &alloc)?;
@@ -718,6 +720,64 @@ impl Cheatcode for setBlockhashCall {
     }
 }
 
+impl Cheatcode for startDebugTraceRecordingCall {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+        };
+
+        let mut info = RecordDebugStepInfo {
+            // will be updated later
+            start_node_idx: 0,
+            // keep the original config to revert back later
+            original_tracer_config: *tracer.config(),
+        };
+
+        // turn on tracer configuration for recording
+        tracer.update_config(|config| {
+            config
+                .set_steps(true)
+                .set_memory_snapshots(true)
+                .set_stack_snapshots(StackSnapshotType::Full)
+        });
+
+        // track where the recording starts
+        if let Some(last_node) = tracer.traces().nodes().last() {
+            info.start_node_idx = last_node.idx;
+        }
+
+        ccx.state.record_debug_steps_info = Some(info);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+        };
+
+        let Some(record_info) = ccx.state.record_debug_steps_info else {
+            return Err(Error::from("nothing recorded"))
+        };
+
+        // Revert the tracer config to the one before recording
+        tracer.update_config(|_config| record_info.original_tracer_config);
+
+        // Use the trace nodes to flatten the call trace
+        let root = tracer.traces();
+        let steps = flatten_call_trace(0, root, record_info.start_node_idx);
+
+        let debug_steps: Vec<DebugStep> =
+            steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
+
+        // Clean up the recording info
+        ccx.state.record_debug_steps_info = None;
+
+        Ok(debug_steps.abi_encode())
+    }
+}
+
 pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
     let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
@@ -959,4 +1019,21 @@ fn get_state_diff(state: &mut Cheatcodes) -> Result {
         .flatten()
         .collect::<Vec<_>>();
     Ok(res.abi_encode())
+}
+
+/// Helper function that creates a `GenesisAccount` from a regular `Account`.
+fn genesis_account(account: &Account) -> GenesisAccount {
+    GenesisAccount {
+        nonce: Some(account.info.nonce),
+        balance: account.info.balance,
+        code: account.info.code.as_ref().map(|o| o.original_bytes()),
+        storage: Some(
+            account
+                .storage
+                .iter()
+                .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
+                .collect(),
+        ),
+        private_key: None,
+    }
 }

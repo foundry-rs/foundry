@@ -30,6 +30,7 @@ alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-trie.workspace = true
+op-alloy-consensus.workspace = true
 
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
@@ -37,6 +38,7 @@ bytes = "1.4"
 
 # misc
 rand = "0.8"
+thiserror.workspace = true
 
 [features]
 default = ["serde"]

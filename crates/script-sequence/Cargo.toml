@@ -1,0 +1,29 @@
+[package]
+name = "forge-script-sequence"
+description = "Script sequence types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+foundry-config.workspace = true
+foundry-common.workspace = true
+foundry-compilers = { workspace = true, features = ["full"] }
+
+serde.workspace = true
+eyre.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+revm-inspectors.workspace = true
+
+alloy-rpc-types.workspace = true
+alloy-primitives.workspace = true

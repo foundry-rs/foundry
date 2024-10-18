@@ -20,6 +20,7 @@ interface Vm {
     struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
+    struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -147,19 +148,21 @@ interface Vm {
     function assumeNoRevert() external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
-    function breakpoint(string calldata char) external;
-    function breakpoint(string calldata char, bool value) external;
+    function breakpoint(string calldata char) external pure;
+    function breakpoint(string calldata char, bool value) external pure;
     function broadcastRawTransaction(bytes calldata data) external;
     function broadcast() external;
     function broadcast(address signer) external;
     function broadcast(uint256 privateKey) external;
     function chainId(uint256 newChainId) external;
     function clearMockedCalls() external;
+    function cloneAccount(address source, address target) external;
     function closeFile(string calldata path) external;
     function coinbase(address newCoinbase) external;
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
     function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
+    function contains(string calldata subject, string calldata search) external returns (bool result);
     function cool(address target) external;
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
     function copyStorage(address from, address to) external;
@@ -264,6 +267,7 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
+    function getWallets() external returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external returns (bool result);
@@ -284,6 +288,8 @@ interface Vm {
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData) external;
     function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
+    function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
+    function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
     function mockFunction(address callee, address target, bytes calldata data) external;
     function parseAddress(string calldata stringifiedValue) external pure returns (address parsedValue);
     function parseBool(string calldata stringifiedValue) external pure returns (bool parsedValue);
@@ -365,6 +371,8 @@ interface Vm {
     function record() external;
     function recordLogs() external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
@@ -434,12 +442,14 @@ interface Vm {
     function startBroadcast() external;
     function startBroadcast(address signer) external;
     function startBroadcast(uint256 privateKey) external;
+    function startDebugTraceRecording() external;
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
     function startSnapshotGas(string calldata name) external;
     function startSnapshotGas(string calldata group, string calldata name) external;
     function startStateDiffRecording() external;
+    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
     function stopExpectSafeMemory() external;

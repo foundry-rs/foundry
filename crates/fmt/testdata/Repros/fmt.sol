@@ -144,3 +144,18 @@ contract IfElseTest {
         }
     }
 }
+
+contract DbgFmtTest is Test {
+    function test_argsList() public {
+        uint256 result1 = internalNoArgs({});
+        result2 = add({a: 1, b: 2});
+    }
+
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a + b;
+    }
+
+    function internalNoArgs() internal pure returns (uint256) {
+        return 0;
+    }
+}

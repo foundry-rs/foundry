@@ -5,6 +5,7 @@ use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::{Chain, Config};
+use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -131,6 +132,11 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
             .wrap_err("Could not parse ether value from string")?
             .0
     })
+}
+
+/// Parses a `T` from a string using [`serde_json::from_str`].
+pub fn parse_json<T: DeserializeOwned>(value: &str) -> serde_json::Result<T> {
+    serde_json::from_str(value)
 }
 
 /// Parses a `Duration` from a &str
@@ -463,10 +469,7 @@ and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
-
-If none of the previous steps worked, please open an issue at:
-https://github.com/foundry-rs/foundry/issues/new/choose"
+ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag."
             ))
         }
     }

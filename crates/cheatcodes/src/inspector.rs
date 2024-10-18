@@ -8,7 +8,7 @@ use crate::{
         DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
-    script::{Broadcast, ScriptWallets},
+    script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
         expect::{
@@ -36,7 +36,8 @@ use foundry_evm_core::{
     utils::new_evm_with_existing_context,
     InspectorExt,
 };
-use foundry_evm_traces::TracingInspector;
+use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
+use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
@@ -49,7 +50,6 @@ use revm::{
     primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
-use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -218,6 +218,14 @@ pub struct BroadcastableTransaction {
     pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionMaybeSigned,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct RecordDebugStepInfo {
+    /// The debug trace node index when the recording starts.
+    pub start_node_idx: usize,
+    /// The original tracer config when the recording starts.
+    pub original_tracer_config: TracingInspectorConfig,
 }
 
 /// Holds gas metering state.
@@ -397,12 +405,15 @@ pub struct Cheatcodes {
     /// merged into the previous vector.
     pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
 
+    /// The information of the debug step recording.
+    pub record_debug_steps_info: Option<RecordDebugStepInfo>,
+
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
-    pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
+    pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
 
     /// Mocked functions. Maps target address to be mocked to pair of (calldata, mock address).
     pub mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
@@ -413,7 +424,7 @@ pub struct Cheatcodes {
     pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
-    pub allowed_mem_writes: FxHashMap<u64, Vec<Range<u64>>>,
+    pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
@@ -466,6 +477,8 @@ pub struct Cheatcodes {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// Unlocked wallets used in scripts and testing of scripts.
+    pub wallets: Option<Wallets>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -493,6 +506,7 @@ impl Cheatcodes {
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
+            record_debug_steps_info: Default::default(),
             mocked_calls: Default::default(),
             mocked_functions: Default::default(),
             expected_calls: Default::default(),
@@ -512,12 +526,18 @@ impl Cheatcodes {
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
+            wallets: Default::default(),
         }
     }
 
-    /// Returns the configured script wallets.
-    pub fn script_wallets(&self) -> Option<&ScriptWallets> {
-        self.config.script_wallets.as_ref()
+    /// Returns the configured wallets if available, else creates a new instance.
+    pub fn wallets(&mut self) -> &Wallets {
+        self.wallets.get_or_insert(Wallets::new(MultiWallet::default(), None))
+    }
+
+    /// Sets the unlocked wallets.
+    pub fn set_wallets(&mut self, wallets: Wallets) {
+        self.wallets = Some(wallets);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -889,26 +909,36 @@ where {
         }
 
         // Handle mocked calls
-        if let Some(mocks) = self.mocked_calls.get(&call.bytecode_address) {
+        if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let ctx =
                 MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
-            if let Some(return_data) = mocks.get(&ctx).or_else(|| {
-                mocks
-                    .iter()
+
+            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
+                Some(queue) => Some(queue),
+                None => mocks
+                    .iter_mut()
                     .find(|(mock, _)| {
                         call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
                             mock.value.map_or(true, |value| Some(value) == call.transfer_value())
                     })
-                    .map(|(_, v)| v)
-            }) {
-                return Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: return_data.ret_type,
-                        output: return_data.data.clone(),
-                        gas,
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                });
+                    .map(|(_, v)| v),
+            } {
+                if let Some(return_data) = if return_data_queue.len() == 1 {
+                    // If the mocked calls stack has a single element in it, don't empty it
+                    return_data_queue.front().map(|x| x.to_owned())
+                } else {
+                    // Else, we pop the front element
+                    return_data_queue.pop_front()
+                } {
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: return_data.ret_type,
+                            output: return_data.data,
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    });
+                }
             }
         }
 

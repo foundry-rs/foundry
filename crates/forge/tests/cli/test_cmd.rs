@@ -274,6 +274,51 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+const SIMPLE_CONTRACT: &str = r#"
+import "./test.sol";
+import "./console.sol";
+
+contract SimpleContract {
+    uint256 public num;
+
+    function setValues(uint256 _num) public {
+        num = _num;
+    }
+}
+
+contract SimpleContractTest is DSTest {
+    function test() public {
+        SimpleContract c = new SimpleContract();
+        c.setValues(100);
+        console.log("Value set: ", 100);
+    }
+}
+   "#;
+
+forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+
+    // Assert that with verbose output the json output includes the traces
+    cmd.args(["test", "-vvv", "--json"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json": Json]);
+});
+
+forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+
+    // Assert that without verbose output the json output does not include the traces
+    cmd.args(["test", "--json"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json": Json]);
+});
+
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
@@ -603,7 +648,6 @@ forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.add_test(
         "Contract.t.sol",
         r#"
-pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract TransientTester {
@@ -2172,6 +2216,160 @@ Use --match-contract and --match-path to further limit the search.
 forgetest_init!(deprecated_regex_arg, |prj, cmd| {
     cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
 warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
+
+"#]]);
+});
+
+// Test a script that calls vm.rememberKeys
+forgetest_init!(script_testing, |prj, cmd| {
+    prj
+    .add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
+
+contract WalletScript is Script {
+function run() public {
+    string memory mnemonic = "test test test test test test test test test test test junk";
+    string memory derivationPath = "m/44'/60'/0'/0/";
+    address[] memory wallets = Vm(address(vm)).rememberKeys(mnemonic, derivationPath, 3);
+    for (uint256 i = 0; i < wallets.length; i++) {
+        console.log(wallets[i]);
+    }
+}
+}
+
+contract FooTest {
+    WalletScript public script;
+
+
+    function setUp() public {
+        script = new WalletScript();
+    }
+
+    function testWalletScript() public {
+        script.run();
+    }
+}
+
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "testWalletScript", "-vvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Foo.sol:FooTest
+[PASS] testWalletScript() ([GAS])
+Logs:
+  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/8995>
+forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
+    prj.add_source(
+        "ParentProxy.sol",
+        r#"
+import {Counter} from "./Counter.sol";
+
+abstract contract ParentProxy {
+    Counter impl;
+    bytes data;
+
+    constructor(Counter _implementation, bytes memory _data) {
+        impl = _implementation;
+        data = _data;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Proxy.sol",
+        r#"
+import {ParentProxy} from "./ParentProxy.sol";
+import {Counter} from "./Counter.sol";
+
+contract Proxy is ParentProxy {
+    constructor(Counter _implementation, bytes memory _data)
+        ParentProxy(_implementation, _data)
+    {}
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "MetadataTraceTest.t.sol",
+        r#"
+import {Counter} from "src/Counter.sol";
+import {Proxy} from "src/Proxy.sol";
+
+import {Test} from "forge-std/Test.sol";
+
+contract MetadataTraceTest is Test {
+    function test_proxy_trace() public {
+        Counter counter = new Counter();
+        new Proxy(counter, "");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
+[PASS] test_proxy_trace() ([GAS])
+Traces:
+  [152142] MetadataTraceTest::test_proxy_trace()
+    ├─ [49499] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 247 bytes of code
+    ├─ [37978] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 63 bytes of code
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Check consistent traces for running with no metadata.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-metadata"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
+[PASS] test_proxy_trace() ([GAS])
+Traces:
+  [130521] MetadataTraceTest::test_proxy_trace()
+    ├─ [38693] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 193 bytes of code
+    ├─ [27175] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 9 bytes of code
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });

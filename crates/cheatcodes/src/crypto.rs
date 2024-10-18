@@ -8,7 +8,7 @@ use alloy_signer_local::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    MnemonicBuilder, PrivateKeySigner,
+    LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
 use k256::{
@@ -89,12 +89,43 @@ impl Cheatcode for rememberKeyCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
-        let address = wallet.address();
-        if let Some(script_wallets) = state.script_wallets() {
-            script_wallets.add_local_signer(wallet);
-        }
+        let address = inject_wallet(state, wallet);
         Ok(address.abi_encode())
     }
+}
+
+impl Cheatcode for rememberKeys_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { mnemonic, derivationPath, count } = self;
+        let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
+        let mut addresses = Vec::<Address>::with_capacity(wallets.len());
+        for wallet in wallets {
+            let addr = inject_wallet(state, wallet);
+            addresses.push(addr);
+        }
+
+        Ok(addresses.abi_encode())
+    }
+}
+
+impl Cheatcode for rememberKeys_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { mnemonic, derivationPath, language, count } = self;
+        let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
+        let mut addresses = Vec::<Address>::with_capacity(wallets.len());
+        for wallet in wallets {
+            let addr = inject_wallet(state, wallet);
+            addresses.push(addr);
+        }
+
+        Ok(addresses.abi_encode())
+    }
+}
+
+fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Address {
+    let address = wallet.address();
+    state.wallets().add_local_signer(wallet);
+    address
 }
 
 impl Cheatcode for sign_1Call {
@@ -213,13 +244,13 @@ fn sign_with_wallet(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
-    let Some(script_wallets) = state.script_wallets() else {
-        bail!("no wallets are available");
-    };
+    if state.wallets().is_empty() {
+        bail!("no wallets available");
+    }
 
-    let mut script_wallets = script_wallets.inner.lock();
-    let maybe_provided_sender = script_wallets.provided_sender;
-    let signers = script_wallets.multi_wallet.signers()?;
+    let mut wallets = state.wallets().inner.lock();
+    let maybe_provided_sender = wallets.provided_sender;
+    let signers = wallets.multi_wallet.signers()?;
 
     let signer = if let Some(signer) = signer {
         signer
@@ -228,7 +259,7 @@ fn sign_with_wallet(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        bail!("could not determine signer");
+        bail!("could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one");
     };
 
     let wallet = signers
@@ -307,6 +338,50 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         .build()?;
     let private_key = U256::from_be_bytes(wallet.credential().to_bytes().into());
     Ok(private_key.abi_encode())
+}
+
+fn derive_wallets_str(
+    mnemonic: &str,
+    path: &str,
+    language: &str,
+    count: u32,
+) -> Result<Vec<LocalSigner<SigningKey>>> {
+    match language {
+        "chinese_simplified" => derive_wallets::<ChineseSimplified>(mnemonic, path, count),
+        "chinese_traditional" => derive_wallets::<ChineseTraditional>(mnemonic, path, count),
+        "czech" => derive_wallets::<Czech>(mnemonic, path, count),
+        "english" => derive_wallets::<English>(mnemonic, path, count),
+        "french" => derive_wallets::<French>(mnemonic, path, count),
+        "italian" => derive_wallets::<Italian>(mnemonic, path, count),
+        "japanese" => derive_wallets::<Japanese>(mnemonic, path, count),
+        "korean" => derive_wallets::<Korean>(mnemonic, path, count),
+        "portuguese" => derive_wallets::<Portuguese>(mnemonic, path, count),
+        "spanish" => derive_wallets::<Spanish>(mnemonic, path, count),
+        _ => Err(fmt_err!("unsupported mnemonic language: {language:?}")),
+    }
+}
+
+fn derive_wallets<W: Wordlist>(
+    mnemonic: &str,
+    path: &str,
+    count: u32,
+) -> Result<Vec<LocalSigner<SigningKey>>> {
+    let mut out = path.to_string();
+
+    if !out.ends_with('/') {
+        out.push('/');
+    }
+
+    let mut wallets = Vec::with_capacity(count as usize);
+    for idx in 0..count {
+        let wallet = MnemonicBuilder::<W>::default()
+            .phrase(mnemonic)
+            .derivation_path(format!("{out}{idx}"))?
+            .build()?;
+        wallets.push(wallet);
+    }
+
+    Ok(wallets)
 }
 
 #[cfg(test)]
