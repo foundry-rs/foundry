@@ -278,14 +278,18 @@ fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u6
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let id = ccx.ecx.db.create_select_fork(fork, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
+    let id = ccx
+        .ecx
+        .db
+        .create_select_fork(fork, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)
+        .map_err(|err| fmt_err!("{err:?}"))?;
     Ok(id.abi_encode())
 }
 
 /// Creates a new fork
 fn create_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u64>) -> Result {
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let id = ccx.ecx.db.create_fork(fork)?;
+    let id = ccx.ecx.db.create_fork(fork).map_err(|err| fmt_err!("{err:?}"))?;
     Ok(id.abi_encode())
 }
 
@@ -298,12 +302,16 @@ fn create_select_fork_at_transaction(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let id = ccx.ecx.db.create_select_fork_at_transaction(
-        fork,
-        &mut ccx.ecx.env,
-        &mut ccx.ecx.journaled_state,
-        *transaction,
-    )?;
+    let id = ccx
+        .ecx
+        .db
+        .create_select_fork_at_transaction(
+            fork,
+            &mut ccx.ecx.env,
+            &mut ccx.ecx.journaled_state,
+            *transaction,
+        )
+        .map_err(|err| fmt_err!("{err:?}"))?;
     Ok(id.abi_encode())
 }
 
@@ -314,7 +322,11 @@ fn create_fork_at_transaction(
     transaction: &B256,
 ) -> Result {
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let id = ccx.ecx.db.create_fork_at_transaction(fork, *transaction)?;
+    let id = ccx
+        .ecx
+        .db
+        .create_fork_at_transaction(fork, *transaction)
+        .map_err(|err| fmt_err!("{err:?}"))?;
     Ok(id.abi_encode())
 }
 
@@ -353,13 +365,16 @@ fn transact(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    ccx.ecx.db.transact(
-        fork_id,
-        transaction,
-        (*ccx.ecx.env).clone(),
-        &mut ccx.ecx.journaled_state,
-        &mut *executor.get_inspector(ccx.state),
-    )?;
+    ccx.ecx
+        .db
+        .transact(
+            fork_id,
+            transaction,
+            (*ccx.ecx.env).clone(),
+            &mut ccx.ecx.journaled_state,
+            &mut *executor.get_inspector(ccx.state),
+        )
+        .map_err(|err| fmt_err!("{err:?}"))?;
     Ok(Default::default())
 }
 
