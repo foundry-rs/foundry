@@ -9,7 +9,7 @@ use alloy_provider::network::ReceiptResponse;
 use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
-use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
+use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::interpreter::CreateInputs;
@@ -635,13 +635,13 @@ impl Cheatcode for getBroadcastCall {
         let Self { contractName, chainId, txType } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?
-            .with_tx_type(*txType);
+            .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcast = reader.read_latest()?;
 
         let results = reader.search_broadcast(broadcast)?;
 
-        let summaries = reader.parse_results(results);
+        let summaries = parse_broadcast_results(results);
 
         if let Some(summary) = summaries.first() {
             return Ok(summary.abi_encode());
@@ -656,7 +656,7 @@ impl Cheatcode for getBroadcasts_0Call {
         let Self { contractName, chainId, txType } = self;
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?
-            .with_tx_type(*txType);
+            .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcasts = reader.read_all()?;
 
@@ -664,7 +664,7 @@ impl Cheatcode for getBroadcasts_0Call {
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
                 let results = reader.search_broadcast(broadcast)?;
-                Ok(reader.parse_results(results))
+                Ok(parse_broadcast_results(results))
             })
             .flatten()
             .collect::<Vec<BroadcastTxSummary>>();
@@ -688,7 +688,7 @@ impl Cheatcode for getBroadcasts_1Call {
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
                 let results = reader.search_broadcast(broadcast)?;
-                Ok(reader.parse_results(results))
+                Ok(parse_broadcast_results(results))
             })
             .flatten()
             .collect::<Vec<BroadcastTxSummary>>();
@@ -700,152 +700,33 @@ impl Cheatcode for getBroadcasts_1Call {
     }
 }
 
-struct BroadcastReader {
-    contract_name: String,
-    #[allow(dead_code)]
-    chain_id: u64,
-    tx_type: Option<CallKind>,
-    broadcast_path: PathBuf,
+fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
+    match tx_type {
+        BroadcastTxType::Call => CallKind::Call,
+        BroadcastTxType::Create => CallKind::Create,
+        BroadcastTxType::Create2 => CallKind::Create2,
+        _ => unreachable!("invalid tx type"),
+    }
 }
 
-impl BroadcastReader {
-    fn new(contract_name: String, chain_id: u64, root: &Path) -> Result<Self> {
-        let broadcast_path = root
-            .join("broadcast")
-            .join(format!("{contract_name}.s.sol"))
-            .join(chain_id.to_string());
-
-        if !broadcast_path.exists() {
-            bail!("broadcast does not exist, ensure the contract name and/or chain_id is correct");
-        }
-
-        Ok(Self { contract_name, chain_id, tx_type: None, broadcast_path })
-    }
-
-    fn with_tx_type(mut self, tx_type: BroadcastTxType) -> Self {
-        let tx_type = match tx_type {
-            BroadcastTxType::Call => CallKind::Call,
-            BroadcastTxType::Create => CallKind::Create,
-            BroadcastTxType::Create2 => CallKind::Create2,
-            _ => unreachable!("invalid tx type"),
-        };
-
-        self.tx_type = Some(tx_type);
-        self
-    }
-
-    fn read_all(&self) -> eyre::Result<Vec<ScriptSequence>, crate::error::Error> {
-        let files = std::fs::read_dir(&self.broadcast_path)?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                if path.file_name()?.to_string_lossy() == "run-latest.json" {
-                    return None;
-                }
-                Some(path)
-            })
-            .collect::<Vec<_>>();
-
-        let broadcasts = files
-            .iter()
-            .map(|path| {
-                fs::read_json_file(path).map_err(|e| fmt_err!("failed reading broadcast: {e}"))
-            })
-            .collect::<Result<Vec<ScriptSequence>>>()?;
-
-        Ok(broadcasts)
-    }
-
-    fn read_latest(&self) -> eyre::Result<ScriptSequence, crate::error::Error> {
-        let latest_broadcast: Result<ScriptSequence> =
-            fs::read_json_file(&self.broadcast_path.join("run-latest.json"))
-                .map_err(|e| fmt_err!("{e}"));
-
-        if let Ok(latest_broadcast) = latest_broadcast {
-            return Ok(latest_broadcast);
-        }
-
-        // Iterate over the files in the broadcast path directory except for the run-latest.json
-        let files = std::fs::read_dir(&self.broadcast_path)?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                if path.file_name()?.to_string_lossy() == "run-latest.json" {
-                    return None;
-                }
-                Some(path)
-            })
-            .collect::<Vec<_>>();
-
-        let broadcasts = files
-            .iter()
-            .map(|path| {
-                fs::read_json_file(path).map_err(|e| fmt_err!("failed reading broadcast: {e}"))
-            })
-            .collect::<Result<Vec<ScriptSequence>>>()?;
-
-        // Find the broadcast with the latest timestamp
-        let target = broadcasts
-            .into_iter()
-            .max_by_key(|broadcast| broadcast.timestamp)
-            .ok_or_else(|| fmt_err!("no broadcasts found"))?;
-
-        Ok(target)
-    }
-
-    fn search_broadcast(
-        &self,
-        broadcast: ScriptSequence,
-    ) -> Result<Vec<(TransactionWithMetadata, AnyTransactionReceipt)>> {
-        let transactions = broadcast.transactions.clone();
-        let txs = transactions
-            .into_iter()
-            .filter(|tx| {
-                let name_filter =
-                    tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
-
-                let type_filter = self.tx_type.map_or(true, |kind| tx.opcode == kind);
-
-                name_filter && type_filter
-            })
-            .collect::<Vec<_>>();
-
-        let mut targets = Vec::new();
-        for tx in txs.into_iter() {
-            broadcast.receipts.iter().for_each(|receipt| {
-                if tx.hash.is_some_and(|hash| hash == receipt.transaction_hash) {
-                    targets.push((tx.clone(), receipt.clone()));
-                }
-            });
-        }
-
-        if !targets.is_empty() {
-            return Ok(targets);
-        }
-
-        bail!("target tx not found");
-    }
-
-    fn parse_results(
-        &self,
-        results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
-    ) -> Vec<BroadcastTxSummary> {
-        results
-            .into_iter()
-            .map(|(tx, receipt)| BroadcastTxSummary {
-                txHash: receipt.transaction_hash,
-                blockNumber: receipt.block_number.unwrap_or_default(),
-                txType: match tx.opcode {
-                    CallKind::Call => BroadcastTxType::Call,
-                    CallKind::Create => BroadcastTxType::Create,
-                    CallKind::Create2 => BroadcastTxType::Create2,
-                    _ => unreachable!("invalid tx type"),
-                },
-                contractAddress: tx.contract_address.unwrap_or_default(),
-                success: receipt.status(),
-            })
-            .collect()
-    }
+fn parse_broadcast_results(
+    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+) -> Vec<BroadcastTxSummary> {
+    results
+        .into_iter()
+        .map(|(tx, receipt)| BroadcastTxSummary {
+            txHash: receipt.transaction_hash,
+            blockNumber: receipt.block_number.unwrap_or_default(),
+            txType: match tx.opcode {
+                CallKind::Call => BroadcastTxType::Call,
+                CallKind::Create => BroadcastTxType::Create,
+                CallKind::Create2 => BroadcastTxType::Create2,
+                _ => unreachable!("invalid tx type"),
+            },
+            contractAddress: tx.contract_address.unwrap_or_default(),
+            success: receipt.status(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
