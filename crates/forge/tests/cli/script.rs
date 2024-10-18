@@ -2184,20 +2184,25 @@ Compiler run successful!
 Traces:
   [104553] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return]
+    │   └─ ← [Return] 
     ├─ [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     │   └─ ← [Return] 119 bytes of code
     ├─ [13367] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     │   ├─ [146] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 63 bytes of code
-    └─ ← [Stop]
+    └─ ← [Stop] 
+
+
 Script ran successfully.
+
 ## Setting up 1 EVM.
 ==========================
 Simulated On-chain Traces:
+
   [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     └─ ← [Return] 119 bytes of code
+
   [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     ├─ [146] A::getValue() [staticcall]
     │   └─ ← [Return] 100
