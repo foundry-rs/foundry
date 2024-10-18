@@ -784,7 +784,6 @@ impl BroadcastReader {
         broadcast: ScriptSequence,
     ) -> Result<Vec<(TransactionWithMetadata, AnyTransactionReceipt)>> {
         let transactions = broadcast.transactions.clone();
-        let receipts = broadcast.receipts.clone();
         let txs = transactions
             .into_iter()
             .filter(|tx| {
@@ -799,7 +798,7 @@ impl BroadcastReader {
 
         let mut targets = Vec::new();
         for tx in txs.into_iter() {
-            receipts.iter().for_each(|receipt| {
+            broadcast.receipts.iter().for_each(|receipt| {
                 if tx.hash.is_some_and(|hash| hash == receipt.transaction_hash) {
                     targets.push((tx.clone(), receipt.clone()));
                 }
@@ -810,7 +809,7 @@ impl BroadcastReader {
             return Ok(targets);
         }
 
-        bail!("broadcast not found");
+        bail!("target tx not found");
     }
 
     fn parse_results(

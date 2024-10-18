@@ -9,6 +9,7 @@ interface Vm {
     enum CallerMode { None, Broadcast, RecurrentBroadcast, Prank, RecurrentPrank }
     enum AccountAccessKind { Call, DelegateCall, CallCode, StaticCall, Create, SelfDestruct, Resume, Balance, Extcodesize, Extcodehash, Extcodecopy }
     enum ForgeContext { TestGroup, Test, Coverage, Snapshot, ScriptGroup, ScriptDryRun, ScriptBroadcast, ScriptResume, Unknown }
+    enum BroadcastTxType { Call, Create, Create2 }
     struct Log { bytes32[] topics; bytes data; address emitter; }
     struct Rpc { string key; string url; }
     struct EthGetLogs { address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }
@@ -21,6 +22,7 @@ interface Vm {
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
+    struct BroadcastTxSummary {  bytes32 txHash;  BroadcastTxType txType; address contractAddress; uint64 blockNumber; bool success; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;

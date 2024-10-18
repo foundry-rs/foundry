@@ -283,6 +283,31 @@ interface Vm {
         address contractAddr;
     }
 
+    /// The transaction type (`txType`) of the broadcast.
+    enum BroadcastTxType {
+        /// Represents a CALL broadcast tx.
+        Call,
+        /// Represents a CREATE broadcast tx.
+        Create,
+        /// Represents a CREATE2 broadcast tx.
+        Create2
+    }
+
+    /// Represents a transaction's broadcast details.
+    struct BroadcastTxSummary {
+        /// The hash of the transaction that was broadcasted
+        bytes32 txHash;
+        /// Represent the type of transaction among CALL, CREATE, CREATE2
+        BroadcastTxType txType;
+        /// The address of the contract that was called or created.
+        /// This is address of the contract that is created if the txType is CREATE or CREATE2.
+        address contractAddress;
+        /// The block number the transaction landed in.
+        uint64 blockNumber;
+        /// Status of the transaction, retrieved from the transaction receipt.
+        bool success;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -1669,32 +1694,6 @@ interface Vm {
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
-
-
-    /// The transaction type (`txType`) of the broadcast.
-    enum BroadcastTxType {
-        /// Represents a CALL broadcast tx.
-        Call,
-        /// Represents a CREATE broadcast tx.
-        Create,
-        /// Represents a CREATE2 broadcast tx.
-        Create2
-    }
-
-    /// Represents a transaction's broadcast details.
-    struct BroadcastTxSummary {
-        /// The hash of the transaction that was broadcasted
-        bytes32 txHash;
-        /// Represent the type of transaction among CALL, CREATE, CREATE2
-        BroadcastTxType txType;
-        /// The address of the contract that was called or created.
-        /// This is address of the contract that is created if the txType is CREATE or CREATE2.
-        address contractAddress;
-        /// The block number the transaction landed in.
-        uint64 blockNumber;
-        /// Status of the transaction, retrieved from the transaction receipt.
-        bool success;
-    }
 
     /// Returns the most recent broadcast for the given contract on `chainId` matching `txType`.
     ///
