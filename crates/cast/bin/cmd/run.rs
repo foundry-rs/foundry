@@ -52,6 +52,14 @@ pub struct RunArgs {
     #[arg(long, short)]
     verbose: bool,
 
+    /// Prints the trace in JSON format.
+    #[arg(long, short)]
+    json: bool,
+
+    /// Prints the state changes, only works with the `json` flag.
+    #[arg(long)]
+    with_state_changes: bool,
+
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
@@ -163,6 +171,7 @@ impl RunArgs {
             evm_version,
             self.debug,
             self.decode_internal,
+            self.with_state_changes,
             alphanet,
         );
         let mut env =
@@ -250,6 +259,8 @@ impl RunArgs {
             self.debug,
             self.decode_internal,
             self.verbose,
+            self.json,
+            self.with_state_changes,
         )
         .await?;
 
