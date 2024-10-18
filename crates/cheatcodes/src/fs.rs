@@ -634,9 +634,10 @@ impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId).with_tx_type(*txType);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?
+            .with_tx_type(*txType);
 
-        let broadcast = reader.find_latest(&state.config.root)?;
+        let broadcast = reader.read_latest()?;
 
         let results = reader.search_broadcast(broadcast)?;
 
@@ -654,9 +655,10 @@ impl Cheatcode for getBroadcasts_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId).with_tx_type(*txType);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?
+            .with_tx_type(*txType);
 
-        let broadcasts = reader.read_all(&state.config.root)?;
+        let broadcasts = reader.read_all()?;
 
         let mut summaries = broadcasts
             .into_iter()
@@ -678,9 +680,9 @@ impl Cheatcode for getBroadcasts_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?;
 
-        let broadcasts = reader.read_all(&state.config.root)?;
+        let broadcasts = reader.read_all()?;
 
         let mut summaries = broadcasts
             .into_iter()
@@ -700,13 +702,24 @@ impl Cheatcode for getBroadcasts_1Call {
 
 struct BroadcastReader {
     contract_name: String,
+    #[allow(dead_code)]
     chain_id: u64,
     tx_type: Option<CallKind>,
+    broadcast_path: PathBuf,
 }
 
 impl BroadcastReader {
-    fn new(contract_name: String, chain_id: u64) -> Self {
-        Self { contract_name, chain_id, tx_type: None }
+    fn new(contract_name: String, chain_id: u64, root: &Path) -> Result<Self> {
+        let broadcast_path = root
+            .join("broadcast")
+            .join(format!("{contract_name}.s.sol"))
+            .join(chain_id.to_string());
+
+        if !broadcast_path.exists() {
+            bail!("broadcast does not exist, ensure the contract name and/or chain_id is correct");
+        }
+
+        Ok(Self { contract_name, chain_id, tx_type: None, broadcast_path })
     }
 
     fn with_tx_type(mut self, tx_type: BroadcastTxType) -> Self {
@@ -721,31 +734,8 @@ impl BroadcastReader {
         self
     }
 
-    fn read_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
-        let broadcast_path = root
-            .join("broadcast")
-            .join(format!("{}.s.sol", self.contract_name))
-            .join(self.chain_id.to_string());
-
-        if !broadcast_path.exists() {
-            bail!("broadcast not found");
-        }
-
-        fs::read_json_file(&broadcast_path.join("run-latest.json"))
-            .map_err(|e| fmt_err!("failed reading broadcast: {e}"))
-    }
-
-    fn read_all(&self, root: &Path) -> eyre::Result<Vec<ScriptSequence>, crate::error::Error> {
-        let broadcast_path = root
-            .join("broadcast")
-            .join(format!("{}.s.sol", self.contract_name))
-            .join(self.chain_id.to_string());
-
-        if !broadcast_path.exists() {
-            bail!("broadcast not found");
-        }
-
-        let files = std::fs::read_dir(&broadcast_path)?
+    fn read_all(&self) -> eyre::Result<Vec<ScriptSequence>, crate::error::Error> {
+        let files = std::fs::read_dir(&self.broadcast_path)?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
@@ -766,20 +756,17 @@ impl BroadcastReader {
         Ok(broadcasts)
     }
 
-    fn find_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
-        let latest_broadcast: Result<ScriptSequence> = self.read_latest(root);
+    fn read_latest(&self) -> eyre::Result<ScriptSequence, crate::error::Error> {
+        let latest_broadcast: Result<ScriptSequence> =
+            fs::read_json_file(&self.broadcast_path.join("run-latest.json"))
+                .map_err(|e| fmt_err!("{e}"));
 
         if let Ok(latest_broadcast) = latest_broadcast {
             return Ok(latest_broadcast);
         }
 
-        let broadcast_path = root
-            .join("broadcast")
-            .join(format!("{}.s.sol", self.contract_name))
-            .join(self.chain_id.to_string());
-
         // Iterate over the files in the broadcast path directory except for the run-latest.json
-        let files = std::fs::read_dir(&broadcast_path)?
+        let files = std::fs::read_dir(&self.broadcast_path)?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
