@@ -667,7 +667,7 @@ impl Cheatcode for getBroadcasts_0Call {
             .flatten()
             .collect::<Vec<BroadcastTxSummary>>();
 
-        // Sory by descending block number
+        // Sort by descending block number
         summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
 
         Ok(summaries.abi_encode())
@@ -691,7 +691,7 @@ impl Cheatcode for getBroadcasts_1Call {
             .flatten()
             .collect::<Vec<BroadcastTxSummary>>();
 
-        // Sory by descending block number
+        // Sort by descending block number
         summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
 
         Ok(summaries.abi_encode())
