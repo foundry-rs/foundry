@@ -305,7 +305,7 @@ impl WalletSubcommands {
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
 
-                if json_values.is_none() {
+                if !json {
                     println!("{}", "Generating mnemonic from provided entropy...".yellow());
                 }
 
@@ -317,7 +317,7 @@ impl WalletSubcommands {
                 let wallets =
                     wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
-                if json_values.is_none() {
+                if !json {
                     println!("{}", "Successfully generated a new mnemonic.".green());
                     println!("Phrase:\n{phrase}");
                     println!("\nAccounts:");
