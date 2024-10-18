@@ -226,11 +226,9 @@ impl ScriptTester {
 
         trace!(target: "tests", "STDOUT\n{stdout}\n\nSTDERR\n{stderr}");
 
-        let output = if expected.is_err() { &stderr } else { &stdout };
-        if !output.contains(expected.as_str()) {
-            let which = if expected.is_err() { "stderr" } else { "stdout" };
+        if !stdout.contains(expected.as_str()) && !stderr.contains(expected.as_str()) {
             panic!(
-                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} in {which}",
+                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} not found in stdout or stderr",
                 expected.as_str()
             );
         }
@@ -286,7 +284,7 @@ impl ScriptOutcome {
             Self::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
             Self::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
             Self::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
-            Self::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
+            Self::WarnSpecifyDeployer => "Warning: You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
             Self::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
             Self::MissingWallet => "No associated wallet",
             Self::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",

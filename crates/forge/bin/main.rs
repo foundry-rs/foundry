@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate tracing;
-
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -13,36 +10,44 @@ use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 mod opts;
 use opts::{Forge, ForgeSubcommand};
 
+#[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
+extern crate tracing;
+
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
-    let opts = Forge::parse();
-    init_execution_context(&opts.cmd);
+    let args = Forge::parse();
+    args.shell.shell().set();
+    init_execution_context(&args.cmd);
 
-    match opts.cmd {
+    match args.cmd {
         ForgeSubcommand::Test(cmd) => {
             if cmd.is_watch() {
                 utils::block_on(watch::watch_test(cmd))
             } else {
+                let silent = cmd.junit || cmd.json;
                 let outcome = utils::block_on(cmd.run())?;
-                outcome.ensure_ok()
+                outcome.ensure_ok(silent)
             }
         }
-        ForgeSubcommand::Script(cmd) => {
-            // install the shell before executing the command
-            foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
-                cmd.opts.silent,
-                cmd.json,
-            ))?;
-            utils::block_on(cmd.run_script())
-        }
+        ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
