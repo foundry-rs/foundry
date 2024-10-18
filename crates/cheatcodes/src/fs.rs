@@ -650,15 +650,15 @@ impl Cheatcode for getBroadcastCall {
     }
 }
 
-impl Cheatcode for getBroadcastsCall {
+impl Cheatcode for getBroadcasts_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { contractName, chainId } = self;
+        let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId);
+        let reader = BroadcastReader::new(contractName.clone(), *chainId).with_tx_type(*txType);
 
         let broadcasts = reader.read_all(&state.config.root)?;
 
-        let summaries = broadcasts
+        let mut summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
                 let results = reader.search_broadcast(broadcast)?;
@@ -666,6 +666,33 @@ impl Cheatcode for getBroadcastsCall {
             })
             .flatten()
             .collect::<Vec<BroadcastTxSummary>>();
+
+        // Sory by descending block number
+        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId);
+
+        let broadcasts = reader.read_all(&state.config.root)?;
+
+        let mut summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
+                let results = reader.search_broadcast(broadcast)?;
+                Ok(reader.parse_results(results))
+            })
+            .flatten()
+            .collect::<Vec<BroadcastTxSummary>>();
+
+        // Sory by descending block number
+        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
 
         Ok(summaries.abi_encode())
     }

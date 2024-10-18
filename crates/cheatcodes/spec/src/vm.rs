@@ -1705,7 +1705,15 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);
 
+    /// Returns all broadcasts for the given contract on `chainId` with the specified `txType`.
+    ///
+    /// Sorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary[] memory);
+
     /// Returns all broadcasts for the given contract on `chainId`.
+    ///
+    /// Sorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.
     #[cheatcode(group = Filesystem)]
     function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);
 
