@@ -302,6 +302,42 @@ Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 "#]]);
 });
 
+// tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic
+casttest!(wallet_mnemonic_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--json",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[
+  {
+    "mnemonic": "test test test test test test test test test test test junk",
+    "accounts": [
+      {
+        "address": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      },
+      {
+        "address": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+        "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+      },
+      {
+        "address": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+        "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+      }
+    ]
+  }
+]
+
+"#]]);
+});
+
 // tests that `cast wallet private-key` with arguments outputs the private key
 casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
     cmd.args([

@@ -69,6 +69,10 @@ pub enum WalletSubcommands {
         /// Entropy to use for the mnemonic
         #[arg(long, short, conflicts_with = "words")]
         entropy: Option<String>,
+
+        /// Output generated mnemonic phrase as JSON.
+        #[arg(long, short, default_value = "false")]
+        json: bool,
     },
 
     /// Generate a vanity address.
@@ -290,15 +294,20 @@ impl WalletSubcommands {
                     }
                 }
             }
-            Self::NewMnemonic { words, accounts, entropy } => {
+            Self::NewMnemonic { words, accounts, entropy, json } => {
+                let mut json_values = if json { Some(vec![]) } else { None };
+
                 let phrase = if let Some(entropy) = entropy {
                     let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
-                    println!("{}", "Generating mnemonic from provided entropy...".yellow());
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
                 } else {
                     let mut rng = thread_rng();
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
+
+                if !json {
+                    println!("{}", "Generating mnemonic from provided entropy...".yellow());
+                }
 
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
@@ -308,13 +317,33 @@ impl WalletSubcommands {
                 let wallets =
                     wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
-                println!("{}", "Successfully generated a new mnemonic.".green());
-                println!("Phrase:\n{phrase}");
-                println!("\nAccounts:");
+                if !json {
+                    println!("{}", "Successfully generated a new mnemonic.".green());
+                    println!("Phrase:\n{phrase}");
+                    println!("\nAccounts:");
+                }
+
+                let mut accounts = json!([]);
                 for (i, wallet) in wallets.iter().enumerate() {
-                    println!("- Account {i}:");
-                    println!("Address:     {}", wallet.address());
-                    println!("Private key: 0x{}\n", hex::encode(wallet.credential().to_bytes()));
+                    let private_key = hex::encode(wallet.credential().to_bytes());
+                    if json {
+                        accounts.as_array_mut().unwrap().push(json!({
+                            "address": wallet.address(),
+                            "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+                        }));
+                    } else {
+                        println!("- Account {i}:");
+                        println!("Address:     {}", wallet.address());
+                        println!("Private key: 0x{private_key}\n");
+                    }
+                }
+
+                if let Some(json) = json_values.as_mut() {
+                    json.push(json!({
+                        "mnemonic": phrase,
+                        "accounts": accounts,
+                    }));
+                    println!("{}", serde_json::to_string_pretty(json)?);
                 }
             }
             Self::Vanity(cmd) => {
