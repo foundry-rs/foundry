@@ -1,3 +1,4 @@
+use crate::utils::generate_large_contract;
 use foundry_config::Config;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
@@ -42,6 +43,32 @@ contract Dummy {
 "#]].is_json());
 });
 
+forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
+    prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
+    cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![
+        r#"
+...
+| Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|--------------|------------------|-------------------|--------------------|---------------------|
+| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+...
+"#
+    ]);
+});
+
+forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
+    prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
+    cmd.args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(str![
+        r#"
+...
+| Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|--------------|------------------|-------------------|--------------------|---------------------|
+| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+...
+"#
+    ]);
+});
+
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
@@ -57,9 +84,9 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![
         r#"
 ...
-| Contract | Size (B) | Margin (B) |
-|----------|----------|------------|
-| Counter  |      247 |     24,329 |
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  |              247 |               277 |             24,329 |              48,875 |
 ...
 "#
     ]);
