@@ -56,6 +56,7 @@ pub struct BuildArgs {
     pub names: bool,
 
     /// Print compiled contract sizes.
+    /// Constructor argument length is not included in the calculation of initcode size.
     #[arg(long)]
     #[serde(skip)]
     pub sizes: bool,
@@ -84,8 +85,8 @@ impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
-        if install::install_missing_dependencies(&mut config, self.args.silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.args.silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
