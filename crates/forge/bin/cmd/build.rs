@@ -56,6 +56,7 @@ pub struct BuildArgs {
     pub names: bool,
 
     /// Print compiled contract sizes.
+    /// Constructor argument length is not included in the calculation of initcode size.
     #[arg(long)]
     #[serde(skip)]
     pub sizes: bool,
