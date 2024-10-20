@@ -295,7 +295,8 @@ async fn prepare_and_send_transaction(
 
         let (tx, _) = builder.build(config.sender).await?;
 
-        send_and_monitor_transaction(provider, tx, cast_async, confirmations, timeout, to_json).await
+        send_and_monitor_transaction(provider, tx, cast_async, confirmations, timeout, to_json)
+            .await
     // Case 2:
     // An option to use a local signer was provided.
     // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -313,7 +314,8 @@ async fn prepare_and_send_transaction(
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().wallet(wallet).on_provider(&provider);
 
-        send_and_monitor_transaction(provider, tx, cast_async, confirmations, timeout, to_json).await
+        send_and_monitor_transaction(provider, tx, cast_async, confirmations, timeout, to_json)
+            .await
     }
 }
 
