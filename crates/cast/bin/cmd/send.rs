@@ -154,7 +154,7 @@ impl SendTxArgs {
             let mut new_tx = tx.clone();
             new_tx.gas_price = Some(current_gas_price);
 
-            match cast_send0(
+            match prepare_and_send_transaction(
                 eth.clone(),
                 to.clone(),
                 sig.clone(),
@@ -227,7 +227,7 @@ impl SendTxArgs {
 }
 
 #[allow(clippy::too_many_arguments, dependency_on_unit_never_type_fallback)]
-async fn cast_send0(
+async fn prepare_and_send_transaction(
     eth: EthereumOpts,
     to: Option<NameOrAddress>,
     mut sig: Option<String>,
@@ -295,7 +295,7 @@ async fn cast_send0(
 
         let (tx, _) = builder.build(config.sender).await?;
 
-        cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+        send_and_monitor_transaction(provider, tx, cast_async, confirmations, timeout, to_json).await
     // Case 2:
     // An option to use a local signer was provided.
     // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -313,11 +313,11 @@ async fn cast_send0(
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().wallet(wallet).on_provider(&provider);
 
-        cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+        send_and_monitor_transaction(provider, tx, cast_async, confirmations, timeout, to_json).await
     }
 }
 
-async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn send_and_monitor_transaction<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,
