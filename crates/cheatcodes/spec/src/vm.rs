@@ -1912,7 +1912,7 @@ interface Vm {
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
-    function getScriptWallets() external returns (address[] memory wallets);
+    function getWallets() external returns (address[] memory wallets);
 
     // ======== Utilities ========
 
@@ -2406,6 +2406,20 @@ interface Vm {
     /// Adds a private key to the local forge wallet and returns the address.
     #[cheatcode(group = Crypto)]
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
+
+    /// Derive a set number of wallets from a mnemonic at the derivation path `m/44'/60'/0'/0/{0..count}`.
+    ///
+    /// The respective private keys are saved to the local forge wallet for later use and their addresses are returned.
+    #[cheatcode(group = Crypto)]
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+
+    /// Derive a set number of wallets from a mnemonic in the specified language at the derivation path `m/44'/60'/0'/0/{0..count}`.
+    ///
+    /// The respective private keys are saved to the local forge wallet for later use and their addresses are returned.
+    #[cheatcode(group = Crypto)]
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count)
+        external
+        returns (address[] memory keyAddrs);
 
     // -------- Uncategorized Utilities --------
 

@@ -1,9 +1,36 @@
-use crate::utils::parse_ether_value;
-use alloy_primitives::{U256, U64};
-use clap::Parser;
-use serde::Serialize;
+use std::str::FromStr;
 
-#[derive(Clone, Debug, Serialize, Parser)]
+use crate::utils::{parse_ether_value, parse_json};
+use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_primitives::{hex, Address, U256, U64};
+use alloy_rlp::Decodable;
+use clap::Parser;
+
+/// CLI helper to parse a EIP-7702 authorization list.
+/// Can be either a hex-encoded signed authorization or an address.
+#[derive(Clone, Debug)]
+pub enum CliAuthorizationList {
+    /// If an address is provided, we sign the authorization delegating to provided address.
+    Address(Address),
+    /// If RLP-encoded authorization is provided, we decode it and attach to transaction.
+    Signed(SignedAuthorization),
+}
+
+impl FromStr for CliAuthorizationList {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(addr) = Address::from_str(s) {
+            Ok(Self::Address(addr))
+        } else if let Ok(auth) = SignedAuthorization::decode(&mut hex::decode(s)?.as_ref()) {
+            Ok(Self::Signed(auth))
+        } else {
+            eyre::bail!("Failed to decode authorization")
+        }
+    }
+}
+
+#[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Transaction options")]
 pub struct TransactionOpts {
     /// Gas limit for the transaction.
@@ -61,15 +88,15 @@ pub struct TransactionOpts {
     ///
     /// Can be either a hex-encoded signed authorization or an address.
     #[arg(long, conflicts_with_all = &["legacy", "blob"])]
-    pub auth: Option<String>,
+    pub auth: Option<CliAuthorizationList>,
 
     /// EIP-2930 access list.
     ///
     /// Accepts either a JSON-encoded access list or an empty value to create the access list
     /// via an RPC call to `eth_createAccessList`. To retrieve only the access list portion, use
     /// the `cast access-list` command.
-    #[arg(long)]
-    pub access_list: Option<Option<String>>,
+    #[arg(long, value_parser = parse_json::<AccessList>)]
+    pub access_list: Option<Option<AccessList>>,
 }
 
 #[cfg(test)]

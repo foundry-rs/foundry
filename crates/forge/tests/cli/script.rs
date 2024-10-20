@@ -2077,12 +2077,12 @@ forgetest_init!(can_get_script_wallets, |prj, cmd| {
 import "forge-std/Script.sol";
 
 interface Vm {
-    function getScriptWallets() external returns (address[] memory wallets);
+    function getWallets() external returns (address[] memory wallets);
 }
 
 contract WalletScript is Script {
     function run() public {
-        address[] memory wallets = Vm(address(vm)).getScriptWallets();
+        address[] memory wallets = Vm(address(vm)).getWallets();
         console.log(wallets[0]);
     }
 }"#,
@@ -2105,6 +2105,44 @@ Script ran successfully.
 
 == Logs ==
   0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+
+"#]]);
+});
+
+forgetest_init!(can_remeber_keys, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
+
+contract WalletScript is Script {
+    function run() public {
+        string memory mnemonic = "test test test test test test test test test test test junk";
+        string memory derivationPath = "m/44'/60'/0'/0/";
+        address[] memory wallets = Vm(address(vm)).rememberKeys(mnemonic, derivationPath, 3);
+        for (uint256 i = 0; i < wallets.length; i++) {
+            console.log(wallets[i]);
+        }
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
 
 "#]]);
 });

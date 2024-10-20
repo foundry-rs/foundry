@@ -8,7 +8,7 @@ use crate::{
         DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
-    script::{Broadcast, ScriptWallets},
+    script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
         expect::{
@@ -37,6 +37,7 @@ use foundry_evm_core::{
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
+use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
@@ -476,6 +477,8 @@ pub struct Cheatcodes {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// Unlocked wallets used in scripts and testing of scripts.
+    pub wallets: Option<Wallets>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -523,12 +526,18 @@ impl Cheatcodes {
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
+            wallets: Default::default(),
         }
     }
 
-    /// Returns the configured script wallets.
-    pub fn script_wallets(&self) -> Option<&ScriptWallets> {
-        self.config.script_wallets.as_ref()
+    /// Returns the configured wallets if available, else creates a new instance.
+    pub fn wallets(&mut self) -> &Wallets {
+        self.wallets.get_or_insert(Wallets::new(MultiWallet::default(), None))
+    }
+
+    /// Sets the unlocked wallets.
+    pub fn set_wallets(&mut self, wallets: Wallets) {
+        self.wallets = Some(wallets);
     }
 
     /// Decodes the input data and applies the cheatcode.

@@ -20,6 +20,7 @@ members = [
     "crates/evm/traces/",
     "crates/fmt/",
     "crates/forge/",
+    "crates/script-sequence/",
     "crates/macros/",
     "crates/test-utils/",
 ]
@@ -147,6 +148,7 @@ forge-fmt = { path = "crates/fmt" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }
 forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
+forge-script-sequence = { path = "crates/script-sequence" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -167,7 +169,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.7.3", default-features = false }
-foundry-compilers = { version = "0.11.4", default-features = false }
+foundry-compilers = { version = "0.11.6", default-features = false }
 foundry-fork-db = "0.4.0"
 solang-parser = "=0.3.3"
 
