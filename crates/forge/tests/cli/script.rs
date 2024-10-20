@@ -86,6 +86,7 @@ contract Demo {
         )
         .unwrap();
 
+    cmd.unset_env("ETH_RPC_URL");
     cmd.arg("script").arg(format!("{}:Demo", script.display())).assert_success().stdout_eq(str![[
         r#"
 ...
@@ -1290,6 +1291,7 @@ result: uint256 255
 
 forgetest_async!(can_run_script_with_empty_setup, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester.cmd.unset_env("ETH_RPC_URL");
 
     tester.add_sig("BroadcastEmptySetUp", "run()").simulate(ScriptOutcome::OkNoEndpoint);
 });
@@ -1466,6 +1468,7 @@ interface Interface {}
         )
         .unwrap();
 
+    cmd.unset_env("ETH_RPC_URL");
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1568,6 +1571,7 @@ contract ScriptC {{}}
 
     let mut tester = ScriptTester::new(cmd, None, prj.root(), "script/B.sol");
     tester.cmd.forge_fuse().args(["script", "script/B.sol"]);
+    tester.cmd.unset_env("ETH_RPC_URL");
     tester.simulate(ScriptOutcome::OkNoEndpoint);
 });
 
@@ -1575,6 +1579,7 @@ forgetest_async!(can_sign_with_script_wallet_single, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester.cmd.unset_env("ETH_RPC_URL");
     tester
         .add_sig("ScriptSign", "run()")
         .load_private_keys(&[0])
