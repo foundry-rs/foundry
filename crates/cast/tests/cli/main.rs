@@ -1400,6 +1400,55 @@ Retrying with a 10% gas price increase (attempt 3/3).
 "#]]);
 });
 
+casttest!(send_bump_gas_price_json, async |_prj, cmd| {
+    // Create a dummy anvil node that won't mine transaction.
+    // The goal is to simulate stuck transactions in the pool.
+    let (_api, handle) = anvil::spawn(NodeConfig::test().with_no_mining(true)).await;
+    let endpoint = handle.http_endpoint();
+
+    // Send a tx with a gas price of 1200000000 wei.
+    cmd.args([
+        "send",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--value",
+        "0.001ether",
+        "--gas-price",
+        "1200000000",
+        "--async",
+        "0x0000000000000000000000000000000000000000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x4e210ed66dcf63734e7db65c6e250e6cecc7f506d937a194d6973f5a58c0a2d6
+
+"#]]);
+
+    // Replace the stuck transaction by specifying the `--bump-fee` flag.
+    // Format the output using `--json`.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--value",
+            "0.001ether",
+            "--bump-fee",
+            "--async",
+            "--json",
+            "0x0000000000000000000000000000000000000000",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x8da0c415e090f780cff122e9aaa2655dc532daf828da1b617e4841198a74b85b
+
+"#]]);
+});
+
 casttest!(send_bump_gas_price_max_attempts, async |_prj, cmd| {
     // Create a dummy anvil node that won't mine transaction.
     // The goal is to simulate stuck transactions in the pool.

@@ -75,7 +75,7 @@ pub struct SendTxArgs {
     bump_gas_price: BumpGasPriceArgs,
 }
 
-#[derive(Debug, Parser, Clone)]
+#[derive(Clone, Debug, Parser)]
 pub enum SendTxSubcommands {
     /// Use to deploy raw contract bytecode.
     #[command(name = "--create")]
@@ -179,10 +179,12 @@ impl SendTxArgs {
 
                     if bump_gas_price.auto_bump_gas_price && (is_underpriced || is_already_imported)
                     {
-                        if is_underpriced {
-                            println!("Error: transaction underpriced.");
-                        } else if is_already_imported {
-                            println!("Error: transaction already imported.");
+                        if !to_json {
+                            if is_underpriced {
+                                println!("Error: transaction underpriced.");
+                            } else if is_already_imported {
+                                println!("Error: transaction already imported.");
+                            }
                         }
 
                         retry_count += 1;
