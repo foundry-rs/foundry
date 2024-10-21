@@ -86,11 +86,13 @@ impl Cheatcodes<'static> {
                 Vm::StorageAccess::STRUCT.clone(),
                 Vm::Gas::STRUCT.clone(),
                 Vm::DebugStep::STRUCT.clone(),
+                Vm::BroadcastTxSummary::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
                 Vm::AccountAccessKind::ENUM.clone(),
                 Vm::ForgeContext::ENUM.clone(),
+                Vm::BroadcastTxType::ENUM.clone(),
             ]),
             errors: Vm::VM_ERRORS.iter().copied().cloned().collect(),
             events: Cow::Borrowed(&[]),
