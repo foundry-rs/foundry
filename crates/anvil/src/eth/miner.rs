@@ -7,7 +7,11 @@ use futures::{
     stream::{Fuse, Stream, StreamExt},
     task::AtomicWaker,
 };
-use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
+use parking_lot::{
+    lock_api::{RwLockReadGuard, RwLockWriteGuard},
+    RawRwLock, RwLock,
+};
+use serde::Serialize;
 use std::{
     fmt,
     pin::Pin,
@@ -75,6 +79,11 @@ impl Miner {
         let mode = std::mem::replace(&mut *self.mode_write(), mode);
         trace!(target: "miner", "updated mining mode from {:?} to {}", mode, new_mode);
         self.inner.wake();
+    }
+
+    /// Get current mining mode
+    pub fn get_mining_mode(&self) -> RwLockReadGuard<'_, RawRwLock, MiningMode> {
+        self.mode.read()
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block according to
@@ -270,5 +279,49 @@ impl fmt::Debug for ReadyTransactionMiner {
         f.debug_struct("ReadyTransactionMiner")
             .field("max_transactions", &self.max_transactions)
             .finish_non_exhaustive()
+    }
+}
+
+/// This struct represents mining mode in a simplified, serializable format
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SerializableMiningMode {
+    None,
+    Auto(SerializableReadyTransactionMiner),
+    FixedBlockTime(SerializableFixedBlockTimeMiner),
+    Mixed(SerializableReadyTransactionMiner, SerializableFixedBlockTimeMiner),
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct SerializableFixedBlockTimeMiner {
+    /// The interval this fixed block time miner operates with, in seconds
+    pub period: u64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct SerializableReadyTransactionMiner {
+    /// how many transactions to mine per block
+    max_transactions: usize,
+}
+
+impl MiningMode {
+    pub fn convert(&self) -> SerializableMiningMode {
+        match self {
+            Self::None => SerializableMiningMode::None,
+            Self::Auto(miner) => SerializableMiningMode::Auto(SerializableReadyTransactionMiner {
+                max_transactions: miner.max_transactions,
+            }),
+            Self::FixedBlockTime(miner) => {
+                SerializableMiningMode::FixedBlockTime(SerializableFixedBlockTimeMiner {
+                    period: miner.interval.period().as_secs(),
+                })
+            }
+            Self::Mixed(ready_miner, fix_minder) => SerializableMiningMode::Mixed(
+                SerializableReadyTransactionMiner {
+                    max_transactions: ready_miner.max_transactions,
+                },
+                SerializableFixedBlockTimeMiner { period: fix_minder.interval.period().as_secs() },
+            ),
+        }
     }
 }
