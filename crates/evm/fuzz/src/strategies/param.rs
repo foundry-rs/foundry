@@ -70,9 +70,11 @@ fn fuzz_param_inner(
         DynSolType::Int(n @ 8..=256) => super::IntStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Int(x, n))
             .boxed(),
-        DynSolType::Uint(n @ 8..=256) => super::UintStrategy::new(n, fuzz_fixtures)
-            .prop_map(move |x| DynSolValue::Uint(x, n))
-            .boxed(),
+        DynSolType::Uint(n @ 8..=256) => {
+            super::UintStrategy::new(n, fuzz_fixtures, None, None, false)
+                .prop_map(move |x| DynSolValue::Uint(x, n))
+                .boxed()
+        }
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
         DynSolType::Bytes => value(),
         DynSolType::FixedBytes(_size @ 1..=32) => value(),
