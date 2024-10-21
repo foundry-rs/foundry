@@ -9,6 +9,7 @@ use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
 use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
 use yansi::Paint;
 
@@ -95,11 +96,11 @@ impl GasReport {
 
         // Only include top-level calls which account for calldata and base (21.000) cost.
         // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1 &&
-            (trace.kind == CallKind::Call ||
-                trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2 ||
-                trace.kind == CallKind::EOFCreate)
+        if trace.depth > 1
+            && (trace.kind == CallKind::Call
+                || trace.kind == CallKind::Create
+                || trace.kind == CallKind::Create2
+                || trace.kind == CallKind::EOFCreate)
         {
             return;
         }
@@ -163,7 +164,27 @@ impl Display for GasReport {
             }
 
             if self.report_type == GasReportKind::JSON {
-                writeln!(f, "{}", serde_json::to_string(&contract).unwrap())?;
+                let output = json!({
+                    "deployment": {
+                        "gas": contract.gas,
+                        "size": contract.size,
+                    },
+                    "functions": contract.functions.iter().map(|(fname, sigs)| {
+                        (fname, sigs.iter().map(|(sig, gas_info)| {
+                            // show function signature if overloaded else name
+                            let fn_display = if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
+                            (sig, json!({
+                                "name": fn_display,
+                                "calls": gas_info.calls,
+                                "min": gas_info.min,
+                                "mean": gas_info.mean,
+                                "median": gas_info.median,
+                                "max": gas_info.max,
+                            }))
+                        }).collect::<BTreeMap<_, _>>())
+                    }).collect::<BTreeMap<_, _>>(),
+                });
+                writeln!(f, "{}", serde_json::to_string(&output).unwrap())?;
                 continue;
             }
 
