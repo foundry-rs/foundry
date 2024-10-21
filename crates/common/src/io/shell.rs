@@ -333,21 +333,17 @@ impl Shell {
     }
 
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
-    ///
     /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
-    /// The message will be styled with [ERROR_MESSAGE].
     ///
     /// **Note**: will log regardless of the verbosity level.
     #[inline]
     pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
         self.maybe_err_erase_line();
-        self.output.message_stderr(&"Error", &ERROR, Some(&message) , false)
+        self.output.message_stderr(&"Error", &ERROR, Some(&message), false)
     }
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
-    ///
     /// This will render a message in [WARN] style with a bold `Warning: `prefix.
-    /// The message will be styled with [WARN_MESSAGE]).
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     #[inline]
