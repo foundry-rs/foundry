@@ -70,7 +70,7 @@ pub enum WalletSubcommands {
         #[arg(long, short, conflicts_with = "words")]
         entropy: Option<String>,
 
-        /// Output generated mnemonic phrase as JSON.
+        /// Output generated mnemonic phrase and accounts as JSON.
         #[arg(long, short, default_value = "false")]
         json: bool,
     },
