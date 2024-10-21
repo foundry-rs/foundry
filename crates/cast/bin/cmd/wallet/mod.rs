@@ -329,7 +329,7 @@ impl WalletSubcommands {
                     if json {
                         accounts.as_array_mut().unwrap().push(json!({
                             "address": wallet.address(),
-                            "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+                            "private_key": format!("0x{}", private_key),
                         }));
                     } else {
                         println!("- Account {i}:");
