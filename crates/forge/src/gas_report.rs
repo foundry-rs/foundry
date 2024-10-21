@@ -164,69 +164,90 @@ impl Display for GasReport {
             }
 
             if self.report_type == GasReportKind::JSON {
-                let output = json!({
-                    "deployment": {
-                        "gas": contract.gas,
-                        "size": contract.size,
-                    },
-                    "functions": contract.functions.iter().map(|(fname, sigs)| {
-                        (fname, sigs.iter().map(|(sig, gas_info)| {
-                            // show function signature if overloaded else name
-                            let fn_display = if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
-                            (sig, json!({
-                                "name": fn_display,
-                                "calls": gas_info.calls,
-                                "min": gas_info.min,
-                                "mean": gas_info.mean,
-                                "median": gas_info.median,
-                                "max": gas_info.max,
-                            }))
-                        }).collect::<BTreeMap<_, _>>())
-                    }).collect::<BTreeMap<_, _>>(),
-                });
-                writeln!(f, "{}", serde_json::to_string(&output).unwrap())?;
-                continue;
+                writeln!(f, "{}", self.format_json_output(contract, name))?;
+            } else {
+                let table = self.format_table_output(contract, name);
+                writeln!(f, "{table}")?;
+                writeln!(f, "\n")?;
             }
-
-            let mut table = Table::new();
-            table.load_preset(ASCII_MARKDOWN);
-            table.set_header([Cell::new(format!("{name} contract"))
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Green)]);
-            table.add_row([
-                Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
-                Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            ]);
-            table.add_row([contract.gas.to_string(), contract.size.to_string()]);
-
-            table.add_row([
-                Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
-                Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
-                Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
-                Cell::new("# calls").add_attribute(Attribute::Bold),
-            ]);
-            contract.functions.iter().for_each(|(fname, sigs)| {
-                sigs.iter().for_each(|(sig, gas_info)| {
-                    // show function signature if overloaded else name
-                    let fn_display =
-                        if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
-
-                    table.add_row([
-                        Cell::new(fn_display).add_attribute(Attribute::Bold),
-                        Cell::new(gas_info.min.to_string()).fg(Color::Green),
-                        Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
-                        Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
-                        Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                        Cell::new(gas_info.calls.to_string()),
-                    ]);
-                })
-            });
-            writeln!(f, "{table}")?;
-            writeln!(f, "\n")?;
         }
         Ok(())
+    }
+}
+
+impl GasReport {
+    // Helper function to format the JSON output
+    fn format_json_output(&self, contract: &ContractInfo, name: &str) -> String {
+        let output = json!({
+            "contract": name,
+            "deployment": {
+                "gas": contract.gas,
+                "size": contract.size,
+            },
+            "functions": contract.functions.iter().map(|(fname, sigs)| {
+                (fname, sigs.iter().map(|(sig, gas_info)| {
+                    // Show function signature if overloaded else display function name.
+                    let display_name = if sigs.len() == 1 {
+                        fname.to_string()
+                    } else {
+                        sig.replace(':', "")
+                    };
+
+                    (display_name, json!({
+                        "calls": gas_info.calls,
+                        "min": gas_info.min,
+                        "mean": gas_info.mean,
+                        "median": gas_info.median,
+                        "max": gas_info.max,
+                    }))
+                }).collect::<BTreeMap<_, _>>())
+            }).collect::<BTreeMap<_, _>>(),
+        });
+
+        serde_json::to_string(&output).unwrap()
+    }
+
+    // Helper function to format the table output
+    fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
+        let mut table = Table::new();
+        table.load_preset(ASCII_MARKDOWN);
+        table.set_header([Cell::new(format!("{name} contract"))
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Green)]);
+
+        table.add_row([
+            Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
+        ]);
+        table.add_row([contract.gas.to_string(), contract.size.to_string()]);
+
+        table.add_row([
+            Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
+            Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
+            Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
+            Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
+            Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
+            Cell::new("# calls").add_attribute(Attribute::Bold),
+        ]);
+
+        contract.functions.iter().for_each(|(fname, sigs)| {
+            sigs.iter().for_each(|(sig, gas_info)| {
+                // Show function signature if overloaded else display function name.
+                let display_name =
+                    if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
+
+                table.add_row([
+                    Cell::new(display_name).add_attribute(Attribute::Bold),
+                    Cell::new(gas_info.min.to_string()).fg(Color::Green),
+                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
+                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
+                    Cell::new(gas_info.max.to_string()).fg(Color::Red),
+                    Cell::new(gas_info.calls.to_string()),
+                ]);
+            })
+        });
+
+        table
     }
 }
 
