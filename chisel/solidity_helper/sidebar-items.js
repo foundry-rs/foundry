@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_COMMENTS","MAX_ANSI_LEN"],"struct":["SolidityHelper"],"trait":["TokenStyle"],"type":["SpannedStyle"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SpinnerMsg"],"fn":["with_spinner_reporter"],"macro":["cli_warn"],"static":["SPINNERS","TERM_SETTINGS"],"struct":["Spinner","SpinnerReporter","TermSettings"]};
