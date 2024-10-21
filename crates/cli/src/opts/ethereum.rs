@@ -40,6 +40,13 @@ pub struct RpcOpts {
     /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'
     #[arg(long, env = "ETH_RPC_JWT_SECRET")]
     pub jwt_secret: Option<String>,
+
+    /// Timeout for the rpc request
+    ///
+    /// The rpc-timeout will be used to override the default timeout for RPC.
+    /// Default value is 45s
+    #[arg(long, env = "ETH_RPC_TIMEOUT")]
+    pub rpc_timeout: Option<u64>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -76,6 +83,16 @@ impl RpcOpts {
         Ok(jwt)
     }
 
+    /// Returns the rpc timeout.
+    pub fn rpc_timeout<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, u64>>> {
+        let rpc_timeout = match (self.rpc_timeout.as_ref(), config) {
+            (Some(rpc_timeout), _) => Some(Cow::Borrowed(rpc_timeout)),
+            (None, Some(config)) => config.get_rpc_timeout()?,
+            (None, None) => None,
+        };
+        Ok(rpc_timeout)
+    }
+
     pub fn dict(&self) -> Dict {
         let mut dict = Dict::new();
         if let Ok(Some(url)) = self.url(None) {
@@ -83,6 +100,9 @@ impl RpcOpts {
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
+        }
+        if let Ok(Some(rpc_timeout)) = self.rpc_timeout(None) {
+            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into_owned().into());
         }
         dict
     }

@@ -238,6 +238,8 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
+    /// timeout that should be used for any rpc calls
+    pub eth_rpc_timeout: Option<u64>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -1124,6 +1126,24 @@ impl Config {
     /// ```
     pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<'_, str>>, UnresolvedEnvVarError> {
         Ok(self.eth_rpc_jwt.as_ref().map(|jwt| Cow::Borrowed(jwt.as_str())))
+    }
+
+    /// Returns the configured RPC timeout value.
+    ///
+    /// Returns:
+    ///    - The RPC timeout value, if configured.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use foundry_config::Config;
+    /// # fn t() {
+    /// let config = Config::with_root("./");
+    /// let rpc_timeout = config.get_rpc_timeout().unwrap().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_timeout(&self) -> Result<Option<Cow<'_, u64>>, UnresolvedEnvVarError> {
+        Ok(self.eth_rpc_timeout.as_ref().map(|timeout| Cow::Borrowed(timeout)))
     }
 
     /// Returns the configured rpc url
@@ -2208,6 +2228,7 @@ impl Default for Config {
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
+            eth_rpc_timeout: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
