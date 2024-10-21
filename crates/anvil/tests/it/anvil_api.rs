@@ -871,3 +871,20 @@ async fn can_set_executor() {
 
     assert_eq!(executor, expected_addr);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arb_get_block() {
+    let (api, _handle) = spawn(NodeConfig::test().with_chain_id(Some(421611u64))).await;
+
+    // Mine two blocks
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let best_number = api.block_number().unwrap().to::<u64>();
+
+    assert_eq!(best_number, 2);
+
+    let block = api.block_by_number(1.into()).await.unwrap().unwrap();
+
+    assert_eq!(block.header.number, 1);
+}
