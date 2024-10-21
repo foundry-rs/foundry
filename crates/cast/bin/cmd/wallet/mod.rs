@@ -295,8 +295,6 @@ impl WalletSubcommands {
                 }
             }
             Self::NewMnemonic { words, accounts, entropy, json } => {
-                let mut json_values = if json { Some(vec![]) } else { None };
-
                 let phrase = if let Some(entropy) = entropy {
                     let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
@@ -338,12 +336,12 @@ impl WalletSubcommands {
                     }
                 }
 
-                if let Some(json) = json_values.as_mut() {
-                    json.push(json!({
+                if json {
+                    let obj = json!({
                         "mnemonic": phrase,
                         "accounts": accounts,
-                    }));
-                    println!("{}", serde_json::to_string_pretty(json)?);
+                    });
+                    println!("{}", serde_json::to_string_pretty(&obj)?);
                 }
             }
             Self::Vanity(cmd) => {
