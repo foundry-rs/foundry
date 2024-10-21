@@ -1,6 +1,7 @@
 //! Helper trait and functions to format Ethereum types.
 
 use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, TxType};
+use alloy_network::ReceiptResponse;
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
 use alloy_rpc_types::{
     AccessListItem, AnyNetworkBlock, AnyTransactionReceipt, Block, BlockTransactions, Log,
@@ -169,7 +170,6 @@ impl UIfmt for AnyTransactionReceipt {
                     to,
                     gas_used,
                     contract_address,
-                    state_root,
                     effective_gas_price,
                     inner:
                         AnyReceiptEnvelope {
@@ -215,7 +215,7 @@ authorizationList       {}",
             gas_used.pretty(),
             serde_json::to_string(&logs).unwrap(),
             logs_bloom.pretty(),
-            state_root.pretty(),
+            self.state_root().pretty(),
             status.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),

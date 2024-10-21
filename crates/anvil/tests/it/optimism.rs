@@ -9,7 +9,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 use anvil_core::eth::transaction::optimism::DepositTransaction;
-use op_alloy_rpc_types::OptimismTransactionFields;
+use op_alloy_rpc_types::OpTransactionFields;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
@@ -26,7 +26,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
         .with_value(U256::from(1234))
         .with_gas_limit(21000);
 
-    let op_fields = OptimismTransactionFields {
+    let op_fields = OpTransactionFields {
         source_hash: Some(b256!(
             "0000000000000000000000000000000000000000000000000000000000000000"
         )),
@@ -63,7 +63,7 @@ async fn test_send_value_deposit_transaction() {
     let send_value = U256::from(1234);
     let before_balance_to = provider.get_balance(to).await.unwrap();
 
-    let op_fields = OptimismTransactionFields {
+    let op_fields = OpTransactionFields {
         source_hash: Some(b256!(
             "0000000000000000000000000000000000000000000000000000000000000000"
         )),
@@ -123,7 +123,7 @@ async fn test_send_value_raw_deposit_transaction() {
         .with_max_fee_per_gas(20_000_000_000)
         .with_max_priority_fee_per_gas(1_000_000_000);
 
-    let op_fields = OptimismTransactionFields {
+    let op_fields = OpTransactionFields {
         source_hash: Some(b256!(
             "0000000000000000000000000000000000000000000000000000000000000000"
         )),

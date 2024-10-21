@@ -135,7 +135,7 @@ impl From<EthereumHardfork> for SpecId {
             EthereumHardfork::Cancun | EthereumHardfork::Latest => Self::CANCUN,
             EthereumHardfork::Prague => Self::PRAGUE,
             // TODO: switch to latest after activation
-            EthereumHardfork::PragueEOF => Self::PRAGUE_EOF,
+            EthereumHardfork::PragueEOF => Self::PRAGUE,
         }
     }
 }

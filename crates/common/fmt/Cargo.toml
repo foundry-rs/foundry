@@ -20,6 +20,7 @@ yansi.workspace = true
 
 # ui
 alloy-consensus.workspace = true
+alloy-network.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth"] }
 alloy-serde.workspace = true
 serde.workspace = true

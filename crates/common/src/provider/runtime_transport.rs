@@ -187,7 +187,7 @@ impl RuntimeTransport {
     /// Connects to a WS transport.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
-        let ws = WsConnect { url: self.url.to_string(), auth }
+        let ws = WsConnect { url: self.url.to_string(), auth, config: None }
             .into_service()
             .await
             .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
