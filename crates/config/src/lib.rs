@@ -1143,7 +1143,7 @@ impl Config {
     /// # }
     /// ```
     pub fn get_rpc_timeout(&self) -> Result<Option<Cow<'_, u64>>, UnresolvedEnvVarError> {
-        Ok(self.eth_rpc_timeout.as_ref().map(|timeout| Cow::Borrowed(timeout)))
+        Ok(self.eth_rpc_timeout.as_ref().map(Cow::Borrowed))
     }
 
     /// Returns the configured rpc url
