@@ -151,20 +151,20 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
         if outcome.allow_failure || failures == 0 {
             return Ok(());
         }
 
-        if !shell::verbosity().is_normal() {
+        if shell::is_quiet() || silent {
             // TODO: Avoid process::exit
             std::process::exit(1);
         }
 
-        shell::println("")?;
-        shell::println("Failing tests:")?;
+        sh_println!()?;
+        sh_println!("Failing tests:")?;
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {
@@ -172,18 +172,18 @@ impl TestOutcome {
             }
 
             let term = if failed > 1 { "tests" } else { "test" };
-            shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
+            sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                sh_println!("{}", result.short_result(name))?;
             }
-            shell::println("")?;
+            sh_println!()?;
         }
         let successes = outcome.passed();
-        shell::println(format!(
+        sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
-        ))?;
+        )?;
 
         // TODO: Avoid process::exit
         std::process::exit(1);

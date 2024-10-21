@@ -2,7 +2,7 @@ use crate::transaction::TransactionWithMetadata;
 use alloy_primitives::{hex, map::HashMap, TxHash};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{fs, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -127,8 +127,8 @@ impl ScriptSequence {
         }
 
         if !silent {
-            shell::println(format!("\nTransactions saved to: {}\n", path.display()))?;
-            shell::println(format!("Sensitive values saved to: {}\n", sensitive_path.display()))?;
+            sh_println!("\nTransactions saved to: {}\n", path.display())?;
+            sh_println!("Sensitive values saved to: {}\n", sensitive_path.display())?;
         }
 
         Ok(())

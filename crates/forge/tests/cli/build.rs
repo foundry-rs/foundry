@@ -3,7 +3,35 @@ use foundry_config::Config;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
 
-// tests that json is printed when --json is passed
+forgetest_init!(can_parse_build_filters, |prj, cmd| {
+    prj.clear();
+
+    cmd.args(["build", "--names", "--skip", "tests", "scripts"]).assert_success().stdout_eq(str![
+        [r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+  compiler version: [..]
+    - Counter
+
+"#]
+    ]);
+});
+
+forgetest!(throws_on_conflicting_args, |prj, cmd| {
+    prj.clear();
+
+    cmd.args(["compile", "--format-json", "--quiet"]).assert_failure().stderr_eq(str![[r#"
+error: the argument '--format-json' cannot be used with '--quiet'
+
+Usage: forge[..] build --format-json [PATHS]...
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+// tests that json is printed when --format-json is passed
 forgetest!(compile_json, |prj, cmd| {
     prj.add_source(
         "jsonError",

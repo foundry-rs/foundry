@@ -76,7 +76,7 @@ pub struct BuildArgs {
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[arg(long, conflicts_with = "silent")]
+    #[arg(long, conflicts_with = "quiet")]
     #[serde(skip)]
     pub format_json: bool,
 }
@@ -85,9 +85,7 @@ impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
-        if install::install_missing_dependencies(&mut config, self.args.silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
         }
@@ -115,7 +113,7 @@ impl BuildArgs {
         let output = compiler.compile(&project)?;
 
         if self.format_json {
-            println!("{}", serde_json::to_string_pretty(&output.output())?);
+            sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
         Ok(output)
@@ -172,35 +170,5 @@ impl Provider for BuildArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_config::filter::SkipBuildFilter;
-
-    #[test]
-    fn can_parse_build_filters() {
-        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests]));
-
-        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "scripts"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Scripts]));
-
-        let args: BuildArgs =
-            BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "--skip", "scripts"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
-
-        let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
-        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
-    }
-
-    #[test]
-    fn check_conflicts() {
-        let args: std::result::Result<BuildArgs, clap::Error> =
-            BuildArgs::try_parse_from(["foundry-cli", "--format-json", "--silent"]);
-        assert!(args.is_err());
-        assert!(args.unwrap_err().kind() == clap::error::ErrorKind::ArgumentConflict);
     }
 }

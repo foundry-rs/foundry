@@ -299,7 +299,7 @@ impl VerifyBytecodeArgs {
             );
 
             if self.json {
-                println!("{}", serde_json::to_string(&json_results)?);
+                sh_println!("{}", serde_json::to_string(&json_results)?)?;
             }
 
             return Ok(());
@@ -395,7 +395,7 @@ impl VerifyBytecodeArgs {
                     &config,
                 );
                 if self.json {
-                    println!("{}", serde_json::to_string(&json_results)?);
+                    sh_println!("{}", serde_json::to_string(&json_results)?)?;
                 }
                 return Ok(());
             }
@@ -498,7 +498,7 @@ impl VerifyBytecodeArgs {
         }
 
         if self.json {
-            println!("{}", serde_json::to_string(&json_results)?);
+            sh_println!("{}", serde_json::to_string(&json_results)?)?;
         }
         Ok(())
     }
