@@ -1916,8 +1916,6 @@ impl Backend {
             NamedChain::ArbitrumTestnet,
         ) = NamedChain::try_from(self.env.read().env.cfg.chain_id)
         {
-            // Block number is the best number.
-            block.header.number = number;
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
