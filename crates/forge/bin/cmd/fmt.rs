@@ -111,7 +111,7 @@ impl FmtArgs {
                     let mut lines = source[..loc.start().min(source.len())].split('\n');
                     let col = lines.next_back().unwrap().len() + 1;
                     let row = lines.count() + 1;
-                    sh_warn!("[{}:{}:{}] {}", name, row, col, warning);
+                    sh_warn!("[{}:{}:{}] {}", name, row, col, warning)?;
                 }
             }
 
@@ -153,7 +153,7 @@ impl FmtArgs {
                         "Nothing to format.\n\
                          HINT: If you are working outside of the project, \
                          try providing paths to your source files: `forge fmt <paths>`"
-                    );
+                    )?;
                     return Ok(())
                 }
                 paths

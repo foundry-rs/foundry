@@ -34,7 +34,7 @@ macro_rules! prompt {
 #[macro_export]
 macro_rules! sh_err {
     ($($args:tt)*) => {
-        $crate::__sh_dispatch!(error $($args)*).expect("failed to write error")
+        $crate::__sh_dispatch!(error $($args)*)
     };
 }
 
@@ -44,7 +44,7 @@ macro_rules! sh_err {
 #[macro_export]
 macro_rules! sh_warn {
     ($($args:tt)*) => {
-        $crate::__sh_dispatch!(warn $($args)*).expect("failed to write warning")
+        $crate::__sh_dispatch!(warn $($args)*)
     };
 }
 
@@ -54,11 +54,11 @@ macro_rules! sh_warn {
 #[macro_export]
 macro_rules! sh_print {
     ($($args:tt)*) => {
-        $crate::__sh_dispatch!(print_out $($args)*).expect("failed to write output")
+        $crate::__sh_dispatch!(print_out $($args)*)
     };
 
     ($shell:expr, $($args:tt)*) => {
-        $crate::__sh_dispatch!(print_out $shell, $($args)*).expect("failed to write output")
+        $crate::__sh_dispatch!(print_out $shell, $($args)*)
     };
 }
 
@@ -68,11 +68,11 @@ macro_rules! sh_print {
 #[macro_export]
 macro_rules! sh_eprint {
     ($($args:tt)*) => {
-        $crate::__sh_dispatch!(print_err $($args)*).expect("failed to write error")
+        $crate::__sh_dispatch!(print_err $($args)*)
     };
 
     ($shell:expr, $($args:tt)*) => {
-        $crate::__sh_dispatch!(print_err $shell, $($args)*).expect("failed to write error")
+        $crate::__sh_dispatch!(print_err $shell, $($args)*)
     };
 }
 
@@ -94,11 +94,11 @@ macro_rules! sh_println {
     };
 
     ($shell:expr, $($args:tt)*) => {
-        $crate::sh_print!($shell, "{}\n", ::core::format_args!($($args)*)).expect("failed to write line")
+        $crate::sh_print!($shell, "{}\n", ::core::format_args!($($args)*))
     };
 
     ($($args:tt)*) => {
-        $crate::sh_print!("{}\n", ::core::format_args!($($args)*)).expect("failed to write line")
+        $crate::sh_print!("{}\n", ::core::format_args!($($args)*))
     };
 }
 
@@ -124,7 +124,7 @@ macro_rules! sh_eprintln {
     };
 
     ($($args:tt)*) => {
-        $crate::sh_eprint!("{}\n", ::core::format_args!($($args)*)).expect("failed to write line")
+        $crate::sh_eprint!("{}\n", ::core::format_args!($($args)*))
     };
 }
 
@@ -147,35 +147,39 @@ macro_rules! __sh_dispatch {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn macros() {
-        sh_err!("err");
-        sh_err!("err {}", "arg");
+    fn macros() -> eyre::Result<()> {
+        sh_err!("err")?;
+        sh_err!("err {}", "arg")?;
 
-        sh_warn!("warn");
-        sh_warn!("warn {}", "arg");
+        sh_warn!("warn")?;
+        sh_warn!("warn {}", "arg")?;
 
-        sh_print!("print -");
-        sh_print!("print {} -", "arg");
+        sh_print!("print -")?;
+        sh_print!("print {} -", "arg")?;
 
-        sh_println!();
-        sh_println!("println");
-        sh_println!("println {}", "arg");
+        sh_println!()?;
+        sh_println!("println")?;
+        sh_println!("println {}", "arg")?;
 
-        sh_eprint!("eprint -");
-        sh_eprint!("eprint {} -", "arg");
+        sh_eprint!("eprint -")?;
+        sh_eprint!("eprint {} -", "arg")?;
 
-        sh_eprintln!();
-        sh_eprintln!("eprintln");
-        sh_eprintln!("eprintln {}", "arg");
+        sh_eprintln!()?;
+        sh_eprintln!("eprintln")?;
+        sh_eprintln!("eprintln {}", "arg")?;
+
+        Ok(())
     }
 
     #[test]
-    fn macros_with_shell() {
+    fn macros_with_shell() -> eyre::Result<()> {
         let shell = &mut crate::Shell::new();
-        sh_eprintln!(shell);
-        sh_eprintln!(shell,);
-        sh_eprintln!(shell, "shelled eprintln");
-        sh_eprintln!(shell, "shelled eprintln {}", "arg");
-        sh_eprintln!(&mut crate::Shell::new(), "shelled eprintln {}", "arg");
+        sh_eprintln!(shell)?;
+        sh_eprintln!(shell,)?;
+        sh_eprintln!(shell, "shelled eprintln")?;
+        sh_eprintln!(shell, "shelled eprintln {}", "arg")?;
+        sh_eprintln!(&mut crate::Shell::new(), "shelled eprintln {}", "arg")?;
+
+        Ok(())
     }
 }

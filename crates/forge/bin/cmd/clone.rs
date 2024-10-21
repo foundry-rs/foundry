@@ -102,7 +102,7 @@ impl CloneArgs {
         let client = Client::new(chain, etherscan_api_key.clone())?;
 
         // step 1. get the metadata from client
-        sh_println!("Downloading the source code of {address} from Etherscan...");
+        sh_println!("Downloading the source code of {address} from Etherscan...")?;
 
         let meta = Self::collect_metadata_from_client(address, &client).await?;
 
@@ -118,10 +118,10 @@ impl CloneArgs {
 
         // step 4. collect the compilation metadata
         // if the etherscan api key is not set, we need to wait for 3 seconds between calls
-        sh_println!("Collecting the creation information of {address} from Etherscan...");
+        sh_println!("Collecting the creation information of {address} from Etherscan...")?;
 
         if etherscan_api_key.is_empty() {
-            sh_warn!("Waiting for 5 seconds to avoid rate limit...");
+            sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
         Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;

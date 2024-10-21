@@ -163,8 +163,8 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        sh_println!();
-        sh_println!("Failing tests:");
+        sh_println!()?;
+        sh_println!("Failing tests:")?;
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {
@@ -172,18 +172,18 @@ impl TestOutcome {
             }
 
             let term = if failed > 1 { "tests" } else { "test" };
-            sh_println!("Encountered {failed} failing {term} in {suite_name}");
+            sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                sh_println!("{}", result.short_result(name));
+                sh_println!("{}", result.short_result(name))?;
             }
-            sh_println!();
+            sh_println!()?;
         }
         let successes = outcome.passed();
         sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
-        );
+        )?;
 
         // TODO: Avoid process::exit
         std::process::exit(1);

@@ -424,8 +424,8 @@ impl BundledState {
             seq_progress.inner.write().finish();
         }
 
-        sh_println!("\n\n==========================");
-        sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.");
+        sh_println!("\n\n==========================")?;
+        sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
         Ok(BroadcastedState {
             args: self.args,

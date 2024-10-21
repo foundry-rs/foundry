@@ -299,9 +299,9 @@ impl NodeHandle {
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
         if let Some(ipc_path) = self.ipc_path() {
-            sh_println!("IPC path: {ipc_path}");
+            let _ = sh_println!("IPC path: {ipc_path}");
         }
-        sh_println!(
+        let _ = sh_println!(
             "Listening on {}",
             self.addresses
                 .iter()

@@ -907,7 +907,7 @@ impl NodeConfig {
             .expect("Failed writing json");
         }
 
-        sh_println!("{}", self.as_string(fork))
+        let _ = sh_println!("{}", self.as_string(fork));
     }
 
     /// Returns the path where the cache file should be stored

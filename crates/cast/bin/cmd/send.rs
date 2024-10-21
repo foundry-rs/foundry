@@ -145,7 +145,7 @@ impl SendTxArgs {
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
                 if config_chain_id != current_chain_id {
-                    sh_warn!("Switching to chain {}", config_chain);
+                    sh_warn!("Switching to chain {}", config_chain)?;
                     provider
                         .raw_request(
                             "wallet_switchEthereumChain".into(),

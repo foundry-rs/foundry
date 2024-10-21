@@ -341,7 +341,7 @@ impl Shell {
     #[inline]
     pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
         self.maybe_err_erase_line();
-        self.output.message_stderr(&"Error", &ERROR, Some(&message), Some(&ERROR_MESSAGE), false)
+        self.output.message_stderr(&"Error", &ERROR, Some(&message) , false)
     }
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
@@ -354,7 +354,7 @@ impl Shell {
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
-            _ => self.print(&"Warning", &WARN, Some(&message), Some(&WARN_MESSAGE), false),
+            _ => self.print(&"Warning", &WARN, Some(&message), false),
         }
     }
 
@@ -405,14 +405,13 @@ impl Shell {
         status: &dyn fmt::Display,
         style: &Style,
         message: Option<&dyn fmt::Display>,
-        message_style: Option<&Style>,
         justified: bool,
     ) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
             _ => {
                 self.maybe_err_erase_line();
-                self.output.message_stderr(status, style, message, message_style, justified)
+                self.output.message_stderr(status, style, message, justified)
             }
         }
     }
@@ -427,10 +426,9 @@ impl ShellOut {
         status: &dyn fmt::Display,
         style: &Style,
         message: Option<&dyn fmt::Display>,
-        message_style: Option<&Style>,
         justified: bool,
     ) -> Result<()> {
-        let buffer = Self::format_message(status, message, style, message_style, justified)?;
+        let buffer = Self::format_message(status, message, style, justified)?;
         self.stderr().write_all(&buffer)?;
         Ok(())
     }
@@ -480,7 +478,6 @@ impl ShellOut {
         status: &dyn fmt::Display,
         message: Option<&dyn fmt::Display>,
         style: &Style,
-        message_style: Option<&Style>,
         justified: bool,
     ) -> Result<Vec<u8>> {
         let style = style.render();
@@ -495,11 +492,7 @@ impl ShellOut {
         }
         match message {
             Some(message) => {
-                if let Some(message_style) = message_style {
-                    writeln!(&mut buffer, " {message_style}{message}{reset}")?;
-                } else {
-                    writeln!(&mut buffer, " {message}")?;
-                }
+                writeln!(&mut buffer, " {message}")?;
             }
             None => write!(buffer, " ")?,
         }

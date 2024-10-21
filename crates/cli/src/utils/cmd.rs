@@ -275,32 +275,38 @@ where
 
     fn load_config_emit_warnings(self) -> Config {
         let config = self.load_config();
-        config.warnings.iter().for_each(|w| sh_warn!("{w}"));
+        config.warnings.iter().for_each(|w| sh_warn!("{w}").unwrap());
         config
     }
 
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config()?;
-        config.warnings.iter().for_each(|w| sh_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
     }
 
     fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.warnings.iter().for_each(|w| sh_warn!("{w}"));
+        emit_warnings(&config);
         Ok((config, evm_opts))
     }
 
     fn load_config_unsanitized_emit_warnings(self) -> Config {
         let config = self.load_config_unsanitized();
-        config.warnings.iter().for_each(|w| sh_warn!("{w}"));
+        emit_warnings(&config);
         config
     }
 
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config_unsanitized()?;
-        config.warnings.iter().for_each(|w| sh_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
+    }
+}
+
+fn emit_warnings(config: &Config) {
+    for warning in &config.warnings {
+        let _ = sh_warn!("{warning}");
     }
 }
 

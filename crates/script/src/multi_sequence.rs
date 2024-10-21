@@ -146,8 +146,8 @@ impl MultiChainSequence {
         }
 
         if !silent {
-            sh_println!("\nTransactions saved to: {}\n", self.path.display());
-            sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+            sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
+            sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
         }
 
         Ok(())

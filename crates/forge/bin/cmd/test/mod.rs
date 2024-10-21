@@ -367,7 +367,7 @@ impl TestArgs {
                 sh_warn!(
                     "specifying argument for --{flag} is deprecated and will be removed in the future, \
                      use --match-test instead"
-                );
+                )?;
 
                 let test_pattern = &mut filter.args_mut().test_pattern;
                 if test_pattern.is_some() {
@@ -606,7 +606,7 @@ impl TestArgs {
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
                 if !silent {
-                    sh_println!("{}", result.short_result(name));
+                    sh_println!("{}", result.short_result(name))?;
 
                     // We only display logs at level 2 and above
                     if verbosity >= 2 {
@@ -661,9 +661,9 @@ impl TestArgs {
                 }
 
                 if !silent && !decoded_traces.is_empty() {
-                    sh_println!("Traces:");
+                    sh_println!("Traces:")?;
                     for trace in &decoded_traces {
-                        sh_println!("{trace}");
+                        sh_println!("{trace}")?;
                     }
                 }
 
@@ -768,7 +768,7 @@ impl TestArgs {
 
             // Print suite summary.
             if !silent {
-                sh_println!("{}", suite_result.summary());
+                sh_println!("{}", suite_result.summary())?;
             }
 
             // Add the suite result to the outcome.
@@ -786,16 +786,16 @@ impl TestArgs {
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
-            sh_println!("{}", &finalized);
+            sh_println!("{}", &finalized)?;
             outcome.gas_report = Some(finalized);
         }
 
         if !silent && !outcome.results.is_empty() {
-            sh_println!("{}", outcome.summary(duration));
+            sh_println!("{}", outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
-                sh_println!("\n\nTest Summary:");
+                sh_println!("\n\nTest Summary:")?;
                 summary_table.print_summary(&outcome);
             }
         }

@@ -34,7 +34,7 @@ impl ConfigArgs {
     pub fn run(self) -> Result<()> {
         if self.fix {
             for warning in fix_tomls() {
-                sh_warn!("{warning}");
+                sh_warn!("{warning}")?;
             }
             return Ok(())
         }
@@ -57,7 +57,7 @@ impl ConfigArgs {
             config.to_string_pretty()?
         };
 
-        sh_println!("{s}");
+        sh_println!("{s}")?;
         Ok(())
     }
 }

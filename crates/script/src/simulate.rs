@@ -74,7 +74,7 @@ impl PreSimulationState {
             .collect::<Result<VecDeque<_>>>()?;
 
         if self.args.skip_simulation {
-            sh_println!("\nSKIPPING ON CHAIN SIMULATION.");
+            sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
         } else {
             transactions = self.simulate_and_fill(transactions).await?;
         }
@@ -172,7 +172,7 @@ impl PreSimulationState {
                     let to = tx.contract_address.unwrap();
                     sh_warn!(
                         "Script contains a transaction to {to} which does not contain any code."
-                    );
+                    )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
                     if self.args.should_broadcast() &&
@@ -222,7 +222,7 @@ impl PreSimulationState {
 
         let n = rpcs.len();
         let s = if n != 1 { "s" } else { "" };
-        sh_println!("\n## Setting up {n} EVM{s}.");
+        sh_println!("\n## Setting up {n} EVM{s}.")?;
 
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
@@ -348,8 +348,8 @@ impl FilledTransactionsState {
                     provider_info.gas_price()?
                 };
 
-                sh_println!("\n==========================");
-                sh_println!("\nChain {}", provider_info.chain);
+                sh_println!("\n==========================")?;
+                sh_println!("\nChain {}", provider_info.chain)?;
 
                 sh_println!(
                     "\nEstimated gas price: {} gwei",
@@ -357,15 +357,15 @@ impl FilledTransactionsState {
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
                         .trim_end_matches('.')
-                );
-                sh_println!("\nEstimated total gas used for script: {total_gas}");
+                )?;
+                sh_println!("\nEstimated total gas used for script: {total_gas}")?;
                 sh_println!(
                     "\nEstimated amount required: {} ETH",
                     format_units(total_gas.saturating_mul(per_gas), 18)
                         .unwrap_or_else(|_| "[Could not calculate]".to_string())
                         .trim_end_matches('0')
-                );
-                sh_println!("\n==========================");
+                )?;
+                sh_println!("\n==========================")?;
             }
         }
 

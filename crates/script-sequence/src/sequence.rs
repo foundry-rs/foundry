@@ -127,8 +127,8 @@ impl ScriptSequence {
         }
 
         if !silent {
-            sh_println!("\nTransactions saved to: {}\n", path.display());
-            sh_println!("Sensitive values saved to: {}\n", sensitive_path.display());
+            sh_println!("\nTransactions saved to: {}\n", path.display())?;
+            sh_println!("Sensitive values saved to: {}\n", sensitive_path.display())?;
         }
 
         Ok(())
