@@ -328,7 +328,7 @@ impl WalletSubcommands {
                     let private_key = hex::encode(wallet.credential().to_bytes());
                     if json {
                         accounts.as_array_mut().unwrap().push(json!({
-                            "address": wallet.address(),
+                            "address": format!("{}", wallet.address()),
                             "private_key": format!("0x{}", private_key),
                         }));
                     } else {
