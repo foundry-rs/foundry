@@ -89,6 +89,11 @@ pub struct VerifyBytecodeArgs {
     /// Ignore verification for creation or runtime bytecode.
     #[clap(long, value_name = "BYTECODE_TYPE")]
     pub ignore: Option<BytecodeType>,
+
+    /// Ignore immutable references while verifying runtime bytecode for predeployed contracts.
+    /// Use this to avoid passing `--constructor-args`.
+    #[clap(long, default_value = "false")]
+    pub ignore_predeploy_immutables: bool,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -138,6 +143,14 @@ impl VerifyBytecodeArgs {
             &config,
         )?;
 
+        // ignore flag setup
+        let ignore_predeploy_immutables = self.ignore_predeploy_immutables;
+        let mut ignore = self.ignore;
+        if ignore_predeploy_immutables && self.ignore.is_none() {
+            ignore = Some(BytecodeType::Creation);
+        }
+
+        trace!(?ignore_predeploy_immutables);
         // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
@@ -209,6 +222,8 @@ impl VerifyBytecodeArgs {
             check_explorer_args(source_code.clone())?
         };
 
+        trace!(provided_constructor_args = ?constructor_args);
+
         // This fails only when the contract expects constructor args but NONE were provided OR
         // retrieved from explorer (in case of predeploys).
         crate::utils::check_args_len(&artifact, &constructor_args)?;
@@ -220,7 +235,10 @@ impl VerifyBytecodeArgs {
                     format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", self.address)
                         .yellow()
                         .bold()
-                )
+                );
+                if ignore_predeploy_immutables {
+                    println!("{}", "Ignoring immutable references for predeploys.".yellow().bold());
+                }
             }
 
             // Append constructor args to the local_bytecode.
@@ -272,17 +290,38 @@ impl VerifyBytecodeArgs {
                 crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), &gen_tx)?;
 
             // Compare runtime bytecode
-            let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
-                &mut executor,
-                &provider,
-                self.address,
-                fork_address,
-                None,
-            )
-            .await?;
+            let (mut deployed_bytecode, mut onchain_runtime_code) =
+                crate::utils::get_runtime_codes(
+                    &mut executor,
+                    &provider,
+                    self.address,
+                    fork_address,
+                    None,
+                )
+                .await?;
+
+            if ignore_predeploy_immutables {
+                // Locate immutable refs using the offsets in the artifact
+                let immutable_refs = crate::utils::get_immutable_refs(&artifact);
+
+                trace!(immutable_refs_found = immutable_refs.is_some());
+
+                if let Some(refs) = immutable_refs {
+                    // TODO: Extract those sections from both `deployed_bytecode` and
+                    // `onchain_runtime_code`.
+
+                    trace!("extracting refs from deployed bytecode");
+                    deployed_bytecode =
+                        crate::utils::extract_immutables_refs(refs.clone(), deployed_bytecode);
+
+                    trace!("extracting refs from onchain runtime code");
+                    onchain_runtime_code =
+                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code);
+                }
+            }
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode.original_bytes(),
+                &deployed_bytecode,
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
@@ -365,7 +404,7 @@ impl VerifyBytecodeArgs {
 
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
-        if !self.ignore.is_some_and(|b| b.is_creation()) {
+        if !ignore.is_some_and(|b| b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
             let match_type = crate::utils::match_bytecodes(
                 local_bytecode_vec.as_slice(),
@@ -401,7 +440,7 @@ impl VerifyBytecodeArgs {
             }
         }
 
-        if !self.ignore.is_some_and(|b| b.is_runtime()) {
+        if !ignore.is_some_and(|b| b.is_runtime()) {
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
@@ -468,7 +507,7 @@ impl VerifyBytecodeArgs {
                 &transaction,
             )?;
 
-            // State committed using deploy_with_env, now get the runtime bytecode from the db.
+            // State commited using deploy_with_env, now get the runtime bytecode from the db.
             let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
                 &mut executor,
                 &provider,
@@ -480,7 +519,7 @@ impl VerifyBytecodeArgs {
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
+                &fork_runtime_code,
                 &onchain_runtime_code,
                 &constructor_args,
                 true,

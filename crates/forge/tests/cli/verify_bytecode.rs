@@ -72,6 +72,7 @@ fn test_verify_bytecode_with_ignore(
     verifier_url: &str,
     expected_matches: (&str, &str),
     ignore: &str,
+    ignore_immutables: bool,
     chain: &str,
 ) {
     let etherscan_key = next_mainnet_etherscan_api_key();
@@ -96,26 +97,27 @@ fn test_verify_bytecode_with_ignore(
     prj.add_source(contract_name, &source_code).unwrap();
     prj.write_config(config);
 
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "verify-bytecode",
-            addr,
-            contract_name,
-            "--etherscan-api-key",
-            &etherscan_key,
-            "--verifier",
-            verifier,
-            "--verifier-url",
-            verifier_url,
-            "--rpc-url",
-            &rpc_url,
-            "--ignore",
-            ignore,
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let mut args = vec![
+        "verify-bytecode",
+        addr,
+        contract_name,
+        "--etherscan-api-key",
+        &etherscan_key,
+        "--verifier",
+        verifier,
+        "--verifier-url",
+        verifier_url,
+        "--rpc-url",
+        &rpc_url,
+        "--ignore",
+        ignore,
+    ];
+
+    if ignore_immutables {
+        args.push("--ignore-predeploy-immutables");
+    }
+
+    let output = cmd.forge_fuse().args(args).assert_success().get_output().stdout_lossy();
 
     if ignore == "creation" {
         assert!(!output.contains(
@@ -131,6 +133,9 @@ fn test_verify_bytecode_with_ignore(
         assert!(!output
             .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
     } else {
+        if ignore_immutables {
+            assert!(output.contains("Ignoring immutable references"));
+        }
         assert!(output
             .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
     }
@@ -261,6 +266,7 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
         "https://api.etherscan.io/api",
         ("ignored", "partial"),
         "creation",
+        false,
         "1",
     );
 });
@@ -283,31 +289,7 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
         "https://api.etherscan.io/api",
         ("partial", "ignored"),
         "runtime",
+        false,
         "1",
     );
 });
-
-// Test predeploy contracts
-// TODO: Add test utils for base such as basescan keys and alchemy keys.
-// WETH9 Predeploy
-// forgetest_async!(can_verify_predeploys, |prj, cmd| {
-//     test_verify_bytecode_with_ignore(
-//         prj,
-//         cmd,
-//         "0x4200000000000000000000000000000000000006",
-//         "WETH9",
-//         Config {
-//             evm_version: EvmVersion::default(),
-//             optimizer: true,
-//             optimizer_runs: 10000,
-//             cbor_metadata: true,
-//             bytecode_hash: BytecodeHash::Bzzr1,
-//             ..Default::default()
-//         },
-//         "etherscan",
-//         "https://api.basescan.org/api",
-//         ("ignored", "partial"),
-//         "creation",
-//         "base",
-//     );
-// });
