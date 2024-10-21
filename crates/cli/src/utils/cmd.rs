@@ -16,7 +16,7 @@ use foundry_evm::{
     traces::{
         debug::DebugTraceIdentifier,
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
         Traces,
     },
@@ -439,5 +439,27 @@ pub async fn print_traces(
     }
 
     println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let path = cache_path.join("signatures");
+    let mut cached_signatures = CachedSignatures::load(cache_path);
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+        }
+    });
+
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }
