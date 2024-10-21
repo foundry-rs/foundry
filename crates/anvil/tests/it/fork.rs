@@ -1218,7 +1218,6 @@ async fn test_arbitrum_fork_dev_balance() {
 
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn test_arbitrum_fork_block_number() {
     // fork to get initial block for test
     let (_, handle) = spawn(

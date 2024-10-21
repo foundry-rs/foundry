@@ -2955,15 +2955,11 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
 }
 
 pub fn is_arbitrum(chain_id: u64) -> bool {
-    if let Ok(
-        NamedChain::Arbitrum |
-        NamedChain::ArbitrumGoerli |
-        NamedChain::ArbitrumNova |
-        NamedChain::ArbitrumTestnet,
-    ) = NamedChain::try_from(chain_id)
-    {
-        true
-    } else {
-        false
-    }
+    matches!(
+        NamedChain::try_from(chain_id),
+        Ok(NamedChain::Arbitrum |
+            NamedChain::ArbitrumTestnet |
+            NamedChain::ArbitrumGoerli |
+            NamedChain::ArbitrumNova)
+    )
 }
