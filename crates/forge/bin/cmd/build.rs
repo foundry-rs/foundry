@@ -138,10 +138,12 @@ impl BuildArgs {
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
-        // use the path arguments or if none where provided the `src` dir
+        // Use the path arguments or if none where provided the `src`, `test` and `script`
+        // directories as well as the `foundry.toml` configuration file.
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            [config.src, config.test, config.script]
+            let foundry_toml: PathBuf = config.root.0.join(Config::FILE_NAME);
+            [config.src, config.test, config.script, foundry_toml]
         })
     }
 }
