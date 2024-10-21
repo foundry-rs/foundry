@@ -285,9 +285,16 @@ Created new encrypted keystore file: [..]
 
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
 casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
-    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 Generating mnemonic from provided entropy...
 Successfully generated a new mnemonic.
 Phrase:
@@ -298,6 +305,14 @@ Accounts:
 Address:     0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
+- Account 1:
+Address:     0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+Private key: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+- Account 2:
+Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+
 
 "#]]);
 });
@@ -307,11 +322,11 @@ casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
     cmd.args([
         "wallet",
         "new-mnemonic",
-        "--json",
         "--accounts",
         "3",
         "--entropy",
         "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "--json",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1324,32 +1339,37 @@ casttest!(block_number_hash, |_prj, cmd| {
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });
 
-casttest!(send_eip7702, async |_prj, cmd| {
-    let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
-            .await;
-    let endpoint = handle.http_endpoint();
+casttest!(
+    send_eip7702,
+    async | _prj,
+    cmd | {
+        let (_api, handle) = anvil::spawn(
+            NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())),
+        )
+        .await;
+        let endpoint = handle.http_endpoint();
 
-    cmd.args([
-        "send",
-        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "--auth",
-        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &endpoint,
-    ])
-    .assert_success();
+        cmd.args([
+            "send",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "--auth",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success();
 
-    cmd.cast_fuse()
-        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
-        .assert_success()
-        .stdout_eq(str![[r#"
+        cmd.cast_fuse()
+            .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
+            .assert_success()
+            .stdout_eq(str![[r#"
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
-});
+    }
+);
 
 casttest!(hash_message, |_prj, cmd| {
     cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
