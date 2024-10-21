@@ -3,6 +3,8 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::Config;
 use foundry_test_utils::{
     rpc,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -176,6 +178,7 @@ script failed: revert: failed
 // Tests that the manually specified gas limit is used when using the --unlocked option
 forgetest_async!(can_execute_script_command_with_manual_gas_limit_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.write_config(Config { evm_version: EvmVersion::Paris, ..Default::default() });
     let deploy_script = prj
         .add_source(
             "Foo",
@@ -278,6 +281,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 // Tests that the manually specified gas limit is used.
 forgetest_async!(can_execute_script_command_with_manual_gas_limit, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.write_config(Config { evm_version: EvmVersion::Paris, ..Default::default() });
     let deploy_script = prj
         .add_source(
             "Foo",
@@ -458,6 +462,7 @@ result: uint256 255
 
 forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.write_config(Config { evm_version: EvmVersion::Paris, ..Default::default() });
     // This example script would fail in on-chain simulation
     let deploy_script = prj
         .add_source(
