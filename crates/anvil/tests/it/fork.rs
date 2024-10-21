@@ -1216,9 +1216,29 @@ async fn test_arbitrum_fork_dev_balance() {
     }
 }
 
+// <https://github.com/foundry-rs/foundry/issues/9152>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arb_fork_mining() {
+    let fork_block_number = 266137031u64;
+    let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
+    let (api, _handle) = spawn(
+        fork_config()
+            .with_fork_block_number(Some(fork_block_number))
+            .with_eth_rpc_url(Some(fork_rpc)),
+    )
+    .await;
+
+    let init_blk_num = api.block_number().unwrap().to::<u64>();
+
+    // Mine one
+    api.mine_one().await;
+    let mined_blk_num = api.block_number().unwrap().to::<u64>();
+
+    assert_eq!(mined_blk_num, init_blk_num + 1);
+}
+
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn test_arbitrum_fork_block_number() {
     // fork to get initial block for test
     let (_, handle) = spawn(
