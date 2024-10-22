@@ -234,14 +234,6 @@ impl UintStrategy {
 
         value
     }
-
-    fn type_max(&self) -> U256 {
-        if self.bits < 256 {
-            (U256::from(1) << self.bits) - U256::from(1)
-        } else {
-            U256::MAX
-        }
-    }
 }
 
 impl Strategy for UintStrategy {
@@ -263,7 +255,9 @@ impl Strategy for UintStrategy {
 mod tests {
     use crate::strategies::uint::UintValueTree;
     use alloy_primitives::U256;
-    use proptest::strategy::ValueTree;
+    use proptest::{prelude::Strategy, strategy::ValueTree, test_runner::TestRunner};
+
+    use super::UintStrategy;
 
     #[test]
     fn test_uint_tree_complicate_max() {
@@ -273,4 +267,18 @@ mod tests {
         uint_tree.complicate();
         assert_eq!(uint_tree.lo, U256::MIN);
     }
+
+    #[test]
+    fn test_uint_strategy_respects_bounds() {
+        let min = U256::from(1000u64);
+        let max = U256::from(2000u64);
+        let strategy = UintStrategy::new(16, None, Some(min), Some(max), false);
+        let mut runner = TestRunner::default();
+
+        for _ in 0..1000 {
+            let value = strategy.new_tree(&mut runner).unwrap().current();
+            assert!(value >= min && value <= max, "Generated value {} is out of bounds", value);
+        }
+    }
+
 }
