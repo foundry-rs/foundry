@@ -201,8 +201,12 @@ impl UintStrategy {
             self.generate_log_uniform(runner)
         } else if self.max_bound > self.min_bound {
             let range = self.max_bound - self.min_bound + U256::from(1);
-            let random = self.generate_random_values_uniformly(runner) % range;
-            self.min_bound + random
+            if range == U256::ZERO {  
+                self.min_bound
+            } else {
+                let random = self.generate_random_values_uniformly(runner) % range;
+                self.min_bound + random
+            }
         } else {
             self.min_bound
         };
@@ -254,6 +258,7 @@ impl Strategy for UintStrategy {
 #[cfg(test)]
 mod tests {
     use crate::strategies::uint::UintValueTree;
+    use alloy_dyn_abi::DynSolValue;
     use alloy_primitives::U256;
     use proptest::{prelude::Strategy, strategy::ValueTree, test_runner::TestRunner};
 
@@ -279,6 +284,110 @@ mod tests {
             let value = strategy.new_tree(&mut runner).unwrap().current();
             assert!(value >= min && value <= max, "Generated value {} is out of bounds", value);
         }
+    }
+
+    #[test]
+    fn test_uint_value_tree_bounds() {
+        let min = U256::from(100u64);
+        let max = U256::from(200u64);
+        let start = U256::from(150u64);
+        
+        let mut tree = UintValueTree::new(start, false, min, max);
+        
+        assert_eq!(tree.current(), start);
+        
+        while tree.simplify() {
+            let curr = tree.current();
+            assert!(curr >= min && curr <= max, 
+                "Simplify produced out of bounds value: {}", curr);
+        }
+        
+        tree = UintValueTree::new(start, false, min, max);
+        
+        while tree.complicate() {
+            let curr = tree.current();
+            assert!(curr >= min && curr <= max, 
+                "Complicate produced out of bounds value: {}", curr);
+        }
+    }
+
+    #[test]
+    fn test_edge_case_generation() {
+        let min = U256::from(100u64);
+        let max = U256::from(1000u64);
+        let strategy = UintStrategy::new(64, None, Some(min), Some(max), false);
+        let mut runner = TestRunner::default();
+
+        let mut found_min_area = false;
+        let mut found_max_area = false;
+
+        for _ in 0..1000 {
+            let tree = strategy.generate_edge_tree(&mut runner).unwrap();
+            let value = tree.current();
+            
+            assert!(value >= min && value <= max, 
+                "Edge case {} outside bounds [{}, {}]", value, min, max);
+
+            if value <= min + U256::from(3) {
+                found_min_area = true;
+            }
+            if value >= max - U256::from(3) {
+                found_max_area = true;
+            }
+        }
+
+        assert!(found_min_area, "Never generated values near minimum");
+        assert!(found_max_area, "Never generated values near maximum");
+    }
+
+
+    #[test]
+    fn test_fixture_generation() {
+        let min = U256::from(100u64);
+        let max = U256::from(1000u64);
+        let valid_fixture = U256::from(500u64);
+        let fixtures = vec![DynSolValue::Uint(valid_fixture, 64)];
+        
+        let strategy = UintStrategy::new(64, Some(&fixtures), Some(min), Some(max), false);
+        let mut runner = TestRunner::default();
+
+        for _ in 0..100 {
+            let tree = strategy.generate_fixtures_tree(&mut runner).unwrap();
+            let value = tree.current();
+            assert!(value >= min && value <= max, 
+                "Fixture value {} outside bounds [{}, {}]", value, min, max);
+        }
+    }
+
+    #[test]
+    fn test_log_uniform_sampling() {
+        let strategy = UintStrategy::new(256, None, None, None, true);
+        let mut runner = TestRunner::default();
+        let mut log2_buckets = vec![0; 256];
+        let iterations = 100000;
+
+        for _ in 0..iterations {
+            let tree = strategy.generate_random_tree(&mut runner).unwrap();
+            let value = tree.current();
+            
+            // Find the highest set bit (log2 bucket)
+            let mut highest_bit = 0;
+            for i in 0..256 {
+                if value >= (U256::from(1) << i) {
+                    highest_bit = i;
+                }
+            }
+            log2_buckets[highest_bit] += 1;
+        }
+
+        let mut populated_buckets = 0;
+        for &count in &log2_buckets {
+            if count > 0 {
+                populated_buckets += 1;
+            }
+        }
+        assert!(populated_buckets > 200, 
+            "Log-uniform sampling didn't cover enough orders of magnitude");
     }
 
 }
