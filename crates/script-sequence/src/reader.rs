@@ -1,6 +1,6 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
 use alloy_rpc_types::AnyTransactionReceipt;
-use eyre::{bail, Context, Result};
+use eyre::{bail, Result};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
 use std::path::{Path, PathBuf};
@@ -25,12 +25,9 @@ pub struct BroadcastReader {
 impl BroadcastReader {
     /// Create a new `BroadcastReader` instance.
     pub fn new(contract_name: String, chain_id: u64, root: &Path) -> Result<Self> {
-        let broadcast_path = root
-            .join("broadcast")
-            .join(format!("{contract_name}.s.sol"))
-            .join(chain_id.to_string());
+        let broadcast_path = root.join("broadcast");
 
-        if !broadcast_path.exists() {
+        if !broadcast_path.exists() && !broadcast_path.is_dir() {
             bail!("broadcast does not exist, ensure the contract name and/or chain_id is correct");
         }
 
@@ -44,22 +41,76 @@ impl BroadcastReader {
     }
 
     /// Read all broadcast files in the broadcast directory.
+    ///
+    /// Example structure:
+    ///
+    /// project-root/broadcast/{script_contract_name}.s.sol/{chain_id}/*.json
     pub fn read_all(&self) -> eyre::Result<Vec<ScriptSequence>> {
-        let files = std::fs::read_dir(&self.broadcast_path)?
+        // 1. Read the broadcast directory and get all the script directories i.e
+        //    {script_contract_name}.s.sol
+        let script_dirs = std::fs::read_dir(&self.broadcast_path)?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
-                if path.file_name()?.to_string_lossy() == "run-latest.json" {
-                    return None;
+                // Get all the script directories that end with `.s.sol`
+                if path.is_dir() &&
+                    path.file_name()
+                        .is_some_and(|dir_name| dir_name.to_string_lossy().ends_with(".s.sol"))
+                {
+                    return Some(path);
                 }
-                Some(path)
+                None
             })
             .collect::<Vec<_>>();
 
-        let broadcasts = files
-            .iter()
-            .map(|path| fs::read_json_file(path).wrap_err("failed reading broadcast"))
-            .collect::<Result<Vec<ScriptSequence>>>()?;
+        // 2. Iterate over the script directories and get the {chain_id} directories
+        let chain_dirs = script_dirs
+            .into_iter()
+            .filter_map(|script_dir| {
+                tracing::info!("Script Dir: {:?}/", script_dir);
+                std::fs::read_dir(&script_dir).ok().map(|read_dir| {
+                    read_dir.filter_map(|chain_dir| {
+                        let chain_dir = chain_dir.ok()?;
+                        let path = chain_dir.path();
+
+                        // Get all the chain directories that match the chain_id
+                        if path.is_dir() &&
+                            path.file_name().is_some_and(|dir_name| {
+                                dir_name.to_string_lossy() == self.chain_id.to_string()
+                            })
+                        {
+                            Some(path)
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        // 3. Iterate over the chain directories and get all the broadcast files
+        let broadcasts = chain_dirs
+            .into_iter()
+            .flat_map(|chain_dir| {
+                tracing::info!("Chain Dir: {:?}/", chain_dir);
+
+                fs::json_files(&chain_dir).into_iter().filter_map(|path| {
+                    tracing::info!("Broadcast File: {:?}", path);
+                    fs::read_json_file::<ScriptSequence>(&path).ok().filter(|broadcast| {
+                        if broadcast.chain != self.chain_id {
+                            return false;
+                        }
+                        broadcast.transactions.iter().any(move |tx| {
+                            tx.contract_name.as_ref().is_some_and(|cn| {
+                                cn == &self.contract_name &&
+                                    self.tx_type.map_or(true, |kind| tx.opcode == kind)
+                            })
+                        })
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
 
         Ok(broadcasts)
     }
@@ -68,30 +119,7 @@ impl BroadcastReader {
     ///
     /// This may be the `run-latest.json` file or the broadcast file with the latest timestamp.
     pub fn read_latest(&self) -> eyre::Result<ScriptSequence> {
-        let latest_broadcast: Result<ScriptSequence> =
-            fs::read_json_file(&self.broadcast_path.join("run-latest.json"))
-                .wrap_err("failed reading latest broadcast");
-
-        if let Ok(latest_broadcast) = latest_broadcast {
-            return Ok(latest_broadcast);
-        }
-
-        // Iterate over the files in the broadcast path directory except for the run-latest.json
-        let files = std::fs::read_dir(&self.broadcast_path)?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                if path.file_name()?.to_string_lossy() == "run-latest.json" {
-                    return None;
-                }
-                Some(path)
-            })
-            .collect::<Vec<_>>();
-
-        let broadcasts = files
-            .iter()
-            .map(|path| fs::read_json_file(path).wrap_err("failed reading broadcast"))
-            .collect::<Result<Vec<ScriptSequence>>>()?;
+        let broadcasts = self.read_all()?;
 
         // Find the broadcast with the latest timestamp
         let target = broadcasts
@@ -104,39 +132,38 @@ impl BroadcastReader {
 
     /// Search for transactions in the broadcast that match the specified `contractName` and
     /// `txType`.
+    ///
+    /// It cross-checks the transactions with their corresponding receipts in the broadcast and
+    /// returns the result.
+    ///
+    /// Transactions that don't have a corresponding receipt are ignored.
     pub fn search_broadcast(
         &self,
         broadcast: ScriptSequence,
     ) -> Result<Vec<(TransactionWithMetadata, AnyTransactionReceipt)>> {
         let transactions = broadcast.transactions.clone();
 
-        if broadcast.chain == self.chain_id {
-            let txs = transactions
-                .into_iter()
-                .filter(|tx| {
-                    let name_filter =
-                        tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
+        let txs = transactions
+            .into_iter()
+            .filter(|tx| {
+                let name_filter =
+                    tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
 
-                    let type_filter = self.tx_type.map_or(true, |kind| tx.opcode == kind);
+                let type_filter = self.tx_type.map_or(true, |kind| tx.opcode == kind);
 
-                    name_filter && type_filter
-                })
-                .collect::<Vec<_>>();
+                name_filter && type_filter
+            })
+            .collect::<Vec<_>>();
 
-            let mut targets = Vec::new();
-            for tx in txs.into_iter() {
-                broadcast.receipts.iter().for_each(|receipt| {
-                    if tx.hash.is_some_and(|hash| hash == receipt.transaction_hash) {
-                        targets.push((tx.clone(), receipt.clone()));
-                    }
-                });
-            }
-
-            if !targets.is_empty() {
-                return Ok(targets);
-            }
+        let mut targets = Vec::new();
+        for tx in txs.into_iter() {
+            broadcast.receipts.iter().for_each(|receipt| {
+                if tx.hash.is_some_and(|hash| hash == receipt.transaction_hash) {
+                    targets.push((tx.clone(), receipt.clone()));
+                }
+            });
         }
 
-        bail!("target tx not found in broadcast on chain: {}", self.chain_id);
+        Ok(targets)
     }
 }
