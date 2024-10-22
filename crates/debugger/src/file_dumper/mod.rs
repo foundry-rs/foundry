@@ -4,11 +4,11 @@ use crate::{context::DebuggerContext, DebugNode};
 use alloy_primitives::Address;
 use eyre::Result;
 use foundry_common::fs::write_json_file;
+use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_compilers::{artifacts::sourcemap::Jump, multi::MultiCompilerLanguage};
 use foundry_evm_traces::debug::{ArtifactData, ContractSources, SourceData};
 use serde::Serialize;
 use std::{collections::HashMap, ops::Deref, path::PathBuf};
-use foundry_compilers::artifacts::sourcemap::SourceElement;
 
 /// The file dumper
 pub struct FileDumper<'a> {
@@ -82,7 +82,6 @@ struct ArtifactDataDump {
     pub file_id: u32,
 }
 
-
 impl ContractsDump {
     pub fn new(debugger_context: &DebuggerContext) -> Self {
         Self {
@@ -107,12 +106,7 @@ impl ContractsSourcesDump {
                         name.clone(),
                         inner_map
                             .iter()
-                            .map(|(id, source_data)| {
-                                (
-                                    *id,
-                                    SourceDataDump::new(source_data),
-                                )
-                            })
+                            .map(|(id, source_data)| (*id, SourceDataDump::new(source_data)))
                             .collect(),
                     )
                 })
@@ -121,12 +115,7 @@ impl ContractsSourcesDump {
                 .artifacts_by_name
                 .iter()
                 .map(|(name, data)| {
-                    (
-                        name.clone(),
-                        data.iter()
-                            .map(ArtifactDataDump::new)
-                            .collect(),
-                    )
+                    (name.clone(), data.iter().map(ArtifactDataDump::new).collect())
                 })
                 .collect(),
         }
@@ -135,11 +124,7 @@ impl ContractsSourcesDump {
 
 impl SourceDataDump {
     pub fn new(v: &SourceData) -> Self {
-        Self {
-            source: v.source.deref().clone(),
-            language: v.language,
-            path: v.path.clone(),
-        }
+        Self { source: v.source.deref().clone(), language: v.language, path: v.path.clone() }
     }
 }
 
@@ -162,24 +147,15 @@ impl SourceElementDump {
 impl ArtifactDataDump {
     pub fn new(v: &ArtifactData) -> Self {
         Self {
-            source_map: v.source_map.clone().map(|source_map| {
-                source_map
-                    .iter()
-                    .map(SourceElementDump::new)
-                    .collect()
-            }),
-            source_map_runtime: v.source_map_runtime.clone().map(
-                |source_map| {
-                    source_map
-                        .iter()
-                        .map(SourceElementDump::new)
-                        .collect()
-                },
-            ),
-            pc_ic_map: v
-                .pc_ic_map
+            source_map: v
+                .source_map
                 .clone()
-                .map(|v| v.inner.iter().map(|(k, v)| (*k, *v)).collect()),
+                .map(|source_map| source_map.iter().map(SourceElementDump::new).collect()),
+            source_map_runtime: v
+                .source_map_runtime
+                .clone()
+                .map(|source_map| source_map.iter().map(SourceElementDump::new).collect()),
+            pc_ic_map: v.pc_ic_map.clone().map(|v| v.inner.iter().map(|(k, v)| (*k, *v)).collect()),
             pc_ic_map_runtime: v
                 .pc_ic_map_runtime
                 .clone()
