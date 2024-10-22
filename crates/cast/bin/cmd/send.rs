@@ -105,13 +105,13 @@ struct BumpGasPriceArgs {
     #[arg(long, default_value = "10")]
     gas_price_increment_percentage: u64,
 
-    /// The maximum total percentage increase allowed for gas price.
+    /// Maximum allowed gas price during retries.
     ///
-    /// This sets an upper limit on the gas price across all retry attempts, expressed as a
-    /// percentage of the original price. For example, a value of 150 means the gas price will
-    /// never exceed 150% of the original price (1.5 times the initial price).
-    #[arg(long, default_value = "150")]
-    gas_price_bump_limit_percentage: u64,
+    /// Specifies the absolute upper bound for gas price across all retry attempts,
+    /// expressed in wei. The gas price will never exceed this limit, regardless of
+    /// the number of retry attempts or the initial gas price.
+    #[arg(long, default_value = "3000000000")]
+    gas_price_bump_limit: u64,
 
     /// The maximum number of times to bump the gas price for a transaction.
     #[arg(long, default_value = "3")]
@@ -137,16 +137,17 @@ impl SendTxArgs {
             bump_gas_price,
         } = self;
 
-        const INITIAL_BASE_FEE: u64 = 1000000000;
-        let initial_gas_price = tx.gas_price.unwrap_or(U256::from(INITIAL_BASE_FEE));
+        let config = Config::from(&eth);
+        let provider = utils::get_provider(&config)?;
+
+        let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+        let base_fee = eip1559_est.max_fee_per_gas - eip1559_est.max_priority_fee_per_gas;
+        let initial_gas_price = tx.gas_price.unwrap_or(U256::from(base_fee));
 
         let bump_amount = initial_gas_price
             .saturating_mul(U256::from(bump_gas_price.gas_price_increment_percentage))
             .wrapping_div(U256::from(100));
-
-        let gas_price_limit = initial_gas_price
-            .saturating_mul(U256::from(bump_gas_price.gas_price_bump_limit_percentage))
-            .wrapping_div(U256::from(100));
+        let gas_price_limit = U256::from(bump_gas_price.gas_price_bump_limit);
 
         let mut current_gas_price = initial_gas_price;
         let mut retry_count = 0;
@@ -200,10 +201,10 @@ impl SendTxArgs {
                 current_gas_price = initial_gas_price + (bump_amount * U256::from(retry_count));
 
                 if current_gas_price >= gas_price_limit {
-                    return Err(eyre::eyre!("Unable to bump more the gas price. Hit the limit of {}% of the original price ({} wei)",
-                            bump_gas_price.gas_price_bump_limit_percentage,
-                            gas_price_limit
-                        ));
+                    return Err(eyre::eyre!(
+                        "Unable to bump more the gas price. Hit the bump gas limit of {} wei.",
+                        gas_price_limit
+                    ));
                 }
 
                 if !to_json {
