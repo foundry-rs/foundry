@@ -67,7 +67,6 @@ impl BroadcastReader {
         let chain_dirs = script_dirs
             .into_iter()
             .filter_map(|script_dir| {
-                tracing::info!("Script Dir: {:?}/", script_dir);
                 std::fs::read_dir(&script_dir).ok().map(|read_dir| {
                     read_dir.filter_map(|chain_dir| {
                         let chain_dir = chain_dir.ok()?;
@@ -93,10 +92,11 @@ impl BroadcastReader {
         let broadcasts = chain_dirs
             .into_iter()
             .flat_map(|chain_dir| {
-                tracing::info!("Chain Dir: {:?}/", chain_dir);
-
                 fs::json_files(&chain_dir).into_iter().filter_map(|path| {
-                    tracing::info!("Broadcast File: {:?}", path);
+                    // Ignore if file == run-latest.json to avoid duplicates
+                    if path.file_name().is_some_and(|file| file == "run-latest.json") {
+                        return None;
+                    }
                     fs::read_json_file::<ScriptSequence>(&path).ok().filter(|broadcast| {
                         if broadcast.chain != self.chain_id {
                             return false;
