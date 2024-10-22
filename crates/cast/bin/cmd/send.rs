@@ -95,9 +95,7 @@ pub enum SendTxSubcommands {
 #[command(next_help_heading = "Bump gas price options")]
 struct BumpGasPriceArgs {
     /// Enable automatic gas price escalation for transactions.
-    ///
-    /// When set to true, automatically increase the gas price of a pending transaction. It can be
-    /// used to replace transactions that are stuck during busy network times.
+    /// When set to true, automatically increase the gas price of a pending/stuck transaction.
     #[arg(long, alias = "bump-fee")]
     auto_bump_gas_price: bool,
 
@@ -105,11 +103,7 @@ struct BumpGasPriceArgs {
     #[arg(long, default_value = "10")]
     gas_price_increment_percentage: u64,
 
-    /// Maximum allowed gas price during retries.
-    ///
-    /// Specifies the absolute upper bound for gas price across all retry attempts,
-    /// expressed in wei. The gas price will never exceed this limit, regardless of
-    /// the number of retry attempts or the initial gas price.
+    /// The maximum allowed gas price during retries, in wei.
     #[arg(long, default_value = "3000000000")]
     gas_price_bump_limit: u64,
 
