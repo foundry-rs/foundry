@@ -164,6 +164,9 @@ impl BroadcastReader {
             });
         }
 
+        // Sort by descending block number
+        targets.sort_by(|a, b| b.1.block_number.cmp(&a.1.block_number));
+
         Ok(targets)
     }
 }
