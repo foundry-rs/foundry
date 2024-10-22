@@ -1098,8 +1098,17 @@ impl Backend {
                 env.cfg.disable_base_fee = true;
             }
 
+            let block_number =
+                self.blockchain.storage.read().best_number.saturating_add(U64::from(1));
+
             // increase block number for this block
-            env.block.number = env.block.number.saturating_add(U256::from(1));
+            if is_arbitrum(env.cfg.chain_id) {
+                // Temporary set `env.block.number` to `block_number` for Arbitrum chains.
+                env.block.number = block_number.to();
+            } else {
+                env.block.number = env.block.number.saturating_add(U256::from(1));
+            }
+
             env.block.basefee = U256::from(current_base_fee);
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
 
@@ -1149,9 +1158,7 @@ impl Backend {
             let ExecutedTransactions { block, included, invalid } = executed_tx;
             let BlockInfo { block, transactions, receipts } = block;
 
-            let mut storage = self.blockchain.storage.write();
             let header = block.header.clone();
-            let block_number = storage.best_number.saturating_add(U64::from(1));
 
             trace!(
                 target: "backend",
@@ -1160,7 +1167,7 @@ impl Backend {
                 transactions.len(),
                 transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
-
+            let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
@@ -1909,13 +1916,7 @@ impl Backend {
         let mut block = WithOtherFields::new(block);
 
         // If Arbitrum, apply chain specifics to converted block.
-        if let Ok(
-            NamedChain::Arbitrum |
-            NamedChain::ArbitrumGoerli |
-            NamedChain::ArbitrumNova |
-            NamedChain::ArbitrumTestnet,
-        ) = NamedChain::try_from(self.env.read().env.cfg.chain_id)
-        {
+        if is_arbitrum(self.env.read().cfg.chain_id) {
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
@@ -2951,4 +2952,14 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     }
 
     proofs
+}
+
+pub fn is_arbitrum(chain_id: u64) -> bool {
+    matches!(
+        NamedChain::try_from(chain_id),
+        Ok(NamedChain::Arbitrum |
+            NamedChain::ArbitrumTestnet |
+            NamedChain::ArbitrumGoerli |
+            NamedChain::ArbitrumNova)
+    )
 }
