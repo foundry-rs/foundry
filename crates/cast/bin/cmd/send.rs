@@ -154,7 +154,7 @@ impl SendTxArgs {
             let mut new_tx = tx.clone();
             new_tx.gas_price = Some(current_gas_price);
 
-            match prepare_and_send_transaction(
+            let Err(err) = prepare_and_send_transaction(
                 eth.clone(),
                 to.clone(),
                 sig.clone(),
@@ -169,59 +169,58 @@ impl SendTxArgs {
                 path.clone(),
             )
             .await
-            {
-                Ok(_) => return Ok(()),
-                Err(err) => {
-                    let is_underpriced =
-                        err.to_string().contains("replacement transaction underpriced");
-                    let is_already_imported =
-                        err.to_string().contains("transaction already imported");
+            else {
+                return Ok(())
+            };
 
-                    if bump_gas_price.auto_bump_gas_price && (is_underpriced || is_already_imported)
-                    {
-                        if !to_json {
-                            if is_underpriced {
-                                println!("Error: transaction underpriced.");
-                            } else if is_already_imported {
-                                println!("Error: transaction already imported.");
-                            }
-                        }
+            let is_underpriced = err.to_string().contains("replacement transaction underpriced");
+            let is_already_imported = err.to_string().contains("transaction already imported");
 
-                        retry_count += 1;
-                        if retry_count > bump_gas_price.max_gas_price_bumps {
-                            return Err(eyre::eyre!(
-                                "Max gas price bump attempts reached. Transaction still stuck."
-                            ));
-                        }
-
-                        let old_gas_price = current_gas_price;
-                        current_gas_price =
-                            initial_gas_price + (bump_amount * U256::from(retry_count));
-
-                        if current_gas_price >= gas_price_limit {
-                            return Err(eyre::eyre!("Unable to bump more the gas price. Hit the limit of {}% of the original price ({} wei)",
-                                bump_gas_price.gas_price_bump_limit_percentage,
-                                gas_price_limit
-                            ));
-                        }
-
-                        if !to_json {
-                            println!();
-                            println!(
-                                "Retrying with a {}% gas price increase (attempt {}/{}).",
-                                bump_gas_price.gas_price_increment_percentage,
-                                retry_count,
-                                bump_gas_price.max_gas_price_bumps
-                            );
-                            println!("- Old gas price: {old_gas_price} wei");
-                            println!("- New gas price: {current_gas_price} wei");
-                        }
-                        continue;
-                    }
-
-                    return Err(err);
-                }
+            if !(is_underpriced || is_already_imported) {
+                return Err(err);
             }
+
+            if bump_gas_price.auto_bump_gas_price {
+                if !to_json {
+                    if is_underpriced {
+                        println!("Error: transaction underpriced.");
+                    } else if is_already_imported {
+                        println!("Error: transaction already imported.");
+                    }
+                }
+
+                retry_count += 1;
+                if retry_count > bump_gas_price.max_gas_price_bumps {
+                    return Err(eyre::eyre!(
+                        "Max gas price bump attempts reached. Transaction still stuck."
+                    ));
+                }
+
+                let old_gas_price = current_gas_price;
+                current_gas_price = initial_gas_price + (bump_amount * U256::from(retry_count));
+
+                if current_gas_price >= gas_price_limit {
+                    return Err(eyre::eyre!("Unable to bump more the gas price. Hit the limit of {}% of the original price ({} wei)",
+                            bump_gas_price.gas_price_bump_limit_percentage,
+                            gas_price_limit
+                        ));
+                }
+
+                if !to_json {
+                    println!();
+                    println!(
+                        "Retrying with a {}% gas price increase (attempt {}/{}).",
+                        bump_gas_price.gas_price_increment_percentage,
+                        retry_count,
+                        bump_gas_price.max_gas_price_bumps
+                    );
+                    println!("- Old gas price: {old_gas_price} wei");
+                    println!("- New gas price: {current_gas_price} wei");
+                }
+                continue;
+            }
+
+            return Err(err);
         }
     }
 }
