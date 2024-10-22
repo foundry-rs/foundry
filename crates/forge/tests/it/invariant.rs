@@ -871,9 +871,11 @@ contract CounterTest is Test {
     }
 
     /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.show-metrics = true
     function invariant_counter() public {}
 
     /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.show-metrics = true
     function invariant_counter2() public {}
 }
 

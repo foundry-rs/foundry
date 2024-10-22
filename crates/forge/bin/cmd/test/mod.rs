@@ -613,7 +613,7 @@ impl TestArgs {
             for (name, result) in tests {
                 if !silent {
                     shell::println(result.short_result(name))?;
-
+                    // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { runs: _, calls: _, reverts: _, metrics } =
                         &result.kind
                     {

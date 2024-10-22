@@ -369,7 +369,9 @@ impl<'a> InvariantExecutor<'a> {
                     })?;
 
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
-                invariant_test.record_metrics(tx, call_result.reverted, discarded);
+                if self.config.show_metrics {
+                    invariant_test.record_metrics(tx, call_result.reverted, discarded);
+                }
 
                 // Collect coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.coverage.clone());
