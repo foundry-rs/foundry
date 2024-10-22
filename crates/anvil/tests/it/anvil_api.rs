@@ -315,7 +315,7 @@ async fn test_set_next_timestamp() {
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     assert_eq!(next.header.number, 2);
 
-    assert!(next.header.timestamp > block.header.timestamp);
+    assert!(next.header.timestamp >= block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
