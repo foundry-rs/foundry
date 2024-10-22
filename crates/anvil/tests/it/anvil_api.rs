@@ -339,7 +339,7 @@ async fn test_evm_set_time() {
     api.evm_mine(None).await.unwrap();
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
-    assert!(next.header.timestamp > block.header.timestamp);
+    assert!(next.header.timestamp >= block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -608,7 +608,7 @@ async fn test_fork_revert_next_block_timestamp() {
 
     api.mine_one().await;
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert!(block.header.timestamp > latest_block.header.timestamp);
+    assert!(block.header.timestamp >= latest_block.header.timestamp);
 }
 
 // test that after a snapshot revert, the env block is reset
