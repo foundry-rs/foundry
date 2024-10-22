@@ -92,7 +92,7 @@ impl BroadcastReader {
         let broadcasts = chain_dirs
             .into_iter()
             .flat_map(|chain_dir| {
-                fs::json_files(&chain_dir).into_iter().filter_map(|path| {
+                fs::json_files(&chain_dir).filter_map(|path| {
                     // Ignore if file == run-latest.json to avoid duplicates
                     if path.file_name().is_some_and(|file| file == "run-latest.json") {
                         return None;
