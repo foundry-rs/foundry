@@ -776,7 +776,14 @@ pub enum EthRequest {
     WalletGetCapabilities(()),
 
     /// Wallet send_tx
-    #[cfg_attr(feature = "serde", serde(rename = "wallet_sendTransaction", with = "sequence"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "wallet_sendTransaction",
+            alias = "odyssey_sendTransaction",
+            with = "sequence"
+        )
+    )]
     WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Add an address to the [`DelegationCapability`] of the wallet

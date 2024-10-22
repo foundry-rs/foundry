@@ -293,7 +293,6 @@ impl_from!(
     alloy_primitives::SignatureError,
     FsPathError,
     hex::FromHexError,
-    eyre::Error,
     BackendError,
     DatabaseError,
     jsonpath_lib::JsonPathError,
@@ -313,6 +312,17 @@ impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     #[inline]
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))
+    }
+}
+
+impl From<eyre::Report> for Error {
+    #[inline]
+    fn from(err: eyre::Report) -> Self {
+        let mut chained_cause = String::new();
+        for cause in err.chain() {
+            chained_cause.push_str(format!(" {cause};").as_str());
+        }
+        Self::display(chained_cause)
     }
 }
 
