@@ -206,13 +206,6 @@ impl SendTxArgs {
                 let old_gas_price = current_gas_price;
                 current_gas_price = initial_gas_price + (bump_amount * U256::from(retry_count));
 
-                if current_gas_price >= gas_price_limit {
-                    return Err(eyre::eyre!(
-                        "Unable to bump more the gas price. Hit the bump gas limit of {} wei.",
-                        gas_price_limit
-                    ));
-                }
-
                 if !to_json {
                     println!();
                     println!(
@@ -224,6 +217,14 @@ impl SendTxArgs {
                     println!("- Old gas price: {old_gas_price} wei");
                     println!("- New gas price: {current_gas_price} wei");
                 }
+
+                if current_gas_price >= gas_price_limit {
+                    return Err(eyre::eyre!(
+                        "Unable to bump more the gas price. Hit the bump gas limit of {} wei.",
+                        gas_price_limit
+                    ));
+                }
+
                 continue;
             }
 

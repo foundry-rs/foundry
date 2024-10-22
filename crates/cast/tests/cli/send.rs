@@ -336,6 +336,10 @@ Retrying with a 10% gas price increase (attempt 1/3).
 - New gas price: 2200000000 wei
 Error: transaction already imported.
 
+Retrying with a 10% gas price increase (attempt 2/3).
+- Old gas price: 2200000000 wei
+- New gas price: 2400000000 wei
+
 "#]])
         .stderr_eq(str![[r#"
 Error: 
