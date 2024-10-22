@@ -4,8 +4,10 @@ use crate::{context::DebuggerContext, DebugNode};
 use alloy_primitives::Address;
 use eyre::Result;
 use foundry_common::fs::write_json_file;
-use foundry_compilers::artifacts::sourcemap::SourceElement;
-use foundry_compilers::{artifacts::sourcemap::Jump, multi::MultiCompilerLanguage};
+use foundry_compilers::{
+    artifacts::sourcemap::{Jump, SourceElement},
+    multi::MultiCompilerLanguage,
+};
 use foundry_evm_traces::debug::{ArtifactData, ContractSources, SourceData};
 use serde::Serialize;
 use std::{collections::HashMap, ops::Deref, path::PathBuf};
