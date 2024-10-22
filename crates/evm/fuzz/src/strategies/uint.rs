@@ -167,39 +167,39 @@ impl UintStrategy {
 
     fn generate_random_values_uniformly(&self, runner: &mut TestRunner) -> U256 {
         let rng = runner.rng();
-        // generate random number of bits uniformly
-        let bits = rng.gen_range(0..=self.bits);
+        
+        //Generate the bits to use
+        let bits = self.bits; 
+        
+        // Generate lower and higher parts 
+        let lower: u128 = rng.gen();
+        let higher: u128 = rng.gen();
 
-        // init 2 128-bit randoms
-        let mut higher: u128 = rng.gen_range(0..=u128::MAX);
-        let mut lower: u128 = rng.gen_range(0..=u128::MAX);
-
-        // cut 2 randoms according to bits size
-        match bits {
-            x if x < 128 => {
-                lower &= (1u128 << x) - 1;
-                higher = 0;
-            }
-            x if (128..256).contains(&x) => higher &= (1u128 << (x - 128)) - 1,
-            _ => {}
+        // Apply masking
+        let (masked_lower, masked_higher) = if bits < 128 {
+            (lower & ((1u128 << bits) - 1), 0)
+        } else if bits < 256 {
+            (lower, higher & ((1u128 << (bits - 128)) - 1))
+        } else {
+            (lower, higher)
         };
 
-        // init U256 from 2 randoms
+        //Convert to U256
         let mut inner: [u64; 4] = [0; 4];
-        let mask64 = (1 << 65) - 1;
-        inner[0] = (lower & mask64) as u64;
-        inner[1] = (lower >> 64) as u64;
-        inner[2] = (higher & mask64) as u64;
-        inner[3] = (higher >> 64) as u64;
+        inner[0] = (masked_lower & ((1u128 << 64) - 1)) as u64;
+        inner[1] = (masked_lower >> 64) as u64;
+        inner[2] = (masked_higher & ((1u128 << 64) - 1)) as u64;
+        inner[3] = (masked_higher >> 64) as u64;
 
-        let start: U256 = U256::from_limbs(inner);
-        start
+        U256::from_limbs(inner)
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
-        let start = if self.use_log_sampling {
+        let start = if self.max_bound <= self.min_bound {
+            self.min_bound
+        } else if self.use_log_sampling {
             self.generate_log_uniform(runner)
-        } else if self.max_bound > self.min_bound {
+        } else {
             let range = self.max_bound - self.min_bound + U256::from(1);
             if range == U256::ZERO {
                 self.min_bound
@@ -207,12 +207,14 @@ impl UintStrategy {
                 let random = self.generate_random_values_uniformly(runner) % range;
                 self.min_bound + random
             }
-        } else {
-            self.min_bound
         };
 
-        let clamped_start = start.clamp(self.min_bound, self.max_bound);
-        Ok(UintValueTree::new(clamped_start, false, self.min_bound, self.max_bound))
+        Ok(UintValueTree::new(
+            start.clamp(self.min_bound, self.max_bound),
+            false,
+            self.min_bound,
+            self.max_bound
+        ))
     }
 
     fn generate_log_uniform(&self, runner: &mut TestRunner) -> U256 {
@@ -220,20 +222,20 @@ impl UintStrategy {
             return self.min_bound;
         }
 
-        let max_exp = 256;
-        let random_exp = runner.rng().gen_range(0..=max_exp);
+        let rng = runner.rng();
+        
+        let exp = rng.gen::<u32>() % 256;
+        let mantissa = rng.gen::<u64>();
 
-        let mantissa = U256::from(runner.rng().gen::<u64>());
-
-        let mut value: U256 = (mantissa << random_exp) | (U256::from(1) << random_exp);
-
+        let base = U256::from(1) << exp;
+        let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
+        
         value = value.clamp(self.min_bound, self.max_bound);
-
-        if value == self.min_bound {
+        
+        if value == self.min_bound && self.max_bound > self.min_bound {
             let range = self.max_bound - self.min_bound;
-            if range > U256::ZERO {
-                value += U256::from(runner.rng().gen::<u64>()) % range;
-            }
+            let offset = U256::from(rng.gen::<u64>()) % range;
+            value = self.min_bound + offset;
         }
 
         value
@@ -246,7 +248,7 @@ impl Strategy for UintStrategy {
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
         let bias = runner.rng().gen_range(0..total_weight);
-        // randomly select one of 3 strategies
+        // randomly select one of 3 strategies 
         match bias {
             x if x < self.edge_weight => self.generate_edge_tree(runner),
             x if x < self.edge_weight + self.fixtures_weight => self.generate_fixtures_tree(runner),
