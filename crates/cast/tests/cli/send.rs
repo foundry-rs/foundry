@@ -180,6 +180,31 @@ casttest!(send_bump_gas_price_json, async |_prj, cmd| {
 "#]]);
 });
 
+casttest!(send_bump_gas_price_no_pending_tx, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Try to replace a stuck transaction that doesn't exist.
+    cmd.args([
+        "send",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--value",
+        "0.001ether",
+        "--bump-fee",
+        "--async",
+        "0x0000000000000000000000000000000000000000",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: 
+No pending transactions to replace.
+
+"#]]);
+});
+
 casttest!(send_bump_gas_price_max_attempts, async |_prj, cmd| {
     // Create a dummy anvil node that won't mine transaction.
     // The goal is to simulate stuck transactions in the pool.

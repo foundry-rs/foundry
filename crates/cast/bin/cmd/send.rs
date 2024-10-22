@@ -1,8 +1,8 @@
-use crate::tx::{self, CastTxBuilder};
+use crate::tx::{self, CastTxBuilder, SenderKind};
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_primitives::U256;
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
@@ -139,6 +139,18 @@ impl SendTxArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
+
+        // Ensure there are pending transactions before attempting to bump the gas price.
+        if bump_gas_price.auto_bump_gas_price {
+            let sender = SenderKind::from_wallet_opts(eth.wallet.clone()).await?;
+            let from = sender.address();
+            let nonce = provider.get_transaction_count(from).await.unwrap();
+            let pending_nonce =
+                provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
+            if nonce == pending_nonce {
+                return Err(eyre::eyre!("No pending transactions to replace."));
+            }
+        }
 
         let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
         let base_fee = eip1559_est.max_fee_per_gas - eip1559_est.max_priority_fee_per_gas;
