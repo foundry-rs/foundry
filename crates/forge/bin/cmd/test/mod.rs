@@ -54,7 +54,9 @@ mod summary;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::TestSummaryReporter;
 
+use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
+use forge::result::TestKind;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -611,6 +613,12 @@ impl TestArgs {
             for (name, result) in tests {
                 if !silent {
                     shell::println(result.short_result(name))?;
+
+                    if let TestKind::Invariant { runs: _, calls: _, reverts: _, metrics } =
+                        &result.kind
+                    {
+                        print_invariant_metrics(metrics);
+                    }
 
                     // We only display logs at level 2 and above
                     if verbosity >= 2 {
