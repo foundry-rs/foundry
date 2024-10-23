@@ -202,7 +202,7 @@ impl SessionSource {
 
             if let Some(event_definition) = intermediate_contract.event_definitions.get(input) {
                 let formatted = format_event_definition(event_definition)?;
-                return Ok((false, Some(formatted)));
+                return Ok((false, Some(formatted)))
             }
 
             // we were unable to check the event
