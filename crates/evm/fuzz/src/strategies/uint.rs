@@ -147,21 +147,25 @@ impl UintStrategy {
                 max.saturating_sub(offset)
             }
         } else {
-            // If no bounds, we use original behavior
-            let type_max = if self.bits < 256 {
-                (U256::from(1) << self.bits) - U256::from(1)
-            } else {
-                U256::MAX
-            };
+            let type_max = self.type_max();
             if is_min {
                 offset
             } else {
-                type_max.saturating_sub(offset)
+                if offset == U256::ZERO {
+                    type_max
+                } else {
+                    type_max.saturating_sub(offset)
+                }
             }
         };
 
-        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
-        Ok(UintValueTree::new(start, false, Some(min), Some(max)))
+        let (_min, _max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        Ok(UintValueTree::new(
+            start,
+            false,
+            self.bounds.map(|(min, _)| min),
+            self.bounds.map(|(_, max)| max), 
+        ))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
