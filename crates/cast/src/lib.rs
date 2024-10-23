@@ -1364,6 +1364,18 @@ impl SimpleCast {
         Ok(formatted)
     }
 
+    pub fn parse_units(value: &str, unit: u8) -> Result<String> {
+        let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+
+        Ok(ParseUnits::parse_units(value, unit)?.to_string())
+    }
+
+    pub fn format_units(value: &str, unit: u8) -> Result<String> {
+        let value = NumberWithBase::parse_int(value, None)?.number();
+        let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+        Ok(ParseUnits::U256(value).format_units(unit))
+    }
+
     /// Converts wei into an eth amount
     ///
     /// # Example

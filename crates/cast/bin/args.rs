@@ -230,6 +230,26 @@ pub enum CastSubcommand {
         unit: String,
     },
 
+    /// Convert a number into a uint.
+    #[command(visible_aliases = &["--parse-uints", "pu"])]
+    ParseUints {
+        /// The value to convert.
+        value: Option<String>,
+
+        /// The unit to convert to.
+        unit: u8,
+    },
+
+    /// Format a number into a unit.
+    #[command(visible_aliases = &["--format-units", "fu"])]
+    FormatUnits {
+        /// The value to format.
+        value: Option<String>,
+
+        /// The unit to format to.
+        unit: u8,
+    },
+
     /// Convert an ETH amount to wei.
     ///
     /// Consider using --to-unit.
