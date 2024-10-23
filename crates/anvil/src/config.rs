@@ -123,8 +123,6 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// don't print anything on startup
-    pub silent: bool,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
     /// pins the block number or transaction hash for the state fork
@@ -394,7 +392,7 @@ impl NodeConfig {
     /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: true, silent: true, port: 0, ..Default::default() }
+        Self { enable_tracing: true, port: 0, ..Default::default() }
     }
 
     /// Returns a new config which does not initialize any accounts on node startup.
@@ -429,7 +427,6 @@ impl Default for NodeConfig {
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
-            silent: false,
             eth_rpc_url: None,
             fork_choice: None,
             account_generator: None,
@@ -732,18 +729,6 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
-    #[must_use]
-    pub fn silent(self) -> Self {
-        self.set_silent(true)
-    }
-
-    #[must_use]
-    pub fn set_silent(mut self, silent: bool) -> Self {
-        self.silent = silent;
-        self
-    }
-
     /// Sets the ipc path to use
     ///
     /// Note: this is a double Option for
@@ -763,7 +748,7 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
+    /// Disables storage caching
     #[must_use]
     pub fn no_storage_caching(self) -> Self {
         self.with_storage_caching(true)
@@ -921,11 +906,8 @@ impl NodeConfig {
             )
             .expect("Failed writing json");
         }
-        if self.silent {
-            return;
-        }
 
-        println!("{}", self.as_string(fork))
+        let _ = sh_println!("{}", self.as_string(fork));
     }
 
     /// Returns the path where the cache file should be stored

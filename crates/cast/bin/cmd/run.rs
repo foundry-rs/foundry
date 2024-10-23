@@ -45,7 +45,7 @@ pub struct RunArgs {
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
-    #[arg(long, short)]
+    #[arg(long)]
     quick: bool,
 
     /// Prints the full address of the contract.

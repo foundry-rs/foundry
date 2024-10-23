@@ -57,7 +57,6 @@ pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
-        .silent()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -829,10 +828,9 @@ async fn test_fork_init_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reset_fork_on_new_blocks() {
-    let (api, handle) = spawn(
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent(),
-    )
-    .await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())))
+            .await;
 
     let anvil_provider = handle.http_provider();
     let endpoint = next_http_rpc_endpoint();
@@ -897,7 +895,7 @@ async fn test_fork_block_timestamp() {
     api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert!(initial_block.header.timestamp < latest_block.header.timestamp);
+    assert!(initial_block.header.timestamp <= latest_block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -66,7 +66,7 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: Some(crate::shell::verbosity().is_silent()),
+            quiet: Some(crate::shell::is_quiet()),
             bail: None,
             ignore_eip_3860: false,
             files: Vec::new(),
@@ -99,15 +99,6 @@ impl ProjectCompiler {
     #[doc(alias = "silent")]
     pub fn quiet(mut self, yes: bool) -> Self {
         self.quiet = Some(yes);
-        self
-    }
-
-    /// Do not print anything at all if true. Overrides other `print` options.
-    #[inline]
-    pub fn quiet_if(mut self, maybe: bool) -> Self {
-        if maybe {
-            self.quiet = Some(true);
-        }
         self
     }
 

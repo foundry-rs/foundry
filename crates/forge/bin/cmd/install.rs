@@ -2,7 +2,6 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    p_println, prompt,
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
@@ -77,15 +76,11 @@ pub struct DependencyInstallOpts {
     /// Do not create a commit.
     #[arg(long)]
     pub no_commit: bool,
-
-    /// Do not print any messages.
-    #[arg(short, long)]
-    pub quiet: bool,
 }
 
 impl DependencyInstallOpts {
     pub fn git(self, config: &Config) -> Git<'_> {
-        Git::from_config(config).quiet(self.quiet).shallow(self.shallow)
+        Git::from_config(config).shallow(self.shallow)
     }
 
     /// Installs all missing dependencies.
@@ -94,17 +89,16 @@ impl DependencyInstallOpts {
     ///
     /// Returns true if any dependency was installed.
     pub fn install_missing_dependencies(mut self, config: &mut Config) -> bool {
-        let Self { quiet, .. } = self;
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             // The extra newline is needed, otherwise the compiler output will overwrite the message
-            p_println!(!quiet => "Missing dependencies found. Installing now...\n");
+            let _ = sh_println!("Missing dependencies found. Installing now...\n");
             self.no_commit = true;
-            if self.install(config, Vec::new()).is_err() && !quiet {
-                eprintln!(
+            if self.install(config, Vec::new()).is_err() {
+                let _ = sh_warn!(
                     "{}",
-                    "Your project has missing dependencies that could not be installed.".yellow()
-                )
+                    "Your project has missing dependencies that could not be installed."
+                );
             }
             true
         } else {
@@ -114,7 +108,7 @@ impl DependencyInstallOpts {
 
     /// Installs all dependencies
     pub fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
-        let Self { no_git, no_commit, quiet, .. } = self;
+        let Self { no_git, no_commit, .. } = self;
 
         let git = self.git(config);
 
@@ -126,7 +120,8 @@ impl DependencyInstallOpts {
             let root = Git::root_of(git.root)?;
             match git.has_submodules(Some(&root)) {
                 Ok(true) => {
-                    p_println!(!quiet => "Updating dependencies in {}", libs.display());
+                    sh_println!("Updating dependencies in {}", libs.display())?;
+
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
                 }
@@ -148,7 +143,13 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            p_println!(!quiet => "Installing {} in {} (url: {:?}, tag: {:?})", dep.name, path.display(), dep.url, dep.tag);
+            sh_println!(
+                "Installing {} in {} (url: {:?}, tag: {:?})",
+                dep.name,
+                path.display(),
+                dep.url,
+                dep.tag
+            )?;
 
             // this tracks the actual installed tag
             let installed_tag;
@@ -190,14 +191,12 @@ impl DependencyInstallOpts {
                 }
             }
 
-            if !quiet {
-                let mut msg = format!("    {} {}", "Installed".green(), dep.name);
-                if let Some(tag) = dep.tag.or(installed_tag) {
-                    msg.push(' ');
-                    msg.push_str(tag.as_str());
-                }
-                println!("{msg}");
+            let mut msg = format!("    {} {}", "Installed".green(), dep.name);
+            if let Some(tag) = dep.tag.or(installed_tag) {
+                msg.push(' ');
+                msg.push_str(tag.as_str());
             }
+            sh_println!("{msg}")?;
         }
 
         // update `libs` in config if not included yet
@@ -209,8 +208,8 @@ impl DependencyInstallOpts {
     }
 }
 
-pub fn install_missing_dependencies(config: &mut Config, quiet: bool) -> bool {
-    DependencyInstallOpts { quiet, ..Default::default() }.install_missing_dependencies(config)
+pub fn install_missing_dependencies(config: &mut Config) -> bool {
+    DependencyInstallOpts::default().install_missing_dependencies(config)
 }
 
 #[derive(Clone, Copy, Debug)]
