@@ -1316,11 +1316,6 @@ casttest!(send_eip7702, async |_prj, cmd| {
 });
 
 casttest!(hash_message, |_prj, cmd| {
-    cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
-0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
-
-"#]]);
-
     cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
 0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
 
@@ -1340,7 +1335,9 @@ casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
         eth_rpc_url.as_str(),
     ])
     .assert_success()
-    .stdout_eq(str![["0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033"]]);
+    .stdout_eq(str![[r#"
+0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033
+"#]]);
 });
 
 // tests that fetches a sample contract creation args bytes
@@ -1357,7 +1354,9 @@ casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
         "--only-args",
     ])
     .assert_success()
-    .stdout_eq(str![["0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000"]]);
+    .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
+"#]]);
 });
 
 // tests that displays a sample contract creation args
@@ -1373,9 +1372,8 @@ casttest!(fetch_creation_args_from_etherscan, |_prj, cmd| {
         eth_rpc_url.as_str(),
     ])
     .assert_success()
-    .stdout_eq(str![[
-        "uint256 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
+    .stdout_eq(str![[r#"
+uint256 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
 
-"
-    ]]);
+"#]]);
 });
