@@ -2182,3 +2182,91 @@ Script ran successfully.
 
 "#]]);
 });
+
+forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Script.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract A {
+    function getValue() external pure returns (uint256) {
+        return 100;
+    }
+}
+contract B {
+    constructor(A a) {
+        require(a.getValue() == 100);
+    }
+}
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(a);
+    }
+}
+            "#,
+    )
+    .unwrap();
+
+    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [104553] SimpleScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    │   └─ ← [Return] 119 bytes of code
+    ├─ [13367] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [146] A::getValue() [staticcall]
+    │   │   └─ ← [Return] 100
+    │   └─ ← [Return] 63 bytes of code
+    └─ ← [Stop] 
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 119 bytes of code
+
+  [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [146] A::getValue() [staticcall]
+    │   └─ ← [Return] 100
+    └─ ← [Return] 63 bytes of code
+...
+"#]]);
+});
+
+// Tests that chained errors are properly displayed.
+// <https://github.com/foundry-rs/foundry/issues/9161>
+forgetest_init!(should_display_evm_chained_error, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+contract ContractScript is Script {
+    function run() public {
+    }
+}
+   "#,
+        )
+        .unwrap();
+    cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Failed to deploy script:
+backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
+
+"#]]);
+});

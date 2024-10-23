@@ -2222,9 +2222,9 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-| Contract | Size (B) | Margin (B) |
-|----------|----------|------------|
-| Counter  |      247 |     24,329 |
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  |              247 |               277 |             24,329 |              48,875 |
 
 
 "#]]);

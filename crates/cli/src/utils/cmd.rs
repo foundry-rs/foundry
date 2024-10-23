@@ -416,7 +416,7 @@ pub async fn handle_traces(
             .decoder(&decoder)
             .sources(sources)
             .build();
-        debugger.try_run()?;
+        debugger.try_run_tui()?;
     } else {
         print_traces(&mut result, &decoder, verbose).await?;
     }

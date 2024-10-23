@@ -34,6 +34,7 @@ use foundry_evm::{
 };
 use futures::future::join_all;
 use itertools::Itertools;
+use std::path::PathBuf;
 use yansi::Paint;
 
 /// State after linking, contains the linked build data along with library addresses and optional
@@ -492,7 +493,17 @@ impl PreSimulationState {
     }
 
     pub fn run_debugger(self) -> Result<()> {
-        let mut debugger = Debugger::builder()
+        self.create_debugger().try_run_tui()?;
+        Ok(())
+    }
+
+    pub fn run_debug_file_dumper(self, path: &PathBuf) -> Result<()> {
+        self.create_debugger().dump_to_file(path)?;
+        Ok(())
+    }
+
+    fn create_debugger(self) -> Debugger {
+        Debugger::builder()
             .traces(
                 self.execution_result
                     .traces
@@ -503,8 +514,6 @@ impl PreSimulationState {
             .decoder(&self.execution_artifacts.decoder)
             .sources(self.build_data.sources)
             .breakpoints(self.execution_result.breakpoints)
-            .build();
-        debugger.try_run()?;
-        Ok(())
+            .build()
     }
 }
