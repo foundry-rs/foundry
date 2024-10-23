@@ -170,14 +170,14 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            println!("Executing previous transactions from the block.");
+            sh_println!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
                 pb.set_position(0);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.iter().enumerate() {

@@ -197,12 +197,12 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {
-        println!("{tx_hash:#x}");
+        sh_println!("{tx_hash:#x}")?;
     } else {
         let receipt = cast
             .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false, to_json)
             .await?;
-        println!("{receipt}");
+        sh_println!("{receipt}")?;
     }
 
     Ok(())
