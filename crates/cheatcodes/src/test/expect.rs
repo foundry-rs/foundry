@@ -1,16 +1,15 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
+use crate::{test::revert::handle_revert, Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    address, hex,
+    address,
     map::{hash_map::Entry, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
-use foundry_evm_core::decode::RevertDecoder;
 use revm::interpreter::{
     return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
 };
-use spec::Vm;
+
+use super::revert::RevertParameters;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -453,6 +452,24 @@ impl Cheatcode for expectSafeMemoryCallCall {
     }
 }
 
+impl RevertParameters for ExpectedRevert {
+    fn reverter(&self) -> Option<Address> {
+        self.reverter
+    }
+
+    fn reverted_by(&self) -> Option<Address> {
+        self.reverted_by
+    }
+
+    fn reason(&self) -> Option<&[u8]> {
+        self.reason.as_deref()
+    }
+
+    fn partial_match(&self) -> bool {
+        self.partial_match
+    }
+}
+
 /// Handles expected calls specified by the `expectCall` cheatcodes.
 ///
 /// It can handle calls in two ways:
@@ -700,71 +717,8 @@ pub(crate) fn handle_expect_revert(
 
     ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
 
-    // If expected reverter address is set then check it matches the actual reverter.
-    if let (Some(expected_reverter), Some(actual_reverter)) =
-        (expected_revert.reverter, expected_revert.reverted_by)
-    {
-        if expected_reverter != actual_reverter {
-            return Err(fmt_err!(
-                "Reverter != expected reverter: {} != {}",
-                actual_reverter,
-                expected_reverter
-            ));
-        }
-    }
-
-    let expected_reason = expected_revert.reason.as_deref();
-    // If None, accept any revert.
-    let Some(expected_reason) = expected_reason else {
-        return Ok(success_return());
-    };
-
-    if !expected_reason.is_empty() && retdata.is_empty() {
-        bail!("call reverted as expected, but without data");
-    }
-
-    let mut actual_revert: Vec<u8> = retdata.into();
-
-    // Compare only the first 4 bytes if partial match.
-    if expected_revert.partial_match && actual_revert.get(..4) == expected_reason.get(..4) {
-        return Ok(success_return())
-    }
-
-    // Try decoding as known errors.
-    if matches!(
-        actual_revert.get(..4).map(|s| s.try_into().unwrap()),
-        Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-    ) {
-        if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
-            actual_revert = decoded;
-        }
-    }
-
-    if actual_revert == expected_reason ||
-        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
-    {
-        Ok(success_return())
-    } else {
-        let (actual, expected) = if let Some(contracts) = known_contracts {
-            let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
-            (
-                &decoder.decode(actual_revert.as_slice(), Some(status)),
-                &decoder.decode(expected_reason, Some(status)),
-            )
-        } else {
-            let stringify = |data: &[u8]| {
-                if let Ok(s) = String::abi_decode(data, true) {
-                    return s;
-                }
-                if data.is_ascii() {
-                    return std::str::from_utf8(data).unwrap().to_owned();
-                }
-                hex::encode_prefixed(data)
-            };
-            (&stringify(&actual_revert), &stringify(expected_reason))
-        };
-        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
-    }
+    handle_revert(is_cheatcode, expected_revert, status, retdata, known_contracts)?;
+    Ok(success_return())
 }
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {

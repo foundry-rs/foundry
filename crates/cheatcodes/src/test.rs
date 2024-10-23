@@ -10,6 +10,7 @@ use std::env;
 pub(crate) mod assert;
 pub(crate) mod assume;
 pub(crate) mod expect;
+pub(crate) mod revert;
 
 impl Cheatcode for breakpoint_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {

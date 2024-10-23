@@ -10,7 +10,7 @@ use crate::{
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
-        assume::AssumeNoRevert,
+        assume::{handle_assume_no_revert, AssumeNoRevert},
         expect::{
             self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
             ExpectedRevert, ExpectedRevertKind,
@@ -1252,15 +1252,48 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         }
 
         // Handle assume not revert cheatcode.
-        if let Some(assume_no_revert) = &self.assume_no_revert {
+        if let Some(assume_no_revert) = &mut self.assume_no_revert {
+            // allow multiple cheatcode calls at the same depth
             if ecx.journaled_state.depth() == assume_no_revert.depth && !cheatcode_call {
-                // Discard run if we're at the same depth as cheatcode and call reverted.
+                // Record current reverter address before processing the assumeNoRevert call
+                // reverted,
+                // todo: DRY this?
+                if outcome.result.is_revert() &&
+                    assume_no_revert.reverter.is_some() &&
+                    assume_no_revert.reverted_by.is_none()
+                {
+                    assume_no_revert.reverted_by = Some(call.target_address);
+                }
+                // Discard run if we're at the same depth as cheatcode, call reverted, and no
+                // specific reason was supplied
                 if outcome.result.is_revert() {
-                    outcome.result.output = Error::from(MAGIC_ASSUME).abi_encode().into();
+                    return match handle_assume_no_revert(
+                        assume_no_revert,
+                        outcome.result.result,
+                        outcome.result.output.clone(),
+                        &self.config.available_artifacts,
+                    ) {
+                        // if result is Ok, it was an anticipated revert; return an "assume" error
+                        // to reject this run
+                        Ok(_) => {
+                            // reset assume_no_revert state
+                            outcome.result.output = Error::from(MAGIC_ASSUME).abi_encode().into();
+                            return outcome;
+                        }
+                        // if result is Error, it was an unanticipated revert; should revert
+                        // normally
+                        Err(error) => {
+                            trace!(expected=?assume_no_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
+                            outcome.result.result = InstructionResult::Revert;
+                            outcome.result.output = error.abi_encode().into();
+                            outcome
+                        }
+                    }
+                } else {
+                    // Call didn't revert, reset `assume_no_revert` state.
+                    self.assume_no_revert = None;
                     return outcome;
                 }
-                // Call didn't revert, reset `assume_no_revert` state.
-                self.assume_no_revert = None;
             }
         }
 
