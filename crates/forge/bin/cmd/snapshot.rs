@@ -96,7 +96,7 @@ impl GasSnapshotArgs {
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let outcome = self.test.execute_tests().await?;
-        outcome.ensure_ok()?;
+        outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
         if let Some(path) = self.diff {
