@@ -108,7 +108,7 @@ struct InterfaceSource {
 }
 
 /// Load the ABI from a file.
-fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonAbi, String)>> {
+pub fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonAbi, String)>> {
     let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
     let obj: ContractObject = serde_json::from_str(&file)?;
     let abi = obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;

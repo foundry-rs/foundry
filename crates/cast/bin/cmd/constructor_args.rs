@@ -8,13 +8,21 @@ use foundry_cli::{
 };
 use foundry_config::Config;
 
-use super::{creation_code::fetch_creation_code, interface::fetch_abi_from_etherscan};
+use super::{
+    creation_code::fetch_creation_code,
+    interface::{fetch_abi_from_etherscan, load_abi_from_file},
+};
 
 /// CLI arguments for `cast creation-args`.
 #[derive(Parser)]
-pub struct CreationArgsArgs {
+pub struct ConstructorArgsArgs {
     /// An Ethereum address, for which the bytecode will be fetched.
     contract: Address,
+
+    /// Path to file containing the contract's JSON ABI. It's necessary if the target contract is
+    /// not verified on Etherscan
+    #[arg(long)]
+    abi_path: Option<String>,
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
@@ -23,9 +31,9 @@ pub struct CreationArgsArgs {
     rpc: RpcOpts,
 }
 
-impl CreationArgsArgs {
+impl ConstructorArgsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, etherscan, rpc } = self;
+        let Self { contract, etherscan, rpc, abi_path } = self;
 
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
@@ -37,7 +45,7 @@ impl CreationArgsArgs {
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 
-        let args_arr = parse_creation_args(bytecode, contract, &etherscan).await?;
+        let args_arr = parse_constructor_args(bytecode, contract, &etherscan, abi_path).await?;
         for arg in args_arr {
             println!("{arg}");
         }
@@ -47,12 +55,18 @@ impl CreationArgsArgs {
 }
 
 /// Fetches the constructor arguments values and types from the creation bytecode and ABI.
-async fn parse_creation_args(
+async fn parse_constructor_args(
     bytecode: Bytes,
     contract: Address,
     etherscan: &EtherscanOpts,
+    abi_path: Option<String>,
 ) -> Result<Vec<String>> {
-    let abi = fetch_abi_from_etherscan(contract, etherscan).await?;
+    let abi = if let Some(abi_path) = abi_path {
+        load_abi_from_file(&abi_path, None)?
+    } else {
+        fetch_abi_from_etherscan(contract, etherscan).await?
+    };
+
     let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
     let (abi, _) = abi;
 

@@ -1,8 +1,9 @@
 use crate::cmd::{
-    access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
-    creation_args::CreationArgsArgs, creation_code::CreationCodeArgs, estimate::EstimateArgs,
-    find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs,
-    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
+    access_list::AccessListArgs, bind::BindArgs, call::CallArgs,
+    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
+    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
+    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
+    wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
@@ -904,7 +905,7 @@ pub enum CastSubcommand {
 
     /// Display args used for the contract initialization
     #[command(visible_alias = "cra")]
-    CreationArgs(CreationArgsArgs),
+    ConstructorArgs(ConstructorArgsArgs),
 
     /// Generate a Solidity interface from a given ABI.
     ///
