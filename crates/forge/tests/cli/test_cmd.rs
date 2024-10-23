@@ -2458,6 +2458,162 @@ contract Dummy {
     assert!(dump_path.exists());
 });
 
+forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
+    let config = Config {
+        fuzz: { FuzzConfig { runs: 60, seed: Some(U256::from(100)), ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.add_source(
+        "AssumeNoRevertTest.t.sol",
+        r#"
+import {Test} from 'forge-std/Test.sol';
+
+interface Vm {
+    function expectRevert() external;
+    function assumeNoRevert() external pure;
+    function assumeNoRevert(bytes4 revertData) external pure;
+    function assumeNoRevert(bytes calldata revertData) external pure;
+    function assumeNoRevert(bytes4 revertData, address reverter) external pure;
+    function assumeNoRevert(bytes calldata revertData, address reverter) external pure;
+}
+
+contract ReverterB {
+    /// @notice has same error selectors as contract below to test the `reverter` param
+    error MyRevert();
+    error SpecialRevertWithData(uint256 x);
+
+    function revertIf2(uint256 x) public pure returns (bool) {
+        if (x == 2) {
+            revert MyRevert();
+        }
+        return true;
+    }
+
+    function revertWithData() public pure returns (bool) {
+        revert SpecialRevertWithData(2);
+    }
+}
+
+contract Reverter {
+    error MyRevert();
+    error RevertWithData(uint256 x);
+    error UnusedError();
+
+    ReverterB public immutable subReverter;
+
+    constructor() {
+        subReverter = new ReverterB();
+    }
+
+    function myFunction() public pure returns (bool) {
+        revert MyRevert();
+    }
+
+    function revertIf2(uint256 value) public pure returns (bool) {
+        if (value == 2) {
+            revert MyRevert();
+        }
+        return true;
+    }
+
+    function revertWithDataIf2(uint256 value) public pure returns (bool) {
+        if (value == 2) {
+            revert RevertWithData(2);
+        }
+        return true;
+    }
+
+    function twoPossibleReverts(uint256 x) public pure returns (bool) {
+        if (x == 2) {
+            revert MyRevert();
+        } else if (x == 3) {
+            revert RevertWithData(3);
+        }
+        return true;
+    }
+}
+
+contract ReverterTest is Test {
+    Reverter reverter;
+    Vm _vm = Vm(VM_ADDRESS);
+
+    function setUp() public {
+        reverter = new Reverter();
+    }
+
+    /// @dev Test that `assumeNoRevert` does not reject an unanticipated error selector
+    function testAssume_wrongSelector_fails(uint256 x) public view {
+        _vm.assumeNoRevert(Reverter.UnusedError.selector);
+        reverter.revertIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` does not reject an unanticipated error with extra data
+    function testAssume_wrongData_fails(uint256 x) public view {
+        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.RevertWithData.selector, 3));
+        reverter.revertWithDataIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` correctly rejects an error selector from a different contract
+    function testAssumeWithReverter_fails(uint256 x) public view {
+        ReverterB subReverter = (reverter.subReverter());
+        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.MyRevert.selector), address(reverter));
+        subReverter.revertIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` correctly rejects one of two different error selectors when supplying a specific reverter
+    function testMultipleAssumes_OneWrong_fails(uint256 x) public view {
+        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.MyRevert.selector), address(reverter));
+        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), address(reverter));
+        reverter.twoPossibleReverts(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
+    function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+        _vm.assumeNoRevert(Reverter.MyRevert.selector);
+        _vm.assumeNoRevert(Reverter.RevertWithData.selector, address(reverter));
+        reverter.twoPossibleReverts(x);
+
+        reverter.twoPossibleReverts(2);
+    }
+
+    /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any specific reason is provided
+    function testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {
+        _vm.assumeNoRevert(selector);
+        _vm.assumeNoRevert();
+        reverter.twoPossibleReverts(2);
+    }
+
+    /// @dev Test that calling `expectRevert` after `assumeNoRevert` results in an error
+    function testAssumeThenExpect_fails(uint256) public {
+        _vm.assumeNoRevert(Reverter.MyRevert.selector);
+        _vm.expectRevert();
+        reverter.revertIf2(1);
+    }
+}
+    
+"#,
+    )
+    .unwrap();
+    cmd.args(["test", "--mc", "ReverterTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 7 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
+[FAIL: vm.expectRevert: Cannot expect a revert when using assumeNoRevert; counterexample: [..]] testAssumeThenExpect_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
+[FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: vm.assumeNoRevert: Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
+...
+
+"#]]);
+});
+
 forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
