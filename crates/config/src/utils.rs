@@ -301,7 +301,7 @@ impl FromStr for Numeric {
 #[inline]
 pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
     if alphanet {
-        return SpecId::PRAGUE_EOF;
+        return SpecId::OSAKA;
     }
     match evm_version {
         EvmVersion::Homestead => SpecId::HOMESTEAD,
@@ -316,7 +316,7 @@ pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
         EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::PRAGUE_EOF,
+        EvmVersion::Prague => SpecId::OSAKA, // Osaka enables EOF
     }
 }
 
