@@ -25,7 +25,7 @@ pub struct CreationCodeArgs {
     disassemble: bool,
 
     /// Return creation bytecode without constructor arguments appended.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "only_args")]
     without_args: bool,
 
     /// Return only constructor arguments.
@@ -34,6 +34,7 @@ pub struct CreationCodeArgs {
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
+
     #[command(flatten)]
     rpc: RpcOpts,
 }
@@ -41,10 +42,6 @@ pub struct CreationCodeArgs {
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
         let Self { contract, etherscan, rpc, disassemble, without_args, only_args } = self;
-
-        if without_args && only_args {
-            return Err(eyre!("--without-args and --only-args are mutually exclusive."));
-        }
 
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
@@ -62,7 +59,7 @@ impl CreationCodeArgs {
         if disassemble {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
         } else {
-            print!("{bytecode}");
+            println!("{bytecode}");
         }
 
         Ok(())
