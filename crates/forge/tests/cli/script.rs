@@ -2264,8 +2264,7 @@ contract ContractScript is Script {
         )
         .unwrap();
     cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Failed to deploy script:
+Error: Failed to deploy script:
 backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
 
 "#]]);
