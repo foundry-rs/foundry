@@ -18,6 +18,7 @@ pub struct CreationArgsArgs {
 
     #[command(flatten)]
     etherscan: EtherscanOpts,
+
     #[command(flatten)]
     rpc: RpcOpts,
 }

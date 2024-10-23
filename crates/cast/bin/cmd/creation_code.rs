@@ -138,12 +138,12 @@ pub async fn fetch_creation_code(
         })?;
 
         for trace in traces {
-            if let Some(TraceOutput::Create(CreateOutput { address, code: _, gas_used: _ })) =
+            if let Some(TraceOutput::Create(CreateOutput { address, .. })) =
                 trace.trace.result
             {
                 if address == contract {
                     creation_bytecode = match trace.trace.action {
-                        Action::Create(CreateAction { init, value: _, from: _, gas: _ }) => {
+                        Action::Create(CreateAction { init, .. }) => {
                             Some(init)
                         }
                         _ => None,
