@@ -104,7 +104,7 @@ fn fuzz_param_inner(
                 (None, None)
             };
 
-            super::UintStrategy::new(n, fuzz_fixtures, min, max)
+            super::UintStrategy::new(n, fuzz_fixtures, None)
                 .prop_map(move |x| DynSolValue::Uint(x, n))
                 .boxed()
         }
