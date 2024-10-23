@@ -37,7 +37,7 @@ pub(crate) fn handle_revert(
     let expected_reason = revert_params.reason();
     // If None, accept any revert.
     let Some(expected_reason) = expected_reason else {
-        return Ok(Default::default());
+        return Ok(());
     };
 
     if !expected_reason.is_empty() && retdata.is_empty() {
@@ -49,7 +49,7 @@ pub(crate) fn handle_revert(
 
     // Compare only the first 4 bytes if partial match.
     if revert_params.partial_match() && actual_revert.get(..4) == expected_reason.get(..4) {
-        return Ok(Default::default())
+        return Ok(());
     }
 
     // Try decoding as known errors.
@@ -65,7 +65,7 @@ pub(crate) fn handle_revert(
     if actual_revert == expected_reason ||
         (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
-        Ok(Default::default())
+        Ok(())
     } else {
         let (actual, expected) = if let Some(contracts) = known_contracts {
             let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
