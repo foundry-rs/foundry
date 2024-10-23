@@ -1,3 +1,4 @@
+use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
 use clap::{command, Parser};
 use eyre::{eyre, OptionExt, Result};
@@ -87,9 +88,17 @@ async fn parse_constructor_args(
         .enumerate()
         .map(|(i, arg)| {
             let arg = arg.to_vec();
-            format!("{} {}", constructor.inputs[i].ty, Bytes::from(arg))
+            format_arg(&constructor.inputs[i].ty, arg).expect("Failed to format argument.")
         })
         .collect();
 
     Ok(display_args)
+}
+
+fn format_arg(ty: &str, arg: Vec<u8>) -> Result<String> {
+    let arg_type: DynSolType = ty.parse().expect("Invalid ABI type.");
+    let bytes = Bytes::from(arg.clone());
+    let decoded = arg_type.abi_decode(&arg)?;
+
+    Ok(format!("{bytes} -> {decoded:?}"))
 }
