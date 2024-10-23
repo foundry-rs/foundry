@@ -176,8 +176,7 @@ solang-parser = "=0.3.3"
 ## revm
 revm = { version = "14.0.3", default-features = false }
 revm-primitives = { version = "10.0.0", default-features = false }
-# Update this after the PR https://github.com/paradigmxyz/revm-inspectors/pull/213 is merged
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev="3c079514cdc39cf95ddb42816a841fd55c16c3b7", features = ["serde"] }
+revm-inspectors = { version = "0.9.0", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }

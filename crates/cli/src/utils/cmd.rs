@@ -354,6 +354,7 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
 }
 
 /// labels the traces, conditionally prints them or opens the debugger
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
