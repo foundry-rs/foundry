@@ -16,10 +16,10 @@ pub struct UintValueTree {
     hi: U256,
     /// If true cannot be simplified or complexified
     fixed: bool,
-    ///Optional Min Value
-    min_bound: Option<U256>,
-    ///Optional Max Value
-    max_bound: Option<U256>,
+    /// Min Value
+    min_bound: U256,
+    /// Max Value
+    max_bound: U256,
 }
 
 impl UintValueTree {
@@ -27,7 +27,7 @@ impl UintValueTree {
     /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
-    fn new(start: U256, fixed: bool, min_bound: Option<U256>, max_bound: Option<U256>) -> Self {
+    fn new(start: U256, fixed: bool, min_bound: U256, max_bound: U256) -> Self {
         Self { lo: U256::ZERO, curr: start, hi: start, fixed, min_bound, max_bound }
     }
 
@@ -48,12 +48,7 @@ impl ValueTree for UintValueTree {
     type Value = U256;
 
     fn current(&self) -> Self::Value {
-        match (self.min_bound, self.max_bound) {
-            (Some(min), Some(max)) => self.curr.clamp(min, max),
-            (Some(min), None) => self.curr.max(min),
-            (None, Some(max)) => self.curr.min(max),
-            (None, None) => self.curr,
-        }
+        self.curr.clamp(self.min_bound, self.max_bound)
     }
 
     fn simplify(&mut self) -> bool {
@@ -139,18 +134,19 @@ impl UintStrategy {
 
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
+        // Choose if we want values around 0 or max
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
 
         let start = if let Some((min, max)) = self.bounds {
-            // If bounds are set,we use them
+            // If bounds are set, use them
             if is_min {
                 min.saturating_add(offset)
             } else {
                 max.saturating_sub(offset)
             }
         } else {
-            // If no bounds, we use original behavior
+            // If no bounds, use original behavior
             let type_max = if self.bits < 256 {
                 (U256::from(1) << self.bits) - U256::from(1)
             } else {
@@ -163,12 +159,8 @@ impl UintStrategy {
             }
         };
 
-        Ok(UintValueTree::new(
-            start,
-            false,
-            self.bounds.map(|(min, _)| min),
-            self.bounds.map(|(_, max)| max),
-        ))
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        Ok(UintValueTree::new(start, false, min, max))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -179,20 +171,11 @@ impl UintStrategy {
 
         // Generate value tree from fixture.
         let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
-
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
         if let Some(uint_fixture) = fixture.as_uint() {
             if uint_fixture.1 == self.bits {
-                let fixture_value = match self.bounds {
-                    Some((min, max)) => uint_fixture.0.clamp(min, max),
-                    None => uint_fixture.0,
-                };
-
-                return Ok(UintValueTree::new(
-                    fixture_value,
-                    false,
-                    self.bounds.map(|(min, _)| min),
-                    self.bounds.map(|(_, max)| max),
-                ));
+                let fixture_value = uint_fixture.0.clamp(min, max);
+                return Ok(UintValueTree::new(fixture_value, false, min, max));
             }
         }
 
@@ -231,58 +214,45 @@ impl UintStrategy {
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
-        let start = match self.bounds {
-            Some((min, max)) => {
-                if max <= min {
-                    min
-                } else if Self::use_log_sampling(self) {
-                    self.generate_log_uniform(runner)
-                } else {
-                    let range = max - min + U256::from(1);
-                    if range == U256::ZERO {
-                        min
-                    } else {
-                        let random = self.generate_random_values_uniformly(runner) % range;
-                        min + random
-                    }
-                }
-            }
-            None => {
-                if Self::use_log_sampling(self) {
-                    self.generate_log_uniform(runner)
-                } else {
-                    // When no bounds are specified, generate within type bounds
-                    let type_max = self.type_max();
-                    self.generate_random_values_uniformly(runner) % (type_max + U256::from(1))
-                }
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        let start = if max <= min {
+            min
+        } else if Self::use_log_sampling(self) {
+            self.generate_log_uniform(runner)
+        } else {
+            let range = max - min + U256::from(1);
+            if range == U256::ZERO {
+                min
+            } else {
+                let random = self.generate_random_values_uniformly(runner) % range;
+                min + random
             }
         };
 
-        Ok(UintValueTree::new(
-            start,
-            false,
-            self.bounds.map(|(min, _)| min),
-            self.bounds.map(|(_, max)| max),
-        ))
+        Ok(UintValueTree::new(start.clamp(min, max), false, min, max))
     }
 
     fn generate_log_uniform(&self, runner: &mut TestRunner) -> U256 {
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+
+        if max <= min {
+            return min;
+        }
+
         let rng = runner.rng();
+
         let exp = rng.gen::<u32>() % 256;
         let mantissa = rng.gen::<u64>();
 
         let base = U256::from(1) << exp;
         let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
 
-        // Only clamp if bounds are specified
-        if let Some((min, max)) = self.bounds {
-            value = value.clamp(min, max);
+        value = value.clamp(min, max);
 
-            if value == min && max > min {
-                let range = max - min;
-                let offset = U256::from(rng.gen::<u64>()) % range;
-                value = min + offset;
-            }
+        if value == min && max > min {
+            let range = max - min;
+            let offset = U256::from(rng.gen::<u64>()) % range;
+            value = min + offset;
         }
 
         value
@@ -323,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_uint_tree_complicate_max() {
-        let mut uint_tree = UintValueTree::new(U256::MAX, false, Some(U256::MAX), Some(U256::MIN));
+        let mut uint_tree = UintValueTree::new(U256::MAX, false, U256::MAX, U256::MIN);
         assert_eq!(uint_tree.hi, U256::MAX);
         assert_eq!(uint_tree.curr, U256::MAX);
         uint_tree.complicate();
@@ -349,7 +319,7 @@ mod tests {
         let max = U256::from(200u64);
         let start = U256::from(150u64);
 
-        let mut tree = UintValueTree::new(start, false, Some(min), Some(max));
+        let mut tree = UintValueTree::new(start, false, min, max);
 
         assert_eq!(tree.current(), start);
 
@@ -358,7 +328,7 @@ mod tests {
             assert!(curr >= min && curr <= max, "Simplify produced out of bounds value: {curr}");
         }
 
-        tree = UintValueTree::new(start, false, Some(min), Some(max));
+        tree = UintValueTree::new(start, false, min, max);
 
         while tree.complicate() {
             let curr = tree.current();
