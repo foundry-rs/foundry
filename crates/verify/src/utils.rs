@@ -340,6 +340,7 @@ pub async fn get_tracing_executor(
         Some(fork_config.evm_version),
         false,
         false,
+        false,
         is_alphanet,
     );
 
