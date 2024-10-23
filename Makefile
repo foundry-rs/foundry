@@ -38,7 +38,7 @@ fmt: ## Run all formatters.
 	cargo +nightly fmt
 	./.github/scripts/format.sh --check
 
-lint-clippy:
+lint-foundry:
 	RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets --all-features
 
 lint-codespell: ensure-codespell
@@ -52,19 +52,19 @@ ensure-codespell:
 
 lint: ## Run all linters.
 	make fmt && \
-	make lint-clippy && \
+	make lint-foundry && \
 	make lint-codespell
 
 ## Testing
 
-test-unit:
+test-foundry:
 	cargo nextest run -E 'kind(test) & !test(/issue|forge_std|ext_integration/)'
 
 test-doc:
 	cargo test --doc --workspace
 
 test: ## Run all tests.
-	make test-unit && \
+	make test-foundry && \
 	make test-doc
 
 pr: ## Run all tests and linters in preparation for a PR.
