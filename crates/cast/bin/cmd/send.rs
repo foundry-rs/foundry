@@ -281,12 +281,11 @@ async fn prepare_and_send_transaction(
     // This should be the only way this RPC method is used as it requires a local node
     // or remote RPC with unlocked accounts.
     if unlocked {
-        // only check current chain id if it was specified in the config
+        // Only check current chain id if it was specified in the config.
         if let Some(config_chain) = config.chain {
             let current_chain_id = provider.get_chain_id().await?;
             let config_chain_id = config_chain.id();
-            // switch chain if current chain id is not the same as the one specified in the
-            // config
+            // Switch chain if current chain id is not the same as the one specified in the config.
             if config_chain_id != current_chain_id {
                 sh_warn!("Switching to chain {}", config_chain)?;
                 provider
