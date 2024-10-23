@@ -105,32 +105,29 @@ pub struct UintStrategy {
 }
 
 impl UintStrategy {
-    /// Create a new strategy without bounds.
+    /// Create a new strategy.
     /// #Arguments
     /// * `bits` - Size of uint in bits
     /// * `fixtures` - A set of fixed values to be generated (according to fixtures weight)
     pub fn new(
         bits: usize,
         fixtures: Option<&[DynSolValue]>,
-        bounds: Option<(U256, U256)>,
+        min_bound: Option<U256>,
+        max_bound: Option<U256>,
     ) -> Self {
+        let bounds = match (min_bound, max_bound) {
+            (Some(min), Some(max)) => Some((min, max)),
+            _ => None,
+        };
+
         Self {
             bits,
             fixtures: Vec::from(fixtures.unwrap_or_default()),
             edge_weight: 10usize,
             fixtures_weight: 40usize,
             random_weight: 50usize,
-            bounds: None,
+            bounds,
         }
-    }
-
-    /// Add bounds to an existing strategy
-    pub fn with_bounds(self, min_bound: Option<U256>, max_bound: Option<U256>) -> Self {
-        let bounds = match (min_bound, max_bound) {
-            (Some(min), Some(max)) => Some((min, max)),
-            _ => None,
-        };
-        Self { bounds, ..self }
     }
 
     pub fn use_log_sampling(&self) -> bool {
@@ -163,12 +160,8 @@ impl UintStrategy {
             }
         };
 
-        Ok(UintValueTree::new(
-            start,
-            false,
-            self.bounds.map(|(min, _)| min),
-            self.bounds.map(|(_, max)| max),
-        ))
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        Ok(UintValueTree::new(start, false, min, max))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -258,12 +251,7 @@ impl UintStrategy {
             }
         };
 
-        Ok(UintValueTree::new(
-            start,
-            false,
-            self.bounds.map(|(min, _)| min),
-            self.bounds.map(|(_, max)| max),
-        ))
+        Ok(UintValueTree::new(start.clamp(min, max), false, min, max))
     }
 
     fn generate_log_uniform(&self, runner: &mut TestRunner) -> U256 {
@@ -274,15 +262,12 @@ impl UintStrategy {
         let base = U256::from(1) << exp;
         let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
 
-        // Only clamp if bounds are specified
-        if let Some((min, max)) = self.bounds {
-            value = value.clamp(min, max);
+        value = value.clamp(min, max);
 
-            if value == min && max > min {
-                let range = max - min;
-                let offset = U256::from(rng.gen::<u64>()) % range;
-                value = min + offset;
-            }
+        if value == min && max > min {
+            let range = max - min;
+            let offset = U256::from(rng.gen::<u64>()) % range;
+            value = min + offset;
         }
 
         value
@@ -334,7 +319,7 @@ mod tests {
     fn test_uint_strategy_respects_bounds() {
         let min = U256::from(1000u64);
         let max = U256::from(2000u64);
-        let strategy = UintStrategy::new(16, None, Some((min, max)));
+        let strategy = UintStrategy::new(16, None, Some(min), Some(max));
         let mut runner = TestRunner::default();
 
         for _ in 0..1000 {
@@ -370,7 +355,7 @@ mod tests {
     fn test_edge_case_generation() {
         let min = U256::from(100u64);
         let max = U256::from(1000u64);
-        let strategy = UintStrategy::new(64, None, Some((min, max)));
+        let strategy = UintStrategy::new(64, None, Some(min), Some(max));
         let mut runner = TestRunner::default();
 
         let mut found_min_area = false;
@@ -404,7 +389,7 @@ mod tests {
         let valid_fixture = U256::from(500u64);
         let fixtures = vec![DynSolValue::Uint(valid_fixture, 64)];
 
-        let strategy = UintStrategy::new(64, Some(&fixtures), Some((min, max)));
+        let strategy = UintStrategy::new(64, Some(&fixtures), Some(min), Some(max));
         let mut runner = TestRunner::default();
 
         for _ in 0..100 {
@@ -419,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_log_uniform_sampling() {
-        let strategy = UintStrategy::new(256, None, None);
+        let strategy = UintStrategy::new(256, None, None, None);
         let mut runner = TestRunner::default();
         let mut log2_buckets = vec![0; 256];
         let iterations = 100000;
