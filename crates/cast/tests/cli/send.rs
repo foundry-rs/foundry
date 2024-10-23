@@ -4,17 +4,21 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{casttest, str};
 
 // ensure receipt or code is required
-casttest!(send_requires_to, |_prj, cmd| {
+casttest!(send_requires_to, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
     cmd.args([
         "send",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "--chain",
         "1",
+        "--rpc-url",
+        &endpoint,
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -90,8 +94,7 @@ casttest!(send_bump_gas_price, async |_prj, cmd| {
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-server returned an error response: error code -32003: replacement transaction underpriced
+Error: server returned an error response: error code -32003: replacement transaction underpriced
 
 "#]]);
 
@@ -199,8 +202,7 @@ casttest!(send_bump_gas_price_no_pending_tx, async |_prj, cmd| {
     ])
     .assert_failure()
     .stderr_eq(str![[r#"
-Error: 
-No pending transactions to replace.
+Error: No pending transactions to replace.
 
 "#]]);
 });
@@ -272,8 +274,7 @@ Error: transaction underpriced.
 
 "#]])
         .stderr_eq(str![[r#"
-Error: 
-Max gas price bump attempts reached. Transaction still stuck.
+Error: Max gas price bump attempts reached. Transaction still stuck.
 
 "#]]);
 });
@@ -342,8 +343,7 @@ Retrying with a 10% gas price increase (attempt 2/3).
 
 "#]])
         .stderr_eq(str![[r#"
-Error: 
-Unable to bump more the gas price. Hit the bump gas limit of 2400000000 wei.
+Error: Unable to bump more the gas price. Hit the bump gas limit of 2400000000 wei.
 
 "#]]);
 });
