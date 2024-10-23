@@ -163,8 +163,8 @@ impl UintStrategy {
         Ok(UintValueTree::new(
             start,
             false,
-            self.bounds.map(|(min, _)| min),
-            self.bounds.map(|(_, max)| max), 
+            None,
+            None
         ))
     }
 
