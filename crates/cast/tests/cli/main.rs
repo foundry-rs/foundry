@@ -25,8 +25,26 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Display options:
+      --color <COLOR>
+          Log messages coloring
+
+          Possible values:
+          - auto:   Intelligently guess whether to use color output (default)
+          - always: Force color output
+          - never:  Force disable color output
+
+  -q, --quiet
+          Do not print log messages
+
+      --verbose
+          Use verbose output
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -152,8 +170,7 @@ Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed 
         .args(["wallet", "verify", "-a", address, "other msg", expected])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
+Error: Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
 
 "#]]);
 });
@@ -285,9 +302,16 @@ Created new encrypted keystore file: [..]
 
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
 casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
-    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 Generating mnemonic from provided entropy...
 Successfully generated a new mnemonic.
 Phrase:
@@ -298,6 +322,48 @@ Accounts:
 Address:     0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
+- Account 1:
+Address:     0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+Private key: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+- Account 2:
+Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+
+
+"#]]);
+});
+
+// tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic
+casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "mnemonic": "test test test test test test test test test test test junk",
+  "accounts": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+    }
+  ]
+}
 
 "#]]);
 });
@@ -886,8 +952,7 @@ casttest!(mktx_requires_to, |_prj, cmd| {
         "1",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -904,8 +969,7 @@ casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-The specified sender via CLI/env vars does not match the sender configured via
+Error: The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.
@@ -976,8 +1040,7 @@ casttest!(send_requires_to, |_prj, cmd| {
         "1",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -1230,8 +1293,7 @@ casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     cmd.args(["resolve-name", "emo", "--rpc-url", &eth_rpc_url, "--verify"])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-ENS resolver not found for name "emo"
+Error: ENS resolver not found for name "emo"
 
 "#]]);
 });
@@ -1246,8 +1308,7 @@ casttest!(index7201, |_prj, cmd| {
 casttest!(index7201_unknown_formula_id, |_prj, cmd| {
     cmd.args(["index-erc7201", "test", "--formula-id", "unknown"]).assert_failure().stderr_eq(
         str![[r#"
-Error: 
-unsupported formula ID: unknown
+Error: unsupported formula ID: unknown
 
 "#]],
     );
@@ -1322,7 +1383,7 @@ casttest!(hash_message, |_prj, cmd| {
 "#]]);
 
     cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
-0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
+0x83a0870b6c63a71efdd3b2749ef700653d97454152c4b53fa9b102dc430c7c32
 
 "#]]);
 });

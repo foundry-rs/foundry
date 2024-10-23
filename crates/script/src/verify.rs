@@ -1,12 +1,18 @@
-use crate::{build::LinkedBuildData, sequence::ScriptSequenceKind, ScriptArgs, ScriptConfig};
+use crate::{
+    build::LinkedBuildData,
+    sequence::{get_commit_hash, ScriptSequenceKind},
+    ScriptArgs, ScriptConfig,
+};
 use alloy_primitives::{hex, Address};
-use eyre::Result;
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use eyre::{eyre, Result};
+use forge_script_sequence::{AdditionalContract, ScriptSequence};
+use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
+use yansi::Paint;
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
@@ -31,7 +37,7 @@ impl BroadcastedState {
         );
 
         for sequence in sequence.sequences_mut() {
-            sequence.verify_contracts(&script_config.config, verify.clone()).await?;
+            verify_contracts(sequence, &script_config.config, verify.clone()).await?;
         }
 
         Ok(())
@@ -156,5 +162,109 @@ impl VerifyBundle {
             }
         }
         None
+    }
+}
+
+/// Given the broadcast log, it matches transactions with receipts, and tries to verify any
+/// created contract on etherscan.
+async fn verify_contracts(
+    sequence: &mut ScriptSequence,
+    config: &Config,
+    mut verify: VerifyBundle,
+) -> Result<()> {
+    trace!(target: "script", "verifying {} contracts [{}]", verify.known_contracts.len(), sequence.chain);
+
+    verify.set_chain(config, sequence.chain.into());
+
+    if verify.etherscan.has_key() || verify.verifier.verifier != VerificationProviderType::Etherscan
+    {
+        trace!(target: "script", "prepare future verifications");
+
+        let mut future_verifications = Vec::with_capacity(sequence.receipts.len());
+        let mut unverifiable_contracts = vec![];
+
+        // Make sure the receipts have the right order first.
+        sequence.sort_receipts();
+
+        for (receipt, tx) in sequence.receipts.iter_mut().zip(sequence.transactions.iter()) {
+            // create2 hash offset
+            let mut offset = 0;
+
+            if tx.is_create2() {
+                receipt.contract_address = tx.contract_address;
+                offset = 32;
+            }
+
+            // Verify contract created directly from the transaction
+            if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
+                match verify.get_verify_args(address, offset, data, &sequence.libraries) {
+                    Some(verify) => future_verifications.push(verify.run()),
+                    None => unverifiable_contracts.push(address),
+                };
+            }
+
+            // Verify potential contracts created during the transaction execution
+            for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
+                match verify.get_verify_args(*address, 0, init_code.as_ref(), &sequence.libraries) {
+                    Some(verify) => future_verifications.push(verify.run()),
+                    None => unverifiable_contracts.push(*address),
+                };
+            }
+        }
+
+        trace!(target: "script", "collected {} verification jobs and {} unverifiable contracts", future_verifications.len(), unverifiable_contracts.len());
+
+        check_unverified(sequence, unverifiable_contracts, verify);
+
+        let num_verifications = future_verifications.len();
+        let mut num_of_successful_verifications = 0;
+        println!("##\nStart verification for ({num_verifications}) contracts");
+        for verification in future_verifications {
+            match verification.await {
+                Ok(_) => {
+                    num_of_successful_verifications += 1;
+                }
+                Err(err) => eprintln!("Error during verification: {err:#}"),
+            }
+        }
+
+        if num_of_successful_verifications < num_verifications {
+            return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
+        }
+
+        println!("All ({num_verifications}) contracts were verified!");
+    }
+
+    Ok(())
+}
+
+fn check_unverified(
+    sequence: &ScriptSequence,
+    unverifiable_contracts: Vec<Address>,
+    verify: VerifyBundle,
+) {
+    if !unverifiable_contracts.is_empty() {
+        println!(
+            "\n{}",
+            format!(
+                "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
+                unverifiable_contracts,
+                "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
+            )
+            .yellow()
+            .bold(),
+        );
+
+        if let Some(commit) = &sequence.commit {
+            let current_commit = verify
+                .project_paths
+                .root
+                .map(|root| get_commit_hash(&root).unwrap_or_default())
+                .unwrap_or_default();
+
+            if &current_commit != commit {
+                println!("\tScript was broadcasted on commit `{commit}`, but we are at `{current_commit}`.");
+            }
+        }
     }
 }

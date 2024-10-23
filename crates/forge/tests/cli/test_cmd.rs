@@ -2191,22 +2191,19 @@ Warning: the following cheatcode(s) are deprecated and will be removed in future
 
 forgetest_init!(requires_single_test, |prj, cmd| {
     cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamechart"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
 
 Use --match-contract and --match-path to further limit the search.
 
@@ -2215,7 +2212,7 @@ Use --match-contract and --match-path to further limit the search.
 
 forgetest_init!(deprecated_regex_arg, |prj, cmd| {
     cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
-warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
+Warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
 
 "#]]);
 });
@@ -2372,4 +2369,24 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+// Tests if dump of execution was created.
+forgetest!(test_debug_with_dump, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    let dump_path = prj.root().join("dump.json");
+
+    cmd.args(["test", "--debug", "testDummy", "--dump", dump_path.to_str().unwrap()]);
+    cmd.assert_success();
+
+    assert!(dump_path.exists());
 });

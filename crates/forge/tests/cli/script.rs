@@ -150,8 +150,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: revert: failed
+Error: script failed: revert: failed
 
 "#]]);
 });
@@ -167,8 +166,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: revert: failed
+Error: script failed: revert: failed
 
 "#]]);
 });
@@ -201,7 +199,7 @@ contract DeployScript is Script {
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
     let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
     let (_api, handle) = spawn(node_config).await;
     let dev = handle.dev_accounts().next().unwrap();
     cmd.set_current_dir(prj.root());
@@ -303,7 +301,7 @@ contract DeployScript is Script {
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
     let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -493,7 +491,7 @@ contract DeployScript is Script {
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
     let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -1012,12 +1010,19 @@ struct Transaction {
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1134,12 +1139,19 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1301,12 +1313,19 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
 });
 
 forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1382,12 +1401,19 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1609,19 +1635,25 @@ contract Script {
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Multiple functions with the same name `run` found in the ABI
+Error: Multiple functions with the same name `run` found in the ABI
 
 "#]]);
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1652,8 +1684,7 @@ contract CustomErrorScript is Script {
 
     cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: CustomError()
+Error: script failed: CustomError()
 
 "#]]);
 });
@@ -1709,7 +1740,6 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
-Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1732,6 +1762,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 
@@ -1758,7 +1791,6 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
-Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1781,6 +1813,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 });
@@ -1826,7 +1861,6 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
-Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1849,6 +1883,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 });
@@ -1886,8 +1923,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: missing CREATE2 deployer
+Error: script failed: missing CREATE2 deployer
 
 "#]]);
 });
@@ -2143,6 +2179,93 @@ Script ran successfully.
   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
   0x70997970C51812dc3A010C7d01b50e0d17dc79C8
   0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
+"#]]);
+});
+
+forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Script.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract A {
+    function getValue() external pure returns (uint256) {
+        return 100;
+    }
+}
+contract B {
+    constructor(A a) {
+        require(a.getValue() == 100);
+    }
+}
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(a);
+    }
+}
+            "#,
+    )
+    .unwrap();
+
+    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [104553] SimpleScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    │   └─ ← [Return] 119 bytes of code
+    ├─ [13367] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [146] A::getValue() [staticcall]
+    │   │   └─ ← [Return] 100
+    │   └─ ← [Return] 63 bytes of code
+    └─ ← [Stop] 
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 119 bytes of code
+
+  [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [146] A::getValue() [staticcall]
+    │   └─ ← [Return] 100
+    └─ ← [Return] 63 bytes of code
+...
+"#]]);
+});
+
+// Tests that chained errors are properly displayed.
+// <https://github.com/foundry-rs/foundry/issues/9161>
+forgetest_init!(should_display_evm_chained_error, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+contract ContractScript is Script {
+    function run() public {
+    }
+}
+   "#,
+        )
+        .unwrap();
+    cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
+Error: Failed to deploy script:
+backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
 
 "#]]);
 });

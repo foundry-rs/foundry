@@ -1,6 +1,7 @@
-use super::sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_cli::utils::now;
+use forge_script_sequence::{
+    now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
+};
 use foundry_common::fs;
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
@@ -145,8 +146,8 @@ impl MultiChainSequence {
         }
 
         if !silent {
-            println!("\nTransactions saved to: {}\n", self.path.display());
-            println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+            sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
+            sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
         }
 
         Ok(())
