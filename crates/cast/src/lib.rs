@@ -279,7 +279,7 @@ where
     pub async fn send(
         &self,
         tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<'_, T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -305,7 +305,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<'_, T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -783,7 +783,7 @@ where
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
                     } else {
-                        PendingTransactionBuilder::new(self.provider.root(), tx_hash)
+                        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
                             .with_required_confirmations(confs)
                             .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()

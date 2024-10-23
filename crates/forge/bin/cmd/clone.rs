@@ -7,7 +7,7 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     Client,
 };
-use foundry_cli::{opts::EtherscanOpts, p_println, utils::Git};
+use foundry_cli::{opts::EtherscanOpts, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{
@@ -102,7 +102,8 @@ impl CloneArgs {
         let client = Client::new(chain, etherscan_api_key.clone())?;
 
         // step 1. get the metadata from client
-        p_println!(!opts.quiet => "Downloading the source code of {} from Etherscan...", address);
+        sh_println!("Downloading the source code of {address} from Etherscan...")?;
+
         let meta = Self::collect_metadata_from_client(address, &client).await?;
 
         // step 2. initialize an empty project
@@ -117,17 +118,17 @@ impl CloneArgs {
 
         // step 4. collect the compilation metadata
         // if the etherscan api key is not set, we need to wait for 3 seconds between calls
-        p_println!(!opts.quiet => "Collecting the creation information of {} from Etherscan...", address);
+        sh_println!("Collecting the creation information of {address} from Etherscan...")?;
+
         if etherscan_api_key.is_empty() {
-            p_println!(!opts.quiet => "Waiting for 5 seconds to avoid rate limit...");
+            sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        Self::collect_compilation_metadata(&meta, chain, address, &root, &client, opts.quiet)
-            .await?;
+        Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
 
         // step 5. git add and commit the changes if needed
         if !opts.no_commit {
-            let git = Git::new(&root).quiet(opts.quiet);
+            let git = Git::new(&root);
             git.add(Some("--all"))?;
             let msg = format!("chore: forge clone {address}");
             git.commit(&msg)?;
@@ -185,10 +186,9 @@ impl CloneArgs {
         address: Address,
         root: &PathBuf,
         client: &C,
-        quiet: bool,
     ) -> Result<()> {
         // compile the cloned contract
-        let compile_output = compile_project(root, quiet)?;
+        let compile_output = compile_project(root)?;
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
@@ -546,11 +546,11 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 }
 
 /// Compile the project in the root directory, and return the compilation result.
-pub fn compile_project(root: &Path, quiet: bool) -> Result<ProjectCompileOutput> {
+pub fn compile_project(root: &Path) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root).sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
-    let compiler = ProjectCompiler::new().quiet_if(quiet);
+    let compiler = ProjectCompiler::new();
     compiler.compile(&project)
 }
 
@@ -618,7 +618,7 @@ mod tests {
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         println!("project_root: {root:#?}");
-        compile_project(root, false).expect("compilation failure")
+        compile_project(root).expect("compilation failure")
     }
 
     fn assert_compilation_result(
@@ -720,7 +720,6 @@ mod tests {
             address,
             &project_root,
             &client,
-            false,
         )
         .await
         .unwrap();

@@ -1,14 +1,11 @@
 //! The TUI implementation.
 
-use alloy_primitives::map::AddressHashMap;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use eyre::Result;
-use foundry_common::evm::Breakpoints;
-use foundry_evm_traces::debug::ContractSources;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
@@ -21,13 +18,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod builder;
-pub use builder::DebuggerBuilder;
-
 mod context;
-use context::DebuggerContext;
-
-use crate::DebugNode;
+use crate::debugger::DebuggerContext;
+use context::TUIContext;
 
 mod draw;
 
@@ -41,47 +34,18 @@ pub enum ExitReason {
 }
 
 /// The TUI debugger.
-pub struct Debugger {
-    debug_arena: Vec<DebugNode>,
-    identified_contracts: AddressHashMap<String>,
-    /// Source map of contract sources
-    contracts_sources: ContractSources,
-    breakpoints: Breakpoints,
+pub struct TUI<'a> {
+    debugger_context: &'a mut DebuggerContext,
 }
 
-impl Debugger {
-    /// Creates a new debugger builder.
-    #[inline]
-    pub fn builder() -> DebuggerBuilder {
-        DebuggerBuilder::new()
-    }
-
+impl<'a> TUI<'a> {
     /// Creates a new debugger.
-    pub fn new(
-        debug_arena: Vec<DebugNode>,
-        identified_contracts: AddressHashMap<String>,
-        contracts_sources: ContractSources,
-        breakpoints: Breakpoints,
-    ) -> Self {
-        Self { debug_arena, identified_contracts, contracts_sources, breakpoints }
-    }
-
-    /// Starts the debugger TUI. Terminates the current process on failure or user exit.
-    pub fn run_exit(mut self) -> ! {
-        let code = match self.try_run() {
-            Ok(ExitReason::CharExit) => 0,
-            Err(e) => {
-                println!("{e}");
-                1
-            }
-        };
-        std::process::exit(code)
+    pub fn new(debugger_context: &'a mut DebuggerContext) -> Self {
+        Self { debugger_context }
     }
 
     /// Starts the debugger TUI.
     pub fn try_run(&mut self) -> Result<ExitReason> {
-        eyre::ensure!(!self.debug_arena.is_empty(), "debug arena is empty");
-
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         TerminalGuard::with(terminal, |terminal| self.try_run_real(terminal))
@@ -90,7 +54,7 @@ impl Debugger {
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
     fn try_run_real(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
         // Create the context.
-        let mut cx = DebuggerContext::new(self);
+        let mut cx = TUIContext::new(self.debugger_context);
 
         cx.init();
 

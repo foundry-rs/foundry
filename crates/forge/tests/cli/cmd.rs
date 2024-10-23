@@ -30,8 +30,26 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Display options:
+      --color <COLOR>
+          Log messages coloring
+
+          Possible values:
+          - auto:   Intelligently guess whether to use color output (default)
+          - always: Force color output
+          - never:  Force disable color output
+
+  -q, --quiet
+          Do not print log messages
+
+      --verbose
+          Use verbose output
 
 Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
 
@@ -225,12 +243,19 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -253,8 +278,7 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
 
     cmd.current_dir(&nested);
     cmd.arg("init").assert_failure().stderr_eq(str![[r#"
-Error: 
-The target directory is a part of or on its own an already initialized git repository,
+Error: The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
@@ -349,18 +373,23 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
 forgetest!(can_init_non_empty, |prj, cmd| {
     prj.create_file("README.md", "non-empty dir");
     cmd.arg("init").arg(prj.root()).assert_failure().stderr_eq(str![[r#"
-Error: 
-Cannot run `init` on a non-empty directory.
+Error: Cannot run `init` on a non-empty directory.
 Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -384,20 +413,26 @@ forgetest!(can_init_in_empty_repo, |prj, cmd| {
     assert!(root.join(".git").exists());
 
     cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
-Error: 
-Cannot run `init` on a non-empty directory.
+Error: Cannot run `init` on a non-empty directory.
 Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
 
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
 "#]]);
+
     assert!(root.join("lib/forge-std").exists());
 });
 
@@ -420,20 +455,26 @@ forgetest!(can_init_in_non_empty_repo, |prj, cmd| {
     prj.create_file(".gitignore", "not foundry .gitignore");
 
     cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
-Error: 
-Cannot run `init` on a non-empty directory.
+Error: Cannot run `init` on a non-empty directory.
 Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
     Initialized forge project
 
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
 "#]]);
+
     assert!(root.join("lib/forge-std").exists());
 
     // not overwritten
@@ -520,8 +561,7 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 remote: Not Found
 fatal: repository 'https://github.com/a/' not found
-Error: 
-git fetch exited with code 128
+Error: git fetch exited with code 128
 
 "#]]);
 });
@@ -1072,8 +1112,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     prj.write_config(config);
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
 Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
 [FILE]
@@ -1151,8 +1190,7 @@ contract CTest is DSTest {
 
     // `forge build --force` which should fail
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
  [FILE]:7:19:
   |
@@ -1168,8 +1206,7 @@ Error (2314): Expected ';' but got identifier
 
     // still errors
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
  [FILE]:7:19:
   |
@@ -1209,8 +1246,7 @@ Compiler run successful!
     // introduce the error again but building without force
     prj.add_source("CTest.t.sol", syntax_err).unwrap();
     cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
  [FILE]:7:19:
   |

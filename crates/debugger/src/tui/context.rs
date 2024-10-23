@@ -1,6 +1,6 @@
 //! Debugger context and event handler implementation.
 
-use crate::{DebugNode, Debugger, ExitReason};
+use crate::{debugger::DebuggerContext, DebugNode, ExitReason};
 use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::BufferKind;
@@ -16,8 +16,8 @@ pub(crate) struct DrawMemory {
     pub(crate) current_stack_startline: usize,
 }
 
-pub(crate) struct DebuggerContext<'a> {
-    pub(crate) debugger: &'a mut Debugger,
+pub(crate) struct TUIContext<'a> {
+    pub(crate) debugger_context: &'a mut DebuggerContext,
 
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations.
     pub(crate) key_buffer: String,
@@ -35,10 +35,10 @@ pub(crate) struct DebuggerContext<'a> {
     pub(crate) active_buffer: BufferKind,
 }
 
-impl<'a> DebuggerContext<'a> {
-    pub(crate) fn new(debugger: &'a mut Debugger) -> Self {
-        DebuggerContext {
-            debugger,
+impl<'a> TUIContext<'a> {
+    pub(crate) fn new(debugger_context: &'a mut DebuggerContext) -> Self {
+        TUIContext {
+            debugger_context,
 
             key_buffer: String::with_capacity(64),
             current_step: 0,
@@ -58,7 +58,7 @@ impl<'a> DebuggerContext<'a> {
     }
 
     pub(crate) fn debug_arena(&self) -> &[DebugNode] {
-        &self.debugger.debug_arena
+        &self.debugger_context.debug_arena
     }
 
     pub(crate) fn debug_call(&self) -> &DebugNode {
@@ -87,7 +87,8 @@ impl<'a> DebuggerContext<'a> {
 
     fn gen_opcode_list(&mut self) {
         self.opcode_list.clear();
-        let debug_steps = &self.debugger.debug_arena[self.draw_memory.inner_call_index].steps;
+        let debug_steps =
+            &self.debugger_context.debug_arena[self.draw_memory.inner_call_index].steps;
         for step in debug_steps {
             self.opcode_list.push(pretty_opcode(step));
         }
@@ -109,7 +110,7 @@ impl<'a> DebuggerContext<'a> {
     }
 }
 
-impl DebuggerContext<'_> {
+impl TUIContext<'_> {
     pub(crate) fn handle_event(&mut self, event: Event) -> ControlFlow<ExitReason> {
         let ret = match event {
             Event::Key(event) => self.handle_key_event(event),
@@ -259,7 +260,7 @@ impl DebuggerContext<'_> {
     fn handle_breakpoint(&mut self, c: char) {
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
-        if let Some((caller, pc)) = self.debugger.breakpoints.get(&c) {
+        if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
             for (i, node) in self.debug_arena().iter().enumerate() {
                 if node.address == *caller {
                     if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {

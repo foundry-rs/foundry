@@ -25,8 +25,26 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Display options:
+      --color <COLOR>
+          Log messages coloring
+
+          Possible values:
+          - auto:   Intelligently guess whether to use color output (default)
+          - always: Force color output
+          - never:  Force disable color output
+
+  -q, --quiet
+          Do not print log messages
+
+      --verbose
+          Use verbose output
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -152,8 +170,7 @@ Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed 
         .args(["wallet", "verify", "-a", address, "other msg", expected])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
+Error: Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
 
 "#]]);
 });
@@ -935,8 +952,7 @@ casttest!(mktx_requires_to, |_prj, cmd| {
         "1",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -953,8 +969,7 @@ casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-The specified sender via CLI/env vars does not match the sender configured via
+Error: The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.
@@ -1025,8 +1040,7 @@ casttest!(send_requires_to, |_prj, cmd| {
         "1",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -1279,8 +1293,7 @@ casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     cmd.args(["resolve-name", "emo", "--rpc-url", &eth_rpc_url, "--verify"])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-ENS resolver not found for name "emo"
+Error: ENS resolver not found for name "emo"
 
 "#]]);
 });
@@ -1295,8 +1308,7 @@ casttest!(index7201, |_prj, cmd| {
 casttest!(index7201_unknown_formula_id, |_prj, cmd| {
     cmd.args(["index-erc7201", "test", "--formula-id", "unknown"]).assert_failure().stderr_eq(
         str![[r#"
-Error: 
-unsupported formula ID: unknown
+Error: unsupported formula ID: unknown
 
 "#]],
     );

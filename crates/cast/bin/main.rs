@@ -8,7 +8,7 @@ use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::{handler, prompt, stdin, utils};
+use foundry_cli::{handler, utils};
 use foundry_common::{
     abi::get_event,
     ens::{namehash, ProviderEnsExt},
@@ -19,6 +19,7 @@ use foundry_common::{
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
         SelectorType,
     },
+    stdin,
 };
 use foundry_config::Config;
 use std::time::Instant;
@@ -29,16 +30,27 @@ pub mod tx;
 
 use args::{Cast as CastArgs, CastSubcommand, ToBaseArgs};
 
+#[macro_use]
+extern crate foundry_common;
+
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
     let args = CastArgs::parse();
+    args.shell.shell().set();
     main_args(args)
 }
 

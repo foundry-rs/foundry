@@ -21,7 +21,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    shell, TransactionMaybeSigned,
+    TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -424,8 +424,8 @@ impl BundledState {
             seq_progress.inner.write().finish();
         }
 
-        shell::println("\n\n==========================")?;
-        shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        sh_println!("\n\n==========================")?;
+        sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
         Ok(BroadcastedState {
             args: self.args,
