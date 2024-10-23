@@ -1628,7 +1628,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                             fmt.config.multiline_func_header,
                             MultilineFuncHeaderStyle::ParamsFirst |
                                 MultilineFuncHeaderStyle::ParamsFirstMulti |
-                                MultilineFuncHeaderStyle::All
+                                MultilineFuncHeaderStyle::All |
+                                MultilineFuncHeaderStyle::AllParams
                         );
                     params_multiline = should_multiline ||
                         multiline ||
@@ -1637,11 +1638,12 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
-                    // Write new line if we have only one parameter and params first set.
+                    // Write new line if we have only one parameter and params first all multi set.
                     if params.len() == 1 &&
                         matches!(
                             fmt.config.multiline_func_header,
-                            MultilineFuncHeaderStyle::ParamsFirst
+                            MultilineFuncHeaderStyle::ParamsFirst |
+                                MultilineFuncHeaderStyle::AllParams
                         )
                     {
                         writeln!(fmt.buf())?;
@@ -1736,7 +1738,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let should_multiline = header_multiline &&
             if params_multiline {
-                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::All | MultilineFuncHeaderStyle::AllParams
+                )
             } else {
                 matches!(
                     self.config.multiline_func_header,
