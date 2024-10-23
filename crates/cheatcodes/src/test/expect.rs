@@ -84,8 +84,6 @@ pub struct ExpectedRevert {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
-    /// Actual reverter of the call.
-    pub reverted_by: Option<Address>,
 }
 
 #[derive(Clone, Debug)]
@@ -457,10 +455,6 @@ impl RevertParameters for ExpectedRevert {
         self.reverter
     }
 
-    fn reverted_by(&self) -> Option<Address> {
-        self.reverted_by
-    }
-
     fn reason(&self) -> Option<&[u8]> {
         self.reason.as_deref()
     }
@@ -684,6 +678,7 @@ fn expect_revert(
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
+    ensure!(state.assume_no_revert.is_none(), "cannot expect a revert when using assumeNoRevert");
     state.expected_revert = Some(ExpectedRevert {
         reason: reason.map(<[_]>::to_vec),
         depth,
@@ -694,7 +689,7 @@ fn expect_revert(
         },
         partial_match,
         reverter,
-        reverted_by: None,
+        // reverted_by: None,
     });
     Ok(Default::default())
 }
@@ -706,6 +701,7 @@ pub(crate) fn handle_expect_revert(
     status: InstructionResult,
     retdata: Bytes,
     known_contracts: &Option<ContractsByArtifact>,
+    reverter: Option<&Address>,
 ) -> Result<(Option<Address>, Bytes)> {
     let success_return = || {
         if is_create {
@@ -717,7 +713,7 @@ pub(crate) fn handle_expect_revert(
 
     ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
 
-    handle_revert(is_cheatcode, expected_revert, status, retdata, known_contracts)?;
+    handle_revert(is_cheatcode, expected_revert, status, &retdata, known_contracts, reverter)?;
     Ok(success_return())
 }
 

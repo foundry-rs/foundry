@@ -753,6 +753,9 @@ where {
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
+                    // todo: is this specific to `forge create` calls? only tx.sender (equivalent
+                    // to tx.origin?) is set; it would be wrong to say tx sender is the reverter
+                    None,
                 ) {
                     Ok((address, retdata)) => {
                         outcome.result.result = InstructionResult::Return;
@@ -1254,31 +1257,23 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         // Handle assume not revert cheatcode.
         if let Some(assume_no_revert) = &mut self.assume_no_revert {
             // allow multiple cheatcode calls at the same depth
-            if ecx.journaled_state.depth() == assume_no_revert.depth && !cheatcode_call {
-                // Record current reverter address before processing the assumeNoRevert call
-                // reverted,
-                // todo: DRY this?
-                if outcome.result.is_revert() &&
-                    assume_no_revert.reverter.is_some() &&
-                    assume_no_revert.reverted_by.is_none()
-                {
-                    assume_no_revert.reverted_by = Some(call.target_address);
-                }
+            if ecx.journaled_state.depth() <= assume_no_revert.depth && !cheatcode_call {
                 // Discard run if we're at the same depth as cheatcode, call reverted, and no
                 // specific reason was supplied
                 if outcome.result.is_revert() {
+                    let assume_no_revert = std::mem::take(&mut self.assume_no_revert).unwrap();
                     return match handle_assume_no_revert(
-                        assume_no_revert,
+                        &assume_no_revert,
                         outcome.result.result,
-                        outcome.result.output.clone(),
+                        &outcome.result.output,
                         &self.config.available_artifacts,
+                        Some(&call.target_address),
                     ) {
                         // if result is Ok, it was an anticipated revert; return an "assume" error
                         // to reject this run
                         Ok(_) => {
-                            // reset assume_no_revert state
                             outcome.result.output = Error::from(MAGIC_ASSUME).abi_encode().into();
-                            return outcome;
+                            outcome
                         }
                         // if result is Error, it was an unanticipated revert; should revert
                         // normally
@@ -1299,15 +1294,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
         // Handle expected reverts.
         if let Some(expected_revert) = &mut self.expected_revert {
-            // Record current reverter address before processing the expect revert if call reverted,
-            // expect revert is set with expected reverter address and no actual reverter set yet.
-            if outcome.result.is_revert() &&
-                expected_revert.reverter.is_some() &&
-                expected_revert.reverted_by.is_none()
-            {
-                expected_revert.reverted_by = Some(call.target_address);
-            }
-
             if ecx.journaled_state.depth() <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
@@ -1327,6 +1313,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
+                        Some(&call.target_address),
                     ) {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");

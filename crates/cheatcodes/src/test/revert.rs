@@ -9,7 +9,6 @@ use spec::Vm;
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {
     fn reverter(&self) -> Option<Address>;
-    fn reverted_by(&self) -> Option<Address>;
     fn reason(&self) -> Option<&[u8]>;
     fn partial_match(&self) -> bool;
 }
@@ -19,12 +18,12 @@ pub(crate) fn handle_revert(
     is_cheatcode: bool,
     revert_params: &impl RevertParameters,
     status: InstructionResult,
-    retdata: Bytes,
+    retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
+    reverter: Option<&Address>,
 ) -> Result<(), Error> {
     // If expected reverter address is set then check it matches the actual reverter.
-    if let (Some(expected_reverter), Some(actual_reverter)) =
-        (revert_params.reverter(), revert_params.reverted_by())
+    if let (Some(expected_reverter), Some(&actual_reverter)) = (revert_params.reverter(), reverter)
     {
         if expected_reverter != actual_reverter {
             return Err(fmt_err!(
