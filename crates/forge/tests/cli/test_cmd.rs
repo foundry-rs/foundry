@@ -2373,3 +2373,23 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+// Tests if dump of execution was created.
+forgetest!(test_debug_with_dump, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    let dump_path = prj.root().join("dump.json");
+
+    cmd.args(["test", "--debug", "testDummy", "--dump", dump_path.to_str().unwrap()]);
+    cmd.assert_success();
+
+    assert!(dump_path.exists());
+});
