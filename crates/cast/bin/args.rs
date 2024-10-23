@@ -230,14 +230,14 @@ pub enum CastSubcommand {
         unit: String,
     },
 
-    /// Convert a number into a uint with arbitrary decimals.
+    /// Convert a number from decimal to smallest unit with arbitrary decimals.
     ///
     /// Examples:
     /// - 1.0 6    (for USDC, result: 1000000)
     /// - 2.5 12   (for 12 decimals token, result: 2500000000000)
     /// - 1.23 3   (for 3 decimals token, result: 1230)
-    #[command(visible_aliases = &["--parse-uints", "pun"])]
-    ParseUints {
+    #[command(visible_aliases = &["--parse-units", "pun"])]
+    ParseUnits {
         /// The value to convert.
         value: Option<String>,
 
