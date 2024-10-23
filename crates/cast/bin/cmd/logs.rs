@@ -90,7 +90,7 @@ impl LogsArgs {
         if !subscribe {
             let logs = cast.filter_logs(filter, json).await?;
             sh_println!("{logs}")?;
-            return Ok(());
+            return Ok(())
         }
 
         // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
