@@ -225,6 +225,11 @@ alloy-trie = "0.6.0"
 op-alloy-rpc-types = "0.5.0"
 op-alloy-consensus = "0.5.0"
 
+## cli
+anstream = "0.6.15"
+anstyle = "1.0.8"
+terminal_size = "0.4"
+
 # macros
 proc-macro2 = "1.0.82"
 quote = "1.0"

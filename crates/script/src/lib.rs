@@ -6,6 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
 use crate::runner::ScriptRunner;
@@ -27,7 +30,7 @@ use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
-    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
@@ -52,7 +55,6 @@ use foundry_evm::{
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
-use yansi::Paint;
 
 mod broadcast;
 mod build;
@@ -257,7 +259,7 @@ impl ScriptArgs {
                 return match pre_simulation.args.dump.clone() {
                     Some(ref path) => pre_simulation.run_debug_file_dumper(path),
                     None => pre_simulation.run_debugger(),
-                }
+                };
             }
 
             if pre_simulation.args.json {
@@ -279,7 +281,7 @@ impl ScriptArgs {
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 return Ok(());
             }
 
@@ -293,7 +295,7 @@ impl ScriptArgs {
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
-            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             return Ok(());
         }
 
@@ -436,12 +438,9 @@ impl ScriptArgs {
 
                 if deployment_size > max_size {
                     prompt_user = self.should_broadcast();
-                    shell::println(format!(
-                        "{}",
-                        format!(
-                            "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ).red()
-                    ))?;
+                    sh_err!(
+                        "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
+                    )?;
                 }
             }
         }

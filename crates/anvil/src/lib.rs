@@ -1,9 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-#[macro_use]
-extern crate tracing;
-
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},
@@ -23,7 +20,10 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
-use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_common::{
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -73,6 +73,12 @@ mod tasks;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+
+#[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
+extern crate tracing;
 
 /// Creates the node and runs the server.
 ///
@@ -125,7 +131,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// ```
 pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
-    logger.set_enabled(!config.silent);
+    logger.set_enabled(!shell::is_quiet());
 
     let backend = Arc::new(config.setup().await);
 
@@ -292,19 +298,17 @@ impl NodeHandle {
     /// Prints the launch info.
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
-        if !self.config.silent {
-            if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {ipc_path}");
-            }
-            println!(
-                "Listening on {}",
-                self.addresses
-                    .iter()
-                    .map(|addr| { addr.to_string() })
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            );
+        if let Some(ipc_path) = self.ipc_path() {
+            let _ = sh_println!("IPC path: {ipc_path}");
         }
+        let _ = sh_println!(
+            "Listening on {}",
+            self.addresses
+                .iter()
+                .map(|addr| { addr.to_string() })
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
     }
 
     /// The address of the launched server.
