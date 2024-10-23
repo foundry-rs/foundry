@@ -1316,6 +1316,11 @@ casttest!(send_eip7702, async |_prj, cmd| {
 });
 
 casttest!(hash_message, |_prj, cmd| {
+    cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
+0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
+
+"#]]);
+
     cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
 0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
 
