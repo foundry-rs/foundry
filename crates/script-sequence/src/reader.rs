@@ -29,7 +29,12 @@ impl BroadcastReader {
             bail!("broadcast does not exist, ensure the contract name and/or chain_id is correct");
         }
 
-        Ok(Self { contract_name, chain_id, tx_type: None, broadcast_path: broadcast_path.to_path_buf() })
+        Ok(Self {
+            contract_name,
+            chain_id,
+            tx_type: None,
+            broadcast_path: broadcast_path.to_path_buf(),
+        })
     }
 
     /// Set the transaction type to filter by.
@@ -42,10 +47,11 @@ impl BroadcastReader {
     ///
     /// Example structure:
     ///
-    /// project-root/broadcast/{script_contract_name}.s.sol/{chain_id}/*.json
+    /// project-root/broadcast/{script_name}.s.sol/{chain_id}/*.json
+    /// project-root/broadcast/multi/{multichain_script_name}.s.sol-{timestamp}/deploy.json
     pub fn read_all(&self) -> eyre::Result<Vec<ScriptSequence>> {
-        // 1. Read the broadcast directory and get all the script directories i.e
-        //    {script_contract_name}.s.sol
+        // 1. Read the broadcast directory and get all the script directories and multi dirs i.e
+        //    {script_contract_name}.s.sol/ OR broadcast/multi/
         let script_dirs = std::fs::read_dir(&self.broadcast_path)?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
@@ -110,7 +116,89 @@ impl BroadcastReader {
             })
             .collect::<Vec<_>>();
 
+        let multichain_broadcasts = self.read_multi()?;
+
+        let broadcasts =
+            broadcasts.into_iter().chain(multichain_broadcasts.into_iter()).collect::<Vec<_>>();
+
         Ok(broadcasts)
+    }
+
+    pub fn read_multi(&self) -> eyre::Result<Vec<ScriptSequence>> {
+        // Read multichain broadcasts
+        let multi_dir = self.broadcast_path.join("multi");
+
+        let multi_chain_dirs = if multi_dir.exists() && multi_dir.is_dir() {
+            std::fs::read_dir(&multi_dir)?
+                .filter_map(|entry| {
+                    let entry = entry.ok()?;
+                    let path = entry.path();
+
+                    if !path.is_dir() {
+                        return None
+                    }
+
+                    let file = path.file_name();
+
+                    // Ignore -latest to avoid duplicating entries
+                    if file.is_some_and(|dir_name| {
+                        dir_name.to_string_lossy().ends_with(".s.sol-latest")
+                    }) {
+                        return None;
+                    }
+
+                    // Get all the multi chain directories that end with `.s.sol`
+                    if file.is_some_and(|dir_name| dir_name.to_string_lossy().contains(".s.sol")) {
+                        return Some(path);
+                    }
+                    None
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+
+        let multichain_seqs = multi_chain_dirs
+            .into_iter()
+            .flat_map(|multi_dir| fs::json_files(&multi_dir))
+            .collect::<Vec<_>>();
+
+        let seqs = multichain_seqs
+            .into_iter()
+            .flat_map(|path| {
+                fs::read_json_file::<serde_json::Value>(&path).ok().and_then(|ser_seqs| {
+                    Some(
+                        ser_seqs
+                            .get("deployments")
+                            .and_then(|deployments| {
+                                serde_json::from_value::<Vec<ScriptSequence>>(deployments.clone())
+                                    .ok()
+                            })
+                            .unwrap_or_default(),
+                    )
+                })
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        // Apply the filters
+        let seqs = seqs
+            .into_iter()
+            .filter(|broadcast| {
+                if broadcast.chain != self.chain_id {
+                    return false;
+                }
+
+                broadcast.transactions.iter().any(move |tx| {
+                    tx.contract_name.as_ref().is_some_and(|cn| {
+                        cn == &self.contract_name &&
+                            self.tx_type.map_or(true, |kind| tx.opcode == kind)
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Ok(seqs)
     }
 
     /// Attempts read the latest broadcast file in the broadcast directory.
@@ -138,7 +226,7 @@ impl BroadcastReader {
     pub fn search_broadcast(
         &self,
         broadcast: ScriptSequence,
-    ) -> Result<Vec<(TransactionWithMetadata, AnyTransactionReceipt)>> {
+    ) -> Vec<(TransactionWithMetadata, AnyTransactionReceipt)> {
         let transactions = broadcast.transactions.clone();
 
         let txs = transactions
@@ -165,6 +253,6 @@ impl BroadcastReader {
         // Sort by descending block number
         targets.sort_by(|a, b| b.1.block_number.cmp(&a.1.block_number));
 
-        Ok(targets)
+        targets
     }
 }

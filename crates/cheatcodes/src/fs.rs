@@ -639,7 +639,7 @@ impl Cheatcode for getBroadcastCall {
 
         let broadcast = reader.read_latest()?;
 
-        let results = reader.search_broadcast(broadcast)?;
+        let results = reader.search_broadcast(broadcast);
 
         let summaries = parse_broadcast_results(results);
 
@@ -663,7 +663,7 @@ impl Cheatcode for getBroadcasts_0Call {
         let mut summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
-                let results = reader.search_broadcast(broadcast)?;
+                let results = reader.search_broadcast(broadcast);
                 Ok(parse_broadcast_results(results))
             })
             .flatten()
@@ -687,7 +687,7 @@ impl Cheatcode for getBroadcasts_1Call {
         let mut summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
-                let results = reader.search_broadcast(broadcast)?;
+                let results = reader.search_broadcast(broadcast);
                 Ok(parse_broadcast_results(results))
             })
             .flatten()
