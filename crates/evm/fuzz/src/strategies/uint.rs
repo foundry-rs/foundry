@@ -95,12 +95,10 @@ pub struct UintStrategy {
     fixtures_weight: usize,
     /// The weight for purely random values
     random_weight: usize,
-    /// Minimum bound for generated values
-    min_bound: U256,
-    /// Maximum bound for generated values
-    max_bound: U256,
-    /// Use logarithmic sampling for large ranges
-    use_log_sampling: bool,
+    /// Optional bounds for generated values
+    bounds: Option<(U256, U256)>,
+
+    
 }
 
 impl UintStrategy {
@@ -113,12 +111,12 @@ impl UintStrategy {
         fixtures: Option<&[DynSolValue]>,
         min_bound: Option<U256>,
         max_bound: Option<U256>,
-        use_log_sampling: bool,
+        
     ) -> Self {
-        let type_max = if bits < 256 { (U256::from(1) << bits) - U256::from(1) } else { U256::MAX };
-
-        let min = min_bound.unwrap_or(U256::ZERO);
-        let max = max_bound.unwrap_or(type_max);
+        let bounds = match (min_bound, max_bound) {
+            (Some(min), Some(max)) => Some((min, max)),
+            _ => None
+        };
 
         Self {
             bits,
@@ -126,23 +124,43 @@ impl UintStrategy {
             edge_weight: 10usize,
             fixtures_weight: 40usize,
             random_weight: 50usize,
-            min_bound: min,
-            max_bound: max,
-            use_log_sampling,
+            bounds
         }
     }
 
+    pub fn use_log_sampling(&self) -> bool {
+        self.bits > 8
+    }
+    
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
         // Choose if we want values around 0 or max
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
-        let start = if is_min {
-            self.min_bound.saturating_add(offset)
+        
+        let start = if let Some((min, max)) = self.bounds {
+            // If bounds are set, use them
+            if is_min {
+                min.saturating_add(offset)
+            } else {
+                max.saturating_sub(offset)
+            }
         } else {
-            self.max_bound.saturating_sub(offset)
+            // If no bounds, use original behavior
+            let type_max = if self.bits < 256 {
+                (U256::from(1) << self.bits) - U256::from(1)
+            } else {
+                U256::MAX
+            };
+            if is_min {
+                offset
+            } else {
+                type_max.saturating_sub(offset)
+            }
         };
-        Ok(UintValueTree::new(start, false, self.min_bound, self.max_bound))
+        
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        Ok(UintValueTree::new(start, false, min, max))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -153,10 +171,11 @@ impl UintStrategy {
 
         // Generate value tree from fixture.
         let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
         if let Some(uint_fixture) = fixture.as_uint() {
             if uint_fixture.1 == self.bits {
-                let fixture_value = uint_fixture.0.clamp(self.min_bound, self.max_bound);
-                return Ok(UintValueTree::new(fixture_value, false, self.min_bound, self.max_bound));
+                let fixture_value = uint_fixture.0.clamp(min, max);
+                return Ok(UintValueTree::new(fixture_value, false, min, max));
             }
         }
 
@@ -195,31 +214,34 @@ impl UintStrategy {
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
-        let start = if self.max_bound <= self.min_bound {
-            self.min_bound
-        } else if self.use_log_sampling {
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        let start = if max <= min {
+            min
+        } else if Self::use_log_sampling(self) {
             self.generate_log_uniform(runner)
         } else {
-            let range = self.max_bound - self.min_bound + U256::from(1);
+            let range = max - min + U256::from(1);
             if range == U256::ZERO {
-                self.min_bound
+                min
             } else {
                 let random = self.generate_random_values_uniformly(runner) % range;
-                self.min_bound + random
+                min + random
             }
         };
 
         Ok(UintValueTree::new(
-            start.clamp(self.min_bound, self.max_bound),
+            start.clamp(min, max),
             false,
-            self.min_bound,
-            self.max_bound
+            min,
+            max
         ))
     }
 
     fn generate_log_uniform(&self, runner: &mut TestRunner) -> U256 {
-        if self.max_bound <= self.min_bound {
-            return self.min_bound;
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+
+        if max <= min {
+            return min;
         }
 
         let rng = runner.rng();
@@ -230,15 +252,23 @@ impl UintStrategy {
         let base = U256::from(1) << exp;
         let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
         
-        value = value.clamp(self.min_bound, self.max_bound);
+        value = value.clamp(min, max);
         
-        if value == self.min_bound && self.max_bound > self.min_bound {
-            let range = self.max_bound - self.min_bound;
+        if value == min && max > min {
+            let range = max - min;
             let offset = U256::from(rng.gen::<u64>()) % range;
-            value = self.min_bound + offset;
+            value = min + offset;
         }
 
         value
+    }
+
+    pub fn type_max(&self) -> U256 {
+     if self.bits < 256 { 
+        (U256::from(1) << self.bits) - U256::from(1) 
+      } else {
+        U256::MAX 
+      }
     }
 }
 
@@ -279,7 +309,7 @@ mod tests {
     fn test_uint_strategy_respects_bounds() {
         let min = U256::from(1000u64);
         let max = U256::from(2000u64);
-        let strategy = UintStrategy::new(16, None, Some(min), Some(max), false);
+        let strategy = UintStrategy::new(16, None, Some(min), Some(max));
         let mut runner = TestRunner::default();
 
         for _ in 0..1000 {
@@ -315,7 +345,7 @@ mod tests {
     fn test_edge_case_generation() {
         let min = U256::from(100u64);
         let max = U256::from(1000u64);
-        let strategy = UintStrategy::new(64, None, Some(min), Some(max), false);
+        let strategy = UintStrategy::new(64, None, Some(min), Some(max));
         let mut runner = TestRunner::default();
 
         let mut found_min_area = false;
@@ -349,7 +379,7 @@ mod tests {
         let valid_fixture = U256::from(500u64);
         let fixtures = vec![DynSolValue::Uint(valid_fixture, 64)];
 
-        let strategy = UintStrategy::new(64, Some(&fixtures), Some(min), Some(max), false);
+        let strategy = UintStrategy::new(64, Some(&fixtures), Some(min), Some(max));
         let mut runner = TestRunner::default();
 
         for _ in 0..100 {
@@ -364,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_log_uniform_sampling() {
-        let strategy = UintStrategy::new(256, None, None, None, true);
+        let strategy = UintStrategy::new(256, None, None, None);
         let mut runner = TestRunner::default();
         let mut log2_buckets = vec![0; 256];
         let iterations = 100000;
