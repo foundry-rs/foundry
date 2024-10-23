@@ -161,7 +161,7 @@ impl UintStrategy {
         };
 
         let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
-        Ok(UintValueTree::new(start, false, min, max))
+        Ok(UintValueTree::new(start, false, Some(min), Some(max)))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -251,7 +251,9 @@ impl UintStrategy {
             }
         };
 
-        Ok(UintValueTree::new(start.clamp(min, max), false, min, max))
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+
+        Ok(UintValueTree::new(start.clamp(min, max), false, Some(min), Some(max)))
     }
 
     fn generate_log_uniform(&self, runner: &mut TestRunner) -> U256 {
@@ -261,6 +263,8 @@ impl UintStrategy {
 
         let base = U256::from(1) << exp;
         let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
+
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
 
         value = value.clamp(min, max);
 
