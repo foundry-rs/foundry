@@ -24,14 +24,12 @@ pub struct BroadcastReader {
 
 impl BroadcastReader {
     /// Create a new `BroadcastReader` instance.
-    pub fn new(contract_name: String, chain_id: u64, root: &Path) -> Result<Self> {
-        let broadcast_path = root.join("broadcast");
-
+    pub fn new(contract_name: String, chain_id: u64, broadcast_path: &Path) -> Result<Self> {
         if !broadcast_path.exists() && !broadcast_path.is_dir() {
             bail!("broadcast does not exist, ensure the contract name and/or chain_id is correct");
         }
 
-        Ok(Self { contract_name, chain_id, tx_type: None, broadcast_path })
+        Ok(Self { contract_name, chain_id, tx_type: None, broadcast_path: broadcast_path.to_path_buf() })
     }
 
     /// Set the transaction type to filter by.

@@ -634,7 +634,7 @@ impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcast = reader.read_latest()?;
@@ -655,7 +655,7 @@ impl Cheatcode for getBroadcasts_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcasts = reader.read_all()?;
@@ -680,7 +680,7 @@ impl Cheatcode for getBroadcasts_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.root)?;
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
         let broadcasts = reader.read_all()?;
 
