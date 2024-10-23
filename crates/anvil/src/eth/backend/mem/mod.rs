@@ -1438,7 +1438,8 @@ impl Backend {
             let block_number = block.number;
 
             let state = if let Some(overrides) = state_overrides {
-                Box::new(state::apply_state_override(overrides, state)?) as Box<dyn MaybeFullDatabase>
+                Box::new(state::apply_state_override(overrides, state)?)
+                    as Box<dyn MaybeFullDatabase>
             } else {
                 state
             };
