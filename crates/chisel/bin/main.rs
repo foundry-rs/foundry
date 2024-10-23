@@ -274,7 +274,7 @@ async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> ey
                 sh_println!("{}", msg.green())?;
             }
         },
-        DispatchResult::UnrecognizedCommand(e) => sh_eprintln!("{e}")?,
+        DispatchResult::UnrecognizedCommand(e) => sh_err!("{e}")?,
         DispatchResult::SolangParserFailed(e) => {
             sh_err!("{}", "Compilation error".red())?;
             sh_eprintln!("{}", format!("{e:?}").red())?;
@@ -294,7 +294,7 @@ async fn evaluate_prelude(
 ) -> eyre::Result<()> {
     let Some(prelude_dir) = maybe_prelude else { return Ok(()) };
     if prelude_dir.is_file() {
-        sh_println!("{} {}", "Loading prelude source file:", prelude_dir.display(),)?;
+        sh_println!("{} {}", "Loading prelude source file:".yellow(), prelude_dir.display(),)?;
         load_prelude_file(dispatcher, prelude_dir).await?;
         sh_println!("{}\n", "Prelude source file loaded successfully!".green())?;
     } else {

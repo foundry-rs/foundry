@@ -459,7 +459,7 @@ impl ChiselDispatcher {
                 if !Path::new("foundry.toml").exists() {
                     return DispatchResult::CommandFailed(Self::make_error(
                         "Must be in a foundry project to export source to script.",
-                    ))
+                    ));
                 }
 
                 // Create "script" dir if it does not already exist.
