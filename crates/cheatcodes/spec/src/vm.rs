@@ -894,6 +894,22 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assumeNoRevert() external pure;
 
+    /// Discard this run's fuzz inputs and generate new ones if next call reverted with data starting with the given revert data. Call more than once to add multiple reasons.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(bytes4 revertData) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(bytes calldata revertData) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverted with data starting with the given revert data. Call more than once to add multiple reasons.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(bytes4 revertData, address reverter) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(bytes calldata revertData, address reverter) external pure;
+
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
     function breakpoint(string calldata char) external pure;

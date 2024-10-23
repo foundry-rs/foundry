@@ -2,29 +2,12 @@ use std::collections::VecDeque;
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    address, hex,
     map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use alloy_sol_types::{SolError, SolValue};
-use foundry_common::ContractsByArtifact;
-use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::{
-    return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
-};
-use spec::Vm;
+use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
 
-/// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
-/// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
-/// to populate the return with dummy bytes so the decode doesn't fail.
-///
-/// 8192 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
-/// size.
-static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
-
-/// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
-
+use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
 ///
 /// For each address, we track the expected calls per call data. We track it in such manner
@@ -87,7 +70,7 @@ pub struct ExpectedRevert {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
-    /// Actual reverter of the call.
+    /// Address that reverted the call.
     pub reverted_by: Option<Address>,
     /// Number of times this revert is expected.
     pub count: u64,
@@ -605,6 +588,20 @@ impl Cheatcode for expectSafeMemoryCallCall {
     }
 }
 
+impl RevertParameters for ExpectedRevert {
+    fn reverter(&self) -> Option<Address> {
+        self.reverter
+    }
+
+    fn reason(&self) -> Option<&[u8]> {
+        self.reason.as_deref()
+    }
+
+    fn partial_match(&self) -> bool {
+        self.partial_match
+    }
+}
+
 /// Handles expected calls specified by the `expectCall` cheatcodes.
 ///
 /// It can handle calls in two ways:
@@ -903,6 +900,7 @@ fn expect_revert(
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
+    ensure!(state.assume_no_revert.is_none(), "Cannot expect a revert when using assumeNoRevert");
     state.expected_revert = Some(ExpectedRevert {
         reason: reason.map(<[_]>::to_vec),
         depth,
