@@ -38,7 +38,6 @@ impl CreationArgsArgs {
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 
         let args_arr = parse_creation_args(bytecode, contract, &etherscan).await?;
-
         for arg in args_arr {
             println!("{arg}");
         }

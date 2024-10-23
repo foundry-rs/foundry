@@ -52,7 +52,6 @@ impl CreationCodeArgs {
         let provider = utils::get_provider(&config)?;
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
-
         let bytecode =
             parse_code_output(bytecode, contract, &etherscan, without_args, only_args).await?;
 
@@ -105,7 +104,7 @@ async fn parse_code_output(
     } else if only_args {
         Bytes::from(bytecode[bytecode.len() - args_size..].to_vec())
     } else {
-        panic!("Unreachable.")
+        unreachable!();
     };
 
     Ok(bytecode)
