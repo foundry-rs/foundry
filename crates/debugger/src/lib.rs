@@ -11,12 +11,12 @@ extern crate tracing;
 mod op;
 
 mod builder;
-mod context;
 mod debugger;
 mod file_dumper;
 mod tui;
 
 mod node;
+
 pub use node::DebugNode;
 
 pub use builder::DebuggerBuilder;

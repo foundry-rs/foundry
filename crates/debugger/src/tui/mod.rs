@@ -19,7 +19,7 @@ use std::{
 };
 
 mod context;
-use crate::context::DebuggerContext;
+use crate::debugger::DebuggerContext;
 use context::TUIContext;
 
 mod draw;

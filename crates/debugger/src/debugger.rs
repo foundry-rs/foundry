@@ -1,13 +1,19 @@
 //! Debugger implementation.
 
-use crate::{
-    context::DebuggerContext, tui::TUI, DebugNode, DebuggerBuilder, ExitReason, FileDumper,
-};
+use crate::{tui::TUI, DebugNode, DebuggerBuilder, ExitReason, FileDumper};
 use alloy_primitives::map::AddressHashMap;
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
 use std::path::PathBuf;
+
+pub struct DebuggerContext {
+    pub debug_arena: Vec<DebugNode>,
+    pub identified_contracts: AddressHashMap<String>,
+    /// Source map of contract sources
+    pub contracts_sources: ContractSources,
+    pub breakpoints: Breakpoints,
+}
 
 pub struct Debugger {
     context: DebuggerContext,
