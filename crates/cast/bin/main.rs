@@ -59,11 +59,21 @@ fn run() -> Result<()> {
 async fn main_args(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
-        CastSubcommand::MaxInt { r#type } => sh_println!("{}", SimpleCast::max_int(&r#type)?)?,
-        CastSubcommand::MinInt { r#type } => sh_println!("{}", SimpleCast::min_int(&r#type)?)?,
-        CastSubcommand::MaxUint { r#type } => sh_println!("{}", SimpleCast::max_int(&r#type)?)?,
-        CastSubcommand::AddressZero => sh_println!("{:?}", Address::ZERO)?,
-        CastSubcommand::HashZero => sh_println!("{:?}", B256::ZERO)?,
+        CastSubcommand::MaxInt { r#type } => {
+            sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
+        }
+        CastSubcommand::MinInt { r#type } => {
+            sh_println!("{}", SimpleCast::min_int(&r#type)?)?;
+        }
+        CastSubcommand::MaxUint { r#type } => {
+            sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
+        }
+        CastSubcommand::AddressZero => {
+            sh_println!("{:?}", Address::ZERO)?;
+        }
+        CastSubcommand::HashZero => {
+            sh_println!("{:?}", B256::ZERO)?;
+        }
 
         // Conversions & transformations
         CastSubcommand::FromUtf8 { text } => {
