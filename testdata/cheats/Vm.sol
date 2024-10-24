@@ -145,7 +145,13 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
+    function assumeNoPartialRevert(bytes4 revertData) external pure;
+    function assumeNoPartialRevert(bytes4 revertData, address reverter) external pure;
     function assumeNoRevert() external pure;
+    function assumeNoRevert(bytes4 revertData) external pure;
+    function assumeNoRevert(bytes calldata revertData) external pure;
+    function assumeNoRevert(bytes4 revertData, address reverter) external pure;
+    function assumeNoRevert(bytes calldata revertData, address reverter) external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
     function breakpoint(string calldata char) external pure;

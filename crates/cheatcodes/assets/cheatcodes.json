@@ -3009,7 +3009,47 @@
     },
     {
       "func": {
-        "id": "assumeNoRevert",
+        "id": "assumeNoPartialRevert_0",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with data starting with the given revert data. Call more than once to add multiple reasons. Can be combined with `assumeNoRevert`.",
+        "declaration": "function assumeNoPartialRevert(bytes4 revertData) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoPartialRevert(bytes4)",
+        "selector": "0xba286427",
+        "selectorBytes": [
+          186,
+          40,
+          100,
+          39
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoPartialRevert_1",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with data starting with the given revert data. Call more than once to add multiple reasons. Can be combined with `assumeNoRevert`.",
+        "declaration": "function assumeNoPartialRevert(bytes4 revertData, address reverter) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoPartialRevert(bytes4,address)",
+        "selector": "0x3d5c537e",
+        "selectorBytes": [
+          61,
+          92,
+          83,
+          126
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
         "declaration": "function assumeNoRevert() external pure;",
         "visibility": "external",
@@ -3021,6 +3061,86 @@
           91,
           54,
           106
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_1",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons. Can be combined with `assumeNoPartialRevert`.",
+        "declaration": "function assumeNoRevert(bytes4 revertData) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert(bytes4)",
+        "selector": "0x4303edfa",
+        "selectorBytes": [
+          67,
+          3,
+          237,
+          250
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_2",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons. Can be combined with `assumeNoPartialRevert`.",
+        "declaration": "function assumeNoRevert(bytes calldata revertData) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert(bytes)",
+        "selector": "0xbcf4eb10",
+        "selectorBytes": [
+          188,
+          244,
+          235,
+          16
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_3",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons. Can be combined with `assumeNoRevert`.",
+        "declaration": "function assumeNoRevert(bytes4 revertData, address reverter) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert(bytes4,address)",
+        "selector": "0x7ef98451",
+        "selectorBytes": [
+          126,
+          249,
+          132,
+          81
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_4",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons. Can be combined with `assumeNoPartialRevert`.",
+        "declaration": "function assumeNoRevert(bytes calldata revertData, address reverter) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert(bytes,address)",
+        "selector": "0x01e52b3f",
+        "selectorBytes": [
+          1,
+          229,
+          43,
+          63
         ]
       },
       "group": "testing",
