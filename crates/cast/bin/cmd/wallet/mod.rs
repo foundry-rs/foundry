@@ -7,7 +7,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
-use cast::revm::primitives::{Authorization, U256};
+use cast::revm::primitives::Authorization;
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{opts::RpcOpts, utils};
@@ -390,7 +390,7 @@ impl WalletSubcommands {
                 } else {
                     provider.get_chain_id().await?
                 };
-                let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
+                let auth = Authorization { chain_id, address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
                 println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)));

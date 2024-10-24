@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{cli_warn, ens::NameOrAddress};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
@@ -145,7 +145,7 @@ impl SendTxArgs {
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
                 if config_chain_id != current_chain_id {
-                    cli_warn!("Switching to chain {}", config_chain);
+                    sh_warn!("Switching to chain {}", config_chain)?;
                     provider
                         .raw_request(
                             "wallet_switchEthereumChain".into(),

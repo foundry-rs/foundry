@@ -855,3 +855,76 @@ contract NoSelectorTest is Test {
 ...
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/3607>
+forgetest_init!(should_show_invariant_metrics, |prj, cmd| {
+    prj.add_test(
+        "SelectorMetricsTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    function setUp() public {
+        CounterHandler handler = new CounterHandler();
+        AnotherCounterHandler handler1 = new AnotherCounterHandler();
+        // targetContract(address(handler1));
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.show-metrics = true
+    function invariant_counter() public {}
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.show-metrics = true
+    function invariant_counter2() public {}
+}
+
+contract CounterHandler is Test {
+    function doSomething(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+
+    function doAnotherThing(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+}
+
+contract AnotherCounterHandler is Test {
+    function doWork(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+
+    function doWorkThing(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SelectorMetricsTest.t.sol:CounterTest
+[PASS] invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+| Contract              | Selector       | Calls | Reverts | Discards |
+|-----------------------|----------------|-------|---------|----------|
+| AnotherCounterHandler | doWork         |  [..] |    [..]   |   [..]   |
+| AnotherCounterHandler | doWorkThing    |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doAnotherThing |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doSomething    |  [..] |    [..]   |   [..]   |
+
+[PASS] invariant_counter2() (runs: 10, calls: 5000, reverts: [..])
+| Contract              | Selector       | Calls | Reverts | Discards |
+|-----------------------|----------------|-------|---------|----------|
+| AnotherCounterHandler | doWork         |  [..] |    [..]   |   [..]   |
+| AnotherCounterHandler | doWorkThing    |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doAnotherThing |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doSomething    |  [..] |    [..]   |   [..]   |
+
+...
+"#]]);
+});

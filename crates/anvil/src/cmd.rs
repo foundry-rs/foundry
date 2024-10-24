@@ -72,10 +72,6 @@ pub struct NodeArgs {
     #[arg(long)]
     pub derivation_path: Option<String>,
 
-    /// Don't print anything on startup and don't print logs
-    #[arg(long)]
-    pub silent: bool,
-
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
@@ -258,7 +254,6 @@ impl NodeArgs {
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
-            .set_silent(self.silent)
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
