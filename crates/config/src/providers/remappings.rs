@@ -170,7 +170,7 @@ impl RemappingsProvider<'_> {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
-                    continue
+                    continue;
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -196,7 +196,7 @@ impl RemappingsProvider<'_> {
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
             .iter()
-            .map(|p| self.root.join(p))
+            .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
             .flat_map(foundry_toml_dirs)
             .inspect(|lib| {
                 trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
@@ -252,7 +252,7 @@ impl Provider for RemappingsProvider<'_> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone())
+                    return Err(err.clone());
                 }
             }
         }?;
