@@ -57,11 +57,16 @@ impl BroadcastReader {
             let path = entry.path();
 
             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                // Ignore -latest to avoid duplicating broadcast entries
+                if path.components().any(|c| c.as_os_str().to_string_lossy().contains("-latest")) {
+                    continue;
+                }
+
                 // Detect Multichain broadcasts using "multi" in the path
                 if path.components().any(|c| c == Component::Normal("multi".as_ref())) {
                     // Parse as MultiScriptSequence
 
-                    let broadcast = fs::read_json_file::<serde_json::Value>(&path)?;
+                    let broadcast = fs::read_json_file::<serde_json::Value>(path)?;
                     let multichain_deployments = broadcast
                         .get("deployments")
                         .and_then(|deployments| {
@@ -69,15 +74,11 @@ impl BroadcastReader {
                         })
                         .unwrap_or_default();
 
-                    println!("Found {} multichain broadcasts", multichain_deployments.len());
                     broadcasts.extend(multichain_deployments);
-
-                    println!("Extended {} multichain broadcasts", broadcasts.len());
                     continue;
                 }
 
-                let broadcast = fs::read_json_file::<ScriptSequence>(&path)?;
-                println!("Found single chain broadcast at {:?}", path);
+                let broadcast = fs::read_json_file::<ScriptSequence>(path)?;
                 broadcasts.push(broadcast);
             }
         }
