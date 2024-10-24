@@ -1,6 +1,7 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
@@ -543,6 +544,7 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
     prj.wipe_contracts();
+    prj.write_config(Config { evm_version: EvmVersion::Paris, ..Default::default() });
 
     let endpoint = rpc::next_http_archive_rpc_endpoint();
 
@@ -1190,7 +1192,11 @@ forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.clear();
 
     // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
+    prj.write_config(Config {
+        optimizer: false,
+        evm_version: EvmVersion::Paris,
+        ..Default::default()
+    });
 
     prj.add_test(
         "Simple",
@@ -1268,7 +1274,11 @@ forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.clear();
 
     // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
+    prj.write_config(Config {
+        optimizer: false,
+        evm_version: EvmVersion::Paris,
+        ..Default::default()
+    });
 
     prj.add_test(
         "Simple",
@@ -1399,6 +1409,7 @@ contract DeterministicRandomnessTest is Test {
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
     prj.wipe_contracts();
+    prj.write_config(Config { evm_version: EvmVersion::Paris, ..Default::default() });
 
     prj.add_test(
         "ATest.t.sol",
@@ -1565,6 +1576,7 @@ forgetest_init!(pause_tracing, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.clear();
+    prj.write_config(Config { evm_version: EvmVersion::Paris, ..Default::default() });
 
     prj.add_source(
         "Pause.t.sol",
