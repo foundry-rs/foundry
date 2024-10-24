@@ -279,9 +279,9 @@ async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> ey
             sh_err!("{}", "Compilation error".red())?;
             sh_eprintln!("{}", format!("{e:?}").red())?;
         }
-        DispatchResult::FileIoError(e) => sh_err!("{}", format!("⚒️ Chisel File IO Error - {e}").red())?,
+        DispatchResult::FileIoError(e) => sh_err!("{}", format!("File IO - {e}").red())?,
         DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => sh_err!("{}", msg.red())?,
-        DispatchResult::Failure(None) => sh_err!("{}\nPlease Report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose", "⚒️ Unknown Chisel Error ⚒️".red())?,
+        DispatchResult::Failure(None) => sh_err!("Please report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose")?,
     }
     Ok(r.is_error())
 }

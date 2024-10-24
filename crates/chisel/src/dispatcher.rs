@@ -970,7 +970,7 @@ impl ChiselDispatcher {
     ///
     /// A formatted error [String].
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
-        format!("{} {}", format!("{CHISEL_CHAR} Chisel Error:").red(), msg.red())
+        format!("{}", msg.red())
     }
 }
 
