@@ -281,7 +281,7 @@ where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
-    /// Builds [TransactionRequest] and fiils missing fields. Returns a transaction which is ready
+    /// Builds [TransactionRequest] and fills missing fields. Returns a transaction which is ready
     /// to be broadcasted.
     pub async fn build(
         self,
