@@ -1638,13 +1638,17 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
-                    // Write new line if we have only one parameter and params first all multi set.
+                    // Write new line if we have only one parameter and params first set,
+                    // or if the function definition is multiline and all params set.
                     if params.len() == 1 &&
-                        matches!(
+                        (matches!(
                             fmt.config.multiline_func_header,
-                            MultilineFuncHeaderStyle::ParamsFirst |
+                            MultilineFuncHeaderStyle::ParamsFirst
+                        ) || params_multiline &&
+                            matches!(
+                                fmt.config.multiline_func_header,
                                 MultilineFuncHeaderStyle::AllParams
-                        )
+                            ))
                     {
                         writeln!(fmt.buf())?;
                     }
