@@ -1405,7 +1405,7 @@ casttest!(parse_units, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(parse_units, |_prj, cmd| {
+casttest!(format_units, |_prj, cmd| {
     cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
 1
 
