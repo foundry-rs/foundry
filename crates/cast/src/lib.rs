@@ -1351,17 +1351,7 @@ impl SimpleCast {
             .wrap_err("Could not convert to uint")?
             .0;
         let unit = unit.parse().wrap_err("could not parse units")?;
-        let mut formatted = ParseUnits::U256(value).format_units(unit);
-
-        // Trim empty fractional part.
-        if let Some(dot) = formatted.find('.') {
-            let fractional = &formatted[dot + 1..];
-            if fractional.chars().all(|c: char| c == '0') {
-                formatted = formatted[..dot].to_string();
-            }
-        }
-
-        Ok(formatted)
+        Ok(Self::format_unit_as_string(value, unit))
     }
 
     /// Convert a number into a uint with arbitrary decimals.
@@ -1403,8 +1393,12 @@ impl SimpleCast {
     pub fn format_units(value: &str, unit: u8) -> Result<String> {
         let value = NumberWithBase::parse_int(value, None)?.number();
         let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-        let mut formatted = ParseUnits::U256(value).format_units(unit);
+        Ok(Self::format_unit_as_string(value, unit))
+    }
 
+    // Helper function to format units as a string
+    fn format_unit_as_string(value: U256, unit: Unit) -> String {
+        let mut formatted = ParseUnits::U256(value).format_units(unit);
         // Trim empty fractional part.
         if let Some(dot) = formatted.find('.') {
             let fractional = &formatted[dot + 1..];
@@ -1412,8 +1406,7 @@ impl SimpleCast {
                 formatted = formatted[..dot].to_string();
             }
         }
-
-        Ok(formatted)
+        formatted
     }
 
     /// Converts wei into an eth amount
