@@ -53,7 +53,7 @@ impl RpcArgs {
         } else {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
-        println!("{}", Cast::new(provider).rpc(&method, params).await?);
+        sh_println!("{}", Cast::new(provider).rpc(&method, params).await?)?;
         Ok(())
     }
 }

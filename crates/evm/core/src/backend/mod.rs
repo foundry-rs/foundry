@@ -19,8 +19,8 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
+        Account, AccountInfo, BlobExcessGasAndPrice, Bytecode, Env, EnvWithHandlerCfg, EvmState,
+        EvmStorageSlot, HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -1916,6 +1916,8 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
+    env.block.blob_excess_gas_and_price =
+        block.header.excess_blob_gas.map(BlobExcessGasAndPrice::new);
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
@@ -1929,6 +1931,12 @@ fn commit_transaction(
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn InspectorExt,
 ) -> eyre::Result<()> {
+    // TODO: Remove after https://github.com/foundry-rs/foundry/pull/9131
+    // if the tx has the blob_versioned_hashes field, we assume it's a Cancun block
+    if tx.blob_versioned_hashes.is_some() {
+        env.handler_cfg.spec_id = SpecId::CANCUN;
+    }
+
     configure_tx_env(&mut env.env, tx);
 
     let now = Instant::now();

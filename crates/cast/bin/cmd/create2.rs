@@ -124,7 +124,7 @@ impl Create2Args {
         if let Some(salt) = salt {
             let salt = hex::FromHex::from_hex(salt)?;
             let address = deployer.create2(salt, init_code_hash);
-            println!("{address}");
+            sh_println!("{address}")?;
             return Ok(Create2Output { address, salt });
         }
 
@@ -191,11 +191,13 @@ impl Create2Args {
             rng.fill_bytes(remaining);
         }
 
-        println!("Configuration:");
-        println!("Init code hash: {init_code_hash}");
-        println!("Regex patterns: {:?}", regex.patterns());
-        println!();
-        println!("Starting to generate deterministic contract address with {n_threads} threads...");
+        sh_println!("Configuration:")?;
+        sh_println!("Init code hash: {init_code_hash}")?;
+        sh_println!("Regex patterns: {:?}", regex.patterns())?;
+        sh_println!()?;
+        sh_println!(
+            "Starting to generate deterministic contract address with {n_threads} threads..."
+        )?;
         let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
@@ -249,9 +251,9 @@ impl Create2Args {
 
         let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
         let (address, salt) = results.into_iter().next().unwrap();
-        println!("Successfully found contract address in {:?}", timer.elapsed());
-        println!("Address: {address}");
-        println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0));
+        sh_println!("Successfully found contract address in {:?}", timer.elapsed())?;
+        sh_println!("Address: {address}")?;
+        sh_println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
 
         Ok(Create2Output { address, salt })
     }

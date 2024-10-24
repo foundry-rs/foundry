@@ -171,6 +171,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
                 NamedChain::ArbitrumTestnet |
+                NamedChain::Etherlink |
+                NamedChain::EtherlinkTestnet |
                 NamedChain::Karura |
                 NamedChain::KaruraTestnet |
                 NamedChain::Mantle |

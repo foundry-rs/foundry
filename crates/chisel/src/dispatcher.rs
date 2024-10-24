@@ -275,7 +275,7 @@ impl ChiselDispatcher {
                     if let Err(e) = self.session.write() {
                         return DispatchResult::FileIoError(e.into())
                     }
-                    println!("{}", "Saved current session!".green());
+                    let _ = sh_println!("{}", "Saved current session!".green());
                 }
 
                 // Parse the arguments
@@ -426,7 +426,7 @@ impl ChiselDispatcher {
                             if matches!(cmd, ChiselCommand::MemDump) {
                                 // Print memory by word
                                 (0..mem.len()).step_by(32).for_each(|i| {
-                                    println!(
+                                    let _ = sh_println!(
                                         "{}: {}",
                                         format!("[0x{:02x}:0x{:02x}]", i, i + 32).yellow(),
                                         hex::encode_prefixed(&mem[i..i + 32]).cyan()
@@ -435,7 +435,7 @@ impl ChiselDispatcher {
                             } else {
                                 // Print all stack items
                                 (0..stack.len()).rev().for_each(|i| {
-                                    println!(
+                                    let _ = sh_println!(
                                         "{}: {}",
                                         format!("[{}]", stack.len() - i - 1).yellow(),
                                         format!("0x{:02x}", stack[i]).cyan()
@@ -712,9 +712,9 @@ impl ChiselDispatcher {
                                 // Show console logs, if there are any
                                 let decoded_logs = decode_console_logs(&res.logs);
                                 if !decoded_logs.is_empty() {
-                                    println!("{}", "Logs:".green());
+                                    let _ = sh_println!("{}", "Logs:".green());
                                     for log in decoded_logs {
-                                        println!("  {log}");
+                                        let _ = sh_println!("  {log}");
                                     }
                                 }
                             }
@@ -830,7 +830,9 @@ impl ChiselDispatcher {
         // Should change up how this works.
         match source.inspect(input).await {
             // Continue and print
-            Ok((true, Some(res))) => println!("{res}"),
+            Ok((true, Some(res))) => {
+                let _ = sh_println!("{res}");
+            }
             Ok((true, None)) => {}
             // Return successfully
             Ok((false, res)) => {
@@ -859,9 +861,9 @@ impl ChiselDispatcher {
                             // Show console logs, if there are any
                             let decoded_logs = decode_console_logs(&res.logs);
                             if !decoded_logs.is_empty() {
-                                println!("{}", "Logs:".green());
+                                let _ = sh_println!("{}", "Logs:".green());
                                 for log in decoded_logs {
-                                    println!("  {log}");
+                                    let _ = sh_println!("  {log}");
                                 }
                             }
 
@@ -948,12 +950,12 @@ impl ChiselDispatcher {
             eyre::bail!("Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
         }
 
-        println!("{}", "Traces:".green());
+        sh_println!("{}", "Traces:".green())?;
         for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
                 decode_trace_arena(trace, decoder).await?;
-                println!("{}", render_trace_arena(trace));
+                sh_println!("{}", render_trace_arena(trace))?;
             }
         }
 
@@ -970,7 +972,7 @@ impl ChiselDispatcher {
     ///
     /// A formatted error [String].
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
-        format!("{} {}", format!("{CHISEL_CHAR} Chisel Error:").red(), msg.red())
+        format!("{}", msg.red())
     }
 }
 

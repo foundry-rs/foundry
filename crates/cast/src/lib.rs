@@ -56,6 +56,9 @@ mod rlp_converter;
 
 use rlp_converter::Item;
 
+#[macro_use]
+extern crate foundry_common;
+
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
 sol! {
@@ -1947,9 +1950,9 @@ impl SimpleCast {
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, flattened)?;
-            println!("Flattened file written at {}", path.display());
+            sh_println!("Flattened file written at {}", path.display())?
         } else {
-            println!("{flattened}");
+            sh_println!("{flattened}")?
         }
 
         Ok(())
