@@ -1099,34 +1099,21 @@ casttest!(storage, |_prj, cmd| {
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout, |_prj, cmd| {
     cmd.args([
-            "storage",
-            "--rpc-url",
-            next_rpc_endpoint(NamedChain::Mainnet).as_str(),
-            "--block",
-            "21034138",
-            "--etherscan-api-key",
-            next_mainnet_etherscan_api_key().as_str(),
-            "0xDFC14d2Af169B0D36C4EFF567Ada9b2E0CAE044f",
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-| Name                 | Type                                            | Slot | Offset | Bytes | Value                                                                         | Hex Value                                                          | Contract                   |
-|----------------------|-------------------------------------------------|------|--------|-------|-------------------------------------------------------------------------------|--------------------------------------------------------------------|----------------------------|
-| totalSupply          | uint256                                         | 0    | 0      | 32    | 83830546793748974270                                                          | 0x0000000000000000000000000000000000000000000000048b61ee27d82b4abe | Contract.sol:UniswapV2Pair |
-| balanceOf            | mapping(address => uint256)                     | 1    | 0      | 32    | 0                                                                             | 0x0000000000000000000000000000000000000000000000000000000000000000 | Contract.sol:UniswapV2Pair |
-| allowance            | mapping(address => mapping(address => uint256)) | 2    | 0      | 32    | 0                                                                             | 0x0000000000000000000000000000000000000000000000000000000000000000 | Contract.sol:UniswapV2Pair |
-| DOMAIN_SEPARATOR     | bytes32                                         | 3    | 0      | 32    | 24431994160268227242244579702667263358646685984554335916871124115813463999896 | 0x360404c620d5b15ee1a03cb4e9f05d590792c37ed3507630d41f92379543c598 | Contract.sol:UniswapV2Pair |
-| nonces               | mapping(address => uint256)                     | 4    | 0      | 32    | 0                                                                             | 0x0000000000000000000000000000000000000000000000000000000000000000 | Contract.sol:UniswapV2Pair |
-| factory              | address                                         | 5    | 0      | 20    | 527585359103765554095092340981710322784165800559                              | 0x0000000000000000000000005c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f | Contract.sol:UniswapV2Pair |
-| token0               | address                                         | 6    | 0      | 20    | 729466174051048026939049150500379070045048658665                              | 0x0000000000000000000000007fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 | Contract.sol:UniswapV2Pair |
-| token1               | address                                         | 7    | 0      | 20    | 1097077688018008265106216665536940668749033598146                             | 0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2 | Contract.sol:UniswapV2Pair |
-| reserve0             | uint112                                         | 8    | 0      | 14    | 515972123710487818030                                                         | 0x00000000000000000000000000000000000000000000001bf88d38c6f7886f2e | Contract.sol:UniswapV2Pair |
-| reserve1             | uint112                                         | 8    | 14     | 14    | 30456796612309404662                                                          | 0x000000000000000000000000000000000000000000000001a6ac4726e105cbf6 | Contract.sol:UniswapV2Pair |
-| blockTimestampLast   | uint32                                          | 8    | 28     | 4     | 1729755515                                                                    | 0x000000000000000000000000000000000000000000000000000000006719f97b | Contract.sol:UniswapV2Pair |
-| price0CumulativeLast | uint256                                         | 9    | 0      | 32    | 47654595694858616179069266331692577979700                                     | 0x0000000000000000000000000000008c0b55489c9999a37760e1a89ea85dfd34 | Contract.sol:UniswapV2Pair |
-| price1CumulativeLast | uint256                                         | 10   | 0      | 32    | 12725880763600919027073537003654151331110141                                  | 0x00000000000000000000000000009216009b21ce1c5df64e8dba22bdd76fdcfd | Contract.sol:UniswapV2Pair |
-| kLast                | uint256                                         | 11   | 0      | 32    | 0                                                                             | 0x0000000000000000000000000000000000000000000000000000000000000000 | Contract.sol:UniswapV2Pair |
-| unlocked             | uint256                                         | 12   | 0      | 32    | 1                                                                             | 0x0000000000000000000000000000000000000000000000000000000000000001 | Contract.sol:UniswapV2Pair |
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+| Name    | Type    | Slot | Offset | Bytes | Value | Hex Value                                                          | Contract                                      |
+|---------|---------|------|--------|-------|-------|--------------------------------------------------------------------|-----------------------------------------------|
+| _owner  | address | 0    | 0      | 20    | 0     | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/Create2Deployer.sol:Create2Deployer |
+| _paused | bool    | 0    | 20     | 1     | 0     | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/Create2Deployer.sol:Create2Deployer |
 
 "#]]);
 });
