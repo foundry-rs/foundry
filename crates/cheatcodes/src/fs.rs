@@ -639,7 +639,7 @@ impl Cheatcode for getBroadcastCall {
 
         let broadcast = reader.read_latest()?;
 
-        let results = reader.search_broadcast(broadcast);
+        let results = reader.into_tx_receipts(broadcast);
 
         let summaries = parse_broadcast_results(results);
 
@@ -658,12 +658,12 @@ impl Cheatcode for getBroadcasts_0Call {
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
-        let broadcasts = reader.read_all()?;
+        let broadcasts = reader.read()?;
 
         let mut summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
-                let results = reader.search_broadcast(broadcast);
+                let results = reader.into_tx_receipts(broadcast);
                 Ok(parse_broadcast_results(results))
             })
             .flatten()
@@ -682,12 +682,12 @@ impl Cheatcode for getBroadcasts_1Call {
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
-        let broadcasts = reader.read_all()?;
+        let broadcasts = reader.read()?;
 
         let mut summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
-                let results = reader.search_broadcast(broadcast);
+                let results = reader.into_tx_receipts(broadcast);
                 Ok(parse_broadcast_results(results))
             })
             .flatten()

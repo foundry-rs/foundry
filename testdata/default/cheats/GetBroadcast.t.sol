@@ -11,42 +11,26 @@ contract GetBroadcastTest is DSTest {
         // Get latest Counter deployment on chain_id 31337
         bytes32 latestCreate = 0xf4320023569ddcc3aab7da8a39b7388a3aeadf32da466a4b10709274999dcff5;
 
-        Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
-            "Counter",
-            31337,
-            Vm.BroadcastTxType.Create
-        );
+        Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast("Counter", 31337, Vm.BroadcastTxType.Create);
 
         assertEq(broadcast.txHash, latestCreate);
 
         bytes32 latestCreate2 = 0x008bbaec35131ffc7de43d362aa4412e6970bcd8c48d531e9fda51ceaf1f5fe9;
 
-        Vm.BroadcastTxSummary memory broadcast2 = vm.getBroadcast(
-            "Counter",
-            31337,
-            Vm.BroadcastTxType.Create2
-        );
+        Vm.BroadcastTxSummary memory broadcast2 = vm.getBroadcast("Counter", 31337, Vm.BroadcastTxType.Create2);
 
         assertEq(broadcast2.txHash, latestCreate2);
 
         bytes32 latestCall = 0x1046225989e019746b245e8b746933795371efe39c946f3b18bc43d70e260d9f;
 
-        Vm.BroadcastTxSummary memory broadcast3 = vm.getBroadcast(
-            "Counter",
-            1,
-            Vm.BroadcastTxType.Call
-        );
+        Vm.BroadcastTxSummary memory broadcast3 = vm.getBroadcast("Counter", 1, Vm.BroadcastTxType.Call);
 
         assertEq(broadcast3.txHash, latestCall);
     }
 
     function test_getBroadcasts() public {
         // Gets the calls to Counter on chain_id 31337
-        Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts(
-            "Counter",
-            31337,
-            Vm.BroadcastTxType.Call
-        );
+        Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts("Counter", 31337, Vm.BroadcastTxType.Call);
 
         assertEq(broadcasts.length, 2);
 
@@ -59,10 +43,7 @@ contract GetBroadcastTest is DSTest {
 
     function test_getAllBroadcasts() public {
         // Gets all broadcasts to Counter on chain_id 31337
-        Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts(
-            "Counter",
-            31337
-        );
+        Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts("Counter", 31337);
 
         assertEq(broadcasts.length, 4);
 
@@ -70,7 +51,7 @@ contract GetBroadcastTest is DSTest {
         uint8 num_create = 0;
         uint8 num_create2 = 0;
 
-        for (uint i = 0; i < broadcasts.length; i++) {
+        for (uint256 i = 0; i < broadcasts.length; i++) {
             if (broadcasts[i].txType == Vm.BroadcastTxType.Call) {
                 num_calls++;
             } else if (broadcasts[i].txType == Vm.BroadcastTxType.Create) {

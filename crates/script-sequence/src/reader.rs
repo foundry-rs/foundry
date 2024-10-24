@@ -3,7 +3,7 @@ use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{bail, Result};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// This type reads broadcast files in the
 /// `project_root/broadcast/{contract_name}.s.sol/{chain_id}/` directory.
@@ -49,140 +49,63 @@ impl BroadcastReader {
     ///
     /// project-root/broadcast/{script_name}.s.sol/{chain_id}/*.json
     /// project-root/broadcast/multi/{multichain_script_name}.s.sol-{timestamp}/deploy.json
-    pub fn read_all(&self) -> eyre::Result<Vec<ScriptSequence>> {
-        // 1. Read the broadcast directory and get all the script directories and multi dirs i.e
-        //    {script_contract_name}.s.sol/ OR broadcast/multi/
-        let script_dirs = std::fs::read_dir(&self.broadcast_path)?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                // Get all the script directories that end with `.s.sol`
-                if path.is_dir() &&
-                    path.file_name()
-                        .is_some_and(|dir_name| dir_name.to_string_lossy().ends_with(".s.sol"))
-                {
-                    return Some(path);
-                }
-                None
-            })
-            .collect::<Vec<_>>();
+    pub fn read(&self) -> eyre::Result<Vec<ScriptSequence>> {
+        // 1. Recursively read all .json files in the broadcast directory
+        let mut broadcasts = vec![];
+        for entry in walkdir::WalkDir::new(&self.broadcast_path).into_iter() {
+            let entry = entry?;
+            let path = entry.path();
 
-        // 2. Iterate over the script directories and get the {chain_id} directories
-        let chain_dirs = script_dirs
-            .into_iter()
-            .filter_map(|script_dir| {
-                std::fs::read_dir(&script_dir).ok().map(|read_dir| {
-                    read_dir.filter_map(|chain_dir| {
-                        let chain_dir = chain_dir.ok()?;
-                        let path = chain_dir.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                // Detect Multichain broadcasts using "multi" in the path
+                if path.components().any(|c| c == Component::Normal("multi".as_ref())) {
+                    // Parse as MultiScriptSequence
 
-                        // Get all the chain directories that match the chain_id
-                        if path.is_dir() &&
-                            path.file_name().is_some_and(|dir_name| {
-                                dir_name.to_string_lossy() == self.chain_id.to_string()
-                            })
-                        {
-                            Some(path)
-                        } else {
-                            None
-                        }
-                    })
-                })
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-
-        // 3. Iterate over the chain directories and get all the broadcast files
-        let broadcasts = chain_dirs
-            .into_iter()
-            .flat_map(|chain_dir| {
-                fs::json_files(&chain_dir).filter_map(|path| {
-                    // Ignore if file == run-latest.json to avoid duplicates
-                    if path.file_name().is_some_and(|file| file == "run-latest.json") {
-                        return None;
-                    }
-                    fs::read_json_file::<ScriptSequence>(&path).ok().filter(|broadcast| {
-                        if broadcast.chain != self.chain_id {
-                            return false;
-                        }
-                        broadcast.transactions.iter().any(move |tx| {
-                            tx.contract_name.as_ref().is_some_and(|cn| {
-                                cn == &self.contract_name &&
-                                    self.tx_type.map_or(true, |kind| tx.opcode == kind)
-                            })
+                    let broadcast = fs::read_json_file::<serde_json::Value>(&path)?;
+                    let multichain_deployments = broadcast
+                        .get("deployments")
+                        .and_then(|deployments| {
+                            serde_json::from_value::<Vec<ScriptSequence>>(deployments.clone()).ok()
                         })
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
+                        .unwrap_or_default();
 
-        let multichain_broadcasts = self.read_multi()?;
+                    println!("Found {} multichain broadcasts", multichain_deployments.len());
+                    broadcasts.extend(multichain_deployments);
 
-        let broadcasts =
-            broadcasts.into_iter().chain(multichain_broadcasts.into_iter()).collect::<Vec<_>>();
+                    println!("Extended {} multichain broadcasts", broadcasts.len());
+                    continue;
+                }
+
+                let broadcast = fs::read_json_file::<ScriptSequence>(&path)?;
+                println!("Found single chain broadcast at {:?}", path);
+                broadcasts.push(broadcast);
+            }
+        }
+
+        let broadcasts = self.filter_and_sort(broadcasts);
 
         Ok(broadcasts)
     }
 
-    pub fn read_multi(&self) -> eyre::Result<Vec<ScriptSequence>> {
-        // Read multichain broadcasts
-        let multi_dir = self.broadcast_path.join("multi");
+    /// Attempts read the latest broadcast file in the broadcast directory.
+    ///
+    /// This may be the `run-latest.json` file or the broadcast file with the latest timestamp.
+    pub fn read_latest(&self) -> eyre::Result<ScriptSequence> {
+        let broadcasts = self.read()?;
 
-        let multi_chain_dirs = if multi_dir.exists() && multi_dir.is_dir() {
-            std::fs::read_dir(&multi_dir)?
-                .filter_map(|entry| {
-                    let entry = entry.ok()?;
-                    let path = entry.path();
-
-                    if !path.is_dir() {
-                        return None
-                    }
-
-                    let file = path.file_name();
-
-                    // Ignore -latest to avoid duplicating entries
-                    if file.is_some_and(|dir_name| {
-                        dir_name.to_string_lossy().ends_with(".s.sol-latest")
-                    }) {
-                        return None;
-                    }
-
-                    // Get all the multi chain directories that end with `.s.sol`
-                    if file.is_some_and(|dir_name| dir_name.to_string_lossy().contains(".s.sol")) {
-                        return Some(path);
-                    }
-                    None
-                })
-                .collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
-
-        let multichain_seqs = multi_chain_dirs
+        // Find the broadcast with the latest timestamp
+        let target = broadcasts
             .into_iter()
-            .flat_map(|multi_dir| fs::json_files(&multi_dir))
-            .collect::<Vec<_>>();
+            .max_by_key(|broadcast| broadcast.timestamp)
+            .ok_or_else(|| eyre::eyre!("No broadcasts found"))?;
 
-        let seqs = multichain_seqs
-            .into_iter()
-            .flat_map(|path| {
-                fs::read_json_file::<serde_json::Value>(&path).ok().and_then(|ser_seqs| {
-                    Some(
-                        ser_seqs
-                            .get("deployments")
-                            .and_then(|deployments| {
-                                serde_json::from_value::<Vec<ScriptSequence>>(deployments.clone())
-                                    .ok()
-                            })
-                            .unwrap_or_default(),
-                    )
-                })
-            })
-            .flatten()
-            .collect::<Vec<_>>();
+        Ok(target)
+    }
 
+    /// Applies the filters and sorts the broadcasts by descending timestamp.
+    pub fn filter_and_sort(&self, broadcasts: Vec<ScriptSequence>) -> Vec<ScriptSequence> {
         // Apply the filters
-        let seqs = seqs
+        let seqs = broadcasts
             .into_iter()
             .filter(|broadcast| {
                 if broadcast.chain != self.chain_id {
@@ -198,22 +121,11 @@ impl BroadcastReader {
             })
             .collect::<Vec<_>>();
 
-        Ok(seqs)
-    }
+        // Sort by descending timestamp
+        let mut seqs = seqs;
+        seqs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-    /// Attempts read the latest broadcast file in the broadcast directory.
-    ///
-    /// This may be the `run-latest.json` file or the broadcast file with the latest timestamp.
-    pub fn read_latest(&self) -> eyre::Result<ScriptSequence> {
-        let broadcasts = self.read_all()?;
-
-        // Find the broadcast with the latest timestamp
-        let target = broadcasts
-            .into_iter()
-            .max_by_key(|broadcast| broadcast.timestamp)
-            .ok_or_else(|| eyre::eyre!("No broadcasts found"))?;
-
-        Ok(target)
+        seqs
     }
 
     /// Search for transactions in the broadcast that match the specified `contractName` and
@@ -223,7 +135,9 @@ impl BroadcastReader {
     /// returns the result.
     ///
     /// Transactions that don't have a corresponding receipt are ignored.
-    pub fn search_broadcast(
+    ///
+    /// Sorts the transactions by descending block number.
+    pub fn into_tx_receipts(
         &self,
         broadcast: ScriptSequence,
     ) -> Vec<(TransactionWithMetadata, AnyTransactionReceipt)> {
