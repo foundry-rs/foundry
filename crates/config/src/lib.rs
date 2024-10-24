@@ -238,7 +238,7 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
-    /// timeout that should be used for any rpc calls
+    /// Timeout that should be used for any rpc calls
     pub eth_rpc_timeout: Option<u64>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,

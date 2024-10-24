@@ -41,10 +41,11 @@ pub struct RpcOpts {
     #[arg(long, env = "ETH_RPC_JWT_SECRET")]
     pub jwt_secret: Option<String>,
 
-    /// Timeout for the rpc request
+    /// Timeout for the RPC request in seconds.
     ///
-    /// The rpc-timeout will be used to override the default timeout for RPC.
-    /// Default value is 45s
+    /// The specified timeout will be used to override the default timeout for RPC requests.
+    ///
+    /// Default value: 45
     #[arg(long, env = "ETH_RPC_TIMEOUT")]
     pub rpc_timeout: Option<u64>,
 }
