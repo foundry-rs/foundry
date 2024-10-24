@@ -1917,7 +1917,7 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
     env.block.blob_excess_gas_and_price =
-        block.header.excess_blob_gas.map(|g| BlobExcessGasAndPrice::new(g));
+        block.header.excess_blob_gas.map(BlobExcessGasAndPrice::new);
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
