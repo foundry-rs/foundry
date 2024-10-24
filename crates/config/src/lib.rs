@@ -1128,24 +1128,6 @@ impl Config {
         Ok(self.eth_rpc_jwt.as_ref().map(|jwt| Cow::Borrowed(jwt.as_str())))
     }
 
-    /// Returns the configured RPC timeout value.
-    ///
-    /// Returns:
-    ///    - The RPC timeout value, if configured.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use foundry_config::Config;
-    /// # fn t() {
-    /// let config = Config::with_root("./");
-    /// let rpc_timeout = config.get_rpc_timeout().unwrap().unwrap();
-    /// # }
-    /// ```
-    pub fn get_rpc_timeout(&self) -> Result<Option<Cow<'_, u64>>, UnresolvedEnvVarError> {
-        Ok(self.eth_rpc_timeout.as_ref().map(Cow::Borrowed))
-    }
-
     /// Returns the configured rpc url
     ///
     /// Returns:

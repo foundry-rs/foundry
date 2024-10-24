@@ -83,16 +83,6 @@ impl RpcOpts {
         Ok(jwt)
     }
 
-    /// Returns the rpc timeout.
-    pub fn rpc_timeout<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, u64>>> {
-        let rpc_timeout = match (self.rpc_timeout.as_ref(), config) {
-            (Some(rpc_timeout), _) => Some(Cow::Borrowed(rpc_timeout)),
-            (None, Some(config)) => config.get_rpc_timeout()?,
-            (None, None) => None,
-        };
-        Ok(rpc_timeout)
-    }
-
     pub fn dict(&self) -> Dict {
         let mut dict = Dict::new();
         if let Ok(Some(url)) = self.url(None) {
@@ -101,8 +91,8 @@ impl RpcOpts {
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
         }
-        if let Ok(Some(rpc_timeout)) = self.rpc_timeout(None) {
-            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into_owned().into());
+        if let Some(rpc_timeout) = self.rpc_timeout {
+            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
         }
         dict
     }
