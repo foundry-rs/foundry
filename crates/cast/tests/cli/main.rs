@@ -1388,7 +1388,7 @@ casttest!(hash_message, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(parse_uints, |_prj, cmd| {
+casttest!(parse_units, |_prj, cmd| {
     cmd.args(["parse-units", "1.5", "6"]).assert_success().stdout_eq(str![[r#"
 1500000
 
