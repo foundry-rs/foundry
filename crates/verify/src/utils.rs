@@ -10,17 +10,18 @@ use foundry_block_explorers::{
     errors::EtherscanError,
 };
 use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider};
-use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
+use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion, Offsets};
 use foundry_config::Config;
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
 use reqwest::Url;
 use revm_primitives::{
     db::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId,
+    Env, SpecId,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use yansi::Paint;
 
 /// Enum to represent the type of bytecode being verified
@@ -134,6 +135,56 @@ pub fn build_using_cache(
     }
 
     eyre::bail!("couldn't find cached artifact for contract {}", args.contract.name)
+}
+
+pub fn get_immutable_refs(
+    artifact: &CompactContractBytecode,
+) -> Option<BTreeMap<String, Vec<Offsets>>> {
+    if artifact.deployed_bytecode.as_ref().is_some_and(|b| !b.immutable_references.is_empty()) {
+        let immutable_refs =
+            artifact.deployed_bytecode.as_ref().unwrap().immutable_references.clone();
+
+        return Some(immutable_refs);
+    }
+
+    None
+}
+
+pub fn extract_immutables_refs(
+    immutable_refs: BTreeMap<String, Vec<Offsets>>,
+    mut bytecode: Bytes,
+) -> Bytes {
+    let mut total_len_extracted_expected = 0;
+    let init_length = bytecode.len();
+    for (_key, offsets) in immutable_refs {
+        for offset in offsets {
+            let start = offset.start as usize;
+            let end = (offset.start + offset.length) as usize;
+
+            total_len_extracted_expected += offset.length;
+
+            // Remove this sections of bytes from the bytecode
+            let start_section = bytecode.slice(0..start);
+            let end_section = bytecode.slice(end..bytecode.len());
+
+            // Combine the start and end sections
+            let mut start_section_vec = start_section.to_vec();
+
+            start_section_vec.extend_from_slice(&end_section);
+
+            bytecode = Bytes::from(start_section_vec);
+        }
+    }
+    let end_length = bytecode.len();
+
+    tracing::info!(
+        "Total length extracted (Expected): {}, Initial length: {}, Final length: {}",
+        total_len_extracted_expected,
+        init_length,
+        end_length
+    );
+
+    bytecode
 }
 
 pub fn print_result(
@@ -390,7 +441,7 @@ pub async fn get_runtime_codes(
     address: Address,
     fork_address: Address,
     block: Option<u64>,
-) -> Result<(Bytecode, Bytes)> {
+) -> Result<(Bytes, Bytes)> {
     let fork_runtime_code = executor
         .backend_mut()
         .basic(fork_address)?
@@ -414,7 +465,7 @@ pub async fn get_runtime_codes(
         provider.get_code_at(address).await?
     };
 
-    Ok((fork_runtime_code, onchain_runtime_code))
+    Ok((fork_runtime_code.original_bytes(), onchain_runtime_code))
 }
 
 /// Returns `true` if the URL only consists of host.
