@@ -294,7 +294,6 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 Self::AuthorizationListNotSupported
             }
             InvalidTransaction::AuthorizationListInvalidFields |
-            InvalidTransaction::InvalidAuthorizationList(_) |
             InvalidTransaction::OptimismError(_) |
             InvalidTransaction::EofCrateShouldHaveToAddress |
             InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
