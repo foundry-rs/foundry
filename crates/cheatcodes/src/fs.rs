@@ -5,11 +5,15 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_provider::network::ReceiptResponse;
+use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::interpreter::CreateInputs;
+use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -624,6 +628,105 @@ fn prompt(
             Err("Prompt timed out".into())
         }
     }
+}
+
+impl Cheatcode for getBroadcastCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(map_broadcast_tx_type(*txType));
+
+        let broadcast = reader.read_latest()?;
+
+        let results = reader.into_tx_receipts(broadcast);
+
+        let summaries = parse_broadcast_results(results);
+
+        if let Some(summary) = summaries.first() {
+            return Ok(summary.abi_encode());
+        }
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getBroadcasts_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(map_broadcast_tx_type(*txType));
+
+        let broadcasts = reader.read()?;
+
+        let mut summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
+                let results = reader.into_tx_receipts(broadcast);
+                Ok(parse_broadcast_results(results))
+            })
+            .flatten()
+            .collect::<Vec<BroadcastTxSummary>>();
+
+        // Sort by descending block number
+        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
+
+        let broadcasts = reader.read()?;
+
+        let mut summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
+                let results = reader.into_tx_receipts(broadcast);
+                Ok(parse_broadcast_results(results))
+            })
+            .flatten()
+            .collect::<Vec<BroadcastTxSummary>>();
+
+        // Sort by descending block number
+        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
+    match tx_type {
+        BroadcastTxType::Call => CallKind::Call,
+        BroadcastTxType::Create => CallKind::Create,
+        BroadcastTxType::Create2 => CallKind::Create2,
+        _ => unreachable!("invalid tx type"),
+    }
+}
+
+fn parse_broadcast_results(
+    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+) -> Vec<BroadcastTxSummary> {
+    results
+        .into_iter()
+        .map(|(tx, receipt)| BroadcastTxSummary {
+            txHash: receipt.transaction_hash,
+            blockNumber: receipt.block_number.unwrap_or_default(),
+            txType: match tx.opcode {
+                CallKind::Call => BroadcastTxType::Call,
+                CallKind::Create => BroadcastTxType::Create,
+                CallKind::Create2 => BroadcastTxType::Create2,
+                _ => unreachable!("invalid tx type"),
+            },
+            contractAddress: tx.contract_address.unwrap_or_default(),
+            success: receipt.status(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

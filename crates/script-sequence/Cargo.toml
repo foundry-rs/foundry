@@ -22,6 +22,7 @@ serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+walkdir.workspace = true
 
 revm-inspectors.workspace = true
 

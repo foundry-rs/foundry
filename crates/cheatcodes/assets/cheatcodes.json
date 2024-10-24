@@ -125,6 +125,24 @@
           "description": "Unknown `forge` execution context."
         }
       ]
+    },
+    {
+      "name": "BroadcastTxType",
+      "description": "The transaction type (`txType`) of the broadcast.",
+      "variants": [
+        {
+          "name": "Call",
+          "description": "Represents a CALL broadcast tx."
+        },
+        {
+          "name": "Create",
+          "description": "Represents a CREATE broadcast tx."
+        },
+        {
+          "name": "Create2",
+          "description": "Represents a CREATE2 broadcast tx."
+        }
+      ]
     }
   ],
   "structs": [
@@ -522,6 +540,37 @@
           "name": "contractAddr",
           "ty": "address",
           "description": "The contract address where the opcode is running"
+        }
+      ]
+    },
+    {
+      "name": "BroadcastTxSummary",
+      "description": "Represents a transaction's broadcast details.",
+      "fields": [
+        {
+          "name": "txHash",
+          "ty": "bytes32",
+          "description": "The hash of the transaction that was broadcasted"
+        },
+        {
+          "name": "txType",
+          "ty": "BroadcastTxType",
+          "description": "Represent the type of transaction among CALL, CREATE, CREATE2"
+        },
+        {
+          "name": "contractAddress",
+          "ty": "address",
+          "description": "The address of the contract that was called or created.\n This is address of the contract that is created if the txType is CREATE or CREATE2."
+        },
+        {
+          "name": "blockNumber",
+          "ty": "uint64",
+          "description": "The block number the transaction landed in."
+        },
+        {
+          "name": "success",
+          "ty": "bool",
+          "description": "Status of the transaction, retrieved from the transaction receipt."
         }
       ]
     }
@@ -5248,6 +5297,66 @@
         ]
       },
       "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBroadcast",
+        "description": "Returns the most recent broadcast for the given contract on `chainId` matching `txType`.\nFor example:\nThe most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.\nThe most recent call can be fetched by passing `txType` as `CALL`.",
+        "declaration": "function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBroadcast(string,uint64,uint8)",
+        "selector": "0x3dc90cb3",
+        "selectorBytes": [
+          61,
+          201,
+          12,
+          179
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBroadcasts_0",
+        "description": "Returns all broadcasts for the given contract on `chainId` with the specified `txType`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBroadcasts(string,uint64,uint8)",
+        "selector": "0xf7afe919",
+        "selectorBytes": [
+          247,
+          175,
+          233,
+          25
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBroadcasts_1",
+        "description": "Returns all broadcasts for the given contract on `chainId`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getBroadcasts(string,uint64)",
+        "selector": "0xf2fa4a26",
+        "selectorBytes": [
+          242,
+          250,
+          74,
+          38
+        ]
+      },
+      "group": "filesystem",
       "status": "stable",
       "safety": "safe"
     },
