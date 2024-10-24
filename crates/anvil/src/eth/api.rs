@@ -16,7 +16,7 @@ use crate::{
         },
         fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
-        miner::FixedBlockTimeMiner,
+        miner::{FixedBlockTimeMiner, SerializableMiningMode},
         pool::{
             transactions::{
                 to_marker, PoolTransaction, TransactionOrder, TransactionPriority, TxMarker,
@@ -326,6 +326,7 @@ impl EthApi {
             EthRequest::SetIntervalMining(interval) => {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
+            EthRequest::GetMiningMode() => self.anvil_get_mining_mode().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
@@ -1725,6 +1726,15 @@ impl EthApi {
         };
         self.miner.set_mining_mode(mining_mode);
         Ok(())
+    }
+
+    /// get the mining behavior of interval
+    ///
+    /// Handler for ETH RPC call: `anvil_getMiningMode`
+    pub fn anvil_get_mining_mode(&self) -> Result<SerializableMiningMode> {
+        node_info!("anvil_getMiningMode");
+        let mining_mode: SerializableMiningMode = self.miner.get_mining_mode().convert();
+        Ok(mining_mode)
     }
 
     /// Removes transactions from the pool

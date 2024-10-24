@@ -394,6 +394,10 @@ pub enum EthRequest {
     )]
     SetIntervalMining(u64),
 
+    /// Gets the current mining behavior
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_getMiningMode"))]
+    GetMiningMode(),
+
     /// Removes transactions from the pool
     #[cfg_attr(
         feature = "serde",
