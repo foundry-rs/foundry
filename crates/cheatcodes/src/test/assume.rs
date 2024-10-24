@@ -11,6 +11,10 @@ use std::fmt::Debug;
 
 use super::revert::{handle_revert, RevertParameters};
 
+pub const ASSUME_EXPECT_REJECT_MAGIC: &str = "Cannot combine an assumeNoRevert with expectRevert";
+pub const ASSUME_REJECT_MAGIC: &str =
+    "Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons";
+
 #[derive(Clone, Debug)]
 pub struct AssumeNoRevert {
     /// The call depth at which the cheatcode was added.
@@ -19,6 +23,8 @@ pub struct AssumeNoRevert {
     /// reverts with parameters not specified here will count as normal reverts and not rejects
     /// towards the counter.
     pub reasons: Option<Vec<AcceptableRevertParameters>>,
+    /// Address that reverted the call.
+    pub reverted_by: Option<Address>,
 }
 
 /// Parameters for a single anticipated revert, to be thrown out if encountered.
@@ -30,8 +36,6 @@ pub struct AcceptableRevertParameters {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
-    /// Actual reverter of the call.
-    pub reverted_by: Option<Address>,
 }
 
 impl RevertParameters for AcceptableRevertParameters {
@@ -147,38 +151,30 @@ fn assume_no_revert(
     partial_match: bool,
     reverter: Option<Address>,
 ) -> Result {
-    ensure!(state.expected_revert.is_none(), "");
+    ensure!(state.expected_revert.is_none(), ASSUME_EXPECT_REJECT_MAGIC);
 
     // if assume_no_revert is not set, set it
     if state.assume_no_revert.is_none() {
-        state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: None });
+        state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: None, reverted_by: None });
         // if reason is not none, create a new AssumeNoRevertParams vec
         if let Some(reason) = reason {
             state.assume_no_revert.as_mut().unwrap().reasons =
-                Some(vec![AcceptableRevertParameters {
-                    reason,
-                    partial_match,
-                    reverter,
-                    reverted_by: None,
-                }]);
+                Some(vec![AcceptableRevertParameters { reason, partial_match, reverter }]);
         }
     } else {
         // otherwise, ensure that reasons vec is not none and new reason is also not none
         let valid_assume =
             state.assume_no_revert.as_ref().unwrap().reasons.is_some() && reason.is_some();
-        ensure!(
-            valid_assume,
-            "cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons"
-        );
+        ensure!(valid_assume, ASSUME_REJECT_MAGIC);
         // and append the new reason
-        state.assume_no_revert.as_mut().unwrap().reasons.as_mut().unwrap().push(
-            AcceptableRevertParameters {
-                reason: reason.unwrap(),
-                partial_match,
-                reverter,
-                reverted_by: None,
-            },
-        );
+        state
+            .assume_no_revert
+            .as_mut()
+            .unwrap()
+            .reasons
+            .as_mut()
+            .unwrap()
+            .push(AcceptableRevertParameters { reason: reason.unwrap(), partial_match, reverter });
     }
 
     Ok(Default::default())
@@ -190,16 +186,30 @@ pub(crate) fn handle_assume_no_revert(
     retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
     reverter: Option<&Address>,
-) -> Result<(), Error> {
+) -> Result<()> {
     // iterate over acceptable reasons and try to match against any, otherwise, return an Error with
     // the revert data
-    assume_no_revert
-        .reasons
-        .as_ref()
-        .and_then(|reasons| {
-            reasons.iter().find_map(|reason| {
-                handle_revert(false, reason, status, retdata, known_contracts, reverter).ok()
-            })
-        })
-        .ok_or_else(|| retdata.clone().into())
+    assume_no_revert.reasons.as_ref().map_or_else(
+        || {
+            // todo: fix this hack to get cheatcode name in error message
+            let retdata_str = retdata.to_string();
+            if retdata_str.contains(ASSUME_REJECT_MAGIC) ||
+                retdata_str.contains(ASSUME_EXPECT_REJECT_MAGIC)
+            {
+                // raise error with retdata as a string, so apply_dispatch will insert the cheatcode
+                // name
+                Err(Error::from(String::from_utf8(retdata.to_vec()).unwrap()))
+            } else {
+                Ok(())
+            }
+        },
+        |reasons| {
+            reasons
+                .iter()
+                .find_map(|reason| {
+                    handle_revert(false, reason, status, retdata, known_contracts, reverter).ok()
+                })
+                .ok_or_else(|| retdata.clone().into())
+        },
+    )
 }

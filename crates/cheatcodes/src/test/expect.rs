@@ -84,6 +84,8 @@ pub struct ExpectedRevert {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
+    /// Address that reverted the call.
+    pub reverted_by: Option<Address>,
 }
 
 #[derive(Clone, Debug)]
@@ -689,7 +691,7 @@ fn expect_revert(
         },
         partial_match,
         reverter,
-        // reverted_by: None,
+        reverted_by: None,
     });
     Ok(Default::default())
 }
