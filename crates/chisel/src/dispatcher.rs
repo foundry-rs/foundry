@@ -719,18 +719,20 @@ impl ChiselDispatcher {
                                 }
                             }
 
-                            // If the contract execution failed, continue on without
-                            // updating the source.
-                            DispatchResult::CommandFailed(Self::make_error(
-                                "Failed to execute edited contract!",
-                            ))
-                        } else {
-                            // the code could be compiled, save it
-                            *self.source_mut() = new_session_source;
-                            DispatchResult::CommandSuccess(Some(String::from(
-                                "Successfully edited `run()` function's body!",
-                            )))
+                            if failed {
+                                // If the contract execution failed, continue on without
+                                // updating the source.
+                                return DispatchResult::CommandFailed(Self::make_error(
+                                    "Failed to execute edited contract!",
+                                ));
+                            }
                         }
+
+                        // the code could be compiled, save it
+                        *self.source_mut() = new_session_source;
+                        DispatchResult::CommandSuccess(Some(String::from(
+                            "Successfully edited `run()` function's body!",
+                        )))
                     }
                     Err(_) => {
                         DispatchResult::CommandFailed("The code could not be compiled".to_string())
