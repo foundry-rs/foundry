@@ -628,6 +628,7 @@ impl ContractRunner<'_> {
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
+            invariant_result.metrics,
         )
     }
 

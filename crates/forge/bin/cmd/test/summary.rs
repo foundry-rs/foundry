@@ -1,7 +1,11 @@
 use crate::cmd::test::TestOutcome;
 use comfy_table::{
-    modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
+    modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color,
+    Row, Table,
 };
+use foundry_evm::executors::invariant::InvariantMetrics;
+use itertools::Itertools;
+use std::collections::HashMap;
 
 /// A simple summary reporter that prints the test results in a table.
 pub struct TestSummaryReporter {
@@ -89,5 +93,39 @@ impl TestSummaryReporter {
         }
 
         println!("\n{}", self.table);
+    }
+}
+
+/// Helper to create and render invariant metrics summary table:
+/// | Contract              | Selector       | Calls | Reverts | Discards |
+/// |-----------------------|----------------|-------|---------|----------|
+/// | AnotherCounterHandler | doWork         |  7451 |   123   |   4941   |
+/// | AnotherCounterHandler | doWorkThing    |  7279 |   137   |   4849   |
+/// | CounterHandler        | doAnotherThing |  7302 |   150   |   4794   |
+/// | CounterHandler        | doSomething    |  7382 |   160   |   4830   |
+pub(crate) fn print_invariant_metrics(test_metrics: &HashMap<String, InvariantMetrics>) {
+    if !test_metrics.is_empty() {
+        let mut table = Table::new();
+        table.load_preset(ASCII_MARKDOWN);
+        table.set_header(["Contract", "Selector", "Calls", "Reverts", "Discards"]);
+
+        for name in test_metrics.keys().sorted() {
+            if let Some((contract, selector)) =
+                name.split_once(':').and_then(|(_, contract)| contract.split_once('.'))
+            {
+                let mut row = Row::new();
+                row.add_cell(Cell::new(contract).set_alignment(CellAlignment::Left));
+                row.add_cell(Cell::new(selector).set_alignment(CellAlignment::Left));
+                if let Some(metrics) = test_metrics.get(name) {
+                    row.add_cell(Cell::new(metrics.calls).set_alignment(CellAlignment::Center));
+                    row.add_cell(Cell::new(metrics.reverts).set_alignment(CellAlignment::Center));
+                    row.add_cell(Cell::new(metrics.discards).set_alignment(CellAlignment::Center));
+                }
+
+                table.add_row(row);
+            }
+        }
+
+        println!("{table}\n");
     }
 }

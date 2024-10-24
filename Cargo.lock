@@ -3951,6 +3951,7 @@ dependencies = [
  "proptest",
  "revm",
  "revm-inspectors",
+ "serde",
  "thiserror",
  "tracing",
 ]
