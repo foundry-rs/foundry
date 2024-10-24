@@ -93,9 +93,9 @@ impl InterfaceArgs {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, res)?;
-            println!("Saved interface at {}", loc.display());
+            sh_println!("Saved interface at {}", loc.display())?;
         } else {
-            print!("{res}");
+            sh_print!("{res}")?;
         }
 
         Ok(())
