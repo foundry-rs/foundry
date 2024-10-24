@@ -188,7 +188,7 @@ pub struct NodeConfig {
     /// Enable Alphanet features.
     pub alphanet: bool,
     /// Do not print log messages.
-    pub quiet: bool,
+    pub silent: bool,
 }
 
 impl NodeConfig {
@@ -394,7 +394,7 @@ impl NodeConfig {
     /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: true, port: 0, quiet: true, ..Default::default() }
+        Self { enable_tracing: true, port: 0, silent: true, ..Default::default() }
     }
 
     /// Returns a new config which does not initialize any accounts on node startup.
@@ -464,7 +464,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             alphanet: false,
-            quiet: false,
+            silent: false,
         }
     }
 }
@@ -910,7 +910,7 @@ impl NodeConfig {
             .expect("Failed writing json");
         }
 
-        if self.quiet {
+        if self.silent {
             return;
         }
 
@@ -959,13 +959,13 @@ impl NodeConfig {
 
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
-    pub fn quiet(self) -> Self {
-        self.set_quiet(true)
+    pub fn silent(self) -> Self {
+        self.set_silent(true)
     }
 
     #[must_use]
-    pub fn set_quiet(mut self, quiet: bool) -> Self {
-        self.quiet = quiet;
+    pub fn set_silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
         self
     }
 
