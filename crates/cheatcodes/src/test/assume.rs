@@ -187,29 +187,14 @@ pub(crate) fn handle_assume_no_revert(
     known_contracts: &Option<ContractsByArtifact>,
     reverter: Option<&Address>,
 ) -> Result<()> {
-    // iterate over acceptable reasons and try to match against any, otherwise, return an Error with
-    // the revert data
-    assume_no_revert.reasons.as_ref().map_or_else(
-        || {
-            // todo: fix this hack to get cheatcode name in error message
-            let retdata_str = retdata.to_string();
-            if retdata_str.contains(ASSUME_REJECT_MAGIC) ||
-                retdata_str.contains(ASSUME_EXPECT_REJECT_MAGIC)
-            {
-                // raise error with retdata as a string, so apply_dispatch will insert the cheatcode
-                // name
-                Err(Error::from(String::from_utf8(retdata.to_vec()).unwrap()))
-            } else {
-                Ok(())
-            }
-        },
-        |reasons| {
-            reasons
-                .iter()
-                .find_map(|reason| {
-                    handle_revert(false, reason, status, retdata, known_contracts, reverter).ok()
-                })
-                .ok_or_else(|| retdata.clone().into())
-        },
-    )
+    // if a generic assumeNoRevert, return Ok(). Otherwise, iterate over acceptable reasons and try
+    // to match against any, otherwise, return an Error with the revert data
+    assume_no_revert.reasons.as_ref().map_or(Ok(()), |reasons| {
+        reasons
+            .iter()
+            .find_map(|reason| {
+                handle_revert(false, reason, status, retdata, known_contracts, reverter).ok()
+            })
+            .ok_or_else(|| retdata.clone().into())
+    })
 }

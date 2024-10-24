@@ -44,7 +44,6 @@ pub(crate) fn handle_revert(
         bail!("call reverted as expected, but without data");
     }
 
-    // todo: would love to not copy here but types don't seem to work easily
     let mut actual_revert: Vec<u8> = retdata.to_vec();
 
     // Compare only the first 4 bytes if partial match.
