@@ -1,6 +1,6 @@
 use crate::tx::{self, CastTxBuilder, SenderKind};
 use alloy_network::{AnyNetwork, EthereumWallet};
-use alloy_primitives::U256;
+use alloy_primitives::{Uint, U256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -126,7 +126,7 @@ impl SendTxArgs {
             command,
             unlocked,
             timeout,
-            tx,
+            mut tx,
             path,
             bump_gas_price,
         } = self;
@@ -144,6 +144,7 @@ impl SendTxArgs {
             if nonce == pending_nonce {
                 return Err(eyre::eyre!("No pending transactions to replace."));
             }
+            tx.nonce = Some(Uint::from(nonce));
         }
 
         let fee_history = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
