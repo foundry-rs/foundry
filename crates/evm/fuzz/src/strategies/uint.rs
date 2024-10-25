@@ -121,7 +121,7 @@ impl UintStrategy {
             (Some(min), Some(max)) if min <= max => Some((min, max)), 
             (Some(min), None) => Some((min, type_max)),              
             (None, Some(max)) => Some((U256::ZERO, max)),          
-            _ => Some((U256::ZERO, type_max)),                       
+            _ => None,                       
         };
 
         Self {
