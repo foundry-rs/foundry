@@ -118,10 +118,10 @@ impl UintStrategy {
         let type_max = if bits < 256 { (U256::from(1) << bits) - U256::from(1) } else { U256::MAX };
 
         let bounds = match (min_bound, max_bound) {
-            (Some(min), Some(max)) if min <= max => Some((min, max)),
-            (Some(min), None) => Some((min, type_max)),
-            (None, Some(max)) => Some((U256::ZERO, max)),
-            _ => None,
+            (Some(min), Some(max)) if min <= max => Some((min, max)), 
+            (Some(min), None) => Some((min, type_max)),              
+            (None, Some(max)) => Some((U256::ZERO, max)),          
+            _ => None,                       
         };
 
         Self {
@@ -135,18 +135,7 @@ impl UintStrategy {
     }
 
     pub fn use_log_sampling(&self) -> bool {
-
-    if self.bits <= 8 {
-        return false;
-    }
-
-    if let Some((min, max)) = self.bounds {
-        let range = max - min;
-
-        range > U256::from(256)
-    } else {
-        true
-    }
+        self.bits > 8
     }
 
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -275,23 +264,24 @@ impl UintStrategy {
 
     fn generate_log_uniform(&self, runner: &mut TestRunner) -> U256 {
         let rng = runner.rng();
-        let exp = rng.gen::<u32>() % 256;
+        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
+        
+        let min_bits = min.bits();
+        let max_bits = max.bits();
+    
+        let exp = min_bits + (rng.gen::<u32>() % (max_bits - min_bits + 1));
         let mantissa = rng.gen::<u64>();
-
+    
         let base = U256::from(1) << exp;
         let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
-
-        let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
-
+    
         value = value.clamp(min, max);
-
+ 
         if value == min && max > min {
-            let range = max - min;
-            let offset = U256::from(rng.gen::<u64>()) % range;
-            value = min + offset;
+            self.generate_log_uniform(runner) 
+        } else {
+            value
         }
-
-        value
     }
 
     pub fn type_max(&self) -> U256 {
