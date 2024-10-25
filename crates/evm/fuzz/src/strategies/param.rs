@@ -94,19 +94,17 @@ fn fuzz_param_inner(
             .prop_map(move |x| DynSolValue::Int(x, n))
             .boxed(),
         DynSolType::Uint(n @ 8..=256) => {
-            let (min, max) = if let Some(name) = param_name {
-                config
-                    .ranges
-                    .get(name)
-                    .map(|(min, max)| (Some(*min), Some(*max)))
-                    .unwrap_or((None, None))
-            } else {
-                (None, None)
-            };
-
-            super::UintStrategy::new(n, fuzz_fixtures, min, max)
-                .prop_map(move |x| DynSolValue::Uint(x, n))
-                .boxed()
+            let bounds = param_name.and_then(|name| config.ranges.get(name));
+            match bounds {
+                Some((min, max)) => {
+                    super::UintStrategy::new(n, fuzz_fixtures, Some(*min), Some(*max))
+                        .prop_map(move |x| DynSolValue::Uint(x, n))
+                        .boxed()
+                }
+                None => super::UintStrategy::new(n, fuzz_fixtures, None, None)
+                    .prop_map(move |x| DynSolValue::Uint(x, n))
+                    .boxed(),
+            }
         }
         DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
         DynSolType::Bytes => value(),
