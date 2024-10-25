@@ -300,7 +300,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 y_parity: None,
             }),
             access_list: None,
-            transaction_type: None,
+            transaction_type: Some(0),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             authorization_list: None,
