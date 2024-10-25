@@ -1355,3 +1355,39 @@ casttest!(hash_message, |_prj, cmd| {
 
 "#]]);
 });
+
+casttest!(parse_units, |_prj, cmd| {
+    cmd.args(["parse-units", "1.5", "6"]).assert_success().stdout_eq(str![[r#"
+1500000
+
+"#]]);
+
+    cmd.cast_fuse().args(["pun", "1.23", "18"]).assert_success().stdout_eq(str![[r#"
+1230000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["--parse-units", "1.23", "3"]).assert_success().stdout_eq(str![[r#"
+1230
+
+"#]]);
+});
+
+casttest!(format_units, |_prj, cmd| {
+    cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
+1
+
+"#]]);
+
+    cmd.cast_fuse().args(["--format-units", "2500000", "6"]).assert_success().stdout_eq(str![[
+        r#"
+2.500000
+
+"#
+    ]]);
+
+    cmd.cast_fuse().args(["fun", "1230", "3"]).assert_success().stdout_eq(str![[r#"
+1.230
+
+"#]]);
+});

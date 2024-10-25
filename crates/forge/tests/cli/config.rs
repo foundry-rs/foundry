@@ -105,6 +105,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
+        eth_rpc_timeout: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,

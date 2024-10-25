@@ -133,6 +133,14 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let value = stdin::unwrap_line(value)?;
             sh_println!("{}", SimpleCast::to_unit(&value, &unit)?)?
         }
+        CastSubcommand::ParseUnits { value, unit } => {
+            let value = stdin::unwrap_line(value)?;
+            println!("{}", SimpleCast::parse_units(&value, unit)?);
+        }
+        CastSubcommand::FormatUnits { value, unit } => {
+            let value = stdin::unwrap_line(value)?;
+            println!("{}", SimpleCast::format_units(&value, unit)?);
+        }
         CastSubcommand::FromWei { value, unit } => {
             let value = stdin::unwrap_line(value)?;
             sh_println!("{}", SimpleCast::from_wei(&value, &unit)?)?
