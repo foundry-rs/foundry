@@ -108,6 +108,7 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::disallowed_macros)]
     fn encode_decode_test() -> alloy_rlp::Result<()> {
         let parameters = vec![
             (1, b"\xc0".to_vec(), Item::Array(vec![])),
@@ -149,6 +150,7 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::disallowed_macros)]
     fn deserialize_from_str_test_hex() -> JsonResult<()> {
         let parameters = vec![
             (1, "[\"\"]", Item::Array(vec![Item::Data(vec![])])),

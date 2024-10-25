@@ -105,7 +105,7 @@ impl MakeTxArgs {
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 
         let signed_tx = hex::encode(tx.encoded_2718());
-        println!("0x{signed_tx}");
+        sh_println!("0x{signed_tx}")?;
 
         Ok(())
     }
