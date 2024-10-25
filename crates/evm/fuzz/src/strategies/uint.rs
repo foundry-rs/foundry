@@ -266,19 +266,32 @@ impl UintStrategy {
         let rng = runner.rng();
         let (min, max) = self.bounds.unwrap_or((U256::ZERO, self.type_max()));
         
-        let min_bits = min.bits();
-        let max_bits = max.bits();
+        let highest_bit = |mut num: U256| {
+            let mut bit = 0;
+            while num > U256::ZERO {
+                num >>= 1;
+                bit += 1;
+            }
+            bit
+        };
+  
+        let min_bits = highest_bit(min);
+        let max_bits = highest_bit(max);
     
-        let exp = min_bits + (rng.gen::<u32>() % (max_bits - min_bits + 1));
+        let exp = if max_bits > min_bits {
+            min_bits + (rng.gen::<u32>() % (max_bits - min_bits))
+        } else {
+            min_bits
+        };
+        
         let mantissa = rng.gen::<u64>();
-    
         let base = U256::from(1) << exp;
         let mut value = base | (U256::from(mantissa) & (base - U256::from(1)));
     
         value = value.clamp(min, max);
- 
+    
         if value == min && max > min {
-            self.generate_log_uniform(runner) 
+            self.generate_log_uniform(runner)
         } else {
             value
         }
