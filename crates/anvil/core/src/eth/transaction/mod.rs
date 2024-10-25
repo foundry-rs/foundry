@@ -755,7 +755,7 @@ impl TypedTransaction {
     /// Returns the transaction type
     pub fn r#type(&self) -> Option<u8> {
         match self {
-            Self::Legacy(_) => None,
+            Self::Legacy(_) => Some(0),
             Self::EIP2930(_) => Some(1),
             Self::EIP1559(_) => Some(2),
             Self::EIP4844(_) => Some(3),
