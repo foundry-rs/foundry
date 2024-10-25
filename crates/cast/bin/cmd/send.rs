@@ -146,8 +146,8 @@ impl SendTxArgs {
             }
         }
 
-        let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
-        let base_fee = eip1559_est.max_fee_per_gas - eip1559_est.max_priority_fee_per_gas;
+        let fee_history = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
+        let base_fee = *fee_history.base_fee_per_gas.last().unwrap();
         let initial_gas_price = tx.gas_price.unwrap_or(U256::from(base_fee));
 
         let bump_amount = initial_gas_price
