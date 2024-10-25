@@ -115,9 +115,13 @@ impl UintStrategy {
         min_bound: Option<U256>,
         max_bound: Option<U256>,
     ) -> Self {
+        let type_max = if bits < 256 { (U256::from(1) << bits) - U256::from(1) } else { U256::MAX };
+
         let bounds = match (min_bound, max_bound) {
-            (Some(min), Some(max)) => Some((min, max)),
-            _ => None,
+            (Some(min), Some(max)) if min <= max => Some((min, max)), // Valid min-max bounds
+            (Some(min), None) => Some((min, type_max)),               // Only min provided
+            (None, Some(max)) => Some((U256::ZERO, max)),             // Only max provided
+            _ => Some((U256::ZERO, type_max)),                        // Default bounds
         };
 
         Self {
@@ -150,12 +154,10 @@ impl UintStrategy {
             let type_max = self.type_max();
             if is_min {
                 offset
+            } else if offset == U256::ZERO {
+                type_max
             } else {
-                if offset == U256::ZERO {
-                    type_max
-                } else {
-                    type_max.saturating_sub(offset)
-                }
+                type_max.saturating_sub(offset)
             }
         };
 
@@ -163,8 +165,8 @@ impl UintStrategy {
         Ok(UintValueTree::new(
             start,
             false,
-            None,
-            None
+            self.bounds.map(|(min, _)| min),
+            self.bounds.map(|(_, max)| max),
         ))
     }
 
