@@ -45,10 +45,7 @@ impl TtyWidth {
     pub fn get() -> Self {
         // use stderr
         #[cfg(unix)]
-        #[allow(clippy::useless_conversion)]
-        let opt = terminal_size::terminal_size_of(unsafe {
-            std::os::fd::BorrowedFd::borrow_raw(2.into())
-        });
+        let opt = terminal_size::terminal_size_of(std::io::stderr());
         #[cfg(not(unix))]
         let opt = terminal_size::terminal_size();
         match opt {
@@ -190,17 +187,10 @@ impl Shell {
     }
 
     /// Get a static reference to the global shell.
-    #[inline]
-    #[cfg_attr(debug_assertions, track_caller)]
+    ///
+    /// Initializes the global shell with the default values if it has not been set yet.
     pub fn get() -> impl DerefMut<Target = Self> + 'static {
-        #[inline(never)]
-        #[cold]
-        #[cfg_attr(debug_assertions, track_caller)]
-        fn shell_get_fail() -> Mutex<Shell> {
-            Mutex::new(Shell::new())
-        }
-
-        GLOBAL_SHELL.get_or_init(shell_get_fail).lock().unwrap_or_else(PoisonError::into_inner)
+        GLOBAL_SHELL.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Set the global shell.
@@ -208,7 +198,6 @@ impl Shell {
     /// # Panics
     ///
     /// Panics if the global shell has already been set.
-    #[inline]
     #[track_caller]
     pub fn set(self) {
         if GLOBAL_SHELL.get().is_some() {
@@ -290,21 +279,18 @@ impl Shell {
     }
 
     /// Gets a reference to the underlying stdout writer.
-    #[inline]
     pub fn out(&mut self) -> &mut dyn Write {
         self.maybe_err_erase_line();
         self.output.stdout()
     }
 
     /// Gets a reference to the underlying stderr writer.
-    #[inline]
     pub fn err(&mut self) -> &mut dyn Write {
         self.maybe_err_erase_line();
         self.output.stderr()
     }
 
     /// Erase from cursor to end of line if needed.
-    #[inline]
     pub fn maybe_err_erase_line(&mut self) {
         if self.err_supports_color() && self.set_needs_clear(false) {
             // This is the "EL - Erase in Line" sequence. It clears from the cursor
@@ -336,7 +322,6 @@ impl Shell {
     /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
     ///
     /// **Note**: will log regardless of the verbosity level.
-    #[inline]
     pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
         self.maybe_err_erase_line();
         self.output.message_stderr(&"Error", &ERROR, Some(&message), false)
@@ -346,7 +331,6 @@ impl Shell {
     /// This will render a message in [WARN] style with a bold `Warning: `prefix.
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
-    #[inline]
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
         match self.verbosity {
             Verbosity::Quiet => Ok(()),
@@ -357,7 +341,6 @@ impl Shell {
     /// Write a styled fragment.
     ///
     /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
-    #[inline]
     pub fn write_stdout(&mut self, fragment: impl fmt::Display, color: &Style) -> Result<()> {
         self.output.write_stdout(fragment, color)
     }
@@ -365,7 +348,6 @@ impl Shell {
     /// Write a styled fragment with the default color. Use the [`sh_print!`] macro instead.
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
-    #[inline]
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
         if self.verbosity == Verbosity::Quiet {
             Ok(())
@@ -377,7 +359,6 @@ impl Shell {
     /// Write a styled fragment
     ///
     /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
-    #[inline]
     pub fn write_stderr(&mut self, fragment: impl fmt::Display, color: &Style) -> Result<()> {
         self.output.write_stderr(fragment, color)
     }
@@ -385,7 +366,6 @@ impl Shell {
     /// Write a styled fragment with the default color. Use the [`sh_eprint!`] macro instead.
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
-    #[inline]
     pub fn print_err(&mut self, fragment: impl fmt::Display) -> Result<()> {
         if self.verbosity == Verbosity::Quiet {
             Ok(())
@@ -499,6 +479,7 @@ impl ShellOut {
 
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
+    #[inline]
     fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
             Self::Always => anstream::ColorChoice::Always,
@@ -508,6 +489,7 @@ impl ColorChoice {
     }
 }
 
+#[inline]
 fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
         anstream::ColorChoice::Always |

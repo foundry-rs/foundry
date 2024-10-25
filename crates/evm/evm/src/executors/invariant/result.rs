@@ -1,6 +1,6 @@
 use super::{
     call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
-    InvariantFailures, InvariantFuzzError, InvariantTest, InvariantTestRun,
+    InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
@@ -13,7 +13,7 @@ use foundry_evm_fuzz::{
     FuzzedCases,
 };
 use revm_inspectors::tracing::CallTraceArena;
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug)]
@@ -30,6 +30,8 @@ pub struct InvariantFuzzTestResult {
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
     /// The coverage info collected during the invariant test runs.
     pub coverage: Option<HitMaps>,
+    /// Fuzzed selectors metrics collected during the invariant test runs.
+    pub metrics: HashMap<String, InvariantMetrics>,
 }
 
 /// Enriched results of an invariant run check.

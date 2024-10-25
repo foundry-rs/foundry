@@ -1,6 +1,6 @@
-//! The file dumper implementation
+//! The debug file dumper implementation.
 
-use crate::{context::DebuggerContext, DebugNode};
+use crate::{debugger::DebuggerContext, DebugNode};
 use alloy_primitives::Address;
 use eyre::Result;
 use foundry_common::fs::write_json_file;
@@ -12,9 +12,11 @@ use foundry_evm_traces::debug::{ArtifactData, ContractSources, SourceData};
 use serde::Serialize;
 use std::{collections::HashMap, ops::Deref, path::PathBuf};
 
-/// The file dumper
+/// Generates and writes debugger dump in a json file.
 pub struct FileDumper<'a> {
+    /// Path to json file to write dump into.
     path: &'a PathBuf,
+    /// Debugger context to generate dump for.
     debugger_context: &'a mut DebuggerContext,
 }
 
@@ -30,6 +32,13 @@ impl<'a> FileDumper<'a> {
     }
 }
 
+/// Holds info of debugger dump.
+#[derive(Serialize)]
+struct DebuggerDump {
+    contracts: ContractsDump,
+    debug_arena: Vec<DebugNode>,
+}
+
 impl DebuggerDump {
     fn from(debugger_context: &DebuggerContext) -> Self {
         Self {
@@ -37,12 +46,6 @@ impl DebuggerDump {
             debug_arena: debugger_context.debug_arena.clone(),
         }
     }
-}
-
-#[derive(Serialize)]
-struct DebuggerDump {
-    contracts: ContractsDump,
-    debug_arena: Vec<DebugNode>,
 }
 
 #[derive(Serialize)]
@@ -54,34 +57,27 @@ pub struct SourceElementDump {
     modifier_depth: u32,
 }
 
+impl SourceElementDump {
+    pub fn new(v: &SourceElement) -> Self {
+        Self {
+            offset: v.offset(),
+            length: v.length(),
+            index: v.index_i32(),
+            jump: match v.jump() {
+                Jump::In => 0,
+                Jump::Out => 1,
+                Jump::Regular => 2,
+            },
+            modifier_depth: v.modifier_depth(),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ContractsDump {
     // Map of call address to contract name
     identified_contracts: HashMap<Address, String>,
     sources: ContractsSourcesDump,
-}
-
-#[derive(Serialize)]
-struct ContractsSourcesDump {
-    sources_by_id: HashMap<String, HashMap<u32, SourceDataDump>>,
-    artifacts_by_name: HashMap<String, Vec<ArtifactDataDump>>,
-}
-
-#[derive(Serialize)]
-struct SourceDataDump {
-    source: String,
-    language: MultiCompilerLanguage,
-    path: PathBuf,
-}
-
-#[derive(Serialize)]
-struct ArtifactDataDump {
-    pub source_map: Option<Vec<SourceElementDump>>,
-    pub source_map_runtime: Option<Vec<SourceElementDump>>,
-    pub pc_ic_map: Option<HashMap<usize, usize>>,
-    pub pc_ic_map_runtime: Option<HashMap<usize, usize>>,
-    pub build_id: String,
-    pub file_id: u32,
 }
 
 impl ContractsDump {
@@ -95,6 +91,12 @@ impl ContractsDump {
             sources: ContractsSourcesDump::new(&debugger_context.contracts_sources),
         }
     }
+}
+
+#[derive(Serialize)]
+struct ContractsSourcesDump {
+    sources_by_id: HashMap<String, HashMap<u32, SourceDataDump>>,
+    artifacts_by_name: HashMap<String, Vec<ArtifactDataDump>>,
 }
 
 impl ContractsSourcesDump {
@@ -124,26 +126,27 @@ impl ContractsSourcesDump {
     }
 }
 
+#[derive(Serialize)]
+struct SourceDataDump {
+    source: String,
+    language: MultiCompilerLanguage,
+    path: PathBuf,
+}
+
 impl SourceDataDump {
     pub fn new(v: &SourceData) -> Self {
         Self { source: v.source.deref().clone(), language: v.language, path: v.path.clone() }
     }
 }
 
-impl SourceElementDump {
-    pub fn new(v: &SourceElement) -> Self {
-        Self {
-            offset: v.offset(),
-            length: v.length(),
-            index: v.index_i32(),
-            jump: match v.jump() {
-                Jump::In => 0,
-                Jump::Out => 1,
-                Jump::Regular => 2,
-            },
-            modifier_depth: v.modifier_depth(),
-        }
-    }
+#[derive(Serialize)]
+struct ArtifactDataDump {
+    pub source_map: Option<Vec<SourceElementDump>>,
+    pub source_map_runtime: Option<Vec<SourceElementDump>>,
+    pub pc_ic_map: Option<HashMap<usize, usize>>,
+    pub pc_ic_map_runtime: Option<HashMap<usize, usize>>,
+    pub build_id: String,
+    pub file_id: u32,
 }
 
 impl ArtifactDataDump {

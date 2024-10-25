@@ -3,6 +3,7 @@ use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Result;
+use foundry_common::sh_println;
 use itertools::Either;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
@@ -99,7 +100,7 @@ impl VanityArgs {
             };
         }
 
-        println!("Starting to generate vanity address...");
+        sh_println!("Starting to generate vanity address...")?;
         let timer = Instant::now();
 
         let wallet = match (left_exact_hex, left_regex, right_exact_hex, right_regex) {
@@ -144,7 +145,7 @@ impl VanityArgs {
             save_wallet_to_file(&wallet, &save_path)?;
         }
 
-        println!(
+        sh_println!(
             "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
             timer.elapsed().as_secs_f64(),
             if nonce.is_some() { "\nContract address: " } else { "" },
@@ -155,7 +156,7 @@ impl VanityArgs {
             },
             wallet.address().to_checksum(None),
             hex::encode(wallet.credential().to_bytes()),
-        );
+        )?;
 
         Ok(wallet)
     }
