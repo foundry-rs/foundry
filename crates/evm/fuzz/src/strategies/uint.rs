@@ -135,7 +135,18 @@ impl UintStrategy {
     }
 
     pub fn use_log_sampling(&self) -> bool {
-        self.bits > 8
+
+    if self.bits <= 8 {
+        return false;
+    }
+
+    if let Some((min, max)) = self.bounds {
+        let range = max - min;
+
+        range > U256::from(256)
+    } else {
+        true
+    }
     }
 
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
