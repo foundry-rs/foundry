@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuthorizationList","Parity","RecoveredAuthority"],"struct":["Authorization","RecoveredAuthorization","Signature","SignedAuthorization"]};
