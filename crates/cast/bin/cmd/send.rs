@@ -138,17 +138,17 @@ impl SendTxArgs {
         if bump_gas_price.auto_bump_gas_price {
             let sender = SenderKind::from_wallet_opts(eth.wallet.clone()).await?;
             let from = sender.address();
-            let nonce = provider.get_transaction_count(from).await.unwrap();
+            let nonce = provider.get_transaction_count(from).await?;
             let pending_nonce =
-                provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
+                provider.get_transaction_count(from).block_id(BlockId::pending()).await?;
             if nonce == pending_nonce {
                 return Err(eyre::eyre!("No pending transactions to replace."));
             }
             tx.nonce = Some(Uint::from(nonce));
         }
 
-        let fee_history = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
-        let base_fee = *fee_history.base_fee_per_gas.last().unwrap();
+        let fee_history = provider.get_fee_history(1, Default::default(), &[]).await?;
+        let base_fee = fee_history.next_block_base_fee().unwrap();
         let initial_gas_price = tx.gas_price.unwrap_or(U256::from(base_fee));
 
         let bump_amount = initial_gas_price
