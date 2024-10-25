@@ -115,13 +115,16 @@ impl UintStrategy {
         min_bound: Option<U256>,
         max_bound: Option<U256>,
     ) -> Self {
-        let type_max = if bits < 256 { (U256::from(1) << bits) - U256::from(1) } else { U256::MAX };
-
+        let type_max = if bits < 256 { 
+            (U256::from(1) << bits) - U256::from(1) 
+        } else { 
+            U256::MAX 
+        };
         let bounds = match (min_bound, max_bound) {
             (Some(min), Some(max)) if min <= max => Some((min, max)),
             (Some(min), None) => Some((min, type_max)),
             (None, Some(max)) => Some((U256::ZERO, max)),
-            _ => None,
+            _ => None
         };
 
         Self {
