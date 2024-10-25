@@ -300,7 +300,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 y_parity: None,
             }),
             access_list: None,
-            transaction_type: None,
+            transaction_type: Some(0),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             authorization_list: None,
@@ -1564,7 +1564,7 @@ impl Decodable for TypedReceipt {
 impl Encodable2718 for TypedReceipt {
     fn type_flag(&self) -> Option<u8> {
         match self {
-            Self::Legacy(_) => None,
+            Self::Legacy(_) => Some(0),
             Self::EIP2930(_) => Some(1),
             Self::EIP1559(_) => Some(2),
             Self::EIP4844(_) => Some(3),
