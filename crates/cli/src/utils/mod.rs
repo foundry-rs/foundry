@@ -106,6 +106,10 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.jwt(jwt.as_ref());
     }
 
+    if let Some(rpc_timeout) = config.eth_rpc_timeout {
+        builder = builder.timeout(Duration::from_secs(rpc_timeout));
+    }
+
     Ok(builder)
 }
 
