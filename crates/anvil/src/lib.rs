@@ -20,10 +20,7 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
-use foundry_common::{
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
-};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
@@ -131,7 +128,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// ```
 pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
-    logger.set_enabled(!shell::is_quiet());
+    logger.set_enabled(!config.silent);
 
     let backend = Arc::new(config.setup().await);
 
