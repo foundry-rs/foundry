@@ -274,7 +274,7 @@ impl BlockchainStorage {
             excess_blob_gas: env.block.get_blob_excess_gas(),
             ..Default::default()
         };
-        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number: U64 = U64::from(0u64);
@@ -693,11 +693,8 @@ mod tests {
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
             TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
-        let block = Block::new::<MaybeImpersonatedTransaction>(
-            partial_header.clone(),
-            vec![tx.clone()],
-            vec![],
-        );
+        let block =
+            Block::new::<MaybeImpersonatedTransaction>(partial_header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 

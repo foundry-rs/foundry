@@ -8,8 +8,8 @@ use crate::{
     mem::inspector::Inspector,
     PrecompileFactory,
 };
-use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
+use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -134,7 +134,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             None
         };
 
+        let is_shanghai = self.cfg_env.handler_cfg.spec_id >= SpecId::SHANGHAI;
         let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
+        let is_prague = self.cfg_env.handler_cfg.spec_id >= SpecId::PRAGUE;
         let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
@@ -208,7 +210,6 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             transactions.push(transaction.pending_transaction.transaction.clone());
         }
 
-        let ommers: Vec<Header> = Vec::new();
         let receipts_root =
             trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
 
@@ -227,12 +228,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             mix_hash: Default::default(),
             nonce: Default::default(),
             base_fee,
-            parent_beacon_block_root: Default::default(),
+            parent_beacon_block_root: is_cancun.then_some(Default::default()),
             blob_gas_used: cumulative_blob_gas_used,
             excess_blob_gas,
+            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(partial_header, transactions.clone(), ommers);
+        let block = Block::new(partial_header, transactions.clone());
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
