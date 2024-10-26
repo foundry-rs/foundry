@@ -8,9 +8,7 @@ use crate::{
     mem::inspector::Inspector,
     PrecompileFactory,
 };
-use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom,
-};
+use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
 use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
