@@ -3360,6 +3360,7 @@ dependencies = [
  "forge-doc",
  "forge-fmt",
  "forge-script",
+ "forge-script-sequence",
  "forge-sol-macro-gen",
  "forge-verify",
  "foundry-block-explorers",
