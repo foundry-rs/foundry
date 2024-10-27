@@ -81,6 +81,9 @@ stateRoot            [..]
 timestamp            [..]
 withdrawalsRoot      [..]
 totalDifficulty      [..]
+blobGasUsed          [..]
+excessBlobGas        [..]
+requestsHash         [..]
 transactions:        [
 ...
 ]
