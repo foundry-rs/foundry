@@ -2275,10 +2275,9 @@ forgetest_async!(should_detect_additional_contracts, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+    prj.add_source(
+        "Foo",
+        r#"
 import "forge-std/Script.sol";
 
 contract Simple {}
@@ -2297,8 +2296,8 @@ contract ContractScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
     cmd.arg("script")
         .args([
             "ContractScript",
