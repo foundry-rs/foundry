@@ -100,5 +100,5 @@ fn format_arg(ty: &str, arg: Vec<u8>) -> Result<String> {
     let bytes = Bytes::from(arg.clone());
     let decoded = arg_type.abi_decode(&arg)?;
 
-    Ok(format!("{bytes} -> {decoded:?}"))
+    Ok(format!("{bytes} → {decoded:?}"))
 }
