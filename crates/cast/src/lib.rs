@@ -1502,8 +1502,7 @@ impl SimpleCast {
 
         if as_int {
             validate_canonical_int(&bytes).wrap_err("Non-canonical integer")?;
-            let uint_value = U256::from_str(value.as_ref())?;
-            return Ok(format!("{uint_value:#?}"));
+            return Ok(U256::decode(&mut &bytes[..])?.to_string());
         }
 
         let item = Item::decode(&mut &bytes[..]).wrap_err("Could not decode rlp")?;
