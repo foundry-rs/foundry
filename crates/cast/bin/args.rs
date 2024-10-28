@@ -317,6 +317,10 @@ pub enum CastSubcommand {
     FromRlp {
         /// The RLP hex-encoded data.
         value: Option<String>,
+
+        /// Decode the RLP data as int
+        #[arg(id = "int", long = "as_int", alias = "int")]
+        as_int: bool,
     },
 
     /// Converts a number of one base to another

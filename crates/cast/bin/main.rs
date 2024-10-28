@@ -149,9 +149,9 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let value = stdin::unwrap_line(value)?;
             sh_println!("{}", SimpleCast::to_wei(&value, &unit)?)?
         }
-        CastSubcommand::FromRlp { value } => {
+        CastSubcommand::FromRlp { value, as_int } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_rlp(value)?)?
+            sh_println!("{}", SimpleCast::from_rlp(value, as_int)?)?
         }
         CastSubcommand::ToRlp { value } => {
             let value = stdin::unwrap_line(value)?;

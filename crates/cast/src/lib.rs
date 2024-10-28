@@ -1448,23 +1448,31 @@ impl SimpleCast {
         Ok(ParseUnits::parse_units(value, unit)?.to_string())
     }
 
-    /// Decodes rlp encoded list with hex data
+    // Decodes RLP encoded data with validation for canonical integer representation
     ///
-    /// # Example
-    ///
+    /// # Examples
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::from_rlp("0xc0").unwrap(), "[]");
-    /// assert_eq!(Cast::from_rlp("0x0f").unwrap(), "\"0x0f\"");
-    /// assert_eq!(Cast::from_rlp("0x33").unwrap(), "\"0x33\"");
-    /// assert_eq!(Cast::from_rlp("0xc161").unwrap(), "[\"0x61\"]");
-    /// assert_eq!(Cast::from_rlp("0xc26162").unwrap(), "[\"0x61\",\"0x62\"]");
+    /// assert_eq!(Cast::from_rlp("0xc0", false).unwrap(), "[]");
+    /// assert_eq!(Cast::from_rlp("0x0f", false).unwrap(), "\"0x0f\"");
+    /// assert_eq!(Cast::from_rlp("0x33", false).unwrap(), "\"0x33\"");
+    /// assert_eq!(Cast::from_rlp("0xc161", false).unwrap(), "[\"0x61\"]");
+    /// assert_eq!(Cast::from_rlp("820002", true).is_err(), true);
+    /// assert_eq!(Cast::from_rlp("820002", false).unwrap(), "\"0x0002\"");
+    /// assert_eq!(Cast::from_rlp("00", true).is_err(), true);
+    /// assert_eq!(Cast::from_rlp("00", false).unwrap(), "\"0x00\"");
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
+    pub fn from_rlp(value: impl AsRef<str>, as_int: bool) -> Result<String> {
         let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
+
+        if as_int {
+            return Ok(U256::decode(&mut &bytes[..])?.to_string());
+        }
+
         let item = Item::decode(&mut &bytes[..]).wrap_err("Could not decode rlp")?;
+
         Ok(item.to_string())
     }
 
@@ -2288,7 +2296,7 @@ mod tests {
     #[test]
     fn from_rlp() {
         let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
-        let item = Cast::from_rlp(rlp).unwrap();
+        let item = Cast::from_rlp(rlp, false).unwrap();
         assert_eq!(
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
