@@ -2554,7 +2554,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 }
     "#;
 
-    prj.add_test("GetBroadcast", &test).unwrap();
+    prj.add_test("GetBroadcast", test).unwrap();
 
     let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
