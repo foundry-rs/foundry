@@ -1801,7 +1801,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 "#]].is_jsonlines());
 });
 
-forgetest!(gas_ignore_some_contracts, |prj, cmd| {
+forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
@@ -1927,6 +1927,72 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
 "#]].is_jsonlines());
+});
+
+forgetest!(gas_report_multiple_selectors, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public a;
+    int256 public b;
+
+    function setNumber(uint256 x) public {
+        a = x;
+    }
+
+    function setNumber(int256 x) public {
+        b = x;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CounterTest.t.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Counter.sol";
+
+contract CounterTest is DSTest {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(uint256(0));
+        counter.setNumber(int256(0));
+    }
+
+    function test_Increment() public {
+        counter.setNumber(uint256(counter.a() + 1));
+        counter.setNumber(int256(counter.b() + 1));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Counter.sol:Counter contract |                 |       |        |       |         |
+|----------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                  | Deployment Size |       |        |       |         |
+| 101137                           | 250             |       |        |       |         |
+| Function Name                    | min             | avg   | median | max   | # calls |
+| a                                | 2261            | 2261  | 2261   | 2261  | 1       |
+| b                                | 2305            | 2305  | 2305   | 2305  | 1       |
+| setNumber(int256)                | 23648           | 33604 | 33604  | 43560 | 2       |
+| setNumber(uint256)               | 23604           | 33560 | 33560  | 43516 | 2       |
+...
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+{"contract":"src/Counter.sol:Counter","deployment":{"gas":101137,"size":250},"functions":{"a":{"a":{"calls":1,"min":2261,"mean":2261,"median":2261,"max":2261}},"b":{"b":{"calls":1,"min":2305,"mean":2305,"median":2305,"max":2305}},"setNumber":{"setNumber(int256)":{"calls":2,"min":23648,"mean":33604,"median":33604,"max":43560},"setNumber(uint256)":{"calls":2,"min":23604,"mean":33560,"median":33560,"max":43516}}}}
+"#]]
+        .is_jsonlines(),
+    );
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
