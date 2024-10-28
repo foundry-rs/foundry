@@ -73,8 +73,10 @@ impl CreationCodeArgs {
     }
 }
 
-/// Parses the creation bytecode to return either the bytecode, or bytecode without constructor
-/// arguments or only the constructor arguments.
+/// Parses the creation bytecode and returns one of the following:
+/// - The complete bytecode 
+/// - The bytecode without constructor arguments 
+/// - Only the constructor arguments
 async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
