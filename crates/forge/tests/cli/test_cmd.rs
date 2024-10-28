@@ -2395,9 +2395,8 @@ contract Dummy {
 forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
-    let (api, handle) = spawn(NodeConfig::test().silent()).await;
+    let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
-    let chain_id = api.chain_id();
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2480,7 +2479,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 // Gets the latest create
                 Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
                     "Counter",
-                    {chain_id},
+                    31337,
                     Vm.BroadcastTxType.Create
                 );
 
@@ -2492,7 +2491,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 // Gets the latest create2
                 Vm.BroadcastTxSummary memory broadcast2 = vm.getBroadcast(
                     "Counter",
-                    {chain_id},
+                    31337,
                     Vm.BroadcastTxType.Create2
                 );
 
@@ -2503,7 +2502,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 // Gets the latest call
                 Vm.BroadcastTxSummary memory broadcast3 = vm.getBroadcast(
                     "Counter",
-                    {chain_id},
+                    31337,
                     Vm.BroadcastTxType.Call
                 );
 
@@ -2515,7 +2514,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 // Gets all calls
                 Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts(
                     "Counter",
-                    {chain_id},
+                    31337,
                     Vm.BroadcastTxType.Call
                 );
 
@@ -2526,7 +2525,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 // Gets all broadcasts
                 Vm.BroadcastTxSummary[] memory broadcasts2 = vm.getBroadcasts(
                     "Counter",
-                    {chain_id}
+                    31337
                 );
 
                 assertEq(broadcasts2.length, 6);
@@ -2535,7 +2534,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
             function test_getLatestDeployment() public {
                 address deployedAddress = vm.getDeployment(
                     "Counter",
-                    {chain_id}
+                    31337
                 );   
 
                 assertEq(deployedAddress, address(0x030D07c16e2c0a77f74ab16f3C8F10ACeF89FF81));
@@ -2544,16 +2543,16 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
             function test_getDeployments() public {
                 address[] memory deployments = vm.getDeployments(
                     "Counter",
-                    {chain_id}
+                    31337
                 );
 
                 assertEq(deployments.length, 2);
+                assertEq(deployments[0], address(0x030D07c16e2c0a77f74ab16f3C8F10ACeF89FF81)); // Create2 address - latest deployment
+                assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
             
 }
     "#;
-
-    let test = test.replace("{chain_id}", &chain_id.to_string());
 
     prj.add_test("GetBroadcast", &test).unwrap();
 
