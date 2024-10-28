@@ -77,7 +77,7 @@ impl FindBlockArgs {
             }
             matching_block.unwrap_or(low_block)
         };
-        println!("{block_num}");
+        sh_println!("{block_num}")?;
 
         Ok(())
     }

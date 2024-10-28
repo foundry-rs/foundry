@@ -1880,7 +1880,7 @@ impl Backend {
             mix_hash,
             nonce,
             base_fee_per_gas,
-            withdrawals_root: _,
+            withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
             parent_beacon_block_root,
@@ -1906,7 +1906,7 @@ impl Backend {
                 mix_hash: Some(mix_hash),
                 nonce: Some(nonce),
                 base_fee_per_gas,
-                withdrawals_root: None,
+                withdrawals_root,
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
@@ -1917,7 +1917,7 @@ impl Backend {
                 transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
             uncles: vec![],
-            withdrawals: None,
+            withdrawals: withdrawals_root.map(|_| Default::default()),
         };
 
         let mut block = WithOtherFields::new(block);

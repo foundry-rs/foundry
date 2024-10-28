@@ -2,7 +2,7 @@ use super::{
     transaction::{TransactionInfo, TypedReceipt},
     trie,
 };
-use alloy_consensus::Header;
+use alloy_consensus::{Header, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
@@ -34,19 +34,11 @@ impl Block {
     ///
     /// Note: if the `impersonate-tx` feature is enabled this will also accept
     /// `MaybeImpersonatedTransaction`.
-    pub fn new<T>(
-        partial_header: PartialHeader,
-        transactions: impl IntoIterator<Item = T>,
-        ommers: Vec<Header>,
-    ) -> Self
+    pub fn new<T>(partial_header: PartialHeader, transactions: impl IntoIterator<Item = T>) -> Self
     where
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let mut encoded_ommers: Vec<u8> = Vec::new();
-        alloy_rlp::encode_list(&ommers, &mut encoded_ommers);
-        let ommers_hash =
-            B256::from_slice(alloy_primitives::utils::keccak256(encoded_ommers).as_slice());
         let transactions_root =
             trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
 
@@ -54,7 +46,7 @@ impl Block {
             header: Header {
                 parent_hash: partial_header.parent_hash,
                 beneficiary: partial_header.beneficiary,
-                ommers_hash,
+                ommers_hash: EMPTY_OMMER_ROOT_HASH,
                 state_root: partial_header.state_root,
                 transactions_root,
                 receipts_root: partial_header.receipts_root,
@@ -66,16 +58,16 @@ impl Block {
                 timestamp: partial_header.timestamp,
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
-                withdrawals_root: None,
+                withdrawals_root: partial_header.withdrawals_root,
                 blob_gas_used: partial_header.blob_gas_used,
                 excess_blob_gas: partial_header.excess_blob_gas,
                 parent_beacon_block_root: partial_header.parent_beacon_block_root,
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
-                requests_hash: None,
+                requests_hash: partial_header.requests_hash,
             },
             transactions,
-            ommers,
+            ommers: vec![],
         }
     }
 }
@@ -100,6 +92,8 @@ pub struct PartialHeader {
     pub parent_beacon_block_root: Option<B256>,
     pub nonce: B64,
     pub base_fee: Option<u64>,
+    pub withdrawals_root: Option<B256>,
+    pub requests_hash: Option<B256>,
 }
 
 impl From<Header> for PartialHeader {
@@ -122,6 +116,8 @@ impl From<Header> for PartialHeader {
             blob_gas_used: value.blob_gas_used,
             excess_blob_gas: value.excess_blob_gas,
             parent_beacon_block_root: value.parent_beacon_block_root,
+            requests_hash: value.requests_hash,
+            withdrawals_root: value.withdrawals_root,
         }
     }
 }

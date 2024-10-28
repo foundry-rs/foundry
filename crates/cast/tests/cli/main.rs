@@ -81,6 +81,9 @@ stateRoot            [..]
 timestamp            [..]
 withdrawalsRoot      [..]
 totalDifficulty      [..]
+blobGasUsed          [..]
+excessBlobGas        [..]
+requestsHash         [..]
 transactions:        [
 ...
 ]
@@ -1393,6 +1396,42 @@ casttest!(hash_message, |_prj, cmd| {
 
     cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
 0x83a0870b6c63a71efdd3b2749ef700653d97454152c4b53fa9b102dc430c7c32
+
+"#]]);
+});
+
+casttest!(parse_units, |_prj, cmd| {
+    cmd.args(["parse-units", "1.5", "6"]).assert_success().stdout_eq(str![[r#"
+1500000
+
+"#]]);
+
+    cmd.cast_fuse().args(["pun", "1.23", "18"]).assert_success().stdout_eq(str![[r#"
+1230000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["--parse-units", "1.23", "3"]).assert_success().stdout_eq(str![[r#"
+1230
+
+"#]]);
+});
+
+casttest!(format_units, |_prj, cmd| {
+    cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
+1
+
+"#]]);
+
+    cmd.cast_fuse().args(["--format-units", "2500000", "6"]).assert_success().stdout_eq(str![[
+        r#"
+2.500000
+
+"#
+    ]]);
+
+    cmd.cast_fuse().args(["fun", "1230", "3"]).assert_success().stdout_eq(str![[r#"
+1.230
 
 "#]]);
 });
