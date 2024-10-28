@@ -1628,7 +1628,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                             fmt.config.multiline_func_header,
                             MultilineFuncHeaderStyle::ParamsFirst |
                                 MultilineFuncHeaderStyle::ParamsFirstMulti |
-                                MultilineFuncHeaderStyle::All
+                                MultilineFuncHeaderStyle::All |
+                                MultilineFuncHeaderStyle::AllParams
                         );
                     params_multiline = should_multiline ||
                         multiline ||
@@ -1637,13 +1638,17 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
-                    // Write new line if we have only one parameter and params first set.
-                    if params.len() == 1 &&
+                    // Write new line if we have only one parameter and params first set,
+                    // or if the function definition is multiline and all params set.
+                    let single_param_multiline = matches!(
+                        fmt.config.multiline_func_header,
+                        MultilineFuncHeaderStyle::ParamsFirst
+                    ) || params_multiline &&
                         matches!(
                             fmt.config.multiline_func_header,
-                            MultilineFuncHeaderStyle::ParamsFirst
-                        )
-                    {
+                            MultilineFuncHeaderStyle::AllParams
+                        );
+                    if params.len() == 1 && single_param_multiline {
                         writeln!(fmt.buf())?;
                     }
                     fmt.write_chunks_separated(&params, ",", params_multiline)?;
@@ -1736,7 +1741,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let should_multiline = header_multiline &&
             if params_multiline {
-                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::All | MultilineFuncHeaderStyle::AllParams
+                )
             } else {
                 matches!(
                     self.config.multiline_func_header,

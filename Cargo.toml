@@ -170,60 +170,65 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.7.3", default-features = false }
 foundry-compilers = { version = "0.11.6", default-features = false }
-foundry-fork-db = "0.4.0"
+foundry-fork-db = "0.6.0"
 solang-parser = "=0.3.3"
 
 ## revm
-revm = { version = "14.0.3", default-features = false }
-revm-primitives = { version = "10.0.0", default-features = false }
-revm-inspectors = { version = "0.8.0", features = ["serde"] }
+revm = { version = "17.1.0", default-features = false }
+revm-primitives = { version = "13.0.0", default-features = false }
+revm-inspectors = { version = "0.10.0", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.4.2", default-features = false }
-alloy-contract = { version = "0.4.2", default-features = false }
-alloy-eips = { version = "0.4.2", default-features = false }
-alloy-genesis = { version = "0.4.2", default-features = false }
-alloy-json-rpc = { version = "0.4.2", default-features = false }
-alloy-network = { version = "0.4.2", default-features = false }
-alloy-provider = { version = "0.4.2", default-features = false }
-alloy-pubsub = { version = "0.4.2", default-features = false }
-alloy-rpc-client = { version = "0.4.2", default-features = false }
-alloy-rpc-types = { version = "0.4.2", default-features = true }
-alloy-serde = { version = "0.4.2", default-features = false }
-alloy-signer = { version = "0.4.2", default-features = false }
-alloy-signer-aws = { version = "0.4.2", default-features = false }
-alloy-signer-gcp = { version = "0.4.2", default-features = false }
-alloy-signer-ledger = { version = "0.4.2", default-features = false }
-alloy-signer-local = { version = "0.4.2", default-features = false }
-alloy-signer-trezor = { version = "0.4.2", default-features = false }
-alloy-transport = { version = "0.4.2", default-features = false }
-alloy-transport-http = { version = "0.4.2", default-features = false }
-alloy-transport-ipc = { version = "0.4.2", default-features = false }
-alloy-transport-ws = { version = "0.4.2", default-features = false }
+alloy-consensus = { version = "0.5.4", default-features = false }
+alloy-contract = { version = "0.5.4", default-features = false }
+alloy-eips = { version = "0.5.4", default-features = false }
+alloy-genesis = { version = "0.5.4", default-features = false }
+alloy-json-rpc = { version = "0.5.4", default-features = false }
+alloy-network = { version = "0.5.4", default-features = false }
+alloy-provider = { version = "0.5.4", default-features = false }
+alloy-pubsub = { version = "0.5.4", default-features = false }
+alloy-rpc-client = { version = "0.5.4", default-features = false }
+alloy-rpc-types = { version = "0.5.4", default-features = true }
+alloy-serde = { version = "0.5.4", default-features = false }
+alloy-signer = { version = "0.5.4", default-features = false }
+alloy-signer-aws = { version = "0.5.4", default-features = false }
+alloy-signer-gcp = { version = "0.5.4", default-features = false }
+alloy-signer-ledger = { version = "0.5.4", default-features = false }
+alloy-signer-local = { version = "0.5.4", default-features = false }
+alloy-signer-trezor = { version = "0.5.4", default-features = false }
+alloy-transport = { version = "0.5.4", default-features = false }
+alloy-transport-http = { version = "0.5.4", default-features = false }
+alloy-transport-ipc = { version = "0.5.4", default-features = false }
+alloy-transport-ws = { version = "0.5.4", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "0.8.5"
-alloy-json-abi = "0.8.5"
-alloy-primitives = { version = "0.8.5", features = [
+alloy-dyn-abi = "0.8.9"
+alloy-json-abi = "0.8.9"
+alloy-primitives = { version = "0.8.9", features = [
     "getrandom",
     "rand",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "0.8.5"
-alloy-sol-macro-input = "0.8.5"
-alloy-sol-types = "0.8.5"
-syn-solidity = "0.8.5"
+alloy-sol-macro-expander = "0.8.9"
+alloy-sol-macro-input = "0.8.9"
+alloy-sol-types = "0.8.9"
+syn-solidity = "0.8.9"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
 ## op-alloy 
-op-alloy-rpc-types = "0.3.3"
-op-alloy-consensus = "0.3.3"
+op-alloy-rpc-types = "0.5.0"
+op-alloy-consensus = "0.5.0"
+
+## cli
+anstream = "0.6.15"
+anstyle = "1.0.8"
+terminal_size = "0.4"
 
 # macros
 proc-macro2 = "1.0.82"

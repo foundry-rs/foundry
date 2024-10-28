@@ -45,7 +45,7 @@ pub struct RunArgs {
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
-    #[arg(long, short)]
+    #[arg(long)]
     quick: bool,
 
     /// Prints the full address of the contract.
@@ -170,7 +170,7 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            println!("Executing previous transactions from the block.");
+            sh_println!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");

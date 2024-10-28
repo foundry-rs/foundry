@@ -67,7 +67,7 @@ impl AccessListArgs {
 
         let access_list: String = cast.access_list(&tx, block, to_json).await?;
 
-        println!("{access_list}");
+        sh_println!("{access_list}")?;
 
         Ok(())
     }

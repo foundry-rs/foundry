@@ -1098,8 +1098,17 @@ impl Backend {
                 env.cfg.disable_base_fee = true;
             }
 
+            let block_number =
+                self.blockchain.storage.read().best_number.saturating_add(U64::from(1));
+
             // increase block number for this block
-            env.block.number = env.block.number.saturating_add(U256::from(1));
+            if is_arbitrum(env.cfg.chain_id) {
+                // Temporary set `env.block.number` to `block_number` for Arbitrum chains.
+                env.block.number = block_number.to();
+            } else {
+                env.block.number = env.block.number.saturating_add(U256::from(1));
+            }
+
             env.block.basefee = U256::from(current_base_fee);
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
 
@@ -1149,9 +1158,7 @@ impl Backend {
             let ExecutedTransactions { block, included, invalid } = executed_tx;
             let BlockInfo { block, transactions, receipts } = block;
 
-            let mut storage = self.blockchain.storage.write();
             let header = block.header.clone();
-            let block_number = storage.best_number.saturating_add(U64::from(1));
 
             trace!(
                 target: "backend",
@@ -1160,7 +1167,7 @@ impl Backend {
                 transactions.len(),
                 transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
-
+            let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
@@ -1423,12 +1430,19 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides: _ } =
+        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides } =
             opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number;
+
+            let state = if let Some(overrides) = state_overrides {
+                Box::new(state::apply_state_override(overrides, state)?)
+                    as Box<dyn MaybeFullDatabase>
+            } else {
+                state
+            };
 
             if let Some(tracer) = tracer {
                 return match tracer {
@@ -1861,12 +1875,12 @@ impl Backend {
             gas_limit,
             gas_used,
             timestamp,
-            requests_root,
+            requests_hash,
             extra_data,
             mix_hash,
             nonce,
             base_fee_per_gas,
-            withdrawals_root: _,
+            withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
             parent_beacon_block_root,
@@ -1892,30 +1906,24 @@ impl Backend {
                 mix_hash: Some(mix_hash),
                 nonce: Some(nonce),
                 base_fee_per_gas,
-                withdrawals_root: None,
+                withdrawals_root,
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
-                requests_root,
+                requests_hash,
             },
             size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
                 transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
             uncles: vec![],
-            withdrawals: None,
+            withdrawals: withdrawals_root.map(|_| Default::default()),
         };
 
         let mut block = WithOtherFields::new(block);
 
         // If Arbitrum, apply chain specifics to converted block.
-        if let Ok(
-            NamedChain::Arbitrum |
-            NamedChain::ArbitrumGoerli |
-            NamedChain::ArbitrumNova |
-            NamedChain::ArbitrumTestnet,
-        ) = NamedChain::try_from(self.env.read().env.cfg.chain_id)
-        {
+        if is_arbitrum(self.env.read().cfg.chain_id) {
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
@@ -2414,7 +2422,6 @@ impl Backend {
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
-            state_root: None,
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used: blob_gas_used.map(|g| g as u128),
             authorization_list: None,
@@ -2951,4 +2958,14 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     }
 
     proofs
+}
+
+pub fn is_arbitrum(chain_id: u64) -> bool {
+    matches!(
+        NamedChain::try_from(chain_id),
+        Ok(NamedChain::Arbitrum |
+            NamedChain::ArbitrumTestnet |
+            NamedChain::ArbitrumGoerli |
+            NamedChain::ArbitrumNova)
+    )
 }

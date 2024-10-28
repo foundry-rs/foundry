@@ -100,7 +100,7 @@ impl EstimateArgs {
             .await?;
 
         let gas = provider.estimate_gas(&tx).block(block.unwrap_or_default()).await?;
-        println!("{gas}");
+        sh_println!("{gas}")?;
         Ok(())
     }
 }

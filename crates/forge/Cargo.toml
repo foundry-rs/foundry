@@ -33,6 +33,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
+forge-script-sequence.workspace = true
 
 ethers-contract-abigen = { workspace = true, features = ["providers"] }
 

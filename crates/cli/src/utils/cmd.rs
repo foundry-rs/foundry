@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{fs, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -171,6 +171,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
                 NamedChain::ArbitrumTestnet |
+                NamedChain::Etherlink |
+                NamedChain::EtherlinkTestnet |
                 NamedChain::Karura |
                 NamedChain::KaruraTestnet |
                 NamedChain::Mantle |
@@ -275,32 +277,38 @@ where
 
     fn load_config_emit_warnings(self) -> Config {
         let config = self.load_config();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| sh_warn!("{w}").unwrap());
         config
     }
 
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
     }
 
     fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok((config, evm_opts))
     }
 
     fn load_config_unsanitized_emit_warnings(self) -> Config {
         let config = self.load_config_unsanitized();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         config
     }
 
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config_unsanitized()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
+    }
+}
+
+fn emit_warnings(config: &Config) {
+    for warning in &config.warnings {
+        let _ = sh_warn!("{warning}");
     }
 }
 
@@ -410,7 +418,7 @@ pub async fn handle_traces(
             .decoder(&decoder)
             .sources(sources)
             .build();
-        debugger.try_run()?;
+        debugger.try_run_tui()?;
     } else {
         print_traces(&mut result, &decoder, verbose).await?;
     }

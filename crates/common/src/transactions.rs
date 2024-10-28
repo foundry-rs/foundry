@@ -3,7 +3,7 @@
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{
-    network::{AnyNetwork, TransactionBuilder},
+    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
 };
 use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
@@ -122,7 +122,7 @@ pub fn get_pretty_tx_receipt_attr(
         "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
         "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
-        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
+        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root().pretty()),
         "status" | "statusCode" | "status_code" => {
             Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
         }
@@ -201,7 +201,7 @@ impl TransactionMaybeSigned {
 
     pub fn to(&self) -> Option<TxKind> {
         match self {
-            Self::Signed { tx, .. } => Some(tx.to()),
+            Self::Signed { tx, .. } => Some(tx.kind()),
             Self::Unsigned(tx) => tx.to,
         }
     }
