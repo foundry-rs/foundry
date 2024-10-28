@@ -18,7 +18,7 @@ use std::path::{Component, Path, PathBuf};
 pub struct BroadcastReader {
     contract_name: String,
     chain_id: u64,
-    tx_type: Option<CallKind>,
+    tx_type: Vec<CallKind>,
     broadcast_path: PathBuf,
 }
 
@@ -32,14 +32,14 @@ impl BroadcastReader {
         Ok(Self {
             contract_name,
             chain_id,
-            tx_type: None,
+            tx_type: Default::default(),
             broadcast_path: broadcast_path.to_path_buf(),
         })
     }
 
     /// Set the transaction type to filter by.
     pub fn with_tx_type(mut self, tx_type: CallKind) -> Self {
-        self.tx_type = Some(tx_type);
+        self.tx_type.push(tx_type);
         self
     }
 
@@ -116,7 +116,7 @@ impl BroadcastReader {
                 broadcast.transactions.iter().any(move |tx| {
                     tx.contract_name.as_ref().is_some_and(|cn| {
                         cn == &self.contract_name &&
-                            self.tx_type.map_or(true, |kind| tx.opcode == kind)
+                            self.tx_type.iter().any(|kind| *kind == tx.opcode)
                     })
                 })
             })
@@ -150,7 +150,7 @@ impl BroadcastReader {
                 let name_filter =
                     tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
 
-                let type_filter = self.tx_type.map_or(true, |kind| tx.opcode == kind);
+                let type_filter = self.tx_type.iter().any(|kind| *kind == tx.opcode);
 
                 name_filter && type_filter
             })

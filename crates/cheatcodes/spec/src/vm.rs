@@ -1722,6 +1722,10 @@ interface Vm {
     function getDeployment(string memory contractName, uint64 chainId) external returns (address deployedAddress);
 
     /// Returns all deployments for the given contract on `chainId`
+    ///
+    /// Sorted in descending order of deployment time i.e descending order of BroadcastTxSummary.blockNumber.
+    ///
+    /// The most recent deployment is the first element, and the oldest is the last.
     #[cheatcode(group = Filesystem)]
     function getDeployments(string memory contractName, uint64 chainId) external returns (address[] memory deployedAddresses);
 

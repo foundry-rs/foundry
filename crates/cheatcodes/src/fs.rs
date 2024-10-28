@@ -664,7 +664,7 @@ impl Cheatcode for getBroadcasts_0Call {
 
         let broadcasts = reader.read()?;
 
-        let mut summaries = broadcasts
+        let summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
                 let results = reader.into_tx_receipts(broadcast);
@@ -672,9 +672,6 @@ impl Cheatcode for getBroadcasts_0Call {
             })
             .flatten()
             .collect::<Vec<_>>();
-
-        // Sort by descending block number
-        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
 
         Ok(summaries.abi_encode())
     }
@@ -690,7 +687,7 @@ impl Cheatcode for getBroadcasts_1Call {
 
         let broadcasts = reader.read()?;
 
-        let mut summaries = broadcasts
+        let summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
                 let results = reader.into_tx_receipts(broadcast);
@@ -698,9 +695,6 @@ impl Cheatcode for getBroadcasts_1Call {
             })
             .flatten()
             .collect::<Vec<_>>();
-
-        // Sort by descending block number
-        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
 
         Ok(summaries.abi_encode())
     }
@@ -713,7 +707,8 @@ impl Cheatcode for getDeploymentCall {
         let path = &state.config.root.join(&state.config.broadcast);
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?
-            .with_tx_type(CallKind::Create);
+            .with_tx_type(CallKind::Create)
+            .with_tx_type(CallKind::Create2);
 
         let broadcast = reader.read_latest()?;
 
@@ -736,11 +731,14 @@ impl Cheatcode for getDeploymentsCall {
         let path = &state.config.root.join(&state.config.broadcast);
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?
-            .with_tx_type(CallKind::Create);
+            .with_tx_type(CallKind::Create)
+            .with_tx_type(CallKind::Create2);
+
+        println!("Reader {reader:#?}");
 
         let broadcasts = reader.read()?;
 
-        let mut summaries = broadcasts
+        let summaries = broadcasts
             .into_iter()
             .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
                 let results = reader.into_tx_receipts(broadcast);
@@ -748,9 +746,6 @@ impl Cheatcode for getDeploymentsCall {
             })
             .flatten()
             .collect::<Vec<_>>();
-
-        // Sort by descending block number
-        summaries.sort_by(|a, b| b.blockNumber.cmp(&a.blockNumber));
 
         let deployed_addresses =
             summaries.into_iter().map(|summary| summary.contractAddress).collect::<Vec<_>>();
