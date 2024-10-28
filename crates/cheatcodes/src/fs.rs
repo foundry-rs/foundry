@@ -734,8 +734,6 @@ impl Cheatcode for getDeploymentsCall {
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
-        println!("Reader {reader:#?}");
-
         let broadcasts = reader.read()?;
 
         let summaries = broadcasts
