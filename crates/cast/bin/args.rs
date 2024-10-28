@@ -942,7 +942,7 @@ pub enum CastSubcommand {
     #[command(visible_alias = "cc")]
     CreationCode(CreationCodeArgs),
 
-    /// Display args used for the contract initialization
+    /// Display constructor arguments used for the contract initialization.
     #[command(visible_alias = "cra")]
     ConstructorArgs(ConstructorArgsArgs),
 
