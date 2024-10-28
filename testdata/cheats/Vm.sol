@@ -264,6 +264,8 @@ interface Vm {
     function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
+    function getDeployment(string memory contractName, uint64 chainId) external returns (address deployedAddress);
+    function getDeployments(string memory contractName, uint64 chainId) external returns (address[] memory deployedAddresses);
     function getFoundryVersion() external view returns (string memory version);
     function getLabel(address account) external view returns (string memory currentLabel);
     function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);

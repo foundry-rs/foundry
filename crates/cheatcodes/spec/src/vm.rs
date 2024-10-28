@@ -1717,6 +1717,14 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);
 
+    /// Returns the most recent deployment for the given contract on `chainId`
+    #[cheatcode(group = Filesystem)]
+    function getDeployment(string memory contractName, uint64 chainId) external returns (address deployedAddress);
+
+    /// Returns all deployments for the given contract on `chainId`
+    #[cheatcode(group = Filesystem)]
+    function getDeployments(string memory contractName, uint64 chainId) external returns (address[] memory deployedAddresses);
+
     // -------- Foreign Function Interface --------
 
     /// Performs a foreign function call via the terminal.
