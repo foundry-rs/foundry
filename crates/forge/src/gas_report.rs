@@ -96,11 +96,11 @@ impl GasReport {
 
         // Only include top-level calls which account for calldata and base (21.000) cost.
         // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1
-            && (trace.kind == CallKind::Call
-                || trace.kind == CallKind::Create
-                || trace.kind == CallKind::Create2
-                || trace.kind == CallKind::EOFCreate)
+        if trace.depth > 1 &&
+            (trace.kind == CallKind::Call ||
+                trace.kind == CallKind::Create ||
+                trace.kind == CallKind::Create2 ||
+                trace.kind == CallKind::EOFCreate)
         {
             return;
         }
@@ -157,54 +157,82 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for (name, contract) in &self.contracts {
-            if contract.functions.is_empty() {
-                trace!(name, "gas report contract without functions");
-                continue;
-            }
+        match self.report_type {
+            GasReportKind::Markdown => {
+                for (name, contract) in &self.contracts {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        continue;
+                    }
 
-            if self.report_type == GasReportKind::JSON {
-                writeln!(f, "{}", self.format_json_output(contract, name))?;
-            } else {
-                let table = self.format_table_output(contract, name);
-                writeln!(f, "{table}")?;
-                writeln!(f, "\n")?;
+                    let table = self.format_table_output(contract, name);
+                    writeln!(f, "{table}")?;
+                    writeln!(f, "\n")?;
+                }
+            }
+            GasReportKind::JSON => {
+                writeln!(f, "{}", &self.format_json_output())?;
             }
         }
+
         Ok(())
     }
 }
 
 impl GasReport {
-    // Helper function to format the JSON output
-    fn format_json_output(&self, contract: &ContractInfo, name: &str) -> String {
-        let output = json!({
-            "contract": name,
-            "deployment": {
-                "gas": contract.gas,
-                "size": contract.size,
-            },
-            "functions": contract.functions.iter().map(|(fname, sigs)| {
-                (fname, sigs.iter().map(|(sig, gas_info)| {
-                    // Show function signature if overloaded else display function name.
-                    let display_name = if sigs.len() == 1 {
-                        fname.to_string()
-                    } else {
-                        sig.replace(':', "")
-                    };
+    fn format_json_output(&self) -> String {
+        serde_json::to_string(
+            &self
+                .contracts
+                .iter()
+                .filter_map(|(name, contract)| {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        return None;
+                    }
 
-                    (display_name, json!({
-                        "calls": gas_info.calls,
-                        "min": gas_info.min,
-                        "mean": gas_info.mean,
-                        "median": gas_info.median,
-                        "max": gas_info.max,
+                    let functions = contract
+                        .functions
+                        .iter()
+                        .map(|(fname, sigs)| {
+                            let function_details = sigs
+                                .iter()
+                                .map(|(sig, gas_info)| {
+                                    let display_name = if sigs.len() == 1 {
+                                        fname.clone()
+                                    } else {
+                                        sig.replace(':', "")
+                                    };
+
+                                    (
+                                        display_name,
+                                        json!({
+                                            "calls": gas_info.calls,
+                                            "min": gas_info.min,
+                                            "mean": gas_info.mean,
+                                            "median": gas_info.median,
+                                            "max": gas_info.max,
+                                        }),
+                                    )
+                                })
+                                .collect::<BTreeMap<_, _>>();
+
+                            (fname.clone(), function_details)
+                        })
+                        .collect::<BTreeMap<_, _>>();
+
+                    Some(json!({
+                        "contract": name,
+                        "deployment": {
+                            "gas": contract.gas,
+                            "size": contract.size,
+                        },
+                        "functions": functions,
                     }))
-                }).collect::<BTreeMap<_, _>>())
-            }).collect::<BTreeMap<_, _>>(),
-        });
-
-        serde_json::to_string(&output).unwrap()
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
     }
 
     // Helper function to format the table output
