@@ -1591,16 +1591,67 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -1630,16 +1681,67 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -1669,16 +1771,67 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     prj.write_config(Config {
         gas_reports: (vec![
@@ -1715,16 +1868,67 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 });
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
@@ -1745,14 +1949,31 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     // report for Two
     prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
@@ -1770,8 +1991,28 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 "#]]);
     cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
         str![[r#"
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines(),
+[
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
     );
 
     // report for Three
@@ -1791,14 +2032,31 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 });
 
 forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
@@ -1831,15 +2089,49 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     // ignore ContractTwo
     cmd.forge_fuse();
@@ -1868,17 +2160,55 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 ...
 
 "#]]);
-    cmd.forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .arg("--json")
-        .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-"#]].is_jsonlines());
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
-    // ignore ContractThree
+    // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
+    // report for the contract is generated even if it's listed in the ignore
+    // list. This is addressed this way because getting a report you don't expect is
+    // preferable than not getting one you expect. A warning is printed to stderr
+    // indicating the "double listing".
     cmd.forge_fuse();
     prj.write_config(Config {
         gas_reports: (vec![
@@ -1890,7 +2220,10 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
         ..Default::default()
     });
     cmd.forge_fuse();
-    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 | src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
 |----------------------------------------|-----------------|-------|--------|-------|---------|
@@ -1915,18 +2248,83 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 | Function Name                          | min             | avg   | median | max   | # calls |
 | bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
 ...
-
+"#]])
+        .stderr_eq(str![[r#"
+...
+warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
+...
 "#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
         .arg("--json")
         .assert_success()
-        .stdout_eq(str![[r#"
-{"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-{"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-{"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-"#]].is_jsonlines());
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo": {
+        "foo": {
+          "calls": 1,
+          "min": 45387,
+          "mean": 45387,
+          "median": 45387,
+          "max": 45387
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz": {
+        "baz": {
+          "calls": 1,
+          "min": 260712,
+          "mean": 260712,
+          "median": 260712,
+          "max": 260712
+        }
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar": {
+        "bar": {
+          "calls": 1,
+          "min": 64984,
+          "mean": 64984,
+          "median": 64984,
+          "max": 64984
+        }
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        )
+        .stderr_eq(str![[r#"
+...
+warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
+...
+"#]]);
 });
 
 forgetest!(gas_report_multiple_selectors, |prj, cmd| {
@@ -1989,9 +2387,53 @@ contract CounterTest is DSTest {
 "#]]);
     cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
         str![[r#"
-{"contract":"src/Counter.sol:Counter","deployment":{"gas":101137,"size":250},"functions":{"a":{"a":{"calls":1,"min":2261,"mean":2261,"median":2261,"max":2261}},"b":{"b":{"calls":1,"min":2305,"mean":2305,"median":2305,"max":2305}},"setNumber":{"setNumber(int256)":{"calls":2,"min":23648,"mean":33604,"median":33604,"max":43560},"setNumber(uint256)":{"calls":2,"min":23604,"mean":33560,"median":33560,"max":43516}}}}
+[
+  {
+    "contract": "src/Counter.sol:Counter",
+    "deployment": {
+      "gas": 101137,
+      "size": 250
+    },
+    "functions": {
+      "a": {
+        "a": {
+          "calls": 1,
+          "min": 2261,
+          "mean": 2261,
+          "median": 2261,
+          "max": 2261
+        }
+      },
+      "b": {
+        "b": {
+          "calls": 1,
+          "min": 2305,
+          "mean": 2305,
+          "median": 2305,
+          "max": 2305
+        }
+      },
+      "setNumber": {
+        "setNumber(int256)": {
+          "calls": 2,
+          "min": 23648,
+          "mean": 33604,
+          "median": 33604,
+          "max": 43560
+        },
+        "setNumber(uint256)": {
+          "calls": 2,
+          "min": 23604,
+          "mean": 33560,
+          "median": 33560,
+          "max": 43516
+        }
+      }
+    }
+  }
+]
 "#]]
-        .is_jsonlines(),
+        .is_json(),
     );
 });
 
