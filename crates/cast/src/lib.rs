@@ -1465,43 +1465,9 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_rlp(value: impl AsRef<str>, as_int: bool) -> Result<String> {
-        fn validate_canonical_int(bytes: &[u8]) -> Result<()> {
-            if bytes.is_empty() {
-                return Ok(());
-            }
-
-            match bytes.len() {
-                1 => {
-                    if bytes[0] < 0x80 {
-                        eyre::bail!("rlp: non-canonical size information")
-                    }
-                }
-                _ => {
-                    if bytes[0] == 0 {
-                        eyre::bail!("rlp: non-canonical integer (leading zero bytes)")
-                    }
-                    if bytes[0] >= 0x80 {
-                        let size: usize = (bytes[0] - 0x80).into();
-
-                        // Size tags must use the smallest possible encoding.
-                        if size > bytes.len() - 1 {
-                            eyre::bail!("rlp: non-canonical size information")
-                        }
-
-                        if bytes[1] == 0 {
-                            eyre::bail!("rlp: non-canonical size information (leading zero bytes)")
-                        }                        
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
         let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
 
         if as_int {
-            validate_canonical_int(&bytes).wrap_err("Non-canonical integer")?;
             return Ok(U256::decode(&mut &bytes[..])?.to_string());
         }
 
