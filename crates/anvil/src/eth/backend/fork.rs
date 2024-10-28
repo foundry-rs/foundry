@@ -739,7 +739,7 @@ impl ForkedStorage {
         accounts: BTreeMap<Address, SerializableAccountRecord>,
         block_number: u64,
     ) {
-        accounts.into_iter().map(|(k, v)| {
+        accounts.into_iter().for_each(|(k, v)| {
             let info = AccountInfo {
                 balance: v.balance,
                 nonce: v.nonce,
@@ -747,7 +747,7 @@ impl ForkedStorage {
                 code: if v.code.is_empty() { None } else { Some(Bytecode::new_raw(v.code)) },
             };
 
-            self.account_at.insert((k, block_number), info)
+            self.account_at.insert((k, block_number), info);
         });
     }
 }
