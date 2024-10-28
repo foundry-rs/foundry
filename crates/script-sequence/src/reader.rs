@@ -116,7 +116,8 @@ impl BroadcastReader {
                 broadcast.transactions.iter().any(move |tx| {
                     tx.contract_name.as_ref().is_some_and(|cn| {
                         cn == &self.contract_name &&
-                            self.tx_type.iter().any(|kind| *kind == tx.opcode)
+                            (self.tx_type.is_empty() ||
+                                self.tx_type.iter().any(|kind| *kind == tx.opcode))
                     })
                 })
             })
@@ -150,7 +151,8 @@ impl BroadcastReader {
                 let name_filter =
                     tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
 
-                let type_filter = self.tx_type.iter().any(|kind| *kind == tx.opcode);
+                let type_filter =
+                    self.tx_type.is_empty() || self.tx_type.iter().any(|kind| *kind == tx.opcode);
 
                 name_filter && type_filter
             })
