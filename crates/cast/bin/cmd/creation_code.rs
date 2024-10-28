@@ -21,7 +21,7 @@ pub struct CreationCodeArgs {
     contract: Address,
 
     /// Path to file containing the contract's JSON ABI. It's necessary if the target contract is
-    /// not verified on Etherscan
+    /// not verified on Etherscan.
     #[arg(long)]
     abi_path: Option<String>,
 
