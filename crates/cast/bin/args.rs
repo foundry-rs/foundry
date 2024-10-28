@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts, ShellOpts};
 use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
@@ -33,6 +33,9 @@ const VERSION_MESSAGE: &str = concat!(
 pub struct Cast {
     #[command(subcommand)]
     pub cmd: CastSubcommand,
+
+    #[clap(flatten)]
+    pub shell: ShellOpts,
 }
 
 #[derive(Subcommand)]
@@ -231,6 +234,38 @@ pub enum CastSubcommand {
         unit: String,
     },
 
+    /// Convert a number from decimal to smallest unit with arbitrary decimals.
+    ///
+    /// Examples:
+    /// - 1.0 6    (for USDC, result: 1000000)
+    /// - 2.5 12   (for 12 decimals token, result: 2500000000000)
+    /// - 1.23 3   (for 3 decimals token, result: 1230)
+    #[command(visible_aliases = &["--parse-units", "pun"])]
+    ParseUnits {
+        /// The value to convert.
+        value: Option<String>,
+
+        /// The unit to convert to.
+        #[arg(default_value = "18")]
+        unit: u8,
+    },
+
+    /// Format a number from smallest unit to decimal with arbitrary decimals.
+    ///
+    /// Examples:
+    /// - 1000000 6       (for USDC, result: 1.0)
+    /// - 2500000000000 12 (for 12 decimals, result: 2.5)
+    /// - 1230 3          (for 3 decimals, result: 1.23)
+    #[command(visible_aliases = &["--format-units", "fun"])]
+    FormatUnits {
+        /// The value to format.
+        value: Option<String>,
+
+        /// The unit to format to.
+        #[arg(default_value = "18")]
+        unit: u8,
+    },
+
     /// Convert an ETH amount to wei.
     ///
     /// Consider using --to-unit.
@@ -283,6 +318,10 @@ pub enum CastSubcommand {
     FromRlp {
         /// The RLP hex-encoded data.
         value: Option<String>,
+
+        /// Decode the RLP data as int
+        #[arg(id = "int", long = "as_int", alias = "int")]
+        as_int: bool,
     },
 
     /// Converts a number of one base to another

@@ -13,13 +13,13 @@ use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{EvmError, RawCallResult},
+    executors::{invariant::InvariantMetrics, EvmError, RawCallResult},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
@@ -151,20 +151,20 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
         if outcome.allow_failure || failures == 0 {
             return Ok(());
         }
 
-        if !shell::verbosity().is_normal() {
+        if shell::is_quiet() || silent {
             // TODO: Avoid process::exit
             std::process::exit(1);
         }
 
-        shell::println("")?;
-        shell::println("Failing tests:")?;
+        sh_println!()?;
+        sh_println!("Failing tests:")?;
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {
@@ -172,18 +172,18 @@ impl TestOutcome {
             }
 
             let term = if failed > 1 { "tests" } else { "test" };
-            shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
+            sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                sh_println!("{}", result.short_result(name))?;
             }
-            shell::println("")?;
+            sh_println!()?;
         }
         let successes = outcome.passed();
-        shell::println(format!(
+        sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
-        ))?;
+        )?;
 
         // TODO: Avoid process::exit
         std::process::exit(1);
@@ -579,7 +579,8 @@ impl TestResult {
 
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(mut self, reason: SkipReason) -> Self {
-        self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
+        self.kind =
+            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
         self
@@ -592,7 +593,8 @@ impl TestResult {
         invariant_name: &String,
         call_sequence: Vec<BaseCounterExample>,
     ) -> Self {
-        self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
+        self.kind =
+            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
         self.status = TestStatus::Failure;
         self.reason = if replayed_entirely {
             Some(format!("{invariant_name} replay failure"))
@@ -605,13 +607,15 @@ impl TestResult {
 
     /// Returns the fail result for invariant test setup.
     pub fn invariant_setup_fail(mut self, e: Report) -> Self {
-        self.kind = TestKind::Invariant { runs: 0, calls: 0, reverts: 0 };
+        self.kind =
+            TestKind::Invariant { runs: 0, calls: 0, reverts: 0, metrics: HashMap::default() };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
         self
     }
 
     /// Returns the invariant test result.
+    #[allow(clippy::too_many_arguments)]
     pub fn invariant_result(
         mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
@@ -620,11 +624,13 @@ impl TestResult {
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
     ) -> Self {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
+            metrics,
         };
         self.status = match success {
             true => TestStatus::Success,
@@ -669,19 +675,19 @@ impl TestResult {
 pub enum TestKindReport {
     Unit { gas: u64 },
     Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
-    Invariant { runs: usize, calls: usize, reverts: usize },
+    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
 }
 
 impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
+        match self {
             Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
             Self::Fuzz { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            Self::Invariant { runs, calls, reverts } => {
+            Self::Invariant { runs, calls, reverts, metrics: _ } => {
                 write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
             }
         }
@@ -715,7 +721,7 @@ pub enum TestKind {
         median_gas: u64,
     },
     /// An invariant test.
-    Invariant { runs: usize, calls: usize, reverts: usize },
+    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
 }
 
 impl Default for TestKind {
@@ -727,14 +733,17 @@ impl Default for TestKind {
 impl TestKind {
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
-        match *self {
-            Self::Unit { gas } => TestKindReport::Unit { gas },
+        match self {
+            Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
             Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
-                TestKindReport::Fuzz { runs, mean_gas, median_gas }
+                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
-            Self::Invariant { runs, calls, reverts } => {
-                TestKindReport::Invariant { runs, calls, reverts }
-            }
+            Self::Invariant { runs, calls, reverts, metrics: _ } => TestKindReport::Invariant {
+                runs: *runs,
+                calls: *calls,
+                reverts: *reverts,
+                metrics: HashMap::default(),
+            },
         }
     }
 }

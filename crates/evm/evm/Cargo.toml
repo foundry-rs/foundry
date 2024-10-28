@@ -50,3 +50,4 @@ proptest.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif = "0.17"
+serde.workspace = true

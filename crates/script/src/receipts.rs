@@ -40,7 +40,7 @@ pub async fn check_tx_status(
         }
 
         loop {
-            if let Ok(receipt) = PendingTransactionBuilder::new(provider, hash)
+            if let Ok(receipt) = PendingTransactionBuilder::new(provider.clone(), hash)
                 .with_timeout(Some(Duration::from_secs(timeout)))
                 .get_receipt()
                 .await

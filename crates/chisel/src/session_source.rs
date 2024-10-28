@@ -98,7 +98,7 @@ impl SessionSourceConfig {
             SolcReq::Version(version)
         } else {
             if !self.foundry_config.offline {
-                print!("{}", "No solidity versions installed! ".green());
+                sh_print!("{}", "No solidity versions installed! ".green())?;
             }
             // use default
             SolcReq::Version(Version::new(0, 8, 19))
@@ -112,7 +112,7 @@ impl SessionSourceConfig {
                     if self.foundry_config.offline {
                         eyre::bail!("can't install missing solc {version} in offline mode")
                     }
-                    println!("{}", format!("Installing solidity version {version}...").green());
+                    sh_println!("{}", format!("Installing solidity version {version}...").green())?;
                     Solc::blocking_install(&version)?
                 };
                 Ok(solc)

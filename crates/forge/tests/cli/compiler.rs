@@ -31,7 +31,7 @@ contract ContractD {}
 "#;
 
 const VYPER_INTERFACE: &str = r#"
-# pragma version 0.4.0
+# pragma version >=0.4.0
 
 @external
 @view
@@ -87,6 +87,23 @@ Solidity:
 "#]]);
 });
 
+forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
+    prj.add_source("ContractA", CONTRACT_A).unwrap();
+
+    cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+   "Solidity":[
+      {
+         "version":"0.8.4"
+      }
+   ]
+}
+"#]]
+        .is_json(),
+    );
+});
+
 forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
@@ -102,13 +119,24 @@ Solidity:
 "#]]);
 });
 
-forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
+forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
 
-    cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
+    cmd.args(["compiler", "resolve", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
-{"Solidity":[["0.8.27",["src/ContractC.sol","src/ContractD.sol"]]]}"#]]
+{
+  "Solidity": [
+    {
+      "version": "0.8.27",
+      "paths": [
+        "src/ContractC.sol",
+        "src/ContractD.sol"
+      ]
+    }
+  ]
+}
+"#]]
         .is_json(),
     );
 });
@@ -163,11 +191,32 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
     prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
-    cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-{"Solidity":[["0.8.27",["src/ContractD.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vyi"]]]}
-"#]].is_json());
+    cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json", "-v"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "Solidity": [
+    {
+      "version": "0.8.27",
+      "paths": [
+        "src/ContractD.sol"
+      ]
+    }
+  ],
+  "Vyper": [
+    {
+      "version": "0.4.0",
+      "paths": [
+        "src/Counter.vy",
+        "src/ICounter.vyi"
+      ]
+    }
+  ]
+}
+"#]]
+            .is_json(),
+        );
 });
 
 forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
@@ -178,22 +227,22 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
     prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
-    cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["compiler", "resolve", "-vv"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-0.8.4:
+0.8.4 (<= istanbul):
 └── src/ContractA.sol
 
-0.8.11:
+0.8.11 (<= london):
 └── src/ContractB.sol
 
-0.8.27:
+0.8.27 (<= [..]):
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
 Vyper:
 
-0.4.0:
+0.4.0 (<= [..]):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -201,7 +250,7 @@ Vyper:
 "#]]);
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
+forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd| {
     prj.add_source("ContractA", CONTRACT_A).unwrap();
     prj.add_source("ContractB", CONTRACT_B).unwrap();
     prj.add_source("ContractC", CONTRACT_C).unwrap();
@@ -209,9 +258,44 @@ forgetest!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
     prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
     prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
-    cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
+    cmd.args(["compiler", "resolve", "--json", "-vv"]).assert_success().stdout_eq(
         str![[r#"
-{"Solidity":[["0.8.4",["src/ContractA.sol"]],["0.8.11",["src/ContractB.sol"]],["0.8.27",["src/ContractC.sol","src/ContractD.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vyi"]]]}
+{
+  "Solidity": [
+    {
+      "version": "0.8.4",
+      "evm_version": "Istanbul",
+      "paths": [
+        "src/ContractA.sol"
+      ]
+    },
+    {
+      "version": "0.8.11",
+      "evm_version": "London",
+      "paths": [
+        "src/ContractB.sol"
+      ]
+    },
+    {
+      "version": "0.8.27",
+      "evm_version": "[..]",
+      "paths": [
+        "src/ContractC.sol",
+        "src/ContractD.sol"
+      ]
+    }
+  ],
+  "Vyper": [
+    {
+      "version": "0.4.0",
+      "evm_version": "[..]",
+      "paths": [
+        "src/Counter.vy",
+        "src/ICounter.vyi"
+      ]
+    }
+  ]
+}
 "#]]
         .is_json(),
     );

@@ -38,6 +38,7 @@ bytes = "1.4"
 
 # misc
 rand = "0.8"
+thiserror.workspace = true
 
 [features]
 default = ["serde"]
