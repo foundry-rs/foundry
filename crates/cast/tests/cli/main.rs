@@ -25,8 +25,26 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Display options:
+      --color <COLOR>
+          Log messages coloring
+
+          Possible values:
+          - auto:   Intelligently guess whether to use color output (default)
+          - always: Force color output
+          - never:  Force disable color output
+
+  -q, --quiet
+          Do not print log messages
+
+      --verbose
+          Use verbose output
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -63,6 +81,9 @@ stateRoot            [..]
 timestamp            [..]
 withdrawalsRoot      [..]
 totalDifficulty      [..]
+blobGasUsed          [..]
+excessBlobGas        [..]
+requestsHash         [..]
 transactions:        [
 ...
 ]
@@ -152,8 +173,7 @@ Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed 
         .args(["wallet", "verify", "-a", address, "other msg", expected])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
+Error: Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
 
 "#]]);
 });
@@ -285,9 +305,16 @@ Created new encrypted keystore file: [..]
 
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
 casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
-    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 Generating mnemonic from provided entropy...
 Successfully generated a new mnemonic.
 Phrase:
@@ -298,6 +325,48 @@ Accounts:
 Address:     0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
+- Account 1:
+Address:     0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+Private key: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+- Account 2:
+Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+
+
+"#]]);
+});
+
+// tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic
+casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "mnemonic": "test test test test test test test test test test test junk",
+  "accounts": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+    }
+  ]
+}
 
 "#]]);
 });
@@ -886,8 +955,7 @@ casttest!(mktx_requires_to, |_prj, cmd| {
         "1",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -904,8 +972,7 @@ casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-The specified sender via CLI/env vars does not match the sender configured via
+Error: The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.
@@ -976,8 +1043,7 @@ casttest!(send_requires_to, |_prj, cmd| {
         "1",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Must specify a recipient address or contract code to deploy
+Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
 });
@@ -1034,47 +1100,56 @@ casttest!(storage, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(storage_layout, |_prj, cmd| {
+casttest!(storage_layout_simple, |_prj, cmd| {
     cmd.args([
-            "storage",
-            "--rpc-url",
-            next_rpc_endpoint(NamedChain::Optimism).as_str(),
-            "--block",
-            "110000000",
-            "--etherscan-api-key",
-            "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
-            "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
-|-------------------------------|-----------------------------------------------------------------|------|--------|-------|---------------------------------------------------|--------------------------------------------------------------------|----------------------------------------------------|
-| gov                           | address                                                         | 0    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
-| _status                       | uint256                                                         | 1    | 0      | 32    | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
-| admin                         | address                                                         | 2    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
-| feeCalculator                 | address                                                         | 3    | 0      | 20    | 1297482016264593221714872710065075000476194625473 | 0x000000000000000000000000e3451b170806aab3e24b5cd03a331c1ccdb4d7c1 | contracts/perp/PositionManager.sol:PositionManager |
-| oracle                        | address                                                         | 4    | 0      | 20    | 241116142622541106669066767052022920958068430970  | 0x0000000000000000000000002a3c0592dcb58accd346ccee2bb46e3fb744987a | contracts/perp/PositionManager.sol:PositionManager |
-| referralStorage               | address                                                         | 5    | 0      | 20    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| minExecutionFee               | uint256                                                         | 6    | 0      | 32    | 20000                                             | 0x0000000000000000000000000000000000000000000000000000000000004e20 | contracts/perp/PositionManager.sol:PositionManager |
-| minBlockDelayKeeper           | uint256                                                         | 7    | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| minTimeExecuteDelayPublic     | uint256                                                         | 8    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
-| minTimeCancelDelayPublic      | uint256                                                         | 9    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
-| maxTimeDelay                  | uint256                                                         | 10   | 0      | 32    | 1800                                              | 0x0000000000000000000000000000000000000000000000000000000000000708 | contracts/perp/PositionManager.sol:PositionManager |
-| isUserExecuteEnabled          | bool                                                            | 11   | 0      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
-| isUserCancelEnabled           | bool                                                            | 11   | 1      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
-| allowPublicKeeper             | bool                                                            | 11   | 2      | 1     | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| allowUserCloseOnly            | bool                                                            | 11   | 3      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
-| openPositionRequestKeys       | bytes32[]                                                       | 12   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
-| closePositionRequestKeys      | bytes32[]                                                       | 13   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
-| openPositionRequestKeysStart  | uint256                                                         | 14   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
-| closePositionRequestKeysStart | uint256                                                         | 15   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
-| isPositionKeeper              | mapping(address => bool)                                        | 16   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| openPositionsIndex            | mapping(address => uint256)                                     | 17   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| openPositionRequests          | mapping(bytes32 => struct PositionManager.OpenPositionRequest)  | 18   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| closePositionsIndex           | mapping(address => uint256)                                     | 19   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| closePositionRequests         | mapping(bytes32 => struct PositionManager.ClosePositionRequest) | 20   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| managers                      | mapping(address => bool)                                        | 21   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-| approvedManagers              | mapping(address => mapping(address => bool))                    | 22   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+| Name    | Type    | Slot | Offset | Bytes | Value | Hex Value                                                          | Contract                                      |
+|---------|---------|------|--------|-------|-------|--------------------------------------------------------------------|-----------------------------------------------|
+| _owner  | address | 0    | 0      | 20    | 0     | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/Create2Deployer.sol:Create2Deployer |
+| _paused | bool    | 0    | 20     | 1     | 0     | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/Create2Deployer.sol:Create2Deployer |
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6319>
+casttest!(storage_layout_complex, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+| Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
+|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
+| _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+| _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+| _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+| _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 
 "#]]);
 });
@@ -1230,8 +1305,7 @@ casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     cmd.args(["resolve-name", "emo", "--rpc-url", &eth_rpc_url, "--verify"])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-ENS resolver not found for name "emo"
+Error: ENS resolver not found for name "emo"
 
 "#]]);
 });
@@ -1246,8 +1320,7 @@ casttest!(index7201, |_prj, cmd| {
 casttest!(index7201_unknown_formula_id, |_prj, cmd| {
     cmd.args(["index-erc7201", "test", "--formula-id", "unknown"]).assert_failure().stderr_eq(
         str![[r#"
-Error: 
-unsupported formula ID: unknown
+Error: unsupported formula ID: unknown
 
 "#]],
     );
@@ -1323,6 +1396,42 @@ casttest!(hash_message, |_prj, cmd| {
 
     cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
 0x83a0870b6c63a71efdd3b2749ef700653d97454152c4b53fa9b102dc430c7c32
+
+"#]]);
+});
+
+casttest!(parse_units, |_prj, cmd| {
+    cmd.args(["parse-units", "1.5", "6"]).assert_success().stdout_eq(str![[r#"
+1500000
+
+"#]]);
+
+    cmd.cast_fuse().args(["pun", "1.23", "18"]).assert_success().stdout_eq(str![[r#"
+1230000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["--parse-units", "1.23", "3"]).assert_success().stdout_eq(str![[r#"
+1230
+
+"#]]);
+});
+
+casttest!(format_units, |_prj, cmd| {
+    cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
+1
+
+"#]]);
+
+    cmd.cast_fuse().args(["--format-units", "2500000", "6"]).assert_success().stdout_eq(str![[
+        r#"
+2.500000
+
+"#
+    ]]);
+
+    cmd.cast_fuse().args(["fun", "1230", "3"]).assert_success().stdout_eq(str![[r#"
+1.230
 
 "#]]);
 });

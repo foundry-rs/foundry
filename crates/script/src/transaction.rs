@@ -155,6 +155,8 @@ impl ScriptTransactionBuilder {
             self.transaction.contract_address.map_or(true, |addr| addr != contract.address)
         });
 
+        self.transaction.additional_contracts = created_contracts;
+
         if !self.transaction.is_fixed_gas_limit {
             if let Some(unsigned) = self.transaction.transaction.as_unsigned_mut() {
                 // We inflate the gas used by the user specified percentage

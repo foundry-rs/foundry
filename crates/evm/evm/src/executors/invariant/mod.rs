@@ -31,7 +31,11 @@ use proptest::{
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{cell::RefCell, collections::btree_map::Entry, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{btree_map::Entry, HashMap as Map},
+    sync::Arc,
+};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -42,6 +46,7 @@ pub use replay::{replay_error, replay_run};
 
 mod result;
 pub use result::InvariantFuzzTestResult;
+use serde::{Deserialize, Serialize};
 
 mod shrink;
 use crate::executors::EvmError;
@@ -101,6 +106,17 @@ sol! {
     }
 }
 
+/// Contains invariant metrics for a single fuzzed selector.
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct InvariantMetrics {
+    // Count of fuzzed selector calls.
+    pub calls: usize,
+    // Count of fuzzed selector reverts.
+    pub reverts: usize,
+    // Count of fuzzed selector discards (through assume cheatcodes).
+    pub discards: usize,
+}
+
 /// Contains data collected during invariant test runs.
 pub struct InvariantTestData {
     // Consumed gas and calldata of every successful fuzz call.
@@ -115,6 +131,8 @@ pub struct InvariantTestData {
     pub last_call_results: Option<RawCallResult>,
     // Coverage information collected from all fuzzed calls.
     pub coverage: Option<HitMaps>,
+    // Metrics for each fuzzed selector.
+    pub metrics: Map<String, InvariantMetrics>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -153,6 +171,7 @@ impl InvariantTest {
             gas_report_traces: vec![],
             last_call_results,
             coverage: None,
+            metrics: Map::default(),
             branch_runner,
         });
         Self { fuzz_state, targeted_contracts, execution_data }
@@ -188,6 +207,24 @@ impl InvariantTest {
         match &mut self.execution_data.borrow_mut().coverage {
             Some(prev) => prev.merge(new_coverage.unwrap()),
             opt => *opt = new_coverage,
+        }
+    }
+
+    /// Update metrics for a fuzzed selector, extracted from tx details.
+    /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
+    /// separated from reverts.
+    pub fn record_metrics(&self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+        if let Some(metric_key) =
+            self.targeted_contracts.targets.lock().fuzzed_metric_key(tx_details)
+        {
+            let test_metrics = &mut self.execution_data.borrow_mut().metrics;
+            let invariant_metrics = test_metrics.entry(metric_key).or_default();
+            invariant_metrics.calls += 1;
+            if discarded {
+                invariant_metrics.discards += 1;
+            } else if reverted {
+                invariant_metrics.reverts += 1;
+            }
         }
     }
 
@@ -331,10 +368,15 @@ impl<'a> InvariantExecutor<'a> {
                         TestCaseError::fail(format!("Could not make raw evm call: {e}"))
                     })?;
 
+                let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
+                if self.config.show_metrics {
+                    invariant_test.record_metrics(tx, call_result.reverted, discarded);
+                }
+
                 // Collect coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.coverage.clone());
 
-                if call_result.result.as_ref() == MAGIC_ASSUME {
+                if discarded {
                     current_run.inputs.pop();
                     current_run.assume_rejects_counter += 1;
                     if current_run.assume_rejects_counter > self.config.max_assume_rejects {
@@ -443,6 +485,7 @@ impl<'a> InvariantExecutor<'a> {
             last_run_inputs: result.last_run_inputs,
             gas_report_traces: result.gas_report_traces,
             coverage: result.coverage,
+            metrics: result.metrics,
         })
     }
 

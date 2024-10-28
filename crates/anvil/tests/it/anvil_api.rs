@@ -315,7 +315,7 @@ async fn test_set_next_timestamp() {
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     assert_eq!(next.header.number, 2);
 
-    assert!(next.header.timestamp > block.header.timestamp);
+    assert!(next.header.timestamp >= block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -339,7 +339,7 @@ async fn test_evm_set_time() {
     api.evm_mine(None).await.unwrap();
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
-    assert!(next.header.timestamp > block.header.timestamp);
+    assert!(next.header.timestamp >= block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -608,7 +608,7 @@ async fn test_fork_revert_next_block_timestamp() {
 
     api.mine_one().await;
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert!(block.header.timestamp > latest_block.header.timestamp);
+    assert!(block.header.timestamp >= latest_block.header.timestamp);
 }
 
 // test that after a snapshot revert, the env block is reset
@@ -870,4 +870,142 @@ async fn can_set_executor() {
     let executor = api.anvil_set_executor(pk).unwrap();
 
     assert_eq!(executor, expected_addr);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arb_get_block() {
+    let (api, _handle) = spawn(NodeConfig::test().with_chain_id(Some(421611u64))).await;
+
+    // Mine two blocks
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let best_number = api.block_number().unwrap().to::<u64>();
+
+    assert_eq!(best_number, 2);
+
+    let block = api.block_by_number(1.into()).await.unwrap().unwrap();
+
+    assert_eq!(block.header.number, 1);
+}
+
+// Set next_block_timestamp same as previous block
+// api.evm_set_next_block_timestamp(0).unwrap();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_blk_with_prev_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
+
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let next_blk_num = block.header.number;
+    let next_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(next_blk_num, init_number + 1);
+    assert_eq!(next_blk_timestamp, init_timestamp);
+
+    // Sleep for 1 second
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Subsequent block should have a greater timestamp than previous block
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let third_blk_num = block.header.number;
+    let third_blk_timestmap = block.header.timestamp;
+
+    assert_eq!(third_blk_num, init_number + 2);
+    assert_ne!(third_blk_timestmap, next_blk_timestamp);
+    assert!(third_blk_timestmap > next_blk_timestamp);
+}
+
+// increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
+// api.evm_increase_time(0).unwrap();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_increase_time_by_zero() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    let _ = api.evm_increase_time(U256::ZERO).await;
+
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let next_blk_num = block.header.number;
+    let next_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(next_blk_num, init_number + 1);
+    assert_eq!(next_blk_timestamp, init_timestamp);
+}
+
+// evm_mine(MineOptions::Timestamp(prev_block_timestamp))
+#[tokio::test(flavor = "multi_thread")]
+async fn evm_mine_blk_with_same_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    api.evm_mine(Some(MineOptions::Timestamp(Some(init_timestamp)))).await.unwrap();
+
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let next_blk_num = block.header.number;
+    let next_blk_timestamp = block.header.timestamp;
+
+    assert_eq!(next_blk_num, init_number + 1);
+    assert_eq!(next_blk_timestamp, init_timestamp);
+}
+
+// mine 4 blocks instantly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_blks_with_same_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let init_blk = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+
+    let init_number = init_blk.header.number;
+    let init_timestamp = init_blk.header.timestamp;
+
+    // Mine 4 blocks instantly
+    let _ = api.anvil_mine(Some(U256::from(4)), None).await;
+
+    let latest_blk_num = api.block_number().unwrap().to::<u64>();
+
+    assert_eq!(latest_blk_num, init_number + 4);
+
+    let mut blk_futs = vec![];
+    for i in 1..=4 {
+        blk_futs.push(provider.get_block(i.into(), false.into()));
+    }
+
+    let blks = futures::future::join_all(blk_futs)
+        .await
+        .into_iter()
+        .map(|blk| blk.unwrap().unwrap().header.timestamp)
+        .collect::<Vec<_>>();
+
+    // timestamps should be equal
+    assert_eq!(blks, vec![init_timestamp; 4]);
 }

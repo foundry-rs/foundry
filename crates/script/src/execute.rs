@@ -19,7 +19,7 @@ use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::get_http_provider,
-    shell, ContractsByArtifact,
+    ContractsByArtifact,
 };
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
@@ -34,6 +34,7 @@ use foundry_evm::{
 };
 use futures::future::join_all;
 use itertools::Itertools;
+use std::path::PathBuf;
 use yansi::Paint;
 
 /// State after linking, contains the linked build data along with library addresses and optional
@@ -195,7 +196,7 @@ impl PreExecutionState {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
-                                shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                sh_warn!("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                 return Ok(None);
                             }
                         } else if sender != self.script_config.evm_opts.sender {
@@ -254,7 +255,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                     .map(|(_, chain)| *chain as u64)
                     .format(", ")
             );
-            shell::println(msg.yellow())?;
+            sh_warn!("{}", msg)?;
         }
         Ok(())
     }
@@ -300,10 +301,7 @@ impl ExecutedState {
         let rpc_data = RpcData::from_transactions(&txs);
 
         if rpc_data.is_multi_chain() {
-            shell::eprintln(format!(
-                "{}",
-                "Multi chain deployment is still under development. Use with caution.".yellow()
-            ))?;
+            sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
@@ -381,7 +379,7 @@ impl ExecutedState {
                 }
             }
             Err(_) => {
-                shell::println(format!("{returned:?}"))?;
+                sh_err!("Failed to decode return value: {:x?}", returned)?;
             }
         }
 
@@ -399,7 +397,7 @@ impl PreSimulationState {
             result,
         };
         let json = serde_json::to_string(&json_result)?;
-        shell::println(json)?;
+        sh_println!("{json}")?;
 
         if !self.execution_result.success {
             return Err(eyre::eyre!(
@@ -422,7 +420,7 @@ impl PreSimulationState {
                 warn!(verbosity, "no traces");
             }
 
-            shell::println("Traces:")?;
+            sh_println!("Traces:")?;
             for (kind, trace) in &result.traces {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
@@ -433,22 +431,22 @@ impl PreSimulationState {
                 if should_include {
                     let mut trace = trace.clone();
                     decode_trace_arena(&mut trace, decoder).await?;
-                    shell::println(render_trace_arena(&trace))?;
+                    sh_println!("{}", render_trace_arena(&trace))?;
                 }
             }
-            shell::println(String::new())?;
+            sh_println!()?;
         }
 
         if result.success {
-            shell::println(format!("{}", "Script ran successfully.".green()))?;
+            sh_println!("{}", "Script ran successfully.".green())?;
         }
 
         if self.script_config.evm_opts.fork_url.is_none() {
-            shell::println(format!("Gas used: {}", result.gas_used))?;
+            sh_println!("Gas used: {}", result.gas_used)?;
         }
 
         if result.success && !result.returned.is_empty() {
-            shell::println("\n== Return ==")?;
+            sh_println!("\n== Return ==")?;
             match func.abi_decode_output(&result.returned, false) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
@@ -463,24 +461,24 @@ impl PreSimulationState {
                         } else {
                             index.to_string()
                         };
-                        shell::println(format!(
-                            "{}: {internal_type} {}",
-                            label.trim_end(),
-                            format_token(token)
-                        ))?;
+                        sh_println!(
+                            "{label}: {internal_type} {value}",
+                            label = label.trim_end(),
+                            value = format_token(token)
+                        )?;
                     }
                 }
                 Err(_) => {
-                    shell::println(format!("{:x?}", (&result.returned)))?;
+                    sh_err!("{:x?}", (&result.returned))?;
                 }
             }
         }
 
         let console_logs = decode_console_logs(&result.logs);
         if !console_logs.is_empty() {
-            shell::println("\n== Logs ==")?;
+            sh_println!("\n== Logs ==")?;
             for log in console_logs {
-                shell::println(format!("  {log}"))?;
+                sh_println!("  {log}")?;
             }
         }
 
@@ -495,7 +493,17 @@ impl PreSimulationState {
     }
 
     pub fn run_debugger(self) -> Result<()> {
-        let mut debugger = Debugger::builder()
+        self.create_debugger().try_run_tui()?;
+        Ok(())
+    }
+
+    pub fn run_debug_file_dumper(self, path: &PathBuf) -> Result<()> {
+        self.create_debugger().dump_to_file(path)?;
+        Ok(())
+    }
+
+    fn create_debugger(self) -> Debugger {
+        Debugger::builder()
             .traces(
                 self.execution_result
                     .traces
@@ -506,8 +514,6 @@ impl PreSimulationState {
             .decoder(&self.execution_artifacts.decoder)
             .sources(self.build_data.sources)
             .breakpoints(self.execution_result.breakpoints)
-            .build();
-        debugger.try_run()?;
-        Ok(())
+            .build()
     }
 }

@@ -1,9 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-#[macro_use]
-extern crate tracing;
-
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},
@@ -73,6 +70,12 @@ mod tasks;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+
+#[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
+extern crate tracing;
 
 /// Creates the node and runs the server.
 ///
@@ -292,19 +295,17 @@ impl NodeHandle {
     /// Prints the launch info.
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
-        if !self.config.silent {
-            if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {ipc_path}");
-            }
-            println!(
-                "Listening on {}",
-                self.addresses
-                    .iter()
-                    .map(|addr| { addr.to_string() })
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            );
+        if let Some(ipc_path) = self.ipc_path() {
+            let _ = sh_println!("IPC path: {ipc_path}");
         }
+        let _ = sh_println!(
+            "Listening on {}",
+            self.addresses
+                .iter()
+                .map(|addr| { addr.to_string() })
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
     }
 
     /// The address of the launched server.
