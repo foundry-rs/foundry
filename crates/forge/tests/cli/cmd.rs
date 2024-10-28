@@ -1602,13 +1602,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   },
@@ -1620,13 +1618,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   },
@@ -1638,13 +1634,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -1692,13 +1686,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   },
@@ -1710,13 +1702,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   },
@@ -1728,13 +1718,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -1782,13 +1770,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   },
@@ -1800,13 +1786,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   },
@@ -1818,13 +1802,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -1879,13 +1861,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   },
@@ -1897,13 +1877,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   },
@@ -1915,13 +1893,11 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -1960,13 +1936,11 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   }
@@ -2000,13 +1974,11 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -2043,13 +2015,11 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   }
@@ -2100,13 +2070,11 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   },
@@ -2118,13 +2086,11 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -2171,13 +2137,11 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   },
@@ -2189,13 +2153,11 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   }
@@ -2270,13 +2232,11 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
     },
     "functions": {
       "foo": {
-        "foo": {
-          "calls": 1,
-          "min": 45387,
-          "mean": 45387,
-          "median": 45387,
-          "max": 45387
-        }
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
       }
     }
   },
@@ -2288,13 +2248,11 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
     },
     "functions": {
       "baz": {
-        "baz": {
-          "calls": 1,
-          "min": 260712,
-          "mean": 260712,
-          "median": 260712,
-          "max": 260712
-        }
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
       }
     }
   },
@@ -2306,13 +2264,11 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
     },
     "functions": {
       "bar": {
-        "bar": {
-          "calls": 1,
-          "min": 64984,
-          "mean": 64984,
-          "median": 64984,
-          "max": 64984
-        }
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
       }
     }
   }
@@ -2396,22 +2352,18 @@ contract CounterTest is DSTest {
     },
     "functions": {
       "a": {
-        "a": {
-          "calls": 1,
-          "min": 2261,
-          "mean": 2261,
-          "median": 2261,
-          "max": 2261
-        }
+        "calls": 1,
+        "min": 2261,
+        "mean": 2261,
+        "median": 2261,
+        "max": 2261
       },
       "b": {
-        "b": {
-          "calls": 1,
-          "min": 2305,
-          "mean": 2305,
-          "median": 2305,
-          "max": 2305
-        }
+        "calls": 1,
+        "min": 2305,
+        "mean": 2305,
+        "median": 2305,
+        "max": 2305
       },
       "setNumber": {
         "setNumber(int256)": {
