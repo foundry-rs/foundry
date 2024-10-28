@@ -1,6 +1,7 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
+use anvil::{spawn, NodeConfig};
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
@@ -2389,4 +2390,206 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+});
+
+forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let (api, handle) = spawn(NodeConfig::test().silent()).await;
+
+    let chain_id = api.chain_id();
+    prj.insert_vm();
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+        contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "DeployCounter",
+        r#"
+        import "forge-std/Script.sol";
+        import "src/Counter.sol";
+
+        contract DeployCounter is Script {
+            function run() public {
+                vm.startBroadcast();
+
+                Counter counter = new Counter();
+
+                counter.increment();
+
+                counter.setNumber(10);
+
+                vm.stopBroadcast();
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "DeployCounterWithCreate2",
+        r#"
+        import "forge-std/Script.sol";
+        import "src/Counter.sol";
+
+        contract DeployCounterWithCreate2 is Script {
+            function run() public {
+                vm.startBroadcast();
+
+                bytes32 salt = bytes32(uint256(1337));
+                Counter counter = new Counter{salt: salt}();
+
+                counter.increment();
+
+                counter.setNumber(20);
+
+                vm.stopBroadcast();
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    let test = r#"
+        import {Vm} from "../src/Vm.sol";
+        import {DSTest} from "../src/test.sol";
+        import {console} from "../src/console.sol";
+
+        contract GetBroadcastTest is DSTest {
+
+            Vm constant vm = Vm(HEVM_ADDRESS);
+
+            function test_getLatestBroacast() external {
+                // Gets the latest create
+                Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
+                    "Counter",
+                    {chain_id},
+                    Vm.BroadcastTxType.Create
+                );
+
+                console.log("latest create");
+                console.log(broadcast.blockNumber);
+
+                assertEq(broadcast.blockNumber, 1);
+
+                // Gets the latest create2
+                Vm.BroadcastTxSummary memory broadcast2 = vm.getBroadcast(
+                    "Counter",
+                    {chain_id},
+                    Vm.BroadcastTxType.Create2
+                );
+
+                console.log("latest create2");
+                console.log(broadcast2.blockNumber);
+                assertEq(broadcast2.blockNumber, 4);
+
+                // Gets the latest call
+                Vm.BroadcastTxSummary memory broadcast3 = vm.getBroadcast(
+                    "Counter",
+                    {chain_id},
+                    Vm.BroadcastTxType.Call
+                );
+
+                console.log("latest call");
+                assertEq(broadcast3.blockNumber, 6);
+            }
+
+            function test_getBroadcasts() public {
+                // Gets all calls
+                Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts(
+                    "Counter",
+                    {chain_id},
+                    Vm.BroadcastTxType.Call
+                );
+
+                assertEq(broadcasts.length, 4);
+            }
+
+            function test_getAllBroadcasts() public {
+                // Gets all broadcasts
+                Vm.BroadcastTxSummary[] memory broadcasts2 = vm.getBroadcasts(
+                    "Counter",
+                    {chain_id}
+                );
+
+                assertEq(broadcasts2.length, 6);
+            }
+
+            function test_getLatestDeployment() public {
+                address deployedAddress = vm.getDeployment(
+                    "Counter",
+                    {chain_id}
+                );   
+
+                assertEq(deployedAddress, address(0x030D07c16e2c0a77f74ab16f3C8F10ACeF89FF81));
+            }
+
+            function test_getDeployments() public {
+                address[] memory deployments = vm.getDeployments(
+                    "Counter",
+                    {chain_id}
+                );
+
+                assertEq(deployments.length, 2);
+            }
+            
+}
+    "#;
+
+    let test = test.replace("{chain_id}", &chain_id.to_string());
+
+    prj.add_test("GetBroadcast", &test).unwrap();
+
+    let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    cmd.args([
+        "script",
+        "DeployCounter",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        sender,
+        "--unlocked",
+        "--broadcast",
+        "--slow",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "DeployCounterWithCreate2",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--sender",
+            sender,
+            "--unlocked",
+            "--broadcast",
+            "--slow",
+        ])
+        .assert_success();
+
+    let broadcast_path = prj.root().join("broadcast");
+
+    // Check if the broadcast folder exists
+    assert!(broadcast_path.exists() && broadcast_path.is_dir());
+
+    cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
 });
