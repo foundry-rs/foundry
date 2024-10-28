@@ -5423,7 +5423,7 @@
     {
       "func": {
         "id": "getDeployments",
-        "description": "Returns all deployments for the given contract on `chainId`",
+        "description": "Returns all deployments for the given contract on `chainId`\nSorted in descending order of deployment time i.e descending order of BroadcastTxSummary.blockNumber.\nThe most recent deployment is the first element, and the oldest is the last.",
         "declaration": "function getDeployments(string memory contractName, uint64 chainId) external returns (address[] memory deployedAddresses);",
         "visibility": "external",
         "mutability": "",
