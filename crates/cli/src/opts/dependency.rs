@@ -13,7 +13,7 @@ pub static GH_REPO_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static VERSION_PREFIX_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"@(tag|branch|commit)="#).unwrap());
+    LazyLock::new(|| Regex::new(r#"@(tag|branch|rev)="#).unwrap());
 
 const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
@@ -52,7 +52,7 @@ pub struct Dependency {
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
-        // Handle dependency exact ref type (`@tag=`, `@branch=` or `@commit=`)`.
+        // Handle dependency exact ref type (`@tag=`, `@branch=` or `@rev=`)`.
         // Only extract version for first tag/branch/commit specified.
         let url_and_version: Vec<&str> = VERSION_PREFIX_REGEX.split(dependency).collect();
         let dependency = url_and_version[0];
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
         assert_eq!(dep.alias, None);
 
-        let dep = Dependency::from_str("smartcontractkit/ccip@commit=80eb41b").unwrap();
+        let dep = Dependency::from_str("smartcontractkit/ccip@rev=80eb41b").unwrap();
         assert_eq!(dep.name, "ccip");
         assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
         assert_eq!(dep.tag, Some("80eb41b".to_string()));
