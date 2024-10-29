@@ -261,7 +261,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
         cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
             r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
-    Installed solmate
+    Installed solmate[..]
 
 "#
         ]]);
