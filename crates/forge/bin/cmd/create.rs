@@ -1,5 +1,5 @@
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt, Specifier};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
@@ -45,6 +45,7 @@ pub struct CreateArgs {
         num_args(1..),
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
+        allow_hyphen_values = true,
     )]
     constructor_args: Vec<String>,
 
@@ -380,17 +381,9 @@ impl CreateArgs {
             let ty = input
                 .resolve()
                 .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
-
-            // negative ints must be escaped on CLI, so we strip '
-            let arg = if matches!(ty, DynSolType::Int(_)) {
-                arg.trim_start_matches("'").trim_end_matches("'")
-            } else {
-                arg.as_str()
-            };
-
             params.push((ty, arg));
         }
-        let params = params.iter().map(|(ty, arg)| (ty, *arg));
+        let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
         parse_tokens(params).map_err(Into::into)
     }
 }
@@ -705,7 +698,7 @@ mod tests {
             "foundry-cli",
             "src/Domains.sol:Domains",
             "--constructor-args",
-            "'-5'",
+            "-5",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
         let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
