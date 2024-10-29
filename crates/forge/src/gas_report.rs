@@ -9,6 +9,7 @@ use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
 use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
 use yansi::Paint;
 
@@ -156,56 +157,133 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for (name, contract) in &self.contracts {
-            if contract.functions.is_empty() {
-                trace!(name, "gas report contract without functions");
-                continue;
+        match self.report_type {
+            GasReportKind::Markdown => {
+                for (name, contract) in &self.contracts {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        continue;
+                    }
+
+                    let table = self.format_table_output(contract, name);
+                    writeln!(f, "{table}")?;
+                    writeln!(f, "\n")?;
+                }
             }
-
-            if self.report_type == GasReportKind::JSON {
-                writeln!(f, "{}", serde_json::to_string(&contract).unwrap())?;
-                continue;
+            GasReportKind::JSON => {
+                writeln!(f, "{}", &self.format_json_output())?;
             }
-
-            let mut table = Table::new();
-            table.load_preset(ASCII_MARKDOWN);
-            table.set_header([Cell::new(format!("{name} contract"))
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Green)]);
-            table.add_row([
-                Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
-                Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            ]);
-            table.add_row([contract.gas.to_string(), contract.size.to_string()]);
-
-            table.add_row([
-                Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
-                Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
-                Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
-                Cell::new("# calls").add_attribute(Attribute::Bold),
-            ]);
-            contract.functions.iter().for_each(|(fname, sigs)| {
-                sigs.iter().for_each(|(sig, gas_info)| {
-                    // show function signature if overloaded else name
-                    let fn_display =
-                        if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
-
-                    table.add_row([
-                        Cell::new(fn_display).add_attribute(Attribute::Bold),
-                        Cell::new(gas_info.min.to_string()).fg(Color::Green),
-                        Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
-                        Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
-                        Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                        Cell::new(gas_info.calls.to_string()),
-                    ]);
-                })
-            });
-            writeln!(f, "{table}")?;
-            writeln!(f, "\n")?;
         }
+
         Ok(())
+    }
+}
+
+impl GasReport {
+    fn format_json_output(&self) -> String {
+        #[inline]
+        fn format_gas_info(gas_info: &GasInfo) -> serde_json::Value {
+            json!({
+                "calls": gas_info.calls,
+                "min": gas_info.min,
+                "mean": gas_info.mean,
+                "median": gas_info.median,
+                "max": gas_info.max,
+            })
+        }
+
+        serde_json::to_string(
+            &self
+                .contracts
+                .iter()
+                .filter_map(|(name, contract)| {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        return None;
+                    }
+
+                    let functions = contract
+                        .functions
+                        .iter()
+                        .map(|(fname, sigs)| {
+                            // If there is only one signature, display the gas info directly.
+                            let function_value = if sigs.len() == 1 {
+                                format_gas_info(sigs.values().next().unwrap())
+                            } else {
+                                // If there are multiple signatures, e.g. overloads like:
+                                // - `foo(uint256)`
+                                // - `foo(int256)`
+                                // display the gas info as a map with the signature as the key.
+                                let signatures = sigs
+                                    .iter()
+                                    .map(|(sig, gas_info)| {
+                                        let display_name = sig.replace(':', "");
+                                        (display_name, format_gas_info(gas_info))
+                                    })
+                                    .collect::<BTreeMap<_, _>>();
+
+                                json!(signatures)
+                            };
+
+                            (fname.to_string(), function_value)
+                        })
+                        .collect::<BTreeMap<_, _>>();
+
+                    Some(json!({
+                        "contract": name,
+                        "deployment": {
+                            "gas": contract.gas,
+                            "size": contract.size,
+                        },
+                        "functions": functions,
+                    }))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    // Helper function to format the table output
+    fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
+        let mut table = Table::new();
+        table.load_preset(ASCII_MARKDOWN);
+        table.set_header([Cell::new(format!("{name} contract"))
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Green)]);
+
+        table.add_row([
+            Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
+        ]);
+        table.add_row([contract.gas.to_string(), contract.size.to_string()]);
+
+        table.add_row([
+            Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
+            Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
+            Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
+            Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
+            Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
+            Cell::new("# calls").add_attribute(Attribute::Bold),
+        ]);
+
+        contract.functions.iter().for_each(|(fname, sigs)| {
+            sigs.iter().for_each(|(sig, gas_info)| {
+                // Show function signature if overloaded else display function name.
+                let display_name =
+                    if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
+
+                table.add_row([
+                    Cell::new(display_name).add_attribute(Attribute::Bold),
+                    Cell::new(gas_info.min.to_string()).fg(Color::Green),
+                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
+                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
+                    Cell::new(gas_info.max.to_string()).fg(Color::Red),
+                    Cell::new(gas_info.calls.to_string()),
+                ]);
+            })
+        });
+
+        table
     }
 }
 
