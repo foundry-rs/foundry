@@ -106,7 +106,7 @@ impl BroadcastReader {
     /// Applies the filters and sorts the broadcasts by descending timestamp.
     pub fn filter_and_sort(&self, broadcasts: Vec<ScriptSequence>) -> Vec<ScriptSequence> {
         // Apply the filters
-        let seqs = broadcasts
+        let mut seqs = broadcasts
             .into_iter()
             .filter(|broadcast| {
                 if broadcast.chain != self.chain_id {
@@ -114,16 +114,18 @@ impl BroadcastReader {
                 }
 
                 broadcast.transactions.iter().any(move |tx| {
-                    tx.contract_name.as_ref().is_some_and(|cn| cn == &self.contract_name) &&
-                        (self.tx_type.is_empty() ||
-                            self.tx_type.iter().any(|kind| *kind == tx.opcode))
-                    })
+                    let name_filter =
+                        tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
+
+                    let type_filter = self.tx_type.is_empty() ||
+                        self.tx_type.iter().any(|kind| *kind == tx.opcode);
+
+                    name_filter && type_filter
                 })
             })
             .collect::<Vec<_>>();
 
         // Sort by descending timestamp
-        let mut seqs = seqs;
         seqs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         seqs
