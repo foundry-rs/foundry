@@ -114,10 +114,9 @@ impl BroadcastReader {
                 }
 
                 broadcast.transactions.iter().any(move |tx| {
-                    tx.contract_name.as_ref().is_some_and(|cn| {
-                        cn == &self.contract_name &&
-                            (self.tx_type.is_empty() ||
-                                self.tx_type.iter().any(|kind| *kind == tx.opcode))
+                    tx.contract_name.as_ref().is_some_and(|cn| cn == &self.contract_name) &&
+                        (self.tx_type.is_empty() ||
+                            self.tx_type.iter().any(|kind| *kind == tx.opcode))
                     })
                 })
             })
