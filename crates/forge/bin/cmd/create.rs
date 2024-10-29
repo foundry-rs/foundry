@@ -1,5 +1,5 @@
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
+use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
@@ -380,9 +380,17 @@ impl CreateArgs {
             let ty = input
                 .resolve()
                 .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
+
+            // negative ints must be escaped on CLI, so we strip '
+            let arg = if matches!(ty, DynSolType::Int(_)) {
+                arg.trim_start_matches("'").trim_end_matches("'")
+            } else {
+                arg.as_str()
+            };
+
             params.push((ty, arg));
         }
-        let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
+        let params = params.iter().map(|(ty, arg)| (ty, *arg));
         parse_tokens(params).map_err(Into::into)
     }
 }
@@ -634,6 +642,7 @@ impl From<PendingTransactionError> for ContractDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::I256;
 
     #[test]
     fn can_parse_create() {
@@ -688,5 +697,18 @@ mod tests {
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
         let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+    }
+
+    #[test]
+    fn test_parse_int_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "'-5'",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }
 }
