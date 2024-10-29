@@ -688,11 +688,10 @@ impl Cheatcode for getBroadcasts_1Call {
 
         let summaries = broadcasts
             .into_iter()
-            .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
+            .flat_map(|broadcast| {
                 let results = reader.into_tx_receipts(broadcast);
-                Ok(parse_broadcast_results(results))
+                parse_broadcast_results(results)
             })
-            .flatten()
             .collect::<Vec<_>>();
 
         Ok(summaries.abi_encode())
@@ -737,11 +736,10 @@ impl Cheatcode for getDeploymentsCall {
 
         let summaries = broadcasts
             .into_iter()
-            .flat_map(|broadcast| -> Result<Vec<BroadcastTxSummary>> {
+            .flat_map(|broadcast| {
                 let results = reader.into_tx_receipts(broadcast);
-                Ok(parse_broadcast_results(results))
+                parse_broadcast_results(results)
             })
-            .flatten()
             .collect::<Vec<_>>();
 
         let deployed_addresses =
