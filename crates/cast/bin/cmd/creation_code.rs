@@ -64,9 +64,9 @@ impl CreationCodeArgs {
                 .await?;
 
         if disassemble {
-            println!("{}", SimpleCast::disassemble(&bytecode)?);
+            let _ = sh_println!("{}", SimpleCast::disassemble(&bytecode)?);
         } else {
-            println!("{bytecode}");
+            let _ = sh_println!("{bytecode}");
         }
 
         Ok(())

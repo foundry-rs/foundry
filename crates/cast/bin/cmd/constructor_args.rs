@@ -48,7 +48,7 @@ impl ConstructorArgsArgs {
 
         let args_arr = parse_constructor_args(bytecode, contract, &etherscan, abi_path).await?;
         for arg in args_arr {
-            println!("{arg}");
+            let _ = sh_println!("{arg}");
         }
 
         Ok(())
@@ -71,11 +71,8 @@ async fn parse_constructor_args(
     let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
     let (abi, _) = abi;
 
-    if abi.constructor.is_none() {
-        return Err(eyre!("No constructor found."));
-    }
+    let constructor = abi.constructor.ok_or_else(|| eyre!("No constructor found."))?;
 
-    let constructor = abi.constructor.unwrap();
     if constructor.inputs.is_empty() {
         return Err(eyre!("No constructor arguments found."));
     }
@@ -87,7 +84,6 @@ async fn parse_constructor_args(
         .chunks(32)
         .enumerate()
         .map(|(i, arg)| {
-            let arg = arg.to_vec();
             format_arg(&constructor.inputs[i].ty, arg).expect("Failed to format argument.")
         })
         .collect();
@@ -95,10 +91,10 @@ async fn parse_constructor_args(
     Ok(display_args)
 }
 
-fn format_arg(ty: &str, arg: Vec<u8>) -> Result<String> {
+fn format_arg(ty: &str, arg: &[u8]) -> Result<String> {
     let arg_type: DynSolType = ty.parse().expect("Invalid ABI type.");
-    let bytes = Bytes::from(arg.clone());
-    let decoded = arg_type.abi_decode(&arg)?;
+    let decoded = arg_type.abi_decode(arg)?;
+    let bytes = Bytes::from(arg.to_vec());
 
     Ok(format!("{bytes} → {decoded:?}"))
 }
