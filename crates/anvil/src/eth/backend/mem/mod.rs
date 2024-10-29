@@ -1430,12 +1430,19 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides: _ } =
+        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides } =
             opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number;
+
+            let state = if let Some(overrides) = state_overrides {
+                Box::new(state::apply_state_override(overrides, state)?)
+                    as Box<dyn MaybeFullDatabase>
+            } else {
+                state
+            };
 
             if let Some(tracer) = tracer {
                 return match tracer {
@@ -1868,12 +1875,12 @@ impl Backend {
             gas_limit,
             gas_used,
             timestamp,
-            requests_root,
+            requests_hash,
             extra_data,
             mix_hash,
             nonce,
             base_fee_per_gas,
-            withdrawals_root: _,
+            withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
             parent_beacon_block_root,
@@ -1899,18 +1906,18 @@ impl Backend {
                 mix_hash: Some(mix_hash),
                 nonce: Some(nonce),
                 base_fee_per_gas,
-                withdrawals_root: None,
+                withdrawals_root,
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
-                requests_root,
+                requests_hash,
             },
             size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
                 transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
             uncles: vec![],
-            withdrawals: None,
+            withdrawals: withdrawals_root.map(|_| Default::default()),
         };
 
         let mut block = WithOtherFields::new(block);
@@ -2415,7 +2422,6 @@ impl Backend {
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
-            state_root: None,
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used: blob_gas_used.map(|g| g as u128),
             authorization_list: None,

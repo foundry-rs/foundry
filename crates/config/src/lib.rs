@@ -238,6 +238,8 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
+    /// Timeout that should be used for any rpc calls
+    pub eth_rpc_timeout: Option<u64>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -2208,6 +2210,7 @@ impl Default for Config {
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
+            eth_rpc_timeout: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],

@@ -125,6 +125,18 @@ impl TargetedContracts {
             .filter(|(_, c)| !c.abi.functions.is_empty())
             .flat_map(|(contract, c)| c.abi_fuzzed_functions().map(move |f| (contract, f)))
     }
+
+    /// Identifies fuzzed contract and function based on given tx details and returns unique metric
+    /// key composed from contract identifier and function name.
+    pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
+        self.inner.get(&tx.call_details.target).and_then(|contract| {
+            contract
+                .abi
+                .functions()
+                .find(|f| f.selector() == tx.call_details.calldata[..4])
+                .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+        })
+    }
 }
 
 impl std::ops::Deref for TargetedContracts {

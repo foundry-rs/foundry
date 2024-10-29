@@ -223,7 +223,7 @@ impl CallArgs {
             return Ok(());
         }
 
-        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?);
+        sh_println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?)?;
 
         Ok(())
     }
