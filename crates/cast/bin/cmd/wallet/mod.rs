@@ -43,7 +43,7 @@ pub enum WalletSubcommands {
         /// Password for the JSON keystore in cleartext.
         ///
         /// This is UNSAFE to use and we recommend using the --password.
-        #[arg(long, requires = "path", env = "CAST_PASSWORD", value_name = "PASSWORD")]
+        #[arg(long, env = "CAST_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
 
         /// Number of wallets to generate.
@@ -53,6 +53,10 @@ pub enum WalletSubcommands {
         /// Output generated wallets as JSON.
         #[arg(long, short, default_value = "false")]
         json: bool,
+
+        /// Use default keystore location (~/.foundry/keystores)
+        #[arg(long, short, conflicts_with = "path", default_value = "false")]
+        default_keystore: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -219,7 +223,7 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, json, .. } => {
+            Self::New { path, unsafe_password, number, json, default_keystore, .. } => {
                 let mut rng = thread_rng();
 
                 let mut json_values = if json { Some(vec![]) } else { None };
@@ -269,6 +273,40 @@ impl WalletSubcommands {
 
                     if let Some(json) = json_values.as_ref() {
                         sh_println!("{}", serde_json::to_string_pretty(json)?)?;
+                    }
+                } else if default_keystore {
+                    let path = Config::foundry_keystores_dir().ok_or_else(|| {
+                        eyre::eyre!("Could not find the default keystore directory.")
+                    })?;
+                    fs::create_dir_all(&path)?;
+
+                    let password = if let Some(password) = unsafe_password {
+                        password
+                    } else {
+                        // if no --unsafe-password was provided read via stdin
+                        rpassword::prompt_password("Enter secret: ")?
+                    };
+
+                    for _ in 0..number {
+                        let (wallet, uuid) = PrivateKeySigner::new_keystore(
+                            &path,
+                            &mut rng,
+                            password.clone(),
+                            None,
+                        )?;
+
+                        if let Some(json) = json_values.as_mut() {
+                            json.push(json!({
+                                "address": wallet.address().to_checksum(None),
+                                "path": format!("{}", path.join(uuid).display()),
+                            }));
+                        } else {
+                            sh_println!(
+                                "Created new encrypted keystore file: {}",
+                                path.join(uuid).display()
+                            )?;
+                            sh_println!("Address: {}", wallet.address().to_checksum(None))?;
+                        }
                     }
                 } else {
                     for _ in 0..number {
