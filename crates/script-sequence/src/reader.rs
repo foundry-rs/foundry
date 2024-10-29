@@ -161,11 +161,14 @@ impl BroadcastReader {
 
         let mut targets = Vec::new();
         for tx in txs.into_iter() {
-            broadcast.receipts.iter().for_each(|receipt| {
-                if tx.hash.is_some_and(|hash| hash == receipt.transaction_hash) {
-                    targets.push((tx.clone(), receipt.clone()));
-                }
-            });
+            let maybe_receipt = broadcast
+                .receipts
+                .iter()
+                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
+
+            if let Some(receipt) = maybe_receipt {
+                targets.push((tx, receipt.clone()));
+            }
         }
 
         // Sort by descending block number
