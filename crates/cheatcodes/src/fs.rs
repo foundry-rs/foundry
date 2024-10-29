@@ -634,20 +634,14 @@ impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
-            .with_tx_type(map_broadcast_tx_type(*txType));
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![map_broadcast_tx_type(*txType)],
+        )?;
 
-        let broadcast = reader.read_latest()?;
-
-        let results = reader.into_tx_receipts(broadcast);
-
-        let summaries = parse_broadcast_results(results);
-
-        if let Some(summary) = summaries.first() {
-            return Ok(summary.abi_encode());
-        }
-
-        bail!("no broadcast found for {contractName} on chain {chainId}")
+        Ok(latest_broadcast.abi_encode())
     }
 }
 
@@ -692,25 +686,34 @@ impl Cheatcode for getBroadcasts_1Call {
     }
 }
 
-impl Cheatcode for getDeploymentCall {
+impl Cheatcode for getDeployment_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { contractName } = self;
+        let chain_id = ccx.ecx.env.cfg.chain_id;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            chain_id,
+            &ccx.state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
-            .with_tx_type(CallKind::Create)
-            .with_tx_type(CallKind::Create2);
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
 
-        let broadcast = reader.read_latest()?;
-
-        let results = reader.into_tx_receipts(broadcast);
-
-        let summaries = parse_broadcast_results(results);
-
-        if let Some(summary) = summaries.first() {
-            return Ok(summary.contractAddress.abi_encode());
-        }
-
-        bail!("no deployment found for {contractName} on chain {chainId}")
+        Ok(latest_broadcast.contractAddress.abi_encode())
     }
 }
 
@@ -766,6 +769,30 @@ fn parse_broadcast_results(
             success: receipt.status(),
         })
         .collect()
+}
+
+fn latest_broadcast(
+    contract_name: &String,
+    chain_id: u64,
+    broadcast_path: &Path,
+    filters: Vec<CallKind>,
+) -> Result<BroadcastTxSummary> {
+    let mut reader = BroadcastReader::new(contract_name.clone(), chain_id, broadcast_path)?;
+
+    for filter in filters {
+        reader = reader.with_tx_type(filter);
+    }
+
+    let broadcast = reader.read_latest()?;
+
+    let results = reader.into_tx_receipts(broadcast);
+
+    let summaries = parse_broadcast_results(results);
+
+    summaries
+        .first()
+        .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
+        .cloned()
 }
 
 #[cfg(test)]
