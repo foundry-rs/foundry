@@ -1901,7 +1901,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
             let fork_account = occupied.get_mut();
             fork_account.storage.extend(&acc.storage);
         }
-     }
+    }
 }
 
 /// Returns true of the address is a contract
