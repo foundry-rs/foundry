@@ -37,7 +37,7 @@ pub struct CheatsConfig {
     pub fs_permissions: FsPermissions,
     /// Project root
     pub root: PathBuf,
-    /// Path to broadcast dir
+    /// Absolute Path to broadcast dir i.e project_root/broadcast
     pub broadcast: PathBuf,
     /// Paths (directories) where file reading/writing is allowed
     pub allowed_paths: Vec<PathBuf>,
@@ -89,7 +89,7 @@ impl CheatsConfig {
             paths: config.project_paths(),
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.0.clone(),
-            broadcast: config.broadcast.clone(),
+            broadcast: config.root.0.clone().join(&config.broadcast),
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),

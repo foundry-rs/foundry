@@ -634,9 +634,7 @@ impl Cheatcode for getBroadcastCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let path = &state.config.root.join(&state.config.broadcast);
-
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcast = reader.read_latest()?;
@@ -657,9 +655,7 @@ impl Cheatcode for getBroadcasts_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let path = &state.config.root.join(&state.config.broadcast);
-
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
         let broadcasts = reader.read()?;
@@ -680,9 +676,7 @@ impl Cheatcode for getBroadcasts_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
-        let path = &state.config.root.join(&state.config.broadcast);
-
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?;
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
         let broadcasts = reader.read()?;
 
@@ -702,9 +696,7 @@ impl Cheatcode for getDeploymentCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
-        let path = &state.config.root.join(&state.config.broadcast);
-
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
@@ -726,9 +718,7 @@ impl Cheatcode for getDeploymentsCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { contractName, chainId } = self;
 
-        let path = &state.config.root.join(&state.config.broadcast);
-
-        let reader = BroadcastReader::new(contractName.clone(), *chainId, path)?
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
