@@ -128,19 +128,18 @@ impl CreateArgs {
         };
 
         // Add arguments to constructor
-        let provider = utils::get_provider(&config)?;
-        let params = match abi.constructor {
-            Some(ref v) => {
-                let constructor_args =
-                    if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        read_constructor_args_file(constructor_args_path.to_path_buf())?
-                    } else {
-                        self.constructor_args.clone()
-                    };
-                self.parse_constructor_args(v, &constructor_args)?
-            }
-            None => vec![],
+        let params = if let Some(constructor) = &abi.constructor {
+            let constructor_args =
+                self.constructor_args_path.clone().map(read_constructor_args_file).transpose()?;
+            self.parse_constructor_args(
+                constructor,
+                constructor_args.as_deref().unwrap_or(&self.constructor_args),
+            )?
+        } else {
+            vec![]
         };
+
+        let provider = utils::get_provider(&config)?;
 
         // respect chain, if set explicitly via cmd args
         let chain_id = if let Some(chain_id) = self.chain_id() {
