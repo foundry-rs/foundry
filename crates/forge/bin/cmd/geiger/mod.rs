@@ -106,7 +106,7 @@ impl GeigerArgs {
                     let len = metrics.cheatcodes.len();
                     let printer = SolFileMetricsPrinter { metrics: &metrics, root: &root };
                     if self.full || len == 0 {
-                        eprint!("{printer}");
+                        let _ = sh_eprint!("{printer}");
                     }
                     len
                 }

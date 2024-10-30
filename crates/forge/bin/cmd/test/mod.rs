@@ -236,7 +236,7 @@ impl TestArgs {
                 )?;
             } else {
                 sh_println!("No tests match the provided pattern:")?;
-                print!("{filter}");
+                sh_print!("{filter}")?;
 
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
