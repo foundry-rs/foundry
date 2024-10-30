@@ -95,7 +95,7 @@ impl GeigerArgs {
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {
-            eprintln!("{}\n", "ffi enabled".red());
+            sh_warn!("FFI enabled")?;
         }
 
         let root = config.root.0;
@@ -112,7 +112,7 @@ impl GeigerArgs {
                     len
                 }
                 Err(err) => {
-                    eprintln!("{err}");
+                    let _ = sh_err!("{err}");
                     0
                 }
             })
