@@ -761,6 +761,13 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
             return Err(Error::from("nothing recorded"))
         };
 
+        // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
+        if !record_info.original_tracer_config.record_steps {
+            tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
+                node.trace.steps.clear();
+            });
+        }
+
         // Revert the tracer config to the one before recording
         tracer.update_config(|_config| record_info.original_tracer_config);
 
