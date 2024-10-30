@@ -1865,6 +1865,18 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
 
+    /// Create an EIP-7702 authorization for delegation
+    #[cheatcode(group = Scripting)]
+    function createDelegation(address implementation, uint64 nonce) external returns (bytes32);
+    
+    /// Sign an EIP-7702 authorization for delegation
+    #[cheatcode(group = Scripting)]
+    function signDelegation(bytes32 delegation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
+
+    /// Designate the next call as an EIP-7702 transaction
+    #[cheatcode(group = Scripting)]
+    function attachDelegation(address implementation, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;
+
     // ======== Utilities ========
 
     // -------- Strings --------
