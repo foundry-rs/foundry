@@ -197,18 +197,16 @@ async fn test_fork_load_state() {
     )
     .await;
 
+    // Ensure the initial block number is the fork_block_number and not the state_dump_block
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, U256::from(21070686u64));
+    assert_ne!(block_number, state_dump_block);
+
     let provider = handle.http_provider();
 
     let restart_nonce_bob = provider.get_transaction_count(bob).await.unwrap();
 
     let restart_balance_alice = provider.get_balance(alice).await.unwrap();
-
-    println!("init_nonce_bob: {}, restart_nonce_bob: {}", init_nonce_bob, restart_nonce_bob);
-
-    println!(
-        "init_balance_alice: {}, restart_balance_alice: {}",
-        init_balance_alice, restart_balance_alice
-    );
 
     assert_eq!(init_nonce_bob + 1, restart_nonce_bob);
 
@@ -223,23 +221,26 @@ async fn test_fork_load_state() {
 
     assert!(receipt.status());
 
-    let latest_nonce_bob = provider.get_transaction_count(bob).await.unwrap();
+    let nonce_bob = provider.get_transaction_count(bob).await.unwrap();
 
-    let latest_balance_alice = provider.get_balance(alice).await.unwrap();
-
-    println!(
-        "latest_nonce_bob: {}, latest_balance_alice: {}",
-        latest_nonce_bob, latest_balance_alice
-    );
+    let balance_alice = provider.get_balance(alice).await.unwrap();
 
     let tx = TransactionRequest::default()
         .with_to(alice)
         .with_value(value)
         .with_from(bob)
-        .with_nonce(latest_nonce_bob);
+        .with_nonce(nonce_bob);
     let tx = WithOtherFields::new(tx);
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     assert!(receipt.status());
+
+    let latest_nonce_bob = provider.get_transaction_count(bob).await.unwrap();
+
+    let latest_balance_alice = provider.get_balance(alice).await.unwrap();
+
+    assert_eq!(nonce_bob + 1, latest_nonce_bob);
+
+    assert_eq!(balance_alice + value, latest_balance_alice);
 }

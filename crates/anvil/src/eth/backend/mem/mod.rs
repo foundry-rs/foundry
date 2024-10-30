@@ -907,19 +907,27 @@ impl Backend {
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
+            let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
-            let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
-            self.blockchain.storage.write().best_number = best_number;
+            if let Some((number, hash)) = fork_num_and_hash {
+                // If loading state file on a fork, set best number to the fork block number.
+                // Ref:
+                self.blockchain.storage.write().best_number = U64::from(number);
+                self.blockchain.storage.write().best_hash = hash;
+            } else {
+                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                self.blockchain.storage.write().best_number = best_number;
 
-            // Set the current best block hash;
-            let best_hash =
-                self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
-                    BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                        "Best hash not found for best number {best_number}",
-                    )))
-                })?;
+                // Set the current best block hash;
+                let best_hash =
+                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                        BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                            "Best hash not found for best number {best_number}",
+                        )))
+                    })?;
 
-            self.blockchain.storage.write().best_hash = best_hash;
+                self.blockchain.storage.write().best_hash = best_hash;
+            }
         }
 
         if !self.db.write().await.load_state(state.clone())? {
