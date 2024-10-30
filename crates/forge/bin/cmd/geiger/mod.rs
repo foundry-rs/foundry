@@ -6,7 +6,6 @@ use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::path::PathBuf;
-use yansi::Paint;
 
 mod error;
 

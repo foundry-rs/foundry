@@ -2213,7 +2213,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 "#]])
         .stderr_eq(str![[r#"
 ...
-warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
+Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 ...
 "#]]);
     cmd.forge_fuse()
@@ -2278,7 +2278,7 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
         )
         .stderr_eq(str![[r#"
 ...
-warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
+Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 ...
 "#]]);
 });

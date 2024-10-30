@@ -11,7 +11,6 @@ use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
-use yansi::Paint;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GasReportKind {

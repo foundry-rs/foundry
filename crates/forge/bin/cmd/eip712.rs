@@ -63,8 +63,8 @@ impl Eip712Args {
 
         for (id, _) in structs_in_target {
             if let Some(resolved) = resolver.resolve_struct_eip712(id)? {
-                sh_println!("{resolved}");
-                sh_println!();
+                sh_println!("{resolved}")?;
+                sh_println!()?;
             }
         }
 
