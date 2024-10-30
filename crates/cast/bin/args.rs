@@ -320,7 +320,7 @@ pub enum CastSubcommand {
         value: Option<String>,
 
         /// Decode the RLP data as int
-        #[arg(id = "int", long = "as_int", alias = "int")]
+        #[arg(id = "int", long = "as-int", alias = "int")]
         as_int: bool,
     },
 
