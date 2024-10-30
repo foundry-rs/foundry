@@ -911,7 +911,7 @@ impl Backend {
 
             if let Some((number, hash)) = fork_num_and_hash {
                 // If loading state file on a fork, set best number to the fork block number.
-                // Ref:
+                // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
                 self.blockchain.storage.write().best_number = U64::from(number);
                 self.blockchain.storage.write().best_hash = hash;
             } else {
