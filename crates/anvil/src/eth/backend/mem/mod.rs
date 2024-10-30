@@ -937,10 +937,6 @@ impl Backend {
             .into());
         }
 
-        if let Some(mut fork) = self.get_fork() {
-            fork.load_state(state.clone());
-        }
-
         if let Some(historical_states) = state.historical_states {
             self.states.write().load_states(historical_states);
         }
