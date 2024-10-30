@@ -2993,6 +2993,26 @@
     },
     {
       "func": {
+        "id": "attachDelegation",
+        "description": "Designate the next call as an EIP-7702 transaction",
+        "declaration": "function attachDelegation(address implementation, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachDelegation(address,uint64,uint8,bytes32,bytes32)",
+        "selector": "0x2d8e2226",
+        "selectorBytes": [
+          45,
+          142,
+          34,
+          38
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "blobBaseFee",
         "description": "Sets `block.blobbasefee`",
         "declaration": "function blobBaseFee(uint256 newBlobBaseFee) external;",
@@ -3348,6 +3368,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "createDelegation",
+        "description": "Create an EIP-7702 authorization for delegation",
+        "declaration": "function createDelegation(address implementation, uint64 nonce) external returns (bytes32);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "createDelegation(address,uint64)",
+        "selector": "0x0377eeb5",
+        "selectorBytes": [
+          3,
+          119,
+          238,
+          181
+        ]
+      },
+      "group": "scripting",
       "status": "stable",
       "safety": "safe"
     },
@@ -8378,6 +8418,26 @@
         ]
       },
       "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signDelegation",
+        "description": "Sign an EIP-7702 authorization for delegation",
+        "declaration": "function signDelegation(bytes32 delegation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegation(bytes32,uint256)",
+        "selector": "0x75501e61",
+        "selectorBytes": [
+          117,
+          80,
+          30,
+          97
+        ]
+      },
+      "group": "scripting",
       "status": "stable",
       "safety": "safe"
     },
