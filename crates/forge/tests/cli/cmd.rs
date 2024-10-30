@@ -2717,3 +2717,101 @@ interface Counter {
 "#]],
     );
 });
+
+// checks that `clean` also works with the "out" value set in Config
+forgetest_init!(gas_report_include_tests, |prj, cmd| {
+    prj.write_config(Config {
+        gas_reports_include_tests: true,
+        fuzz: FuzzConfig { runs: 1, ..Default::default() },
+        ..Default::default()
+    });
+
+    cmd.args(["test", "--mt", "test_Increment", "--gas-report"]).assert_success().stdout_eq(str![
+        [r#"
+...
+| src/Counter.sol:Counter contract |                 |       |        |       |         |
+|----------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                  | Deployment Size |       |        |       |         |
+| 106715                           | 277             |       |        |       |         |
+| Function Name                    | min             | avg   | median | max   | # calls |
+| increment                        | 43404           | 43404 | 43404  | 43404 | 1       |
+| number                           | 283             | 283   | 283    | 283   | 1       |
+| setNumber                        | 23582           | 23582 | 23582  | 23582 | 1       |
+
+
+| test/Counter.t.sol:CounterTest contract |                 |        |        |        |         |
+|-----------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                         | Deployment Size |        |        |        |         |
+| 965418                                  | 4661            |        |        |        |         |
+| Function Name                           | min             | avg    | median | max    | # calls |
+| setUp                                   | 168064          | 168064 | 168064 | 168064 | 1       |
+| test_Increment                          | 52367           | 52367  | 52367  | 52367  | 1       |
+...
+
+"#]
+    ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "src/Counter.sol:Counter",
+    "deployment": {
+      "gas": 106715,
+      "size": 277
+    },
+    "functions": {
+      "increment()": {
+        "calls": 1,
+        "min": 43404,
+        "mean": 43404,
+        "median": 43404,
+        "max": 43404
+      },
+      "number()": {
+        "calls": 1,
+        "min": 283,
+        "mean": 283,
+        "median": 283,
+        "max": 283
+      },
+      "setNumber(uint256)": {
+        "calls": 1,
+        "min": 23582,
+        "mean": 23582,
+        "median": 23582,
+        "max": 23582
+      }
+    }
+  },
+  {
+    "contract": "test/Counter.t.sol:CounterTest",
+    "deployment": {
+      "gas": 965418,
+      "size": 4661
+    },
+    "functions": {
+      "setUp()": {
+        "calls": 1,
+        "min": 168064,
+        "mean": 168064,
+        "median": 168064,
+        "max": 168064
+      },
+      "test_Increment()": {
+        "calls": 1,
+        "min": 52367,
+        "mean": 52367,
+        "median": 52367,
+        "max": 52367
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
+});
