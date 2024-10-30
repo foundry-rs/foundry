@@ -750,13 +750,13 @@ impl TestArgs {
                                 .collect();
 
                             if !diff.is_empty() {
-                                let _ = sh_err!(
+                                let _ = sh_eprintln!(
                                     "{}",
                                     format!("\n[{group}] Failed to match snapshots:").red().bold()
                                 );
 
                                 for (key, (previous_snapshot, snapshot)) in &diff {
-                                    let _ = sh_println!(
+                                    let _ = sh_eprintln!(
                                         "{}",
                                         format!("- [{key}] {previous_snapshot} → {snapshot}").red()
                                     );
