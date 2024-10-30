@@ -197,16 +197,7 @@ impl GasReport {
                         .flat_map(|(_, sigs)| {
                             sigs.iter().map(|(sig, gas_info)| {
                                 let display_name = sig.replace(':', "");
-                                (
-                                    display_name,
-                                    json!({
-                                        "calls": gas_info.calls,
-                                        "min": gas_info.min,
-                                        "mean": gas_info.mean,
-                                        "median": gas_info.median,
-                                        "max": gas_info.max,
-                                    }),
-                                )
+                                (display_name, gas_info)
                             })
                         })
                         .collect::<BTreeMap<_, _>>();
