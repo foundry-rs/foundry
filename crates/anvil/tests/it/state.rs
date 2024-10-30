@@ -1,10 +1,13 @@
 //! general eth api tests
 
 use crate::abi::Greeter;
-use alloy_primitives::{Bytes, Uint, U256};
+use alloy_network::{ReceiptResponse, TransactionBuilder};
+use alloy_primitives::{address, utils::Unit, Bytes, Uint, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use anvil::{spawn, NodeConfig};
+use foundry_test_utils::rpc::next_http_rpc_endpoint;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_state() {
@@ -154,4 +157,89 @@ async fn can_preserve_historical_states_between_dump_and_load() {
         greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap()._0;
 
     assert_eq!(greeting_after_change, "World!");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_load_state() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_fork_block_number(Some(21070682u64)),
+    )
+    .await;
+
+    let bob = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let alice = address!("9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
+
+    let provider = handle.http_provider();
+
+    let init_nonce_bob = provider.get_transaction_count(bob).await.unwrap();
+
+    let init_balance_alice = provider.get_balance(alice).await.unwrap();
+
+    let value = Unit::ETHER.wei().saturating_mul(U256::from(1)); // 1 ether
+    let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
+    let tx = WithOtherFields::new(tx);
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    let serialized_state = api.serialized_state(false).await.unwrap();
+
+    let state_dump_block = api.block_number().unwrap();
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_fork_block_number(Some(21070686u64)) // Forked chain has moved forward
+            .with_init_state(Some(serialized_state)),
+    )
+    .await;
+
+    let provider = handle.http_provider();
+
+    let restart_nonce_bob = provider.get_transaction_count(bob).await.unwrap();
+
+    let restart_balance_alice = provider.get_balance(alice).await.unwrap();
+
+    println!("init_nonce_bob: {}, restart_nonce_bob: {}", init_nonce_bob, restart_nonce_bob);
+
+    println!(
+        "init_balance_alice: {}, restart_balance_alice: {}",
+        init_balance_alice, restart_balance_alice
+    );
+
+    assert_eq!(init_nonce_bob + 1, restart_nonce_bob);
+
+    assert_eq!(init_balance_alice + value, restart_balance_alice);
+
+    // Send another tx to check if the state is preserved
+
+    let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
+    let tx = WithOtherFields::new(tx);
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    let latest_nonce_bob = provider.get_transaction_count(bob).await.unwrap();
+
+    let latest_balance_alice = provider.get_balance(alice).await.unwrap();
+
+    println!(
+        "latest_nonce_bob: {}, latest_balance_alice: {}",
+        latest_nonce_bob, latest_balance_alice
+    );
+
+    let tx = TransactionRequest::default()
+        .with_to(alice)
+        .with_value(value)
+        .with_from(bob)
+        .with_nonce(latest_nonce_bob);
+    let tx = WithOtherFields::new(tx);
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
 }
