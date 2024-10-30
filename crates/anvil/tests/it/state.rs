@@ -159,6 +159,7 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     assert_eq!(greeting_after_change, "World!");
 }
 
+// <https://github.com/foundry-rs/foundry/issues/9053>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_load_state() {
     let (api, handle) = spawn(
