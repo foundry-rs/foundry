@@ -771,7 +771,7 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
-                node.trace.steps.clear();
+                node.trace.steps = Vec::new();
             });
         }
 
