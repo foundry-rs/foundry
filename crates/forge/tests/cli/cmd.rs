@@ -1601,7 +1601,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -1617,7 +1617,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -1633,7 +1633,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -1685,7 +1685,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -1701,7 +1701,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -1717,7 +1717,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -1769,7 +1769,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -1785,7 +1785,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -1801,7 +1801,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -1860,7 +1860,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -1876,7 +1876,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -1892,7 +1892,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -1935,7 +1935,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -1973,7 +1973,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -2014,7 +2014,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -2069,7 +2069,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -2085,7 +2085,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -2136,7 +2136,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -2152,7 +2152,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -2231,7 +2231,7 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
       "size": 255
     },
     "functions": {
-      "foo": {
+      "foo()": {
         "calls": 1,
         "min": 45387,
         "mean": 45387,
@@ -2247,7 +2247,7 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
       "size": 256
     },
     "functions": {
-      "baz": {
+      "baz()": {
         "calls": 1,
         "min": 260712,
         "mean": 260712,
@@ -2263,7 +2263,7 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
       "size": 255
     },
     "functions": {
-      "bar": {
+      "bar()": {
         "calls": 1,
         "min": 64984,
         "mean": 64984,
@@ -2283,7 +2283,7 @@ warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 "#]]);
 });
 
-forgetest!(gas_report_multiple_selectors, |prj, cmd| {
+forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -2351,35 +2351,33 @@ contract CounterTest is DSTest {
       "size": 250
     },
     "functions": {
-      "a": {
+      "a()": {
         "calls": 1,
         "min": 2261,
         "mean": 2261,
         "median": 2261,
         "max": 2261
       },
-      "b": {
+      "b()": {
         "calls": 1,
         "min": 2305,
         "mean": 2305,
         "median": 2305,
         "max": 2305
       },
-      "setNumber": {
-        "setNumber(int256)": {
-          "calls": 2,
-          "min": 23648,
-          "mean": 33604,
-          "median": 33604,
-          "max": 43560
-        },
-        "setNumber(uint256)": {
-          "calls": 2,
-          "min": 23604,
-          "mean": 33560,
-          "median": 33560,
-          "max": 43516
-        }
+      "setNumber(int256)": {
+        "calls": 2,
+        "min": 23648,
+        "mean": 33604,
+        "median": 33604,
+        "max": 43560
+      },
+      "setNumber(uint256)": {
+        "calls": 2,
+        "min": 23604,
+        "mean": 33560,
+        "median": 33560,
+        "max": 43516
       }
     }
   }
