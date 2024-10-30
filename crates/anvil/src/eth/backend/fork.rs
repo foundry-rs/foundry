@@ -29,11 +29,9 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
-use revm::primitives::{AccountInfo, BlobExcessGasAndPrice, Bytecode, KECCAK_EMPTY};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use revm::primitives::BlobExcessGasAndPrice;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
-
-use super::db::{SerializableAccountRecord, SerializableState};
 
 /// Represents a fork of a remote client
 ///
@@ -272,19 +270,11 @@ impl ClientFork {
         blocknumber: u64,
     ) -> Result<U256, TransportError> {
         trace!(target: "backend::fork", "get_balance={:?}", address);
-        if let Some(account) = self.storage_read().account_at.get(&(address, blocknumber)).cloned()
-        {
-            return Ok(account.balance);
-        }
-
         self.provider().get_balance(address).block_id(blocknumber.into()).await
     }
 
     pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
-        if let Some(account) = self.storage_read().account_at.get(&(address, block)).cloned() {
-            return Ok(account.nonce);
-        }
         self.provider().get_transaction_count(address).block_id(block.into()).await
     }
 
@@ -294,16 +284,6 @@ impl ClientFork {
         blocknumber: u64,
     ) -> Result<Account, TransportError> {
         trace!(target: "backend::fork", "get_account={:?}", address);
-        if let Some(account) = self.storage_read().account_at.get(&(address, blocknumber)).cloned()
-        {
-            let acc = Account {
-                balance: account.balance,
-                nonce: account.nonce,
-                code_hash: account.code_hash,
-                storage_root: Default::default(),
-            };
-            return Ok(acc);
-        }
         self.provider().get_account(address).block_id(blocknumber.into()).await
     }
 
@@ -621,14 +601,6 @@ impl ClientFork {
 
         block
     }
-
-    pub fn load_state(&mut self, state: SerializableState) {
-        let mut storage = self.storage_write();
-
-        if let Some(block) = state.block {
-            storage.load_accounts(state.accounts, block.number.to());
-        }
-    }
 }
 
 /// Contains all fork metadata
@@ -723,7 +695,6 @@ pub struct ForkedStorage {
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
-    pub account_at: HashMap<(Address, u64), AccountInfo>,
 }
 
 impl ForkedStorage {
@@ -731,23 +702,5 @@ impl ForkedStorage {
     pub fn clear(&mut self) {
         // simply replace with a completely new, empty instance
         *self = Self::default()
-    }
-
-    /// Load the accounts.
-    pub fn load_accounts(
-        &mut self,
-        accounts: BTreeMap<Address, SerializableAccountRecord>,
-        block_number: u64,
-    ) {
-        accounts.into_iter().map(|(k, v)| {
-            let info = AccountInfo {
-                balance: v.balance,
-                nonce: v.nonce,
-                code_hash: KECCAK_EMPTY,
-                code: if v.code.is_empty() { None } else { Some(Bytecode::new_raw(v.code)) },
-            };
-
-            self.account_at.insert((k, block_number), info)
-        });
     }
 }
