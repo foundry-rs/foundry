@@ -36,6 +36,8 @@ pub struct GasReport {
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
     ignore: HashSet<String>,
+    /// Whether to include gas reports for tests.
+    include_tests: bool,
     /// All contracts that were analyzed grouped by their identifier
     /// ``test/Counter.t.sol:CounterTest
     pub contracts: BTreeMap<String, ContractInfo>,
@@ -45,13 +47,14 @@ impl GasReport {
     pub fn new(
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
+        include_tests: bool,
         report_kind: GasReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
         let report_type = report_kind;
-        Self { report_any, report_type, report_for, ignore, ..Default::default() }
+        Self { report_any, report_type, report_for, ignore, include_tests, ..Default::default() }
     }
 
     /// Whether the given contract should be reported.
@@ -122,7 +125,7 @@ impl GasReport {
         } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
-            if !name.test_function_kind().is_known() {
+            if self.include_tests || !name.test_function_kind().is_known() {
                 trace!(contract_name, signature, "adding gas info");
                 let gas_info = contract_info
                     .functions
