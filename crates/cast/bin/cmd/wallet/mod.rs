@@ -227,108 +227,89 @@ impl WalletSubcommands {
                 let mut rng = thread_rng();
 
                 let mut json_values = if json { Some(vec![]) } else { None };
-                if let Some(path) = path {
-                    let path = match dunce::canonicalize(path.clone()) {
-                        Ok(path) => path,
-                        // If the path doesn't exist, it will fail to be canonicalized,
-                        // so we attach more context to the error message.
+
+                // Determine the path
+                let path = if let Some(path) = path {
+                    match dunce::canonicalize(path.clone()) {
+                        Ok(path) => {
+                            if !path.is_dir() {
+                                // we require path to be an existing directory
+                                eyre::bail!("`{}` is not a directory", path.display());
+                            }
+                            Some(path)
+                        }
                         Err(e) => {
                             eyre::bail!("If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}", e);
                         }
-                    };
-                    if !path.is_dir() {
-                        // we require path to be an existing directory
-                        eyre::bail!("`{}` is not a directory", path.display());
-                    }
-
-                    let password = if let Some(password) = unsafe_password {
-                        password
-                    } else {
-                        // if no --unsafe-password was provided read via stdin
-                        rpassword::prompt_password("Enter secret: ")?
-                    };
-
-                    for _ in 0..number {
-                        let (wallet, uuid) = PrivateKeySigner::new_keystore(
-                            &path,
-                            &mut rng,
-                            password.clone(),
-                            None,
-                        )?;
-
-                        if let Some(json) = json_values.as_mut() {
-                            json.push(json!({
-                                "address": wallet.address().to_checksum(None),
-                                "path": format!("{}", path.join(uuid).display()),
-                            }
-                            ));
-                        } else {
-                            sh_println!(
-                                "Created new encrypted keystore file: {}",
-                                path.join(uuid).display()
-                            )?;
-                            sh_println!("Address: {}", wallet.address().to_checksum(None))?;
-                        }
-                    }
-
-                    if let Some(json) = json_values.as_ref() {
-                        sh_println!("{}", serde_json::to_string_pretty(json)?)?;
                     }
                 } else if default_keystore {
                     let path = Config::foundry_keystores_dir().ok_or_else(|| {
                         eyre::eyre!("Could not find the default keystore directory.")
                     })?;
                     fs::create_dir_all(&path)?;
-
-                    let password = if let Some(password) = unsafe_password {
-                        password
-                    } else {
-                        // if no --unsafe-password was provided read via stdin
-                        rpassword::prompt_password("Enter secret: ")?
-                    };
-
-                    for _ in 0..number {
-                        let (wallet, uuid) = PrivateKeySigner::new_keystore(
-                            &path,
-                            &mut rng,
-                            password.clone(),
-                            None,
-                        )?;
-
-                        if let Some(json) = json_values.as_mut() {
-                            json.push(json!({
-                                "address": wallet.address().to_checksum(None),
-                                "path": format!("{}", path.join(uuid).display()),
-                            }));
-                        } else {
-                            sh_println!(
-                                "Created new encrypted keystore file: {}",
-                                path.join(uuid).display()
-                            )?;
-                            sh_println!("Address: {}", wallet.address().to_checksum(None))?;
-                        }
-                    }
+                    Some(path)
                 } else {
-                    for _ in 0..number {
-                        let wallet = PrivateKeySigner::random_with(&mut rng);
+                    None
+                };
 
-                        if let Some(json) = json_values.as_mut() {
-                            json.push(json!({
-                                "address": wallet.address().to_checksum(None),
-                                "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
-                            }))
+                match path {
+                    Some(path) => {
+                        let password = if let Some(password) = unsafe_password {
+                            password
                         } else {
-                            sh_println!("Successfully created new keypair.")?;
-                            sh_println!("Address:     {}", wallet.address().to_checksum(None))?;
-                            sh_println!(
-                                "Private key: 0x{}",
-                                hex::encode(wallet.credential().to_bytes())
+                            // if no --unsafe-password was provided read via stdin
+                            rpassword::prompt_password("Enter secret: ")?
+                        };
+
+                        for _ in 0..number {
+                            let (wallet, uuid) = PrivateKeySigner::new_keystore(
+                                &path,
+                                &mut rng,
+                                password.clone(),
+                                None,
                             )?;
+
+                            if let Some(json) = json_values.as_mut() {
+                                json.push(json!({
+                                    "address": wallet.address().to_checksum(None),
+                                    "path": format!("{}", path.join(uuid).display()),
+                                }
+                                ));
+                            } else {
+                                sh_println!(
+                                    "Created new encrypted keystore file: {}",
+                                    path.join(uuid).display()
+                                )?;
+                                sh_println!("Address: {}", wallet.address().to_checksum(None))?;
+                            }
+                        }
+
+                        if let Some(json) = json_values.as_ref() {
+                            sh_println!("{}", serde_json::to_string_pretty(json)?)?;
                         }
                     }
+                    None => {
+                        for _ in 0..number {
+                            let wallet = PrivateKeySigner::random_with(&mut rng);
 
-                    if let Some(json) = json_values.as_ref() {
-                        sh_println!("{}", serde_json::to_string_pretty(json)?)?;
+                            if let Some(json) = json_values.as_mut() {
+                                json.push(json!({
+                                    "address": wallet.address().to_checksum(None),
+                                    "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+                                }))
+                            } else {
+                                sh_println!("Successfully created new keypair.")?;
+                                sh_println!("Address:     {}", wallet.address().to_checksum(None))?;
+                                sh_println!(
+                                    "Private key: 0x{}",
+                                    hex::encode(wallet.credential().to_bytes())
+                                )?;
+                            }
+                        }
+
+                        if let Some(json) = json_values.as_ref() {
+                            sh_println!("{}", serde_json::to_string_pretty(json)?)?;
+                        }
                     }
                 }
             }
