@@ -4,8 +4,8 @@ use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::{Signature, SignerSync};
-use alloy_sol_types::SolValue;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
 use revm::primitives::SignedAuthorization;
@@ -58,7 +58,7 @@ impl Cheatcode for attachDelegationCall {
         let sig = Signature::from_rs_and_parity(
             U256::try_from(*r).unwrap(),
             U256::try_from(*s).unwrap(),
-            alloy_primitives::Parity::from(*v == 1)
+            alloy_primitives::Parity::from(*v == 1),
         )?;
         let signed_auth = auth.into_signed(sig);
         // store in CheatcodeState
@@ -218,7 +218,7 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
         original_origin: ccx.ecx.env.tx.caller,
         depth: ccx.ecx.journaled_state.depth(),
         single_call,
-        delegation
+        delegation,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
     ccx.state.broadcast = Some(broadcast);

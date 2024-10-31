@@ -1868,7 +1868,7 @@ interface Vm {
     /// Create an EIP-7702 authorization for delegation
     #[cheatcode(group = Scripting)]
     function createDelegation(address implementation, uint64 nonce) external returns (bytes32);
-    
+
     /// Sign an EIP-7702 authorization for delegation
     #[cheatcode(group = Scripting)]
     function signDelegation(bytes32 delegation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
