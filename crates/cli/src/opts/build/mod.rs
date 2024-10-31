@@ -26,9 +26,9 @@ pub struct CompilerArgs {
     pub evm_version: Option<EvmVersion>,
 
     /// Activate the Solidity optimizer.
-    #[arg(long)]
+    #[arg(long, default_missing_value="true", num_args = 0..=1)]
     #[serde(skip)]
-    pub optimize: bool,
+    pub optimize: Option<bool>,
 
     /// The number of runs specifies roughly how often each opcode of the deployed code will be
     /// executed across the life-time of the contract. This means it is a trade-off parameter

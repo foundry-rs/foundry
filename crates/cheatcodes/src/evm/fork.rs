@@ -1,4 +1,7 @@
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{
+    json::json_value_to_token, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt,
+    Result, Vm::*,
+};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
@@ -130,28 +133,14 @@ impl Cheatcode for selectForkCall {
 impl Cheatcode for transact_0Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { txHash } = *self;
-        ccx.ecx.db.transact(
-            None,
-            txHash,
-            &mut ccx.ecx.env,
-            &mut ccx.ecx.journaled_state,
-            &mut executor.get_inspector(ccx.state),
-        )?;
-        Ok(Default::default())
+        transact(ccx, executor, txHash, None)
     }
 }
 
 impl Cheatcode for transact_1Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { forkId, txHash } = *self;
-        ccx.ecx.db.transact(
-            Some(forkId),
-            txHash,
-            &mut ccx.ecx.env,
-            &mut ccx.ecx.journaled_state,
-            &mut *executor.get_inspector(ccx.state),
-        )?;
-        Ok(Default::default())
+        transact(ccx, executor, txHash, Some(forkId))
     }
 }
 
@@ -350,7 +339,6 @@ fn create_fork_request(
     Ok(fork)
 }
 
-#[inline]
 fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     if state.broadcast.is_none() {
         Ok(())
@@ -359,11 +347,26 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
+fn transact(
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
+    transaction: B256,
+    fork_id: Option<U256>,
+) -> Result {
+    ccx.ecx.db.transact(
+        fork_id,
+        transaction,
+        (*ccx.ecx.env).clone(),
+        &mut ccx.ecx.journaled_state,
+        &mut *executor.get_inspector(ccx.state),
+    )?;
+    Ok(Default::default())
+}
+
 // Helper to add the caller of fork cheat code as persistent account (in order to make sure that the
 // state of caller contract is not lost when fork changes).
 // Applies to create, select and roll forks actions.
 // https://github.com/foundry-rs/foundry/issues/8004
-#[inline]
 fn persist_caller(ccx: &mut CheatsCtxt) {
     ccx.ecx.db.add_persistent_account(ccx.caller);
 }
@@ -375,18 +378,25 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
     let result =
         foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
-
-    let result_as_tokens = match crate::json::json_value_to_token(&result)
-        .map_err(|err| fmt_err!("failed to parse result: {err}"))?
-    {
-        // Convert fixed bytes to bytes to prevent encoding issues.
-        // See: <https://github.com/foundry-rs/foundry/issues/8287>
-        DynSolValue::FixedBytes(bytes, size) => {
-            DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
-        }
-        DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
-        val => val,
-    };
+    let result_as_tokens = convert_to_bytes(
+        &json_value_to_token(&result).map_err(|err| fmt_err!("failed to parse result: {err}"))?,
+    );
 
     Ok(result_as_tokens.abi_encode())
+}
+
+/// Convert fixed bytes and address values to bytes in order to prevent encoding issues.
+fn convert_to_bytes(token: &DynSolValue) -> DynSolValue {
+    match token {
+        // Convert fixed bytes to prevent encoding issues.
+        // See: <https://github.com/foundry-rs/foundry/issues/8287>
+        DynSolValue::FixedBytes(bytes, size) => {
+            DynSolValue::Bytes(bytes.as_slice()[..*size].to_vec())
+        }
+        DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
+        //  Convert tuple values to prevent encoding issues.
+        // See: <https://github.com/foundry-rs/foundry/issues/7858>
+        DynSolValue::Tuple(vals) => DynSolValue::Tuple(vals.iter().map(convert_to_bytes).collect()),
+        val => val.clone(),
+    }
 }

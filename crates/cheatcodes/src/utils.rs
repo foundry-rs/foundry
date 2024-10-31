@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{map::HashMap, U256};
+use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
@@ -130,6 +130,20 @@ impl Cheatcode for randomBytesCall {
         let mut bytes = vec![0u8; len.to::<usize>()];
         state.rng().fill_bytes(&mut bytes);
         Ok(bytes.abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytes4Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u32 = state.rng().next_u32();
+        Ok(B32::from(rand_u32).abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytes8Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u64 = state.rng().next_u64();
+        Ok(B64::from(rand_u64).abi_encode())
     }
 }
 

@@ -43,6 +43,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
+        gas_reports_include_tests: false,
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         auto_detect_remappings: true,
@@ -105,6 +106,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
+        eth_rpc_timeout: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -260,7 +262,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
         cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
             r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
-    Installed solmate
+    Installed solmate[..]
 
 "#
         ]]);
@@ -397,8 +399,7 @@ Compiler run successful!
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-`solc` this/solc/does/not/exist does not exist
+Error: `solc` this/solc/does/not/exist does not exist
 
 "#]]);
 
@@ -434,8 +435,7 @@ contract Foo {
     .unwrap();
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (6553): The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
  [FILE]:6:8:
   |
@@ -652,7 +652,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
 
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
-warning: Found unknown config section in foundry.toml: [default]
+Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
 

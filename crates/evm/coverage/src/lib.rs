@@ -8,12 +8,12 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{map::HashMap, Bytes, B256};
 use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
     path::{Path, PathBuf},

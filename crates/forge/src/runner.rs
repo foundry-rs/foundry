@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
@@ -35,12 +35,7 @@ use foundry_evm::{
 };
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{
-    borrow::Cow,
-    cmp::min,
-    collections::{BTreeMap, HashMap},
-    time::Instant,
-};
+use std::{borrow::Cow, cmp::min, collections::BTreeMap, time::Instant};
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
 /// libraries affecting nonces of senders used in tests, we are using separate address to
@@ -76,7 +71,7 @@ pub struct ContractRunner<'a> {
     pub span: tracing::Span,
 }
 
-impl<'a> ContractRunner<'a> {
+impl ContractRunner<'_> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
@@ -524,6 +519,11 @@ impl<'a> ContractRunner<'a> {
                 invariant_contract.call_after_invariant,
             ) {
                 if !success {
+                    let _= sh_warn!("\
+                            Replayed invariant failure from {:?} file. \
+                            Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
+                        failure_file.as_path()
+                    );
                     // If sequence still fails then replay error to collect traces and
                     // exit without executing new runs.
                     let _ = replay_run(
@@ -628,6 +628,7 @@ impl<'a> ContractRunner<'a> {
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
+            invariant_result.metrics,
         )
     }
 

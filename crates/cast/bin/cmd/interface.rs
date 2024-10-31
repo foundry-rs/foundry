@@ -93,9 +93,9 @@ impl InterfaceArgs {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, res)?;
-            println!("Saved interface at {}", loc.display());
+            sh_println!("Saved interface at {}", loc.display())?;
         } else {
-            print!("{res}");
+            sh_print!("{res}")?;
         }
 
         Ok(())
@@ -108,7 +108,7 @@ struct InterfaceSource {
 }
 
 /// Load the ABI from a file.
-fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonAbi, String)>> {
+pub fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonAbi, String)>> {
     let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
     let obj: ContractObject = serde_json::from_str(&file)?;
     let abi = obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
@@ -139,7 +139,7 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
 }
 
 /// Fetches the ABI of a contract from Etherscan.
-async fn fetch_abi_from_etherscan(
+pub async fn fetch_abi_from_etherscan(
     address: Address,
     etherscan: &EtherscanOpts,
 ) -> Result<Vec<(JsonAbi, String)>> {

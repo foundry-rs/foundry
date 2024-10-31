@@ -52,7 +52,6 @@ dunce.workspace = true
 eyre.workspace = true
 num-format.workspace = true
 reqwest.workspace = true
-rustc-hash.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -62,6 +61,10 @@ tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
+
+anstream.workspace = true
+anstyle.workspace = true
+terminal_size.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true

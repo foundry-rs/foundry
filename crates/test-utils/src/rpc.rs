@@ -177,9 +177,8 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use super::*;
     use alloy_primitives::address;
     use foundry_config::Chain;

@@ -62,10 +62,10 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect(
+    pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
@@ -110,7 +110,7 @@ impl<'a> CowBackend<'a> {
     }
 }
 
-impl<'a> DatabaseExt for CowBackend<'a> {
+impl DatabaseExt for CowBackend<'_> {
     fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         self.backend_mut(env).snapshot_state(journaled_state, env)
     }
@@ -184,21 +184,21 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
+        self.backend_mut(&env).transact(id, transaction, env, journaled_state, inspector)
     }
 
     fn transact_from_tx(
         &mut self,
-        transaction: TransactionRequest,
-        env: &Env,
+        transaction: &TransactionRequest,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
+        self.backend_mut(&env).transact_from_tx(transaction, env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -233,6 +233,15 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
     }
 
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend_mut(&Env::default()).clone_account(source, target, journaled_state)
+    }
+
     fn is_persistent(&self, acc: &Address) -> bool {
         self.backend.is_persistent(acc)
     }
@@ -262,7 +271,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     }
 }
 
-impl<'a> DatabaseRef for CowBackend<'a> {
+impl DatabaseRef for CowBackend<'_> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -282,7 +291,7 @@ impl<'a> DatabaseRef for CowBackend<'a> {
     }
 }
 
-impl<'a> Database for CowBackend<'a> {
+impl Database for CowBackend<'_> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -302,7 +311,7 @@ impl<'a> Database for CowBackend<'a> {
     }
 }
 
-impl<'a> DatabaseCommit for CowBackend<'a> {
+impl DatabaseCommit for CowBackend<'_> {
     fn commit(&mut self, changes: Map<Address, Account>) {
         self.backend.to_mut().commit(changes)
     }

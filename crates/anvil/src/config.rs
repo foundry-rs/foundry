@@ -99,6 +99,8 @@ pub struct NodeConfig {
     pub gas_price: Option<u128>,
     /// Default base fee
     pub base_fee: Option<u64>,
+    /// If set to `true`, disables the enforcement of a minimum suggested priority fee
+    pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
@@ -121,8 +123,6 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// don't print anything on startup
-    pub silent: bool,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
     /// pins the block number or transaction hash for the state fork
@@ -187,6 +187,8 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Enable Alphanet features.
     pub alphanet: bool,
+    /// Do not print log messages.
+    pub silent: bool,
 }
 
 impl NodeConfig {
@@ -392,7 +394,7 @@ impl NodeConfig {
     /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: true, silent: true, port: 0, ..Default::default() }
+        Self { enable_tracing: true, port: 0, silent: true, ..Default::default() }
     }
 
     /// Returns a new config which does not initialize any accounts on node startup.
@@ -427,11 +429,11 @@ impl Default for NodeConfig {
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
-            silent: false,
             eth_rpc_url: None,
             fork_choice: None,
             account_generator: None,
             base_fee: None,
+            disable_min_priority_fee: false,
             blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
@@ -462,6 +464,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             alphanet: false,
+            silent: false,
         }
     }
 }
@@ -623,6 +626,13 @@ impl NodeConfig {
         self
     }
 
+    /// Disable the enforcement of a minimum suggested priority fee
+    #[must_use]
+    pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
+        self.disable_min_priority_fee = disable_min_priority_fee;
+        self
+    }
+
     /// Sets the init genesis (genesis.json)
     #[must_use]
     pub fn with_genesis(mut self, genesis: Option<Genesis>) -> Self {
@@ -722,18 +732,6 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
-    #[must_use]
-    pub fn silent(self) -> Self {
-        self.set_silent(true)
-    }
-
-    #[must_use]
-    pub fn set_silent(mut self, silent: bool) -> Self {
-        self.silent = silent;
-        self
-    }
-
     /// Sets the ipc path to use
     ///
     /// Note: this is a double Option for
@@ -753,7 +751,7 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
+    /// Disables storage caching
     #[must_use]
     pub fn no_storage_caching(self) -> Self {
         self.with_storage_caching(true)
@@ -911,11 +909,12 @@ impl NodeConfig {
             )
             .expect("Failed writing json");
         }
+
         if self.silent {
             return;
         }
 
-        println!("{}", self.as_string(fork))
+        let _ = sh_println!("{}", self.as_string(fork));
     }
 
     /// Returns the path where the cache file should be stored
@@ -958,6 +957,18 @@ impl NodeConfig {
         self
     }
 
+    /// Makes the node silent to not emit anything on stdout
+    #[must_use]
+    pub fn silent(self) -> Self {
+        self.set_silent(true)
+    }
+
+    #[must_use]
+    pub fn set_silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -994,6 +1005,7 @@ impl NodeConfig {
         let fees = FeeManager::new(
             cfg.handler_cfg.spec_id,
             self.get_base_fee(),
+            !self.disable_min_priority_fee,
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
         );

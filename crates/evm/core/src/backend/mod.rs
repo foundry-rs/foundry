@@ -4,7 +4,7 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{configure_tx_env, new_evm_with_inspector},
+    utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
@@ -19,8 +19,8 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
+        Account, AccountInfo, BlobExcessGasAndPrice, Bytecode, Env, EnvWithHandlerCfg, EvmState,
+        EvmStorageSlot, HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -198,7 +198,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -206,8 +206,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// Executes a given TransactionRequest, commits the new state to the DB
     fn transact_from_tx(
         &mut self,
-        transaction: TransactionRequest,
-        env: &Env,
+        transaction: &TransactionRequest,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -276,6 +276,17 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     fn load_allocs(
         &mut self,
         allocs: &BTreeMap<Address, GenesisAccount>,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError>;
+
+    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target
+    /// address.
+    ///
+    /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError>;
 
@@ -751,10 +762,10 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect(
+    pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
@@ -1223,7 +1234,7 @@ impl DatabaseExt for Backend {
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1245,7 +1256,6 @@ impl DatabaseExt for Backend {
         // So we modify the env to match the transaction's block.
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
-        let mut env = env.clone();
         update_env_block(&mut env, &block);
 
         let env = self.env_with_handler_cfg(env);
@@ -1263,35 +1273,20 @@ impl DatabaseExt for Backend {
 
     fn transact_from_tx(
         &mut self,
-        tx: TransactionRequest,
-        env: &Env,
+        tx: &TransactionRequest,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
-        let mut env = env.clone();
-
-        env.tx.caller =
-            tx.from.ok_or_else(|| eyre::eyre!("transact_from_tx: No `from` field found"))?;
-        env.tx.gas_limit =
-            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))?;
-        env.tx.gas_price = U256::from(tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default());
-        env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
-        env.tx.nonce = tx.nonce;
-        env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
-        env.tx.value =
-            tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
-        env.tx.data = tx.input.into_input().unwrap_or_default();
-        env.tx.transact_to =
-            tx.to.ok_or_else(|| eyre::eyre!("transact_from_tx: No `to` field found"))?;
-        env.tx.chain_id = tx.chain_id;
-
         self.commit(journaled_state.state.clone());
 
         let res = {
-            let mut db = self.clone();
+            configure_tx_req_env(&mut env, tx)?;
             let env = self.env_with_handler_cfg(env);
+
+            let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env, inspector);
             evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact()?
@@ -1383,44 +1378,59 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
         for (addr, acc) in allocs.iter() {
-            // Fetch the account from the journaled state. Will create a new account if it does
-            // not already exist.
-            let mut state_acc = journaled_state.load_account(*addr, self)?;
-
-            // Set the account's bytecode and code hash, if the `bytecode` field is present.
-            if let Some(bytecode) = acc.code.as_ref() {
-                state_acc.info.code_hash = keccak256(bytecode);
-                let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
-                state_acc.info.code = Some(bytecode);
-            }
-
-            // Set the account's storage, if the `storage` field is present.
-            if let Some(storage) = acc.storage.as_ref() {
-                state_acc.storage = storage
-                    .iter()
-                    .map(|(slot, value)| {
-                        let slot = U256::from_be_bytes(slot.0);
-                        (
-                            slot,
-                            EvmStorageSlot::new_changed(
-                                state_acc
-                                    .storage
-                                    .get(&slot)
-                                    .map(|s| s.present_value)
-                                    .unwrap_or_default(),
-                                U256::from_be_bytes(value.0),
-                            ),
-                        )
-                    })
-                    .collect();
-            }
-            // Set the account's nonce and balance.
-            state_acc.info.nonce = acc.nonce.unwrap_or_default();
-            state_acc.info.balance = acc.balance;
-
-            // Touch the account to ensure the loaded information persists if called in `setUp`.
-            journaled_state.touch(addr);
+            self.clone_account(acc, addr, journaled_state)?;
         }
+
+        Ok(())
+    }
+
+    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target
+    /// address.
+    ///
+    /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        // Fetch the account from the journaled state. Will create a new account if it does
+        // not already exist.
+        let mut state_acc = journaled_state.load_account(*target, self)?;
+
+        // Set the account's bytecode and code hash, if the `bytecode` field is present.
+        if let Some(bytecode) = source.code.as_ref() {
+            state_acc.info.code_hash = keccak256(bytecode);
+            let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
+            state_acc.info.code = Some(bytecode);
+        }
+
+        // Set the account's storage, if the `storage` field is present.
+        if let Some(storage) = source.storage.as_ref() {
+            state_acc.storage = storage
+                .iter()
+                .map(|(slot, value)| {
+                    let slot = U256::from_be_bytes(slot.0);
+                    (
+                        slot,
+                        EvmStorageSlot::new_changed(
+                            state_acc
+                                .storage
+                                .get(&slot)
+                                .map(|s| s.present_value)
+                                .unwrap_or_default(),
+                            U256::from_be_bytes(value.0),
+                        ),
+                    )
+                })
+                .collect();
+        }
+        // Set the account's nonce and balance.
+        state_acc.info.nonce = source.nonce.unwrap_or_default();
+        state_acc.info.balance = source.balance;
+
+        // Touch the account to ensure the loaded information persists if called in `setUp`.
+        journaled_state.touch(target);
 
         Ok(())
     }
@@ -1867,25 +1877,31 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 ) {
     trace!(?addr, "merging database data");
 
-    let mut acc = if let Some(acc) = active.accounts.get(&addr).cloned() {
-        acc
-    } else {
-        // Account does not exist
-        return;
-    };
+    let Some(acc) = active.accounts.get(&addr) else { return };
 
-    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
-        fork_db.contracts.insert(acc.info.code_hash, code);
+    // port contract cache over
+    if let Some(code) = active.contracts.get(&acc.info.code_hash) {
+        trace!("merging contract cache");
+        fork_db.contracts.insert(acc.info.code_hash, code.clone());
     }
 
-    if let Some(fork_account) = fork_db.accounts.get_mut(&addr) {
-        // This will merge the fork's tracked storage with active storage and update values
-        fork_account.storage.extend(std::mem::take(&mut acc.storage));
-        // swap them so we can insert the account as whole in the next step
-        std::mem::swap(&mut fork_account.storage, &mut acc.storage);
+    // port account storage over
+    use std::collections::hash_map::Entry;
+    match fork_db.accounts.entry(addr) {
+        Entry::Vacant(vacant) => {
+            trace!("target account not present - inserting from active");
+            // if the fork_db doesn't have the target account
+            // insert the entire thing
+            vacant.insert(acc.clone());
+        }
+        Entry::Occupied(mut occupied) => {
+            trace!("target account present - merging storage slots");
+            // if the fork_db does have the system,
+            // extend the existing storage (overriding)
+            let fork_account = occupied.get_mut();
+            fork_account.storage.extend(&acc.storage);
+        }
     }
-
-    fork_db.accounts.insert(addr, acc);
 }
 
 /// Returns true of the address is a contract
@@ -1906,6 +1922,8 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
+    env.block.blob_excess_gas_and_price =
+        block.header.excess_blob_gas.map(BlobExcessGasAndPrice::new);
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
@@ -1919,6 +1937,12 @@ fn commit_transaction(
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn InspectorExt,
 ) -> eyre::Result<()> {
+    // TODO: Remove after https://github.com/foundry-rs/foundry/pull/9131
+    // if the tx has the blob_versioned_hashes field, we assume it's a Cancun block
+    if tx.blob_versioned_hashes.is_some() {
+        env.handler_cfg.spec_id = SpecId::CANCUN;
+    }
+
     configure_tx_env(&mut env.env, tx);
 
     let now = Instant::now();
@@ -1976,9 +2000,8 @@ fn apply_state_changeset(
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
     use alloy_primitives::{Address, U256};
     use alloy_provider::Provider;

@@ -96,7 +96,7 @@ impl GasSnapshotArgs {
         self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
         let outcome = self.test.execute_tests().await?;
-        outcome.ensure_ok()?;
+        outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
         if let Some(path) = self.diff {
@@ -242,6 +242,7 @@ impl FromStr for GasSnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         calls: calls.as_str().parse().unwrap(),
                                         reverts: reverts.as_str().parse().unwrap(),
+                                        metrics: HashMap::default(),
                                     },
                                 })
                         }
@@ -486,7 +487,12 @@ mod tests {
             GasSnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Invariant { runs: 256, calls: 100, reverts: 200 }
+                gas_used: TestKindReport::Invariant {
+                    runs: 256,
+                    calls: 100,
+                    reverts: 200,
+                    metrics: HashMap::default()
+                }
             }
         );
     }
@@ -500,7 +506,12 @@ mod tests {
             GasSnapshotEntry {
                 contract_name: "ERC20Invariants".to_string(),
                 signature: "invariantBalanceSum()".to_string(),
-                gas_used: TestKindReport::Invariant { runs: 256, calls: 3840, reverts: 2388 }
+                gas_used: TestKindReport::Invariant {
+                    runs: 256,
+                    calls: 3840,
+                    reverts: 2388,
+                    metrics: HashMap::default()
+                }
             }
         );
     }

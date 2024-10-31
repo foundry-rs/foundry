@@ -21,7 +21,6 @@ use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
@@ -37,6 +36,7 @@ use rayon::prelude::*;
 use revm::primitives::Eof;
 use std::{
     borrow::Cow,
+    fmt::Write,
     io,
     marker::PhantomData,
     path::PathBuf,
@@ -45,6 +45,7 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
+use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -54,6 +55,9 @@ pub mod errors;
 mod rlp_converter;
 
 use rlp_converter::Item;
+
+#[macro_use]
+extern crate foundry_common;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -278,7 +282,7 @@ where
     pub async fn send(
         &self,
         tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<'_, T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -304,7 +308,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<'_, T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -670,7 +674,7 @@ where
         if disassemble {
             let code =
                 self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
-            Ok(format_operations(disassemble_bytes(code)?)?)
+            SimpleCast::disassemble(&code)
         } else {
             Ok(format!(
                 "{}",
@@ -782,7 +786,7 @@ where
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
                     } else {
-                        PendingTransactionBuilder::new(self.provider.root(), tx_hash)
+                        PendingTransactionBuilder::new(self.provider.root().clone(), tx_hash)
                             .with_required_confirmations(confs)
                             .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()
@@ -1350,8 +1354,54 @@ impl SimpleCast {
             .wrap_err("Could not convert to uint")?
             .0;
         let unit = unit.parse().wrap_err("could not parse units")?;
-        let mut formatted = ParseUnits::U256(value).format_units(unit);
+        Ok(Self::format_unit_as_string(value, unit))
+    }
 
+    /// Convert a number into a uint with arbitrary decimals.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    /// assert_eq!(Cast::parse_units("1.0", 6)?, "1000000"); // USDC (6 decimals)
+    /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
+    /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
+    /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn parse_units(value: &str, unit: u8) -> Result<String> {
+        let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+
+        Ok(ParseUnits::parse_units(value, unit)?.to_string())
+    }
+
+    /// Format a number from smallest unit to decimal with arbitrary decimals.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    /// assert_eq!(Cast::format_units("1000000", 6)?, "1"); // USDC (6 decimals)
+    /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
+    /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
+    /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn format_units(value: &str, unit: u8) -> Result<String> {
+        let value = NumberWithBase::parse_int(value, None)?.number();
+        let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+        Ok(Self::format_unit_as_string(value, unit))
+    }
+
+    // Helper function to format units as a string
+    fn format_unit_as_string(value: U256, unit: Unit) -> String {
+        let mut formatted = ParseUnits::U256(value).format_units(unit);
         // Trim empty fractional part.
         if let Some(dot) = formatted.find('.') {
             let fractional = &formatted[dot + 1..];
@@ -1359,8 +1409,7 @@ impl SimpleCast {
                 formatted = formatted[..dot].to_string();
             }
         }
-
-        Ok(formatted)
+        formatted
     }
 
     /// Converts wei into an eth amount
@@ -1399,23 +1448,31 @@ impl SimpleCast {
         Ok(ParseUnits::parse_units(value, unit)?.to_string())
     }
 
-    /// Decodes rlp encoded list with hex data
+    // Decodes RLP encoded data with validation for canonical integer representation
     ///
-    /// # Example
-    ///
+    /// # Examples
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::from_rlp("0xc0").unwrap(), "[]");
-    /// assert_eq!(Cast::from_rlp("0x0f").unwrap(), "\"0x0f\"");
-    /// assert_eq!(Cast::from_rlp("0x33").unwrap(), "\"0x33\"");
-    /// assert_eq!(Cast::from_rlp("0xc161").unwrap(), "[\"0x61\"]");
-    /// assert_eq!(Cast::from_rlp("0xc26162").unwrap(), "[\"0x61\",\"0x62\"]");
+    /// assert_eq!(Cast::from_rlp("0xc0", false).unwrap(), "[]");
+    /// assert_eq!(Cast::from_rlp("0x0f", false).unwrap(), "\"0x0f\"");
+    /// assert_eq!(Cast::from_rlp("0x33", false).unwrap(), "\"0x33\"");
+    /// assert_eq!(Cast::from_rlp("0xc161", false).unwrap(), "[\"0x61\"]");
+    /// assert_eq!(Cast::from_rlp("820002", true).is_err(), true);
+    /// assert_eq!(Cast::from_rlp("820002", false).unwrap(), "\"0x0002\"");
+    /// assert_eq!(Cast::from_rlp("00", true).is_err(), true);
+    /// assert_eq!(Cast::from_rlp("00", false).unwrap(), "\"0x00\"");
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
+    pub fn from_rlp(value: impl AsRef<str>, as_int: bool) -> Result<String> {
         let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
+
+        if as_int {
+            return Ok(U256::decode(&mut &bytes[..])?.to_string());
+        }
+
         let item = Item::decode(&mut &bytes[..]).wrap_err("Could not decode rlp")?;
+
         Ok(item.to_string())
     }
 
@@ -1946,9 +2003,9 @@ impl SimpleCast {
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, flattened)?;
-            println!("Flattened file written at {}", path.display());
+            sh_println!("Flattened file written at {}", path.display())?
         } else {
-            println!("{flattened}");
+            sh_println!("{flattened}")?
         }
 
         Ok(())
@@ -1959,17 +2016,36 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::hex;
     /// use cast::SimpleCast as Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let bytecode = "0x608060405260043610603f57600035";
-    /// let opcodes = Cast::disassemble(bytecode)?;
+    /// let opcodes = Cast::disassemble(&hex::decode(bytecode)?)?;
     /// println!("{}", opcodes);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn disassemble(bytecode: &str) -> Result<String> {
-        format_operations(disassemble_str(bytecode)?)
+    pub fn disassemble(code: &[u8]) -> Result<String> {
+        let mut output = String::new();
+
+        for step in decode_instructions(code) {
+            write!(output, "{:08x}: ", step.pc)?;
+
+            if let Some(op) = step.op {
+                write!(output, "{op}")?;
+            } else {
+                write!(output, "INVALID")?;
+            }
+
+            if !step.immediate.is_empty() {
+                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
+            }
+
+            writeln!(output)?;
+        }
+
+        Ok(output)
     }
 
     /// Gets the selector for a given function signature
@@ -2220,7 +2296,7 @@ mod tests {
     #[test]
     fn from_rlp() {
         let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
-        let item = Cast::from_rlp(rlp).unwrap();
+        let item = Cast::from_rlp(rlp, false).unwrap();
         assert_eq!(
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
