@@ -205,8 +205,8 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
-        CastSubcommand::ErrorDecode { error, json } => {
-            let tokens = SimpleCast::calldata_decode("Error(string)", &error, true)?;
+        CastSubcommand::StringDecode { data, json } => {
+            let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
             print_tokens(&tokens, json)
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
