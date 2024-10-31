@@ -536,15 +536,15 @@ pub enum CastSubcommand {
         json: bool,
     },
 
-    /// Decode string
+    /// Decode ABI-encoded string.
     ///
     /// Similar to `calldata-decode --input`, but the function argument is a `string`
     #[command(visible_aliases = &["--string-decode", "sd"])]
     StringDecode {
-        /// The ABI-encoded string
+        /// The ABI-encoded string.
         data: String,
 
-        /// Print the decoded calldata as JSON.
+        /// Print the decoded string as JSON.
         #[arg(long, short, help_heading = "Display options")]
         json: bool,
     },
