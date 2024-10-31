@@ -12,16 +12,21 @@ use std::collections::BTreeMap;
 #[derive(Debug)]
 pub struct ScriptTransactionBuilder {
     transaction: TransactionWithMetadata,
+    create2_deployer: Address,
 }
 
 impl ScriptTransactionBuilder {
-    pub fn new(transaction: TransactionMaybeSigned, rpc: String) -> Self {
+    pub fn new(
+        transaction: TransactionMaybeSigned,
+        rpc: String,
+        create2_deployer: Address,
+    ) -> Self {
         let mut transaction = TransactionWithMetadata::from_tx_request(transaction);
         transaction.rpc = rpc;
         // If tx.gas is already set that means it was specified in script
         transaction.is_fixed_gas_limit = transaction.tx().gas().is_some();
 
-        Self { transaction }
+        Self { transaction, create2_deployer }
     }
 
     /// Populate the transaction as CALL tx
@@ -31,14 +36,13 @@ impl ScriptTransactionBuilder {
         decoder: &CallTraceDecoder,
     ) -> Result<()> {
         if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
-            if to == DEFAULT_CREATE2_DEPLOYER {
+            if to == self.create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);
 
                     self.set_create(
                         true,
-                        DEFAULT_CREATE2_DEPLOYER
-                            .create2_from_code(B256::from_slice(salt), init_code),
+                        self.create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
                         local_contracts,
                     )?;
                 }
@@ -174,6 +178,6 @@ impl ScriptTransactionBuilder {
 
 impl From<TransactionWithMetadata> for ScriptTransactionBuilder {
     fn from(transaction: TransactionWithMetadata) -> Self {
-        Self { transaction }
+        Self { transaction, create2_deployer: DEFAULT_CREATE2_DEPLOYER }
     }
 }
