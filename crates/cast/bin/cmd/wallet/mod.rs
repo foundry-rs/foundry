@@ -54,7 +54,7 @@ pub enum WalletSubcommands {
         #[arg(long, short, default_value = "false")]
         json: bool,
 
-        /// Use default keystore location (~/.foundry/keystores)
+        /// Use default keystore location (~/.foundry/keystores).
         #[arg(long, short, conflicts_with = "path", default_value = "false")]
         default_keystore: bool,
     },
