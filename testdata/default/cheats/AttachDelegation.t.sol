@@ -13,8 +13,8 @@ contract AttachDelegationTest is DSTest {
         bytes32 delegation = vm.createDelegation(implementation, nonce);
         (uint8 v, bytes32 r, bytes32 s) = vm.signDelegation(delegation, pk);
 
-        vm.broadcast();
         vm.attachDelegation(implementation, nonce, v, r, s);
+        vm.broadcast();
         // @todo - assert a transaction's msg.sender is implementation address
     }
 }
