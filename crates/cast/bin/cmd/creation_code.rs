@@ -77,7 +77,7 @@ impl CreationCodeArgs {
 /// - The complete bytecode
 /// - The bytecode without constructor arguments
 /// - Only the constructor arguments
-async fn parse_code_output(
+pub async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
     etherscan: &EtherscanOpts,

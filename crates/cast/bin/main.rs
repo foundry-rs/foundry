@@ -213,6 +213,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
         CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
+        CastSubcommand::Artifact(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
