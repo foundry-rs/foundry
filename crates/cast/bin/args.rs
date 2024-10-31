@@ -536,6 +536,19 @@ pub enum CastSubcommand {
         json: bool,
     },
 
+    /// Decode Error string
+    ///
+    /// Similar to `calldata-decode --input`, but function selector is `Error(string)`
+    #[command(visible_aliases = &["--error-decode", "ed"])]
+    ErrorDecode {
+        /// The ABI-encoded error string
+        error: String,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
+    },
+
     /// Decode ABI-encoded input or output data.
     ///
     /// Defaults to decoding output data. To decode input data pass --input.
