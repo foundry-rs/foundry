@@ -203,6 +203,9 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    #[arg(long, short, value_name = "ADDRESS", default = DEFAULT_CREATE2_DEPLOYER)]
+    pub create2_deployer: Address,
+
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -230,7 +233,7 @@ impl ScriptArgs {
             evm_opts.sender = sender;
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts).await?;
+        let script_config = ScriptConfig::new(config, evm_opts, self.create2_deployer).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets })
     }
@@ -543,17 +546,18 @@ pub struct ScriptConfig {
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<String, Backend>,
+    pub create2_deployer: Address,
 }
 
 impl ScriptConfig {
-    pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
+    pub async fn new(config: Config, evm_opts: EvmOpts, create2_deployer: Address) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url).await?
         } else {
             // dapptools compatibility
             1
         };
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), create2_deployer })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
