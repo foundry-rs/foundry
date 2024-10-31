@@ -151,8 +151,8 @@ impl PreSimulationState {
             .collect::<Vec<_>>();
 
         if self.script_config.evm_opts.verbosity > 3 {
-            println!("==========================");
-            println!("Simulated On-chain Traces:\n");
+            sh_println!("==========================")?;
+            sh_println!("Simulated On-chain Traces:\n")?;
         }
 
         let mut abort = false;
@@ -163,7 +163,7 @@ impl PreSimulationState {
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, &self.execution_artifacts.decoder).await?;
-                    println!("{}", render_trace_arena(trace));
+                    sh_println!("{}", render_trace_arena(trace))?;
                 }
             }
 
