@@ -45,6 +45,7 @@ pub struct CreateArgs {
         num_args(1..),
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
+        allow_hyphen_values = true,
     )]
     constructor_args: Vec<String>,
 
@@ -128,19 +129,18 @@ impl CreateArgs {
         };
 
         // Add arguments to constructor
-        let provider = utils::get_provider(&config)?;
-        let params = match abi.constructor {
-            Some(ref v) => {
-                let constructor_args =
-                    if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        read_constructor_args_file(constructor_args_path.to_path_buf())?
-                    } else {
-                        self.constructor_args.clone()
-                    };
-                self.parse_constructor_args(v, &constructor_args)?
-            }
-            None => vec![],
+        let params = if let Some(constructor) = &abi.constructor {
+            let constructor_args =
+                self.constructor_args_path.clone().map(read_constructor_args_file).transpose()?;
+            self.parse_constructor_args(
+                constructor,
+                constructor_args.as_deref().unwrap_or(&self.constructor_args),
+            )?
+        } else {
+            vec![]
         };
+
+        let provider = utils::get_provider(&config)?;
 
         // respect chain, if set explicitly via cmd args
         let chain_id = if let Some(chain_id) = self.chain_id() {
@@ -350,7 +350,7 @@ impl CreateArgs {
             rpc: Default::default(),
             flatten: false,
             force: false,
-            skip_is_verified_check: false,
+            skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
             libraries: self.opts.libraries.clone(),
@@ -634,6 +634,7 @@ impl From<PendingTransactionError> for ContractDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::I256;
 
     #[test]
     fn can_parse_create() {
@@ -688,5 +689,18 @@ mod tests {
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
         let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+    }
+
+    #[test]
+    fn test_parse_int_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "-5",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }
 }

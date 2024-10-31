@@ -3515,6 +3515,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "walkdir",
 ]
 
 [[package]]
@@ -3614,6 +3615,7 @@ dependencies = [
  "dialoguer",
  "ecdsa",
  "eyre",
+ "forge-script-sequence",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-compilers",
