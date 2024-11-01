@@ -976,10 +976,11 @@ where
             None
         };
 
+        let format_json = shell::is_json();
         let to_block_number = filter.get_to_block();
 
         // If output should be JSON, start with an opening bracket
-        if shell::is_json() {
+        if format_json {
             write!(output, "[")?;
         }
 
@@ -1001,7 +1002,7 @@ where
                 },
                 // Process incoming log
                 log = subscription.next() => {
-                    if shell::is_json() {
+                    if format_json {
                         if !first {
                             write!(output, ",")?;
                         }
@@ -1024,7 +1025,7 @@ where
         }
 
         // If output was JSON, end with a closing bracket
-        if shell::is_json() {
+        if format_json {
             write!(output, "]")?;
         }
 

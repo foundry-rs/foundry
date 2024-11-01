@@ -119,7 +119,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with = "gas_report", help_heading = "Display options")]
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report"], help_heading = "Display options")]
     pub junit: bool,
 
     /// Stop running tests after the first failure.

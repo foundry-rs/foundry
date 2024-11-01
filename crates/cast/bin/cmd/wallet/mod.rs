@@ -295,7 +295,9 @@ impl WalletSubcommands {
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
 
-                if !shell::is_json() {
+                let format_json = shell::is_json();
+
+                if !format_json {
                     sh_println!("{}", "Generating mnemonic from provided entropy...".yellow())?;
                 }
 
@@ -307,7 +309,7 @@ impl WalletSubcommands {
                 let wallets =
                     wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
-                if !shell::is_json() {
+                if !format_json {
                     sh_println!("{}", "Successfully generated a new mnemonic.".green())?;
                     sh_println!("Phrase:\n{phrase}")?;
                     sh_println!("\nAccounts:")?;
@@ -316,7 +318,7 @@ impl WalletSubcommands {
                 let mut accounts = json!([]);
                 for (i, wallet) in wallets.iter().enumerate() {
                     let private_key = hex::encode(wallet.credential().to_bytes());
-                    if shell::is_json() {
+                    if format_json {
                         accounts.as_array_mut().unwrap().push(json!({
                             "address": format!("{}", wallet.address()),
                             "private_key": format!("0x{}", private_key),
@@ -328,7 +330,7 @@ impl WalletSubcommands {
                     }
                 }
 
-                if shell::is_json() {
+                if format_json {
                     let obj = json!({
                         "mnemonic": phrase,
                         "accounts": accounts,
