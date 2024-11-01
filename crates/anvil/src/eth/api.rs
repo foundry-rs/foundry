@@ -1697,12 +1697,12 @@ impl EthApi {
 
         // mine all the blocks
         for _ in 0..blocks.to::<u64>() {
-            self.mine_one().await;
-
             // If we have an interval, jump forwards in time to the "next" timestamp
             if let Some(interval) = interval {
                 self.backend.time().increase_time(interval);
             }
+
+            self.mine_one().await;
         }
 
         Ok(())

@@ -43,6 +43,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
+        gas_reports_include_tests: false,
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         auto_detect_remappings: true,
@@ -261,7 +262,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
         cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
             r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
-    Installed solmate
+    Installed solmate[..]
 
 "#
         ]]);

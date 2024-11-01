@@ -149,9 +149,9 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let value = stdin::unwrap_line(value)?;
             sh_println!("{}", SimpleCast::to_wei(&value, &unit)?)?
         }
-        CastSubcommand::FromRlp { value } => {
+        CastSubcommand::FromRlp { value, as_int } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_rlp(value)?)?
+            sh_println!("{}", SimpleCast::from_rlp(value, as_int)?)?
         }
         CastSubcommand::ToRlp { value } => {
             let value = stdin::unwrap_line(value)?;
@@ -205,7 +205,13 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
+        CastSubcommand::StringDecode { data, json } => {
+            let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
+            print_tokens(&tokens, json)
+        }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
+        CastSubcommand::CreationCode(cmd) => cmd.run().await?,
+        CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;

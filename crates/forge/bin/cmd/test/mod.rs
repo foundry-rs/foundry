@@ -583,6 +583,7 @@ impl TestArgs {
             GasReport::new(
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
+                config.gas_reports_include_tests,
                 if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
