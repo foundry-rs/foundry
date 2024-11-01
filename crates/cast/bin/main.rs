@@ -274,10 +274,12 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::Block { block, full, field, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let block = Cast::new(provider)
-                .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
-                .await?;
-            sh_println!("{block}")?
+            sh_println!(
+                "{}",
+                Cast::new(provider)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
+                    .await?
+            )?
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = Config::from(&rpc);
@@ -433,10 +435,12 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::Receipt { tx_hash, field, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let receipt = Cast::new(provider)
-                .receipt(tx_hash, field, confirmations, None, cast_async)
-                .await?;
-            sh_println!("{receipt}")?
+            sh_println!(
+                "{}",
+                Cast::new(provider)
+                    .receipt(tx_hash, field, confirmations, None, cast_async)
+                    .await?
+            )?
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,

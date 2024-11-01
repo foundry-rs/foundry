@@ -991,38 +991,54 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 
 #[cfg(test)]
 mod tests {
+    use crate::opts::{Forge, ForgeSubcommand};
+
     use super::*;
     use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
     fn watch_parse() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
-        assert!(args.watch.watch.is_some());
+        let args = Forge::parse_from(["foundry-cli", "test", "-vw"]);
+        if let ForgeSubcommand::Test(args) = args.cmd {
+            assert!(args.watch.watch.is_some());
+        }
     }
 
     #[test]
     fn fuzz_seed() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
-        assert!(args.fuzz_seed.is_some());
+        let args = Forge::parse_from(["foundry-cli", "test", "--fuzz-seed", "0x10"]);
+        if let ForgeSubcommand::Test(args) = args.cmd {
+            assert!(args.fuzz_seed.is_some());
+        }
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
     fn fuzz_seed_exists() {
-        let args: TestArgs =
-            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
-        assert!(args.fuzz_seed.is_some());
+        let args = Forge::parse_from([
+            "foundry-cli",
+            "test",
+            "-vvv",
+            "--gas-report",
+            "--fuzz-seed",
+            "0x10",
+        ]);
+        if let ForgeSubcommand::Test(args) = args.cmd {
+            assert!(args.fuzz_seed.is_some());
+        }
     }
 
     #[test]
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
-            let args = TestArgs::parse_from(["foundry-cli", arg]);
-            assert_eq!(args.evm_opts.env.chain, Some(expected));
-            let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
-            assert_eq!(config.chain, Some(expected));
-            assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
+            let args = Forge::parse_from(["foundry-cli", "test", arg]);
+            if let ForgeSubcommand::Test(args) = args.cmd {
+                assert_eq!(args.evm_opts.env.chain, Some(expected));
+                let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+                assert_eq!(config.chain, Some(expected));
+                assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
+            }
         };
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
