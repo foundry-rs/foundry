@@ -411,22 +411,16 @@ impl ShellOut {
 
     /// Write a styled fragment
     fn write_stdout(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
-        let style = style.render();
-        let reset = anstyle::Reset.render();
-
         let mut buffer = Vec::new();
-        write!(buffer, "{style}{fragment}{reset}")?;
+        write!(buffer, "{style}{fragment}{style:#}")?;
         self.stdout().write_all(&buffer)?;
         Ok(())
     }
 
     /// Write a styled fragment
     fn write_stderr(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
-        let style = style.render();
-        let reset = anstyle::Reset.render();
-
         let mut buffer = Vec::new();
-        write!(buffer, "{style}{fragment}{reset}")?;
+        write!(buffer, "{style}{fragment}{style:#}")?;
         self.stderr().write_all(&buffer)?;
         Ok(())
     }
@@ -456,19 +450,17 @@ impl ShellOut {
         style: &Style,
         justified: bool,
     ) -> Result<Vec<u8>> {
-        let style = style.render();
-        let bold = (anstyle::Style::new() | anstyle::Effects::BOLD).render();
-        let reset = anstyle::Reset.render();
+        let bold = anstyle::Style::new().bold();
 
         let mut buffer = Vec::new();
         if justified {
-            write!(&mut buffer, "{style}{status:>12}{reset}")?;
+            write!(buffer, "{style}{status:>12}{style:#}")?;
         } else {
-            write!(&mut buffer, "{style}{status}{reset}{bold}:{reset}")?;
+            write!(buffer, "{style}{status}{style:#}{bold}:{bold:#}")?;
         }
         match message {
             Some(message) => {
-                writeln!(&mut buffer, " {message}")?;
+                writeln!(buffer, " {message}")?;
             }
             None => write!(buffer, " ")?,
         }
