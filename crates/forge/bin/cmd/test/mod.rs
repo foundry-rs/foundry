@@ -147,7 +147,7 @@ pub struct TestArgs {
 
     /// Max concurrent threads to use.
     /// Default value is the number of available CPUs.
-    #[arg(long, short = 'j', visible_alias = "jobs")]
+    #[arg(long, visible_alias = "jobs")]
     pub threads: Option<usize>,
 
     /// Show test execution progress.
