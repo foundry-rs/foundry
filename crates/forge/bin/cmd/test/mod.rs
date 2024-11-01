@@ -999,46 +999,52 @@ mod tests {
 
     #[test]
     fn watch_parse() {
-        let args = Forge::parse_from(["foundry-cli", "test", "-vw"]);
-        if let ForgeSubcommand::Test(args) = args.cmd {
-            assert!(args.watch.watch.is_some());
-        }
+        let args = match Forge::parse_from(["foundry-cli", "test", "-vw"]).cmd {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
+        assert!(args.watch.watch.is_some());
     }
 
     #[test]
     fn fuzz_seed() {
-        let args = Forge::parse_from(["foundry-cli", "test", "--fuzz-seed", "0x10"]);
-        if let ForgeSubcommand::Test(args) = args.cmd {
-            assert!(args.fuzz_seed.is_some());
-        }
+        let args = match Forge::parse_from(["foundry-cli", "test", "--fuzz-seed", "0x10"]).cmd {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
+        assert!(args.fuzz_seed.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
     fn fuzz_seed_exists() {
-        let args = Forge::parse_from([
+        let args = match Forge::parse_from([
             "foundry-cli",
             "test",
             "-vvv",
             "--gas-report",
             "--fuzz-seed",
             "0x10",
-        ]);
-        if let ForgeSubcommand::Test(args) = args.cmd {
-            assert!(args.fuzz_seed.is_some());
-        }
+        ])
+        .cmd
+        {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
+        assert!(args.fuzz_seed.is_some());
     }
 
     #[test]
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
-            let args = Forge::parse_from(["foundry-cli", "test", arg]);
-            if let ForgeSubcommand::Test(args) = args.cmd {
-                assert_eq!(args.evm_opts.env.chain, Some(expected));
-                let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
-                assert_eq!(config.chain, Some(expected));
-                assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
-            }
+            let args = match Forge::parse_from(["foundry-cli", "test", arg]).cmd {
+                ForgeSubcommand::Test(args) => args,
+                _ => unreachable!(),
+            };
+            assert_eq!(args.evm_opts.env.chain, Some(expected));
+            let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+            assert_eq!(config.chain, Some(expected));
+            assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
         };
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
@@ -1088,26 +1094,29 @@ contract FooBarTest is DSTest {
         )
         .unwrap();
 
-        let args = Forge::parse_from([
+        let args = match Forge::parse_from([
             "foundry-cli",
             "test",
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
-        ]);
+        ])
+        .cmd
+        {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
 
-        if let ForgeSubcommand::Test(args) = args.cmd {
-            let outcome = args.run().await.unwrap();
-            let gas_report = outcome.gas_report.unwrap();
+        let outcome = args.run().await.unwrap();
+        let gas_report = outcome.gas_report.unwrap();
 
-            assert_eq!(gas_report.contracts.len(), 3);
-            let call_cnts = gas_report
-                .contracts
-                .values()
-                .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
-                .collect::<Vec<_>>();
-            // assert that all functions were called at least 100 times
-            assert!(call_cnts.iter().all(|c| *c > 100));
-        }
+        assert_eq!(gas_report.contracts.len(), 3);
+        let call_cnts = gas_report
+            .contracts
+            .values()
+            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
+            .collect::<Vec<_>>();
+        // assert that all functions were called at least 100 times
+        assert!(call_cnts.iter().all(|c| *c > 100));
     });
 }
