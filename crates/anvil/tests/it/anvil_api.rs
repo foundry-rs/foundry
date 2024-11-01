@@ -1013,10 +1013,10 @@ async fn test_mine_blks_with_same_timestamp() {
 // <https://github.com/foundry-rs/foundry/issues/8962>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_mine_first_block_with_interval() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-    let init_blk = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
-    let init_timestamp = init_blk.header.timestamp;
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let init_block = api.block_by_number(0.into()).await.unwrap().unwrap();
+    let init_timestamp = init_block.header.timestamp;
 
     // Mine 2 blocks with interval of 60.
     let _ = api.anvil_mine(Some(U256::from(2)), Some(U256::from(60))).await;
