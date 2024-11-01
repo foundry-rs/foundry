@@ -320,7 +320,7 @@ pub enum CastSubcommand {
         value: Option<String>,
 
         /// Decode the RLP data as int
-        #[arg(id = "int", long = "as_int", alias = "int")]
+        #[arg(long, alias = "int")]
         as_int: bool,
     },
 
@@ -523,7 +523,7 @@ pub enum CastSubcommand {
     ///
     /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
     /// string
-    #[command(visible_aliases = &["--calldata-decode","cdd"])]
+    #[command(visible_aliases = &["--calldata-decode", "cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -532,6 +532,19 @@ pub enum CastSubcommand {
         calldata: String,
 
         /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
+    },
+
+    /// Decode ABI-encoded string.
+    ///
+    /// Similar to `calldata-decode --input`, but the function argument is a `string`
+    #[command(visible_aliases = &["--string-decode", "sd"])]
+    StringDecode {
+        /// The ABI-encoded string.
+        data: String,
+
+        /// Print the decoded string as JSON.
         #[arg(long, short, help_heading = "Display options")]
         json: bool,
     },

@@ -35,6 +35,8 @@ pub struct GasReport {
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
     ignore: HashSet<String>,
+    /// Whether to include gas reports for tests.
+    include_tests: bool,
     /// All contracts that were analyzed grouped by their identifier
     /// ``test/Counter.t.sol:CounterTest
     pub contracts: BTreeMap<String, ContractInfo>,
@@ -44,13 +46,14 @@ impl GasReport {
     pub fn new(
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
+        include_tests: bool,
         report_kind: GasReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
         let report_type = report_kind;
-        Self { report_any, report_type, report_for, ignore, ..Default::default() }
+        Self { report_any, report_type, report_for, ignore, include_tests, ..Default::default() }
     }
 
     /// Whether the given contract should be reported.
@@ -119,7 +122,7 @@ impl GasReport {
         } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
-            if !name.test_function_kind().is_known() {
+            if self.include_tests || !name.test_function_kind().is_known() {
                 trace!(contract_name, signature, "adding gas info");
                 let gas_info = contract_info
                     .functions
@@ -178,17 +181,6 @@ impl Display for GasReport {
 
 impl GasReport {
     fn format_json_output(&self) -> String {
-        #[inline]
-        fn format_gas_info(gas_info: &GasInfo) -> serde_json::Value {
-            json!({
-                "calls": gas_info.calls,
-                "min": gas_info.min,
-                "mean": gas_info.mean,
-                "median": gas_info.median,
-                "max": gas_info.max,
-            })
-        }
-
         serde_json::to_string(
             &self
                 .contracts
@@ -202,27 +194,11 @@ impl GasReport {
                     let functions = contract
                         .functions
                         .iter()
-                        .map(|(fname, sigs)| {
-                            // If there is only one signature, display the gas info directly.
-                            let function_value = if sigs.len() == 1 {
-                                format_gas_info(sigs.values().next().unwrap())
-                            } else {
-                                // If there are multiple signatures, e.g. overloads like:
-                                // - `foo(uint256)`
-                                // - `foo(int256)`
-                                // display the gas info as a map with the signature as the key.
-                                let signatures = sigs
-                                    .iter()
-                                    .map(|(sig, gas_info)| {
-                                        let display_name = sig.replace(':', "");
-                                        (display_name, format_gas_info(gas_info))
-                                    })
-                                    .collect::<BTreeMap<_, _>>();
-
-                                json!(signatures)
-                            };
-
-                            (fname.to_string(), function_value)
+                        .flat_map(|(_, sigs)| {
+                            sigs.iter().map(|(sig, gas_info)| {
+                                let display_name = sig.replace(':', "");
+                                (display_name, gas_info)
+                            })
                         })
                         .collect::<BTreeMap<_, _>>();
 
