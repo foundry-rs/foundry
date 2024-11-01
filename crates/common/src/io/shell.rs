@@ -220,9 +220,9 @@ impl Shell {
         }
     }
 
-    /// Get a static reference to the global shell.
+    /// Acquire a lock to the global shell.
     ///
-    /// Initializes the global shell with the default values if it has not been set yet.
+    /// Initializes it with the default values if it has not been set yet.
     pub fn get() -> impl DerefMut<Target = Self> + 'static {
         GLOBAL_SHELL.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -234,10 +234,9 @@ impl Shell {
     /// Panics if the global shell has already been set.
     #[track_caller]
     pub fn set(self) {
-        if GLOBAL_SHELL.get().is_some() {
-            panic!("attempted to set global shell twice");
-        }
-        GLOBAL_SHELL.get_or_init(|| Mutex::new(self));
+        GLOBAL_SHELL
+            .set(Mutex::new(self))
+            .unwrap_or_else(|_| panic!("attempted to set global shell twice"))
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
@@ -450,22 +449,16 @@ impl ShellOut {
 
     /// Write a styled fragment
     fn write_stdout(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
-        let style = style.render();
-        let reset = anstyle::Reset.render();
-
         let mut buffer = Vec::new();
-        write!(buffer, "{style}{fragment}{reset}")?;
+        write!(buffer, "{style}{fragment}{style:#}")?;
         self.stdout().write_all(&buffer)?;
         Ok(())
     }
 
     /// Write a styled fragment
     fn write_stderr(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
-        let style = style.render();
-        let reset = anstyle::Reset.render();
-
         let mut buffer = Vec::new();
-        write!(buffer, "{style}{fragment}{reset}")?;
+        write!(buffer, "{style}{fragment}{style:#}")?;
         self.stderr().write_all(&buffer)?;
         Ok(())
     }
@@ -495,19 +488,17 @@ impl ShellOut {
         style: &Style,
         justified: bool,
     ) -> Result<Vec<u8>> {
-        let style = style.render();
-        let bold = (anstyle::Style::new() | anstyle::Effects::BOLD).render();
-        let reset = anstyle::Reset.render();
+        let bold = anstyle::Style::new().bold();
 
         let mut buffer = Vec::new();
         if justified {
-            write!(&mut buffer, "{style}{status:>12}{reset}")?;
+            write!(buffer, "{style}{status:>12}{style:#}")?;
         } else {
-            write!(&mut buffer, "{style}{status}{reset}{bold}:{reset}")?;
+            write!(buffer, "{style}{status}{style:#}{bold}:{bold:#}")?;
         }
         match message {
             Some(message) => {
-                writeln!(&mut buffer, " {message}")?;
+                writeln!(buffer, " {message}")?;
             }
             None => write!(buffer, " ")?,
         }
