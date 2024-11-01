@@ -123,7 +123,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, false).await?;
+    /// let data = cast.call(&tx, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -207,7 +207,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(&provider);
-    /// let access_list = cast.access_list(&tx, None, false).await?;
+    /// let access_list = cast.access_list(&tx, None).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
@@ -327,7 +327,7 @@ where
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None, false).await?;
+    /// let block = cast.block(5, true, None).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -712,7 +712,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false, false).await?;
+    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -754,7 +754,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -961,7 +961,7 @@ where
     /// let filter =
     ///     Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
     /// let mut output = io::stdout();
-    /// cast.subscribe(filter, &mut output, false).await?;
+    /// cast.subscribe(filter, &mut output).await?;
     /// # Ok(())
     /// # }
     /// ```
