@@ -27,7 +27,7 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
@@ -133,7 +133,6 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
-        json: bool,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
@@ -174,7 +173,7 @@ where
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             res.to_string()
-        } else if json {
+        } else if shell::is_json() {
             let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
@@ -217,11 +216,10 @@ where
         &self,
         req: &WithOtherFields<TransactionRequest>,
         block: Option<BlockId>,
-        to_json: bool,
     ) -> Result<String> {
         let access_list =
             self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
-        let res = if to_json {
+        let res = if shell::is_json() {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =
@@ -773,7 +771,6 @@ where
         confs: u64,
         timeout: Option<u64>,
         cast_async: bool,
-        to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
@@ -802,7 +799,7 @@ where
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
                 .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if to_json {
+        } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&receipt)?.to_string()
         } else {
@@ -878,10 +875,10 @@ where
         ))
     }
 
-    pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
+    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.provider.get_logs(&filter).await?;
 
-        let res = if to_json {
+        let res = if shell::is_json() {
             serde_json::to_string(&logs)?
         } else {
             let mut s = vec![];
@@ -973,12 +970,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe(
-        &self,
-        filter: Filter,
-        output: &mut dyn io::Write,
-        to_json: bool,
-    ) -> Result<()> {
+    pub async fn subscribe(&self, filter: Filter, output: &mut dyn io::Write) -> Result<()> {
         // Initialize the subscription stream for logs
         let mut subscription = self.provider.subscribe_logs(&filter).await?.into_stream();
 
@@ -992,7 +984,7 @@ where
         let to_block_number = filter.get_to_block();
 
         // If output should be JSON, start with an opening bracket
-        if to_json {
+        if shell::is_json() {
             write!(output, "[")?;
         }
 
@@ -1014,7 +1006,7 @@ where
                 },
                 // Process incoming log
                 log = subscription.next() => {
-                    if to_json {
+                    if shell::is_json() {
                         if !first {
                             write!(output, ",")?;
                         }
@@ -1037,7 +1029,7 @@ where
         }
 
         // If output was JSON, end with a closing bracket
-        if to_json {
+        if shell::is_json() {
             write!(output, "]")?;
         }
 

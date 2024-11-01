@@ -57,10 +57,6 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    /// Print the deployment information as JSON.
-    #[arg(long, help_heading = "Display options")]
-    json: bool,
-
     /// Verify contract after creation.
     #[arg(long)]
     verify: bool,

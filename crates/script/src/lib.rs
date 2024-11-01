@@ -180,10 +180,6 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Output results in JSON format.
-    #[arg(long)]
-    pub json: bool,
-
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
     /// specified in wei, or as a string with a unit type.
     ///

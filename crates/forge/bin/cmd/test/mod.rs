@@ -118,10 +118,6 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
-    /// Output test results in JSON format.
-    #[arg(long, help_heading = "Display options")]
-    pub json: bool,
-
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
     pub junit: bool,
@@ -480,7 +476,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
-            return list(runner, filter, self.json);
+            return list(runner, filter);
         }
 
         trace!(target: "forge::test", "running all tests");
@@ -908,14 +904,10 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(
-    runner: MultiContractRunner,
-    filter: &ProjectPathsAwareFilter,
-    json: bool,
-) -> Result<TestOutcome> {
+fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
-    if json {
+    if shell::is_json() {
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {

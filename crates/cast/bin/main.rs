@@ -19,7 +19,7 @@ use foundry_common::{
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
         SelectorType,
     },
-    stdin,
+    shell, stdin,
 };
 use foundry_config::Config;
 use std::time::Instant;
@@ -187,9 +187,9 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
 
         // ABI encoding & decoding
-        CastSubcommand::AbiDecode { sig, calldata, input, json } => {
+        CastSubcommand::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -198,16 +198,16 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
-        CastSubcommand::CalldataDecode { sig, calldata, json } => {
+        CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
-        CastSubcommand::StringDecode { data, json } => {
+        CastSubcommand::StringDecode { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
