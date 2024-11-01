@@ -74,7 +74,7 @@ pub struct Create2Args {
     init_code_hash: Option<String>,
 
     /// Number of threads to use. Defaults to and caps at the number of logical cores.
-    #[arg(short, long)]
+    #[arg(long)]
     jobs: Option<NonZeroUsize>,
 
     /// Address of the caller. Used for the first 20 bytes of the salt.
