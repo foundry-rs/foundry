@@ -405,7 +405,7 @@ mod tests {
             "--starts-with=0x00",
             "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "--seed=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
-            "-j1",
+            "--jobs=1",
         ]);
         let out = args.run().unwrap();
         assert_eq!(out.address, address!("00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
@@ -422,7 +422,7 @@ mod tests {
             "--starts-with=0x00",
             "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "--no-random",
-            "-j1",
+            "--jobs=1",
         ]);
         let out = args.run().unwrap();
         assert_eq!(out.address, address!("00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
