@@ -22,7 +22,7 @@ pub struct ShellOpts {
     pub quiet: bool,
 
     /// Format log messages as JSON.
-    #[clap(short, long, global = true, help_heading = "Display options")]
+    #[clap(long, global = true, help_heading = "Display options")]
     pub json: bool,
 
     /// Log messages coloring.

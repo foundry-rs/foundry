@@ -119,7 +119,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
+    #[arg(long, conflicts_with = "gas_report", help_heading = "Display options")]
     pub junit: bool,
 
     /// Stop running tests after the first failure.
@@ -147,7 +147,7 @@ pub struct TestArgs {
 
     /// Max concurrent threads to use.
     /// Default value is the number of available CPUs.
-    #[arg(long, visible_alias = "jobs")]
+    #[arg(long, short = 'j', visible_alias = "jobs")]
     pub threads: Option<usize>,
 
     /// Show test execution progress.
