@@ -1,15 +1,11 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
-use alloy_primitives::{Address, Bytes};
-use foundry_common::ContractsByArtifact;
+use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
-use revm::interpreter::InstructionResult;
 use spec::Vm::{
     assumeCall, assumeNoPartialRevert_0Call, assumeNoPartialRevert_1Call, assumeNoRevert_0Call,
     assumeNoRevert_1Call, assumeNoRevert_2Call, assumeNoRevert_3Call, assumeNoRevert_4Call,
 };
 use std::fmt::Debug;
-
-use super::revert::{handle_revert, RevertParameters};
 
 pub const ASSUME_EXPECT_REJECT_MAGIC: &str = "Cannot combine an assumeNoRevert with expectRevert";
 pub const ASSUME_REJECT_MAGIC: &str =
@@ -36,20 +32,6 @@ pub struct AcceptableRevertParameters {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
-}
-
-impl RevertParameters for AcceptableRevertParameters {
-    fn reverter(&self) -> Option<Address> {
-        self.reverter
-    }
-
-    fn reason(&self) -> Option<&[u8]> {
-        Some(&self.reason)
-    }
-
-    fn partial_match(&self) -> bool {
-        self.partial_match
-    }
 }
 
 impl Cheatcode for assumeCall {
@@ -178,23 +160,4 @@ fn assume_no_revert(
     }
 
     Ok(Default::default())
-}
-
-pub(crate) fn handle_assume_no_revert(
-    assume_no_revert: &AssumeNoRevert,
-    status: InstructionResult,
-    retdata: &Bytes,
-    known_contracts: &Option<ContractsByArtifact>,
-    reverter: Option<&Address>,
-) -> Result<()> {
-    // if a generic assumeNoRevert, return Ok(). Otherwise, iterate over acceptable reasons and try
-    // to match against any, otherwise, return an Error with the revert data
-    assume_no_revert.reasons.as_ref().map_or(Ok(()), |reasons| {
-        reasons
-            .iter()
-            .find_map(|reason| {
-                handle_revert(false, reason, status, retdata, known_contracts, reverter).ok()
-            })
-            .ok_or_else(|| retdata.clone().into())
-    })
 }

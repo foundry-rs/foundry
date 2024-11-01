@@ -1,10 +1,26 @@
 use crate::{Error, Result};
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{address, hex, Address, Bytes};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::InstructionResult;
+use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
+
+use super::{
+    assume::{AcceptableRevertParameters, AssumeNoRevert},
+    expect::ExpectedRevert,
+};
+
+/// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
+/// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
+/// to populate the return with dummy bytes so the decode doesn't fail.
+///
+/// 8192 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
+/// size.
+static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
+
+/// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
+const DUMMY_CREATE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
 
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {
@@ -12,9 +28,22 @@ pub(crate) trait RevertParameters {
     fn reason(&self) -> Option<&[u8]>;
     fn partial_match(&self) -> bool;
 }
+impl RevertParameters for AcceptableRevertParameters {
+    fn reverter(&self) -> Option<Address> {
+        self.reverter
+    }
+
+    fn reason(&self) -> Option<&[u8]> {
+        Some(&self.reason)
+    }
+
+    fn partial_match(&self) -> bool {
+        self.partial_match
+    }
+}
 
 /// Core logic for handling reverts that may or may not be expected (or assumed).
-pub(crate) fn handle_revert(
+fn handle_revert(
     is_cheatcode: bool,
     revert_params: &impl RevertParameters,
     status: InstructionResult,
@@ -86,4 +115,58 @@ pub(crate) fn handle_revert(
         };
         Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
     }
+}
+
+pub(crate) fn handle_assume_no_revert(
+    assume_no_revert: &AssumeNoRevert,
+    status: InstructionResult,
+    retdata: &Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
+) -> Result<()> {
+    // if a generic assumeNoRevert, return Ok(). Otherwise, iterate over acceptable reasons and try
+    // to match against any, otherwise, return an Error with the revert data
+    assume_no_revert.reasons.as_ref().map_or(Ok(()), |reasons| {
+        reasons
+            .iter()
+            .find_map(|reason| {
+                handle_revert(
+                    false,
+                    reason,
+                    status,
+                    retdata,
+                    known_contracts,
+                    assume_no_revert.reverted_by.as_ref(),
+                )
+                .ok()
+            })
+            .ok_or_else(|| retdata.clone().into())
+    })
+}
+pub(crate) fn handle_expect_revert(
+    is_cheatcode: bool,
+    is_create: bool,
+    expected_revert: &ExpectedRevert,
+    status: InstructionResult,
+    retdata: Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
+) -> Result<(Option<Address>, Bytes)> {
+    let success_return = || {
+        if is_create {
+            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
+        } else {
+            (None, DUMMY_CALL_OUTPUT.clone())
+        }
+    };
+
+    ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
+
+    handle_revert(
+        is_cheatcode,
+        expected_revert,
+        status,
+        &retdata,
+        known_contracts,
+        expected_revert.reverted_by.as_ref(),
+    )?;
+    Ok(success_return())
 }

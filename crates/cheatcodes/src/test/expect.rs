@@ -1,27 +1,11 @@
-use crate::{test::revert::handle_revert, Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    address,
     map::{hash_map::Entry, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use foundry_common::ContractsByArtifact;
-use revm::interpreter::{
-    return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
-};
+use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
 
-use super::revert::RevertParameters;
-
-/// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
-/// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
-/// to populate the return with dummy bytes so the decode doesn't fail.
-///
-/// 8192 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
-/// size.
-static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
-
-/// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
-
+use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
 ///
 /// For each address, we track the expected calls per call data. We track it in such manner
@@ -680,7 +664,7 @@ fn expect_revert(
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    ensure!(state.assume_no_revert.is_none(), "cannot expect a revert when using assumeNoRevert");
+    ensure!(state.assume_no_revert.is_none(), "Cannot expect a revert when using assumeNoRevert");
     state.expected_revert = Some(ExpectedRevert {
         reason: reason.map(<[_]>::to_vec),
         depth,
@@ -694,29 +678,6 @@ fn expect_revert(
         reverted_by: None,
     });
     Ok(Default::default())
-}
-
-pub(crate) fn handle_expect_revert(
-    is_cheatcode: bool,
-    is_create: bool,
-    expected_revert: &ExpectedRevert,
-    status: InstructionResult,
-    retdata: Bytes,
-    known_contracts: &Option<ContractsByArtifact>,
-    reverter: Option<&Address>,
-) -> Result<(Option<Address>, Bytes)> {
-    let success_return = || {
-        if is_create {
-            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
-        } else {
-            (None, DUMMY_CALL_OUTPUT.clone())
-        }
-    };
-
-    ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
-
-    handle_revert(is_cheatcode, expected_revert, status, &retdata, known_contracts, reverter)?;
-    Ok(success_return())
 }
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {

@@ -10,11 +10,12 @@ use crate::{
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
-        assume::{handle_assume_no_revert, AssumeNoRevert},
+        assume::AssumeNoRevert,
         expect::{
             self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
             ExpectedRevert, ExpectedRevertKind,
         },
+        revert_handlers,
     },
     utils::IgnoredTraces,
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
@@ -746,16 +747,13 @@ where {
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
+                return match revert_handlers::handle_expect_revert(
                     false,
                     true,
                     &expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
-                    // todo: is this specific to `forge create` calls? only tx.sender (equivalent
-                    // to tx.origin?) is set; it would be wrong to say tx sender is the reverter
-                    None,
                 ) {
                     Ok((address, retdata)) => {
                         outcome.result.result = InstructionResult::Return;
@@ -1267,12 +1265,11 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 // specific reason was supplied
                 if outcome.result.is_revert() {
                     let assume_no_revert = std::mem::take(&mut self.assume_no_revert).unwrap();
-                    return match handle_assume_no_revert(
+                    return match revert_handlers::handle_assume_no_revert(
                         &assume_no_revert,
                         outcome.result.result,
                         &outcome.result.output,
                         &self.config.available_artifacts,
-                        assume_no_revert.reverted_by.as_ref(),
                     ) {
                         // if result is Ok, it was an anticipated revert; return an "assume" error
                         // to reject this run
@@ -1319,14 +1316,13 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
                 if needs_processing {
                     let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                    return match expect::handle_expect_revert(
+                    return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
                         false,
                         &expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
-                        expected_revert.reverted_by.as_ref(),
                     ) {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");

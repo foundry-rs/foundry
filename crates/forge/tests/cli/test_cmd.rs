@@ -2641,12 +2641,12 @@ forgetest_init!(assume_no_revert_tests, |prj, cmd| {
     assert_failure_contains(
         &mut cmd,
         "testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails",
-        "FAIL: vm.assumeNoRevert: cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons;",
+        "FAIL: vm.assumeNoRevert: Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons;",
     );
     assert_failure_contains(
         &mut cmd,
         "testAssumeThenExpect_fails",
-        "FAIL: vm.expectRevert: cannot expect a revert when using assumeNoRevert;",
+        "FAIL: vm.expectRevert: Cannot expect a revert when using assumeNoRevert;",
     );
 });
 
