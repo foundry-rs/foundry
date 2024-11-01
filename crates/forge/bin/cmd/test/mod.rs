@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -304,7 +304,7 @@ impl TestArgs {
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
         let compiler =
-            ProjectCompiler::new().quiet(self.json || self.junit).files(sources_to_compile);
+            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -482,7 +482,7 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && self.json;
+        let silent = self.gas_report && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -510,7 +510,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && self.json {
+        if !self.gas_report && shell::is_json() {
             let mut results = runner.test_collect(filter);
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
@@ -580,7 +580,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
+                if shell::is_json() { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
 

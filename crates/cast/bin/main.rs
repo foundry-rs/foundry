@@ -271,13 +271,13 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, json, rpc } => {
+        CastSubcommand::Block { block, full, field, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, json)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
                     .await?
             )?
         }
@@ -432,26 +432,26 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{}", serde_json::json!(receipt))?;
             }
         }
-        CastSubcommand::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
+        CastSubcommand::Receipt { tx_hash, field, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, None, cast_async, json)
+                    .receipt(tx_hash, field, confirmations, None, cast_async)
                     .await?
             )?
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, field, raw, json, rpc } => {
+        CastSubcommand::Tx { tx_hash, field, raw, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            sh_println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw, json).await?)?
+            sh_println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw).await?)?
         }
 
         // 4Byte
@@ -465,7 +465,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{sig}")?
             }
         }
-        CastSubcommand::FourByteDecode { calldata, json } => {
+        CastSubcommand::FourByteDecode { calldata } => {
             let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| {
@@ -482,7 +482,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;

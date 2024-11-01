@@ -337,7 +337,6 @@ where
         block: B,
         full: bool,
         field: Option<String>,
-        to_json: bool,
     ) -> Result<String> {
         let block = block.into();
         if let Some(ref field) = field {
@@ -355,7 +354,7 @@ where
         let block = if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
-        } else if to_json {
+        } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
             block.pretty()
@@ -372,7 +371,6 @@ where
             false,
             // Select only select field
             Some(field),
-            false,
         )
         .await?;
 
@@ -406,14 +404,12 @@ where
             false,
             // Select only block hash
             Some(String::from("hash")),
-            false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
-                {
+                match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -451,7 +447,7 @@ where
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash"))).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -726,7 +722,6 @@ where
         tx_hash: String,
         field: Option<String>,
         raw: bool,
-        to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let tx = self
@@ -740,7 +735,7 @@ where
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
-        } else if to_json {
+        } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
         } else {

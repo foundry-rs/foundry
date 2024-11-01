@@ -30,7 +30,7 @@ use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
-    ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
@@ -258,7 +258,7 @@ impl ScriptArgs {
                 };
             }
 
-            if pre_simulation.args.json {
+            if shell::is_json() {
                 pre_simulation.show_json()?;
             } else {
                 pre_simulation.show_traces().await?;

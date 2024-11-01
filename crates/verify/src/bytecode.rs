@@ -211,7 +211,7 @@ impl VerifyBytecodeArgs {
         crate::utils::check_args_len(&artifact, &constructor_args)?;
 
         if maybe_predeploy {
-            if !self.json {
+            if !shell::is_json() {
                 println!(
                     "{}",
                     format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", self.address)
@@ -287,7 +287,6 @@ impl VerifyBytecodeArgs {
             );
 
             crate::utils::print_result(
-                &self,
                 match_type,
                 BytecodeType::Runtime,
                 &mut json_results,
@@ -295,7 +294,7 @@ impl VerifyBytecodeArgs {
                 &config,
             );
 
-            if self.json {
+            if shell::is_json() {
                 sh_println!("{}", serde_json::to_string(&json_results)?)?;
             }
 
@@ -373,7 +372,6 @@ impl VerifyBytecodeArgs {
             );
 
             crate::utils::print_result(
-                &self,
                 match_type,
                 BytecodeType::Creation,
                 &mut json_results,
@@ -384,14 +382,13 @@ impl VerifyBytecodeArgs {
             // If the creation code does not match, the runtime also won't match. Hence return.
             if match_type.is_none() {
                 crate::utils::print_result(
-                    &self,
                     None,
                     BytecodeType::Runtime,
                     &mut json_results,
                     etherscan_metadata,
                     &config,
                 );
-                if self.json {
+                if shell::is_json() {
                     sh_println!("{}", serde_json::to_string(&json_results)?)?;
                 }
                 return Ok(());
@@ -485,7 +482,6 @@ impl VerifyBytecodeArgs {
             );
 
             crate::utils::print_result(
-                &self,
                 match_type,
                 BytecodeType::Runtime,
                 &mut json_results,
@@ -494,7 +490,7 @@ impl VerifyBytecodeArgs {
             );
         }
 
-        if self.json {
+        if shell::is_json() {
             sh_println!("{}", serde_json::to_string(&json_results)?)?;
         }
         Ok(())

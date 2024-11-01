@@ -18,6 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self},
     fmt::parse_tokens,
+    shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use foundry_config::{
@@ -105,7 +106,7 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output = compile::compile_target(&target_path, &project, self.json)?;
+        let mut output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
         let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 
@@ -311,7 +312,7 @@ impl CreateArgs {
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         let address = deployed_contract;
-        if self.json {
+        if shell::is_json() {
             let output = json!({
                 "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),

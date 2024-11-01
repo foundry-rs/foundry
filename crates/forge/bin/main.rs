@@ -2,6 +2,7 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
+use foundry_common::shell;
 use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
 
 mod cmd;
@@ -42,7 +43,7 @@ fn run() -> Result<()> {
             if cmd.is_watch() {
                 utils::block_on(watch::watch_test(cmd))
             } else {
-                let silent = cmd.junit || cmd.json;
+                let silent = cmd.junit || shell::is_json();
                 let outcome = utils::block_on(cmd.run())?;
                 outcome.ensure_ok(silent)
             }
