@@ -1088,23 +1088,26 @@ contract FooBarTest is DSTest {
         )
         .unwrap();
 
-        let args = TestArgs::parse_from([
+        let args = Forge::parse_from([
             "foundry-cli",
+            "test",
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
         ]);
 
-        let outcome = args.run().await.unwrap();
-        let gas_report = outcome.gas_report.unwrap();
+        if let ForgeSubcommand::Test(args) = args.cmd {
+            let outcome = args.run().await.unwrap();
+            let gas_report = outcome.gas_report.unwrap();
 
-        assert_eq!(gas_report.contracts.len(), 3);
-        let call_cnts = gas_report
-            .contracts
-            .values()
-            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
-            .collect::<Vec<_>>();
-        // assert that all functions were called at least 100 times
-        assert!(call_cnts.iter().all(|c| *c > 100));
+            assert_eq!(gas_report.contracts.len(), 3);
+            let call_cnts = gas_report
+                .contracts
+                .values()
+                .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
+                .collect::<Vec<_>>();
+            // assert that all functions were called at least 100 times
+            assert!(call_cnts.iter().all(|c| *c > 100));
+        }
     });
 }
