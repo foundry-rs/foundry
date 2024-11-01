@@ -131,7 +131,7 @@ pub struct Shell {
     /// output to a memory buffer which is useful for tests.
     output: ShellOut,
 
-    /// The format to use for output.
+    /// The format to use for message output.
     output_format: OutputFormat,
 
     /// How verbose messages should be.
