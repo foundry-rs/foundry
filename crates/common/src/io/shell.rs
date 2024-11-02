@@ -321,9 +321,9 @@ impl Shell {
     /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
     ///
     /// **Note**: will log regardless of the verbosity level.
-    pub fn error(&mut self, message: impl fmt::Display) -> Result<()> {
+    pub fn error(&mut self, message: impl fmt::Debug) -> Result<()> {
         self.maybe_err_erase_line();
-        self.output.message_stderr(&"Error", &ERROR, Some(&message), false)
+        self.output.message_stderr(&"Error", &ERROR, Some(&format!("{message:?}")), false)
     }
 
     /// Prints an amber 'warning' message. Use the [`sh_warn!`] macro instead.
