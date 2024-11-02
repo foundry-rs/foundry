@@ -2,7 +2,7 @@ use alloy_chains::Chain;
 use alloy_primitives::{utils::format_units, TxHash, U256};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
 use alloy_rpc_types::AnyTransactionReceipt;
-use eyre::{Result};
+use eyre::Result;
 use foundry_common::provider::RetryProvider;
 use std::time::Duration;
 
@@ -47,7 +47,7 @@ pub async fn check_tx_status(
             {
                 Ok(receipt) => return Ok(receipt.into()),
                 // do nothing on timeout, we will check whether tx is dropped below
-                Err(PendingTransactionError::TxWatcher(WatchTxError::Timeout)) => {},
+                Err(PendingTransactionError::TxWatcher(WatchTxError::Timeout)) => {}
                 // treat other errors as fatal
                 Err(e) => return Err(e.into()),
             }
