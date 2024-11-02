@@ -51,8 +51,9 @@ pub struct DebugArgs {
 
 impl DebugArgs {
     pub async fn run(self) -> eyre::Result<()> {
+        let path = dunce::canonicalize(self.path)?;
         let script = ScriptArgs {
-            path: self.path.to_str().expect("Invalid path string.").to_string(),
+            path: path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,
             target_contract: self.target_contract,
             sig: self.sig,
