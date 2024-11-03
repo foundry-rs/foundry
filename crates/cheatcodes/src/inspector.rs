@@ -379,6 +379,8 @@ pub struct Cheatcodes {
     /// EIP-7702 delegations
     pub delegations: HashMap<Address, SignedAuthorization>,
 
+    pub active_delegation: Option<Address>,
+
     /// The gas price.
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
@@ -504,6 +506,7 @@ impl Cheatcodes {
             config,
             block: Default::default(),
             delegations: Default::default(),
+            active_delegation: Default::default(),
             gas_price: Default::default(),
             prank: Default::default(),
             expected_revert: Default::default(),
@@ -1008,21 +1011,37 @@ where {
                     let account =
                         ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
+                    let tx_req = TransactionRequest {
+                        from: Some(broadcast.new_origin),
+                        to: Some(TxKind::from(Some(call.target_address))),
+                        value: call.transfer_value(),
+                        input: TransactionInput::new(call.input.clone()),
+                        nonce: Some(account.info.nonce),
+                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
+                        authorization_list: self.active_delegation
+                            .and_then(|addr| self.delegations.remove(&addr))
+                            .map(|auth| vec![auth]),
+                        ..Default::default()
+                    };
+
+                    // TODO - fails bc to build 7702 tx max_fee_per_gas, max_priority_fee_per_gas, gas are None
+                    let tx_req = match tx_req.build_typed_tx() {
+                        Ok(typed) => {
+                            debug!(target: "cheatcodes", ?typed, "built typed tx");
+                            typed.into()
+                        }
+                        Err(tx) => {
+                            debug!(target: "cheatcodes", "failed to build typed tx");
+                            tx
+                        }
+                    };
+                    
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.db.active_fork_url(),
-                        transaction: TransactionRequest {
-                            from: Some(broadcast.new_origin),
-                            to: Some(TxKind::from(Some(call.target_address))),
-                            value: call.transfer_value(),
-                            input: TransactionInput::new(call.input.clone()),
-                            nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                            ..Default::default()
-                        }
-                        .into(),
+                        transaction: tx_req.into(),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
-
+                    
                     // Explicitly increment nonce if calls are not isolated.
                     if !self.config.evm_opts.isolate {
                         let prev = account.info.nonce;
