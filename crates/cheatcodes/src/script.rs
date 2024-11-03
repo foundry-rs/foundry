@@ -8,7 +8,6 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::primitives::SignedAuthorization;
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -32,19 +31,6 @@ impl Cheatcode for broadcast_2Call {
     }
 }
 
-impl Cheatcode for createDelegationCall {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, nonce } = self;
-        let auth = Authorization {
-            address: *implementation,
-            nonce: *nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
-        };
-        let hash = auth.signature_hash();
-        Ok(hash.to_vec())
-    }
-}
-
 impl Cheatcode for attachDelegationCall {
     // @todo - change this to apply_full?
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -52,7 +38,7 @@ impl Cheatcode for attachDelegationCall {
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+            chain_id: ccx.ecx.env.cfg.chain_id,
         };
         let addr = auth.address;
         let sig = Signature::from_rs_and_parity(
@@ -61,17 +47,23 @@ impl Cheatcode for attachDelegationCall {
             alloy_primitives::Parity::from(*v == 1),
         )?;
         let signed_auth = auth.into_signed(sig);
-        // store in CheatcodeState
         ccx.state.delegations.insert(addr, signed_auth);
+        ccx.state.active_delegation = Some(addr);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for signDelegationCall {
-    fn apply_stateful(&self, _: &mut CheatsCtxt) -> Result {
-        let Self { delegation, privateKey } = self;
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, nonce, privateKey } = self;
+        let auth = Authorization {
+            address: *implementation,
+            nonce: *nonce,
+            chain_id: ccx.ecx.env.cfg.chain_id,
+        };
+        let hash = auth.signature_hash();
         let signer = super::crypto::parse_wallet(privateKey)?;
-        let sig = signer.sign_hash_sync(delegation)?;
+        let sig = signer.sign_hash_sync(&hash)?;
         Ok(encode_delegation_sig(sig))
     }
 }
@@ -134,8 +126,6 @@ pub struct Broadcast {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
-    /// EIP-7702 delegation
-    pub delegation: Option<SignedAuthorization>,
 }
 
 /// Contains context for wallet management.
@@ -210,24 +200,18 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
     ensure!(ccx.state.broadcast.is_none(), "a broadcast is active already");
 
     let mut new_origin = new_origin.cloned();
-    let mut delegation = None;
 
     if new_origin.is_none() {
             let mut wallets = ccx.state.wallets().inner.lock();
             if let Some(provided_sender) = wallets.provided_sender {
                 new_origin = Some(provided_sender);
-                delegation = ccx.state.delegations.get(&provided_sender).cloned();
         } else {
             let signers = wallets.multi_wallet.signers()?;
             if signers.len() == 1 {
                 let address = signers.keys().next().unwrap();
                 new_origin = Some(*address);
-                delegation = ccx.state.delegations.get(address).cloned();
             }
         }
-    } else if let Some(addr) = new_origin {
-        // check delegation for explicitly provided address
-        delegation = ccx.state.delegations.get(&addr).cloned();
     }
 
     let broadcast = Broadcast {
@@ -236,7 +220,6 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
         original_origin: ccx.ecx.env.tx.caller,
         depth: ccx.ecx.journaled_state.depth(),
         single_call,
-        delegation,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
     ccx.state.broadcast = Some(broadcast);
