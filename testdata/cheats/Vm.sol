@@ -169,7 +169,6 @@ interface Vm {
     function cool(address target) external;
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
     function copyStorage(address from, address to) external;
-    function createDelegation(address implementation, uint64 nonce) external returns (bytes32);
     function createDir(string calldata path, bool recursive) external;
     function createFork(string calldata urlOrAlias) external returns (uint256 forkId);
     function createFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256 forkId);
@@ -434,7 +433,7 @@ interface Vm {
     function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-    function signDelegation(bytes32 delegation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
+    function signDelegation(address implementation, uint64 nonce, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
