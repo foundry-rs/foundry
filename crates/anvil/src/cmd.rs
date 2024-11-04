@@ -562,7 +562,7 @@ pub struct AnvilEvmArgs {
     pub disable_console_log: bool,
 
     /// Enable autoImpersonate on startup
-    #[arg(long, visible_alias = "auto-impersonate")]
+    #[arg(long, visible_alias = "auto-unlock")]
     pub auto_impersonate: bool,
 
     /// Run an Optimism chain
