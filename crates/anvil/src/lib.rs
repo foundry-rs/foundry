@@ -295,17 +295,19 @@ impl NodeHandle {
     /// Prints the launch info.
     pub(crate) fn print(&self, fork: Option<&ClientFork>) {
         self.config.print(fork);
-        if let Some(ipc_path) = self.ipc_path() {
-            let _ = sh_println!("IPC path: {ipc_path}");
+        if !self.config.silent {
+            if let Some(ipc_path) = self.ipc_path() {
+                let _ = sh_println!("IPC path: {ipc_path}");
+            }
+            let _ = sh_println!(
+                "Listening on {}",
+                self.addresses
+                    .iter()
+                    .map(|addr| { addr.to_string() })
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            );
         }
-        let _ = sh_println!(
-            "Listening on {}",
-            self.addresses
-                .iter()
-                .map(|addr| { addr.to_string() })
-                .collect::<Vec<String>>()
-                .join(", ")
-        );
     }
 
     /// The address of the launched server.
