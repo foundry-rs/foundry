@@ -561,7 +561,8 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable autoImpersonate on startup
+    /// Enables automatic impersonation on startup. This allows any transaction sender to be
+    /// simulated as different accounts, which is useful for testing contract behavior.
     #[arg(long, visible_alias = "auto-unlock")]
     pub auto_impersonate: bool,
 
