@@ -454,7 +454,10 @@ pub async fn print_traces(
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    println!("Traces:");
+    if !json {
+        println!("Traces:");
+    }
+
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
         println!("{}", render_trace_arena_inner(arena, verbose, json, state_changes));
@@ -464,14 +467,15 @@ pub async fn print_traces(
         return Ok(());
     }
 
-    println!();
-
-    if result.success {
-        println!("{}", "Transaction successfully executed.".green());
-    } else {
-        println!("{}", "Transaction failed.".red());
+    if !json {
+        println!();
+        if result.success {
+            println!("{}", "Transaction successfully executed.".green());
+        } else {
+            println!("{}", "Transaction failed.".red());
+        }
+        println!("Gas used: {}", result.gas_used);
     }
 
-    println!("Gas used: {}", result.gas_used);
     Ok(())
 }

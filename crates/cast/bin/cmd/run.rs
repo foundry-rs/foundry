@@ -56,7 +56,7 @@ pub struct RunArgs {
     #[arg(long, short)]
     json: bool,
 
-    /// Prints the state changes, only works with the `json` flag.
+    /// Prints the state changes
     #[arg(long)]
     with_state_changes: bool,
 
@@ -179,7 +179,9 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            sh_println!("Executing previous transactions from the block.")?;
+            if !self.json {
+                sh_println!("Executing previous transactions from the block.")?;
+            }
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
