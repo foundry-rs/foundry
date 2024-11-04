@@ -1979,7 +1979,7 @@ interface Vm {
 
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
-    function attachDelegation(address implementation, address authority, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;
+    function attachDelegation(address implementation, address authority, uint8 v, bytes32 r, bytes32 s) external;
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]

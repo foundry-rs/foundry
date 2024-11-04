@@ -148,7 +148,7 @@ interface Vm {
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
     function assumeNoRevert() external pure;
-    function attachDelegation(address implementation, address authority, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;
+    function attachDelegation(address implementation, address authority, uint8 v, bytes32 r, bytes32 s) external;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
     function breakpoint(string calldata char) external pure;

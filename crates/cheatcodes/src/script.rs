@@ -34,11 +34,17 @@ impl Cheatcode for broadcast_2Call {
 
 impl Cheatcode for attachDelegationCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, authority, nonce, v, r, s } = self;
+        let Self { implementation, authority, v, r, s } = self;
+
+        let nonce = ccx.ecx.journaled_state
+            .load_account(*authority, &mut ccx.ecx.db)?
+            .data
+            .info
+            .nonce;
 
         let auth = Authorization {
             address: *implementation,
-            nonce: *nonce,
+            nonce,
             chain_id: ccx.ecx.env.cfg.chain_id,
         };
         let signed_auth = SignedAuthorization::new_unchecked(
@@ -58,7 +64,7 @@ impl Cheatcode for attachDelegationCall {
         // verify nonce matches
         let mut authority_acc = ccx.ecx.journaled_state
             .load_account(*authority, &mut ccx.ecx.db)?;
-        if authority_acc.info.nonce != *nonce {
+        if authority_acc.info.nonce != nonce {
             return Err("nonce mismatch".into());
         }
 

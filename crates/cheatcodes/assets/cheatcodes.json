@@ -3080,16 +3080,16 @@
       "func": {
         "id": "attachDelegation",
         "description": "Designate the next call as an EIP-7702 transaction",
-        "declaration": "function attachDelegation(address implementation, address authority, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;",
+        "declaration": "function attachDelegation(address implementation, address authority, uint8 v, bytes32 r, bytes32 s) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "attachDelegation(address,address,uint64,uint8,bytes32,bytes32)",
-        "selector": "0xbf9aeef2",
+        "signature": "attachDelegation(address,address,uint8,bytes32,bytes32)",
+        "selector": "0x9c509458",
         "selectorBytes": [
-          191,
-          154,
-          238,
-          242
+          156,
+          80,
+          148,
+          88
         ]
       },
       "group": "scripting",
