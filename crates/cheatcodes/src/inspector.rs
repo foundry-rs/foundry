@@ -46,10 +46,7 @@ use revm::{
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{
-        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId,
-        EOF_MAGIC_BYTES,
-    },
+    primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
 use serde_json::Value;
@@ -1004,20 +1001,18 @@ where {
                     let account =
                         ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
-                    let tx_req = TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: Some(TxKind::from(Some(call.target_address))),
-                        value: call.transfer_value(),
-                        input: TransactionInput::new(call.input.clone()),
-                        nonce: Some(account.info.nonce),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                        ..Default::default()
-                    };
-
-
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.db.active_fork_url(),
-                        transaction: tx_req.into(),
+                        transaction: TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to: Some(TxKind::from(Some(call.target_address))),
+                            value: call.transfer_value(),
+                            input: TransactionInput::new(call.input.clone()),
+                            nonce: Some(account.info.nonce),
+                            gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
+                            ..Default::default()
+                        }
+                        .into(),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
