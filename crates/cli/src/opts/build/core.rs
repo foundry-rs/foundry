@@ -167,7 +167,7 @@ impl CoreBuildArgs {
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a CoreBuildArgs> for Figment {
     fn from(args: &'a CoreBuildArgs) -> Self {
-        let mut figment = if let Some(ref config_path) = args.project_paths.config_path {
+        let (mut figment, config) = if let Some(ref config_path) = args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
             }
@@ -175,13 +175,16 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
                 panic!("error: the config-path must be a path to a foundry.toml file")
             }
             let config_path = canonicalized(config_path);
-            Config::figment_with_root(config_path.parent().unwrap())
+            let root_path = config_path.parent().unwrap();
+            (Config::figment_with_root(root_path), Config::load_with_root(root_path))
         } else {
-            Config::figment_with_root(args.project_paths.project_root())
+            let project_root = args.project_paths.project_root();
+            (Config::figment_with_root(&project_root), Config::load_with_root(project_root))
         };
 
         // remappings should stack
-        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
+        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
+            .with_project_dirs(config.src, config.test, config.script);
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);

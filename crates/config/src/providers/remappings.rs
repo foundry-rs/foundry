@@ -16,17 +16,36 @@ use std::{
 pub struct Remappings {
     /// Remappings.
     remappings: Vec<Remapping>,
+    /// Source, test and script configured project dirs.
+    /// Remappings of these dirs from libs are ignored.
+    project_dirs: Vec<String>,
 }
 
 impl Remappings {
     /// Create a new `Remappings` wrapper with an empty vector.
     pub fn new() -> Self {
-        Self { remappings: Vec::new() }
+        Self { remappings: Vec::new(), project_dirs: Vec::new() }
     }
 
     /// Create a new `Remappings` wrapper with a vector of remappings.
     pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
-        Self { remappings }
+        Self { remappings, project_dirs: Vec::new() }
+    }
+
+    /// Project dirs that cannot be remapped in dependencies.
+    pub fn with_project_dirs(
+        mut self,
+        source_dir: PathBuf,
+        test_dir: PathBuf,
+        script_dir: PathBuf,
+    ) -> Self {
+        let mut add_project_dir = |dir: PathBuf| {
+            self.project_dirs.push(dir.display().to_string().trim_end_matches('/').to_string())
+        };
+        add_project_dir(source_dir);
+        add_project_dir(test_dir);
+        add_project_dir(script_dir);
+        self
     }
 
     /// Filters the remappings vector by name and context.
@@ -47,16 +66,28 @@ impl Remappings {
 
     /// Push an element to the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
-        if !self.remappings.iter().any(|existing| {
-            // What we're doing here is filtering for ambiguous paths. For example, if we have
-            // @prb/math/=node_modules/@prb/math/src/ as existing, and
-            // @prb/=node_modules/@prb/  as the one being checked,
-            // we want to keep the already existing one, which is the first one. This way we avoid
-            // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
+        // What we're doing here is filtering for ambiguous paths. For example, if we have
+        // @prb/math/=node_modules/@prb/math/src/ as existing, and
+        // @prb/=node_modules/@prb/  as the one being checked,
+        // we want to keep the already existing one, which is the first one. This way we avoid
+        // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
+        if self.remappings.iter().any(|existing| {
             existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
-            self.remappings.push(remapping)
-        }
+            return;
+        };
+
+        // Ignore remappings of root project src, test or script dir.
+        // See <https://github.com/foundry-rs/foundry/issues/3440>.
+        if self
+            .project_dirs
+            .iter()
+            .any(|dir| remapping.name.trim_end_matches('/').eq_ignore_ascii_case(dir))
+        {
+            return;
+        };
+
+        self.remappings.push(remapping);
     }
 
     /// Extend the remappings vector, leaving out the remappings that are already present.
