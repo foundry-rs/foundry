@@ -614,8 +614,10 @@ forgetest_init!(test_root_remappings_priority, |prj, cmd| {
     let nested = prj.paths().libraries[0].join("dep1");
     pretty_err(&nested, fs::create_dir_all(&nested));
     let mut lib_config = Config::load_with_root(&nested);
-    lib_config.remappings = vec![Remapping::from_str("@utils/libraries/=src/").unwrap().into()];
-    lib_config.remappings = vec![Remapping::from_str("@another-utils/=src/").unwrap().into()];
+    lib_config.remappings = vec![
+        Remapping::from_str("@utils/libraries/=src/").unwrap().into(),
+        Remapping::from_str("@another-utils/=src/").unwrap().into(),
+    ];
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
 

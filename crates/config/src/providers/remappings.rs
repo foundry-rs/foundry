@@ -46,7 +46,7 @@ impl Remappings {
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    pub fn push(&mut self, remapping: Remapping) {
+    fn push(&mut self, remapping: Remapping) {
         if !self.remappings.iter().any(|existing| {
             // What we're doing here is filtering for ambiguous paths. For example, if we have
             // @prb/=node_modules/@prb/ as existing, and
