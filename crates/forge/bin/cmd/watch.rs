@@ -108,7 +108,9 @@ impl WatchArgs {
     ) -> Result<watchexec::Config> {
         let config = watchexec::Config::default();
 
-        config.on_error(|err| eprintln!("[[{err:?}]]"));
+        config.on_error(|err| {
+            let _ = sh_eprintln!("[[{err:?}]]");
+        });
 
         if let Some(delay) = &self.watch_delay {
             config.throttle(utils::parse_delay(delay)?);
@@ -149,7 +151,7 @@ impl WatchArgs {
             let quit = |mut action: ActionHandler| {
                 match quit_again.fetch_add(1, Ordering::Relaxed) {
                     0 => {
-                        eprintln!(
+                        let _ = sh_eprintln!(
                             "[Waiting {stop_timeout:?} for processes to exit before stopping... \
                              Ctrl-C again to exit faster]"
                         );
@@ -228,7 +230,7 @@ fn end_of_process(state: &CommandState) {
 
     let quiet = false;
     if !quiet {
-        eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
+        let _ = sh_eprintln!("{}", format!("[{msg}]").paint(fg.foreground()));
     }
 }
 

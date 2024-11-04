@@ -55,7 +55,7 @@ impl CoverageReporter for SummaryReporter {
         }
 
         self.add_row("Total", self.total.clone());
-        println!("{}", self.table);
+        sh_println!("{}", self.table)?;
         Ok(())
     }
 }
@@ -139,7 +139,7 @@ impl CoverageReporter for LcovReporter<'_> {
             writeln!(self.destination, "end_of_record")?;
         }
 
-        println!("Wrote LCOV report.");
+        sh_println!("Wrote LCOV report.")?;
 
         Ok(())
     }
@@ -151,30 +151,30 @@ pub struct DebugReporter;
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_source() {
-            println!("Uncovered for {}:", path.display());
+            sh_println!("Uncovered for {}:", path.display())?;
             items.iter().for_each(|item| {
                 if item.hits == 0 {
-                    println!("- {item}");
+                    let _ = sh_println!("- {item}");
                 }
             });
-            println!();
+            sh_println!()?;
         }
 
         for (contract_id, anchors) in &report.anchors {
-            println!("Anchors for {contract_id}:");
+            sh_println!("Anchors for {contract_id}:")?;
             anchors
                 .0
                 .iter()
                 .map(|anchor| (false, anchor))
                 .chain(anchors.1.iter().map(|anchor| (true, anchor)))
                 .for_each(|(is_deployed, anchor)| {
-                    println!("- {anchor}");
+                    let _ = sh_println!("- {anchor}");
                     if is_deployed {
-                        println!("- Creation code");
+                        let _ = sh_println!("- Creation code");
                     } else {
-                        println!("- Runtime code");
+                        let _ = sh_println!("- Runtime code");
                     }
-                    println!(
+                    let _ = sh_println!(
                         "  - Refers to item: {}",
                         report
                             .items
@@ -183,7 +183,7 @@ impl CoverageReporter for DebugReporter {
                             .map_or("None".to_owned(), |item| item.to_string())
                     );
                 });
-            println!();
+            sh_println!()?;
         }
 
         Ok(())

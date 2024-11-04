@@ -163,8 +163,7 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        sh_println!()?;
-        sh_println!("Failing tests:")?;
+        sh_println!("\nFailing tests:")?;
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {

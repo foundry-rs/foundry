@@ -207,7 +207,7 @@ impl TestArgs {
         let output = project.compile()?;
 
         if output.has_compiler_errors() {
-            println!("{output}");
+            sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
 
@@ -226,13 +226,13 @@ impl TestArgs {
 
         if test_sources.is_empty() {
             if filter.is_empty() {
-                println!(
+                sh_println!(
                     "No tests found in project! \
                         Forge looks for functions that starts with `test`."
-                );
+                )?;
             } else {
-                println!("No tests match the provided pattern:");
-                print!("{filter}");
+                sh_println!("No tests match the provided pattern:")?;
+                sh_print!("{filter}")?;
 
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
@@ -245,7 +245,7 @@ impl TestArgs {
                         .flat_map(|(_, abi)| abi.functions.into_keys())
                         .collect::<Vec<_>>();
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        println!("\nDid you mean `{suggestion}`?");
+                        sh_println!("\nDid you mean `{suggestion}`?")?;
                     }
                 }
             }
@@ -427,11 +427,11 @@ impl TestArgs {
             // Generate SVG.
             inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
                 .wrap_err("failed to write svg")?;
-            println!("\nSaved to {file_name}");
+            sh_println!("Saved to {file_name}")?;
 
             // Open SVG in default program.
             if let Err(e) = opener::open(&file_name) {
-                eprintln!("\nFailed to open {file_name}; please open it manually: {e}");
+                sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
             }
         }
 
@@ -523,13 +523,13 @@ impl TestArgs {
                     }
                 }
             });
-            println!("{}", serde_json::to_string(&results)?);
+            sh_println!("{}", serde_json::to_string(&results)?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
         if self.junit {
             let results = runner.test_collect(filter);
-            println!("{}", junit_xml_report(&results, verbosity).to_string()?);
+            sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
@@ -604,14 +604,14 @@ impl TestArgs {
 
             // Print suite header.
             if !silent {
-                println!();
+                sh_println!()?;
                 for warning in suite_result.warnings.iter() {
-                    eprintln!("{} {warning}", "Warning:".yellow().bold());
+                    sh_warn!("{warning}")?;
                 }
                 if !tests.is_empty() {
                     let len = tests.len();
                     let tests = if len > 1 { "tests" } else { "test" };
-                    println!("Ran {len} {tests} for {contract_name}");
+                    sh_println!("Ran {len} {tests} for {contract_name}")?;
                 }
             }
 
@@ -632,11 +632,11 @@ impl TestArgs {
                         // We only decode logs from Hardhat and DS-style console events
                         let console_logs = decode_console_logs(&result.logs);
                         if !console_logs.is_empty() {
-                            println!("Logs:");
+                            sh_println!("Logs:")?;
                             for log in console_logs {
-                                println!("  {log}");
+                                sh_println!("  {log}")?;
                             }
-                            println!();
+                            sh_println!()?;
                         }
                     }
                 }
@@ -747,13 +747,13 @@ impl TestArgs {
                                 .collect();
 
                             if !diff.is_empty() {
-                                println!(
+                                let _ = sh_eprintln!(
                                     "{}",
                                     format!("\n[{group}] Failed to match snapshots:").red().bold()
                                 );
 
                                 for (key, (previous_snapshot, snapshot)) in &diff {
-                                    println!(
+                                    let _ = sh_eprintln!(
                                         "{}",
                                         format!("- [{key}] {previous_snapshot} → {snapshot}").red()
                                     );
@@ -767,7 +767,7 @@ impl TestArgs {
                     );
 
                     if differences_found {
-                        println!();
+                        sh_eprintln!()?;
                         eyre::bail!("Snapshots differ from previous run");
                     }
                 }
@@ -911,10 +911,10 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {
-            println!("{file}");
+            sh_println!("{file}")?;
             for (contract, tests) in contracts.iter() {
-                println!("  {contract}");
-                println!("    {}\n", tests.join("\n    "));
+                sh_println!("  {contract}")?;
+                sh_println!("    {}\n", tests.join("\n    "))?;
             }
         }
     }

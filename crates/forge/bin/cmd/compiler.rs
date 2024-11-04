@@ -141,25 +141,25 @@ impl ResolveArgs {
         }
 
         if json {
-            println!("{}", serde_json::to_string(&output)?);
+            sh_println!("{}", serde_json::to_string(&output)?)?;
             return Ok(());
         }
 
         for (language, compilers) in &output {
             match verbosity {
-                0 => println!("{language}:"),
-                _ => println!("{language}:\n"),
+                0 => sh_println!("{language}:")?,
+                _ => sh_println!("{language}:\n")?,
             }
 
             for resolved_compiler in compilers {
                 let version = &resolved_compiler.version;
                 match verbosity {
-                    0 => println!("- {version}"),
+                    0 => sh_println!("- {version}")?,
                     _ => {
                         if let Some(evm) = &resolved_compiler.evm_version {
-                            println!("{version} (<= {evm}):")
+                            sh_println!("{version} (<= {evm}):")?
                         } else {
-                            println!("{version}:")
+                            sh_println!("{version}:")?
                         }
                     }
                 }
@@ -168,16 +168,16 @@ impl ResolveArgs {
                     let paths = &resolved_compiler.paths;
                     for (idx, path) in paths.iter().enumerate() {
                         if idx == paths.len() - 1 {
-                            println!("└── {path}\n");
+                            sh_println!("└── {path}\n")?
                         } else {
-                            println!("├── {path}");
+                            sh_println!("├── {path}")?
                         }
                     }
                 }
             }
 
             if verbosity == 0 {
-                println!();
+                sh_println!()?
             }
         }
 
