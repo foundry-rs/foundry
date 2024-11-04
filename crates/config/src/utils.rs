@@ -168,24 +168,6 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Returns a remapping for the given dir
-pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
-    let dir = dir.as_ref();
-    if let Some(dir_name) = dir.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty()) {
-        let mut r = Remapping {
-            context: None,
-            name: format!("{dir_name}/"),
-            path: format!("{}", dir.display()),
-        };
-        if !r.path.ends_with('/') {
-            r.path.push('/')
-        }
-        Some(r)
-    } else {
-        None
-    }
-}
-
 /// Returns all available `profile` keys in a given `.toml` file
 ///
 /// i.e. The toml below would return would return `["default", "ci", "local"]`
