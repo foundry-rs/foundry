@@ -758,3 +758,39 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
 });
+
+// Tests that root paths are properly resolved even if submodule specifies remappings for them.
+// See <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(test_submodule_root_path_remappings, |prj, cmd| {
+    prj.add_script(
+        "BaseScript.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract BaseScript is Script {
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "MyScript.sol",
+        r#"
+import "script/BaseScript.sol";
+
+contract MyScript is BaseScript {
+}
+   "#,
+    )
+    .unwrap();
+
+    let nested = prj.paths().libraries[0].join("another-dep");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested);
+    lib_config.remappings = vec![
+        Remapping::from_str("test/=test/").unwrap().into(),
+        Remapping::from_str("script/=script/").unwrap().into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+    cmd.forge_fuse().args(["build"]).assert_success();
+});
