@@ -64,8 +64,9 @@ impl AsDoc for CommentsRef<'_> {
             writer.write_bold(&format!("Note{}:", if customs.len() == 1 { "" } else { "s" }))?;
             for c in customs.iter() {
                 writer.writeln_raw(format!(
-                    "{}{}",
+                    "{}{}: {}",
                     if customs.len() == 1 { "" } else { "- " },
+                    &c.tag,
                     &c.value
                 ))?;
                 writer.writeln()?;
