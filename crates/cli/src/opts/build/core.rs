@@ -184,7 +184,7 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
 
         // remappings should stack
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
-            .with_project_dirs(config.src, config.test, config.script);
+            .with_project_config(config);
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
