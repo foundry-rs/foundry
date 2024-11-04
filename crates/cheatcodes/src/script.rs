@@ -236,9 +236,9 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
     let mut new_origin = new_origin.cloned();
 
     if new_origin.is_none() {
-            let mut wallets = ccx.state.wallets().inner.lock();
-            if let Some(provided_sender) = wallets.provided_sender {
-                new_origin = Some(provided_sender);
+        let mut wallets = ccx.state.wallets().inner.lock();
+        if let Some(provided_sender) = wallets.provided_sender {
+            new_origin = Some(provided_sender);
         } else {
             let signers = wallets.multi_wallet.signers()?;
             if signers.len() == 1 {
