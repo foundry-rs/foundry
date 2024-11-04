@@ -2,7 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
     utils::source_files_iter,
@@ -73,12 +73,6 @@ pub struct BuildArgs {
     #[command(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
-
-    /// Output the compilation errors in the json format.
-    /// This is useful when you want to use the output in other tools.
-    #[arg(long, conflicts_with = "quiet")]
-    #[serde(skip)]
-    pub format_json: bool,
 }
 
 impl BuildArgs {
@@ -102,17 +96,18 @@ impl BuildArgs {
             }
         }
 
+        let format_json = shell::is_json();
         let compiler = ProjectCompiler::new()
             .files(files)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .quiet(self.format_json)
-            .bail(!self.format_json);
+            .quiet(format_json)
+            .bail(!format_json);
 
         let output = compiler.compile(&project)?;
 
-        if self.format_json {
+        if format_json {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 

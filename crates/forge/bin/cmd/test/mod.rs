@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -118,12 +118,8 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
-    /// Output test results in JSON format.
-    #[arg(long, help_heading = "Display options")]
-    pub json: bool,
-
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report"], help_heading = "Display options")]
     pub junit: bool,
 
     /// Stop running tests after the first failure.
@@ -308,7 +304,7 @@ impl TestArgs {
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
         let compiler =
-            ProjectCompiler::new().quiet(self.json || self.junit).files(sources_to_compile);
+            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -480,13 +476,13 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
-            return list(runner, filter, self.json);
+            return list(runner, filter);
         }
 
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && self.json;
+        let silent = self.gas_report && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -514,7 +510,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && self.json {
+        if !self.gas_report && shell::is_json() {
             let mut results = runner.test_collect(filter);
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
@@ -584,7 +580,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
+                if shell::is_json() { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
 
@@ -908,15 +904,11 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(
-    runner: MultiContractRunner,
-    filter: &ProjectPathsAwareFilter,
-    json: bool,
-) -> Result<TestOutcome> {
+fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
-    if json {
-        sh_println!("{}", serde_json::to_string(&results)?)?;
+    if shell::is_json() {
+        println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {
             sh_println!("{file}")?;
@@ -999,34 +991,56 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 
 #[cfg(test)]
 mod tests {
+    use crate::opts::{Forge, ForgeSubcommand};
+
     use super::*;
     use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
     fn watch_parse() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
+        let args = match Forge::parse_from(["foundry-cli", "test", "-vw"]).cmd {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
         assert!(args.watch.watch.is_some());
     }
 
     #[test]
     fn fuzz_seed() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
+        let args = match Forge::parse_from(["foundry-cli", "test", "--fuzz-seed", "0x10"]).cmd {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
         assert!(args.fuzz_seed.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
     fn fuzz_seed_exists() {
-        let args: TestArgs =
-            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
+        let args = match Forge::parse_from([
+            "foundry-cli",
+            "test",
+            "-vvv",
+            "--gas-report",
+            "--fuzz-seed",
+            "0x10",
+        ])
+        .cmd
+        {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
         assert!(args.fuzz_seed.is_some());
     }
 
     #[test]
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
-            let args = TestArgs::parse_from(["foundry-cli", arg]);
+            let args = match Forge::parse_from(["foundry-cli", "test", arg]).cmd {
+                ForgeSubcommand::Test(args) => args,
+                _ => unreachable!(),
+            };
             assert_eq!(args.evm_opts.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
@@ -1080,12 +1094,18 @@ contract FooBarTest is DSTest {
         )
         .unwrap();
 
-        let args = TestArgs::parse_from([
+        let args = match Forge::parse_from([
             "foundry-cli",
+            "test",
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
-        ]);
+        ])
+        .cmd
+        {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
 
         let outcome = args.run().await.unwrap();
         let gas_report = outcome.gas_report.unwrap();

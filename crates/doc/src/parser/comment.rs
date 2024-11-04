@@ -1,10 +1,10 @@
 use alloy_primitives::map::HashMap;
-use derive_more::{Deref, DerefMut};
+use derive_more::{derive::Display, Deref, DerefMut};
 use solang_parser::doccomment::DocCommentTag;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Display, PartialEq, Eq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
     Title,
