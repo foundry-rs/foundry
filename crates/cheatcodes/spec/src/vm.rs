@@ -1975,11 +1975,11 @@ interface Vm {
 
     /// Sign an EIP-7702 authorization for delegation
     #[cheatcode(group = Scripting)]
-    function signDelegation(address implementation, uint64 nonce, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
+    function signDelegation(address implementation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
 
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
-    function attachDelegation(address implementation, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;
+    function attachDelegation(address implementation, address authority, uint64 nonce, uint8 v, bytes32 r, bytes32 s) external;
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
