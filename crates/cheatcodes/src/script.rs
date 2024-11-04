@@ -3,11 +3,12 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::Authorization;
-use alloy_signer::{Signature, SignerSync};
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
+use revm::primitives::{Bytecode, SignedAuthorization};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -32,33 +33,60 @@ impl Cheatcode for broadcast_2Call {
 }
 
 impl Cheatcode for attachDelegationCall {
-    // @todo - change this to apply_full?
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, nonce, v, r, s } = self;
+        let Self { implementation, authority, nonce, v, r, s } = self;
+
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
             chain_id: ccx.ecx.env.cfg.chain_id,
         };
-        let addr = auth.address;
-        let sig = Signature::from_rs_and_parity(
+        let signed_auth = SignedAuthorization::new_unchecked(
+            auth,
+            *v as u8,
             U256::try_from(*r).unwrap(),
-            U256::try_from(*s).unwrap(),
-            alloy_primitives::Parity::from(*v == 1),
-        )?;
-        let signed_auth = auth.into_signed(sig);
-        ccx.state.delegations.insert(addr, signed_auth);
-        ccx.state.active_delegation = Some(addr);
+            U256::try_from(*s).unwrap()
+        );
+
+        // verify signature is from claimed authority
+        let recovered = signed_auth.recover_authority()
+            .map_err(|e| format!("{e}"))?;
+        if recovered != *authority {
+            return Err("invalid signature".into());
+        }
+
+        // verify nonce matches
+        let mut authority_acc = ccx.ecx.journaled_state
+            .load_account(*authority, &mut ccx.ecx.db)?;
+        if authority_acc.info.nonce != *nonce {
+            return Err("nonce mismatch".into());
+        }
+
+        // write delegation code
+        let bytecode = Bytecode::new_eip7702(*implementation); 
+        authority_acc.info.code = Some(bytecode.clone());
+        authority_acc.info.code_hash = bytecode.hash_slow();
+        authority_acc.mark_touch();
+        
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for signDelegationCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, nonce, privateKey } = self;
+        let Self { implementation, privateKey } = self;
+        let key_bytes = B256::from(*privateKey);
+        let signer: alloy_signer_local::LocalSigner<ecdsa::SigningKey<k256::Secp256k1>> = PrivateKeySigner::from_bytes(&key_bytes)?;
+        let authority = signer.address();
+        let nonce = ccx.ecx.journaled_state
+            .load_account(authority, &mut ccx.ecx.db)?
+            .data
+            .info
+            .nonce;
+
         let auth = Authorization {
             address: *implementation,
-            nonce: *nonce,
+            nonce,
             chain_id: ccx.ecx.env.cfg.chain_id,
         };
         let hash = auth.signature_hash();
