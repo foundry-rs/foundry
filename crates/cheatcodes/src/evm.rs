@@ -761,15 +761,22 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
             return Err(Error::from("nothing recorded"))
         };
 
-        // Revert the tracer config to the one before recording
-        tracer.update_config(|_config| record_info.original_tracer_config);
-
         // Use the trace nodes to flatten the call trace
         let root = tracer.traces();
         let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
+
+        // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
+        if !record_info.original_tracer_config.record_steps {
+            tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
+                node.trace.steps = Vec::new();
+            });
+        }
+
+        // Revert the tracer config to the one before recording
+        tracer.update_config(|_config| record_info.original_tracer_config);
 
         // Clean up the recording info
         ccx.state.record_debug_steps_info = None;

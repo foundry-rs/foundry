@@ -362,6 +362,23 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
+impl From<RawCallResult> for TraceResult {
+    fn from(result: RawCallResult) -> Self {
+        Self::from_raw(result, TraceKind::Execution)
+    }
+}
+
+impl TryFrom<Result<RawCallResult>> for TraceResult {
+    type Error = EvmError;
+
+    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
+        match value {
+            Ok(result) => Ok(Self::from(result)),
+            Err(err) => Err(EvmError::from(err)),
+        }
+    }
+}
+
 /// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,

@@ -1,5 +1,6 @@
 use crate::cmd::{
-    access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
+    access_list::AccessListArgs, bind::BindArgs, call::CallArgs,
+    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
     wallet::WalletSubcommands,
@@ -317,6 +318,10 @@ pub enum CastSubcommand {
     FromRlp {
         /// The RLP hex-encoded data.
         value: Option<String>,
+
+        /// Decode the RLP data as int
+        #[arg(long, alias = "int")]
+        as_int: bool,
     },
 
     /// Converts a number of one base to another
@@ -518,7 +523,7 @@ pub enum CastSubcommand {
     ///
     /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
     /// string
-    #[command(visible_aliases = &["--calldata-decode","cdd"])]
+    #[command(visible_aliases = &["--calldata-decode", "cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -527,6 +532,19 @@ pub enum CastSubcommand {
         calldata: String,
 
         /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
+    },
+
+    /// Decode ABI-encoded string.
+    ///
+    /// Similar to `calldata-decode --input`, but the function argument is a `string`
+    #[command(visible_aliases = &["--string-decode", "sd"])]
+    StringDecode {
+        /// The ABI-encoded string.
+        data: String,
+
+        /// Print the decoded string as JSON.
         #[arg(long, short, help_heading = "Display options")]
         json: bool,
     },
@@ -932,6 +950,14 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: WalletSubcommands,
     },
+
+    /// Download a contract creation code from Etherscan and RPC.
+    #[command(visible_alias = "cc")]
+    CreationCode(CreationCodeArgs),
+
+    /// Display constructor arguments used for the contract initialization.
+    #[command(visible_alias = "cra")]
+    ConstructorArgs(ConstructorArgsArgs),
 
     /// Generate a Solidity interface from a given ABI.
     ///

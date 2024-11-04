@@ -270,6 +270,9 @@ impl ProviderBuilder {
             client.set_poll_interval(
                 chain
                     .average_blocktime_hint()
+                    // we cap the poll interval because if not provided, chain would default to
+                    // mainnet
+                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
                     .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
                     .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
             );

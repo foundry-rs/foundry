@@ -3,6 +3,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
+use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     rpc,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -2268,4 +2269,51 @@ Error: Failed to deploy script:
 backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
 
 "#]]);
+});
+
+forgetest_async!(should_detect_additional_contracts, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Simple {}
+
+contract Deployer {
+    function deploy() public {
+        new Simple();
+    }
+}
+
+contract ContractScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        Deployer deployer = new Deployer();
+        deployer.deploy();
+    }
+}
+   "#,
+    )
+    .unwrap();
+    cmd.arg("script")
+        .args([
+            "ContractScript",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|file| file.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+
+    let sequence: ScriptSequence = foundry_common::fs::read_json_file(&run_latest).unwrap();
+
+    assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
 });

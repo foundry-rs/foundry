@@ -4,7 +4,7 @@ use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
 use alloy_rpc_types::{
-    AccessListItem, AnyNetworkBlock, AnyTransactionReceipt, Block, BlockTransactions, Log,
+    AccessListItem, AnyNetworkBlock, AnyTransactionReceipt, Block, BlockTransactions, Header, Log,
     Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
@@ -597,6 +597,9 @@ pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<Stri
         "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
         "timestamp" => Some(block.header.timestamp.pretty()),
         "totalDifficulty" | "total_difficult" => Some(block.header.total_difficulty.pretty()),
+        "blobGasUsed" | "blob_gas_used" => Some(block.header.blob_gas_used.pretty()),
+        "excessBlobGas" | "excess_blob_gas" => Some(block.header.excess_blob_gas.pretty()),
+        "requestsHash" | "requests_hash" => Some(block.header.requests_hash.pretty()),
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
@@ -608,6 +611,38 @@ pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<Stri
 }
 
 fn pretty_block_basics<T>(block: &Block<T>) -> String {
+    let Block {
+        header:
+            Header {
+                hash,
+                parent_hash,
+                uncles_hash,
+                miner,
+                state_root,
+                transactions_root,
+                receipts_root,
+                logs_bloom,
+                difficulty,
+                number,
+                gas_limit,
+                gas_used,
+                timestamp,
+                total_difficulty,
+                extra_data,
+                mix_hash,
+                nonce,
+                base_fee_per_gas,
+                withdrawals_root,
+                blob_gas_used,
+                excess_blob_gas,
+                parent_beacon_block_root,
+                requests_hash,
+            },
+        uncles: _,
+        transactions: _,
+        size,
+        withdrawals: _,
+    } = block;
     format!(
         "
 baseFeePerGas        {}
@@ -630,31 +665,37 @@ size                 {}
 stateRoot            {}
 timestamp            {} ({})
 withdrawalsRoot      {}
-totalDifficulty      {}",
-        block.header.base_fee_per_gas.pretty(),
-        block.header.difficulty.pretty(),
-        block.header.extra_data.pretty(),
-        block.header.gas_limit.pretty(),
-        block.header.gas_used.pretty(),
-        block.header.hash.pretty(),
-        block.header.logs_bloom.pretty(),
-        block.header.miner.pretty(),
-        block.header.mix_hash.pretty(),
-        block.header.nonce.pretty(),
-        block.header.number.pretty(),
-        block.header.parent_hash.pretty(),
-        block.header.parent_beacon_block_root.pretty(),
-        block.header.transactions_root.pretty(),
-        block.header.receipts_root.pretty(),
-        block.header.uncles_hash.pretty(),
-        block.size.pretty(),
-        block.header.state_root.pretty(),
-        block.header.timestamp.pretty(),
-        chrono::DateTime::from_timestamp(block.header.timestamp as i64, 0)
+totalDifficulty      {}
+blobGasUsed          {}
+excessBlobGas        {}
+requestsHash         {}",
+        base_fee_per_gas.pretty(),
+        difficulty.pretty(),
+        extra_data.pretty(),
+        gas_limit.pretty(),
+        gas_used.pretty(),
+        hash.pretty(),
+        logs_bloom.pretty(),
+        miner.pretty(),
+        mix_hash.pretty(),
+        nonce.pretty(),
+        number.pretty(),
+        parent_hash.pretty(),
+        parent_beacon_block_root.pretty(),
+        transactions_root.pretty(),
+        receipts_root.pretty(),
+        uncles_hash.pretty(),
+        size.pretty(),
+        state_root.pretty(),
+        timestamp.pretty(),
+        chrono::DateTime::from_timestamp(*timestamp as i64, 0)
             .expect("block timestamp in range")
             .to_rfc2822(),
-        block.header.withdrawals_root.pretty(),
-        block.header.total_difficulty.pretty(),
+        withdrawals_root.pretty(),
+        total_difficulty.pretty(),
+        blob_gas_used.pretty(),
+        excess_blob_gas.pretty(),
+        requests_hash.pretty(),
     )
 }
 
