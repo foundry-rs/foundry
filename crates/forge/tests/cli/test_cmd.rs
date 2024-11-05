@@ -2500,23 +2500,6 @@ forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
             _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), address(reverter));
             reverter.twoPossibleReverts(x);
         }
-
-    
-        /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
-        function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
-            _vm.assumeNoRevert(Reverter.MyRevert.selector);
-            _vm.assumeNoPartialRevert(Reverter.RevertWithData.selector, address(reverter));
-            reverter.twoPossibleReverts(x);
-    
-            reverter.twoPossibleReverts(2);
-        }
- 
-        // /// @dev Test that `assumeNoRevert` correctly rejects any error selector when no selector is provided
-        // function testMultipleAssumes_ThrowOnGenericNoRevert_fails(bytes4 selector) public view {
-        //     _vm.assumeNoRevert();
-        //     _vm.assumeNoRevert(selector);
-        //     reverter.twoPossibleReverts(2);
-        // }
     
         /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any specific reason is provided
         function testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {

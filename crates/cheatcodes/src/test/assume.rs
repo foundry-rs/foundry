@@ -18,7 +18,7 @@ pub struct AssumeNoRevert {
     /// Acceptable revert parameters for the next call, to be thrown out if they are encountered;
     /// reverts with parameters not specified here will count as normal reverts and not rejects
     /// towards the counter.
-    pub reasons: Option<Vec<AcceptableRevertParameters>>,
+    pub reasons: Vec<AcceptableRevertParameters>,
     /// Address that reverted the call.
     pub reverted_by: Option<Address>,
 }
@@ -137,26 +137,23 @@ fn assume_no_revert(
 
     // if assume_no_revert is not set, set it
     if state.assume_no_revert.is_none() {
-        state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: None, reverted_by: None });
+        state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: vec![], reverted_by: None });
         // if reason is not none, create a new AssumeNoRevertParams vec
         if let Some(reason) = reason {
             state.assume_no_revert.as_mut().unwrap().reasons =
-                Some(vec![AcceptableRevertParameters { reason, partial_match, reverter }]);
+                vec![AcceptableRevertParameters { reason, partial_match, reverter }];
         }
     } else {
         // otherwise, ensure that reasons vec is not none and new reason is also not none
         let valid_assume =
-            state.assume_no_revert.as_ref().unwrap().reasons.is_some() && reason.is_some();
+            !state.assume_no_revert.as_ref().unwrap().reasons.is_empty() && reason.is_some();
         ensure!(valid_assume, ASSUME_REJECT_MAGIC);
         // and append the new reason
-        state
-            .assume_no_revert
-            .as_mut()
-            .unwrap()
-            .reasons
-            .as_mut()
-            .unwrap()
-            .push(AcceptableRevertParameters { reason: reason.unwrap(), partial_match, reverter });
+        state.assume_no_revert.as_mut().unwrap().reasons.push(AcceptableRevertParameters {
+            reason: reason.unwrap(),
+            partial_match,
+            reverter,
+        });
     }
 
     Ok(Default::default())

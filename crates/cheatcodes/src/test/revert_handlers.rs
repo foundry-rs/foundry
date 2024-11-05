@@ -123,10 +123,13 @@ pub(crate) fn handle_assume_no_revert(
     retdata: &Bytes,
     known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<()> {
-    // if a generic assumeNoRevert, return Ok(). Otherwise, iterate over acceptable reasons and try
+    // if a generic AssumeNoRevert, return Ok(). Otherwise, iterate over acceptable reasons and try
     // to match against any, otherwise, return an Error with the revert data
-    assume_no_revert.reasons.as_ref().map_or(Ok(()), |reasons| {
-        reasons
+    if assume_no_revert.reasons.is_empty() {
+        Ok(())
+    } else {
+        assume_no_revert
+            .reasons
             .iter()
             .find_map(|reason| {
                 handle_revert(
@@ -140,8 +143,9 @@ pub(crate) fn handle_assume_no_revert(
                 .ok()
             })
             .ok_or_else(|| retdata.clone().into())
-    })
+    }
 }
+
 pub(crate) fn handle_expect_revert(
     is_cheatcode: bool,
     is_create: bool,
