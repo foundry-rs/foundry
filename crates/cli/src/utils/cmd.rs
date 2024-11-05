@@ -467,15 +467,13 @@ pub async fn print_traces(
         return Ok(());
     }
 
-    if !json {
-        println!();
-        if result.success {
-            println!("{}", "Transaction successfully executed.".green());
-        } else {
-            println!("{}", "Transaction failed.".red());
-        }
-        println!("Gas used: {}", result.gas_used);
+    println!();
+    if result.success {
+        println!("{}", "Transaction successfully executed.".green());
+    } else {
+        println!("{}", "Transaction failed.".red());
     }
+    println!("Gas used: {}", result.gas_used);
 
     Ok(())
 }
