@@ -193,8 +193,7 @@ impl Create2Args {
 
         sh_println!("Configuration:")?;
         sh_println!("Init code hash: {init_code_hash}")?;
-        sh_println!("Regex patterns: {:?}", regex.patterns())?;
-        sh_println!()?;
+        sh_println!("Regex patterns: {:?}\n", regex.patterns())?;
         sh_println!(
             "Starting to generate deterministic contract address with {n_threads} threads..."
         )?;

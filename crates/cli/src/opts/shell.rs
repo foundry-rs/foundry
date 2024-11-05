@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_common::shell::{ColorChoice, Shell, Verbosity};
+use foundry_common::shell::{ColorChoice, OutputFormat, Shell, Verbosity};
 
 // note: `verbose` and `quiet` cannot have `short` because of conflicts with multiple commands.
 
@@ -21,6 +21,16 @@ pub struct ShellOpts {
     )]
     pub quiet: bool,
 
+    /// Format log messages as JSON.
+    #[clap(
+        long,
+        global = true,
+        alias = "format-json",
+        conflicts_with_all = &["quiet", "color"],
+        help_heading = "Display options"
+    )]
+    pub json: bool,
+
     /// Log messages coloring.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
     pub color: Option<ColorChoice>,
@@ -34,6 +44,12 @@ impl ShellOpts {
             (false, false) => Verbosity::Normal,
             (true, true) => unreachable!(),
         };
-        Shell::new_with(self.color.unwrap_or_default(), verbosity)
+        let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
+        let format = match self.json {
+            true => OutputFormat::Json,
+            false => OutputFormat::Text,
+        };
+
+        Shell::new_with(format, color, verbosity)
     }
 }

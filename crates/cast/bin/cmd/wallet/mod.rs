@@ -11,7 +11,7 @@ use cast::revm::primitives::Authorization;
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{opts::RpcOpts, utils};
-use foundry_common::{fs, sh_println};
+use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
@@ -49,10 +49,6 @@ pub enum WalletSubcommands {
         /// Number of wallets to generate.
         #[arg(long, short, default_value = "1")]
         number: u32,
-
-        /// Output generated wallets as JSON.
-        #[arg(long, short, default_value = "false")]
-        json: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -69,10 +65,6 @@ pub enum WalletSubcommands {
         /// Entropy to use for the mnemonic
         #[arg(long, short, conflicts_with = "words")]
         entropy: Option<String>,
-
-        /// Output generated mnemonic phrase and accounts as JSON.
-        #[arg(long, short, default_value = "false")]
-        json: bool,
     },
 
     /// Generate a vanity address.
@@ -219,10 +211,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, json, .. } => {
+            Self::New { path, unsafe_password, number, .. } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if json { Some(vec![]) } else { None };
+                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
                 if let Some(path) = path {
                     let path = match dunce::canonicalize(path.clone()) {
                         Ok(path) => path,
@@ -294,7 +286,7 @@ impl WalletSubcommands {
                     }
                 }
             }
-            Self::NewMnemonic { words, accounts, entropy, json } => {
+            Self::NewMnemonic { words, accounts, entropy } => {
                 let phrase = if let Some(entropy) = entropy {
                     let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
@@ -303,7 +295,9 @@ impl WalletSubcommands {
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
 
-                if !json {
+                let format_json = shell::is_json();
+
+                if !format_json {
                     sh_println!("{}", "Generating mnemonic from provided entropy...".yellow())?;
                 }
 
@@ -315,7 +309,7 @@ impl WalletSubcommands {
                 let wallets =
                     wallets.into_iter().map(|b| b.build()).collect::<Result<Vec<_>, _>>()?;
 
-                if !json {
+                if !format_json {
                     sh_println!("{}", "Successfully generated a new mnemonic.".green())?;
                     sh_println!("Phrase:\n{phrase}")?;
                     sh_println!("\nAccounts:")?;
@@ -324,7 +318,7 @@ impl WalletSubcommands {
                 let mut accounts = json!([]);
                 for (i, wallet) in wallets.iter().enumerate() {
                     let private_key = hex::encode(wallet.credential().to_bytes());
-                    if json {
+                    if format_json {
                         accounts.as_array_mut().unwrap().push(json!({
                             "address": format!("{}", wallet.address()),
                             "private_key": format!("0x{}", private_key),
@@ -336,7 +330,7 @@ impl WalletSubcommands {
                     }
                 }
 
-                if json {
+                if format_json {
                     let obj = json!({
                         "mnemonic": phrase,
                         "accounts": accounts,
