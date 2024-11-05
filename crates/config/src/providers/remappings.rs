@@ -1,7 +1,10 @@
-use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
+use crate::{
+    foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, utils::get_dir_remapping,
+    Config,
+};
 use figment::{
     value::{Dict, Map},
-    Error, Metadata, Profile, Provider,
+    Error, Figment, Metadata, Profile, Provider,
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
@@ -33,15 +36,17 @@ impl Remappings {
     }
 
     /// Extract project paths that cannot be remapped by dependencies.
-    pub fn with_project_config(mut self, config: Config) -> Self {
-        let mut add_project_remapping = |remapping: Option<Remapping>| {
-            if let Some(remapping) = remapping {
-                self.project_paths.push(remapping)
+    pub fn with_figment(mut self, figment: &Figment) -> Self {
+        let mut add_project_remapping = |path: &str| {
+            if let Ok(path) = figment.find_value(path) {
+                if let Some(remapping) = path.into_string().and_then(get_dir_remapping) {
+                    self.project_paths.push(remapping);
+                }
             }
         };
-        add_project_remapping(config.get_source_dir_remapping());
-        add_project_remapping(config.get_test_dir_remapping());
-        add_project_remapping(config.get_script_dir_remapping());
+        add_project_remapping("src");
+        add_project_remapping("test");
+        add_project_remapping("script");
         self
     }
 
