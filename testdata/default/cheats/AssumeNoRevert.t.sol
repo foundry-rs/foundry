@@ -80,9 +80,9 @@ contract ReverterTest is Test {
         reverter.revertWithDataIf2(x);
     }
 
-    /// @dev Test that `assumeNoPartialRevert` anticipates and correctly rejects a specific error selector with any extra data
+    /// @dev Test that `assumeNoRevert` anticipates and correctly rejects a specific error selector with any extra data (ie providing selector allows for arbitrary extra data)
     function testAssumeWithDataPartial(uint256 x) public view {
-        _vm.assumeNoPartialRevert(Reverter.RevertWithData.selector);
+        _vm.assumeNoRevert(Reverter.RevertWithData.selector);
         reverter.revertWithDataIf2(x);
     }
 
@@ -100,9 +100,9 @@ contract ReverterTest is Test {
         reverter.twoPossibleReverts(x);
     }
 
-    /// @dev Test that `assumeNoPartialRevert` correctly interacts with `assumeNoRevert`
+    /// @dev Test that `assumeNoRevert` correctly interacts with itself when partially matching on the error selector
     function testMultipleAssumes_Partial(uint256 x) public view {
-        _vm.assumeNoPartialRevert(Reverter.RevertWithData.selector);
+        _vm.assumeNoRevert(Reverter.RevertWithData.selector);
         _vm.assumeNoRevert(Reverter.MyRevert.selector);
         reverter.twoPossibleReverts(x);
     }

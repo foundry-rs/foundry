@@ -28,6 +28,7 @@ pub(crate) trait RevertParameters {
     fn reason(&self) -> Option<&[u8]>;
     fn partial_match(&self) -> bool;
 }
+
 impl RevertParameters for AcceptableRevertParameters {
     fn reverter(&self) -> Option<Address> {
         self.reverter

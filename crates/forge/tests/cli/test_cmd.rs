@@ -2500,6 +2500,15 @@ forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
             _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), address(reverter));
             reverter.twoPossibleReverts(x);
         }
+            
+        /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
+        function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+            _vm.assumeNoRevert(Reverter.MyRevert.selector);
+            _vm.assumeNoRevert(Reverter.RevertWithData.selector, address(reverter));
+            reverter.twoPossibleReverts(x);
+    
+            reverter.twoPossibleReverts(2);
+        }
     
         /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any specific reason is provided
         function testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {
@@ -2560,14 +2569,6 @@ forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
         "testMultipleAssumesClearAfterCall_fails",
         "FAIL: MyRevert(); counterexample:",
     );
-    // need a better way to handle cheatcodes reverting; currently their messages get abi-encoded
-    // and treated like normal evm data, which makes them hard (and inefficient) to match in the
-    // handler
-    // assert_failure_contains(
-    //     &mut cmd,
-    //     "testMultipleAssumes_ThrowOnGenericNoRevert_fails",
-    //     "FAIL: vm.assumeNoRevert: cannot combine a generic assumeNoRevert with specific
-    // assumeNoRevert reasons;", );
     assert_failure_contains(
         &mut cmd,
         "testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails",

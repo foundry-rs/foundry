@@ -2,8 +2,8 @@ use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use spec::Vm::{
-    assumeCall, assumeNoPartialRevert_0Call, assumeNoPartialRevert_1Call, assumeNoRevert_0Call,
-    assumeNoRevert_1Call, assumeNoRevert_2Call, assumeNoRevert_3Call, assumeNoRevert_4Call,
+    assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
+    assumeNoRevert_3Call, assumeNoRevert_4Call,
 };
 use std::fmt::Debug;
 
@@ -47,7 +47,7 @@ impl Cheatcode for assumeCall {
 
 impl Cheatcode for assumeNoRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth(), None, false, None)
+        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth(), None, None)
     }
 }
 
@@ -58,7 +58,6 @@ impl Cheatcode for assumeNoRevert_1Call {
             ccx.state,
             ccx.ecx.journaled_state.depth(),
             Some(revertData.to_vec()),
-            false,
             None,
         )
     }
@@ -70,7 +69,6 @@ impl Cheatcode for assumeNoRevert_2Call {
             ccx.state,
             ccx.ecx.journaled_state.depth(),
             Some(revertData.to_vec()),
-            false,
             None,
         )
     }
@@ -82,7 +80,6 @@ impl Cheatcode for assumeNoRevert_3Call {
             ccx.state,
             ccx.ecx.journaled_state.depth(),
             Some(revertData.to_vec()),
-            false,
             Some(*reverter),
         )
     }
@@ -94,33 +91,6 @@ impl Cheatcode for assumeNoRevert_4Call {
             ccx.state,
             ccx.ecx.journaled_state.depth(),
             Some(revertData.to_vec()),
-            false,
-            Some(*reverter),
-        )
-    }
-}
-
-impl Cheatcode for assumeNoPartialRevert_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { revertData } = self;
-        assume_no_revert(
-            ccx.state,
-            ccx.ecx.journaled_state.depth(),
-            Some(revertData.to_vec()),
-            true,
-            None,
-        )
-    }
-}
-
-impl Cheatcode for assumeNoPartialRevert_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { revertData, reverter } = self;
-        assume_no_revert(
-            ccx.state,
-            ccx.ecx.journaled_state.depth(),
-            Some(revertData.to_vec()),
-            true,
             Some(*reverter),
         )
     }
@@ -130,11 +100,12 @@ fn assume_no_revert(
     state: &mut Cheatcodes,
     depth: u64,
     reason: Option<Vec<u8>>,
-    partial_match: bool,
     reverter: Option<Address>,
 ) -> Result {
     ensure!(state.expected_revert.is_none(), ASSUME_EXPECT_REJECT_MAGIC);
 
+    // if reason is not none, check if it is 4 bytes; if so, allow partial matches
+    let partial_match = reason.is_some() && reason.as_ref().unwrap().len() == 4;
     // if assume_no_revert is not set, set it
     if state.assume_no_revert.is_none() {
         state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: vec![], reverted_by: None });
