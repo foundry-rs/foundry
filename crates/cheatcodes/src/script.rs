@@ -43,9 +43,9 @@ impl Cheatcode for attachDelegationCall {
             Authorization { address: *implementation, nonce, chain_id: ccx.ecx.env.cfg.chain_id };
         let signed_auth = SignedAuthorization::new_unchecked(
             auth,
-            *v as u8,
-            U256::try_from(*r).unwrap(),
-            U256::try_from(*s).unwrap(),
+            *v,
+            U256::from_be_bytes(r.0),
+            U256::from_be_bytes(s.0),
         );
 
         // verify signature is from claimed authority
