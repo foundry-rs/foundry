@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -47,10 +47,6 @@ pub struct RunArgs {
     /// May result in different results than the live execution!
     #[arg(long)]
     quick: bool,
-
-    /// Prints the full address of the contract.
-    #[arg(long, short)]
-    verbose: bool,
 
     /// Label addresses in the trace.
     ///
@@ -249,7 +245,7 @@ impl RunArgs {
             self.label,
             self.debug,
             self.decode_internal,
-            self.verbose,
+            shell::verbosity() > 1,
         )
         .await?;
 
