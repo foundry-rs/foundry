@@ -1,4 +1,4 @@
-use clap::{ArgAction, Parser, Subcommand, ValueHint};
+use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, Graph};
@@ -52,22 +52,11 @@ pub struct ResolveArgs {
     /// Skip files that match the given regex pattern.
     #[arg(long, short, value_name = "REGEX")]
     skip: Option<regex::Regex>,
-
-    /// Verbosity of the output.
-    ///
-    /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
-    ///
-    /// Verbosity levels:
-    /// - 0: Print compiler versions.
-    /// - 1: Print compiler version and source paths.
-    /// - 2: Print compiler version, source paths and max supported EVM version of the compiler.
-    #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count, help_heading = "Display options")]
-    pub verbosity: u8,
 }
 
 impl ResolveArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, skip, verbosity } = self;
+        let Self { root, skip } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
         let config = Config::load_with_root(&root);
@@ -107,7 +96,7 @@ impl ResolveArgs {
                         })
                         .collect();
 
-                    let evm_version = if verbosity > 1 {
+                    let evm_version = if shell::verbosity() > 1 {
                         Some(
                             EvmVersion::default()
                                 .normalize_version_solc(version)
@@ -129,7 +118,7 @@ impl ResolveArgs {
             if !versions_with_paths.is_empty() {
                 // Clear paths if verbosity is 0, performed only after filtering to avoid being
                 // skipped.
-                if verbosity == 0 {
+                if shell::verbosity() == 0 {
                     versions_with_paths.iter_mut().for_each(|version| version.paths.clear());
                 }
 
@@ -143,14 +132,14 @@ impl ResolveArgs {
         }
 
         for (language, compilers) in &output {
-            match verbosity {
+            match shell::verbosity() {
                 0 => sh_println!("{language}:")?,
                 _ => sh_println!("{language}:\n")?,
             }
 
             for resolved_compiler in compilers {
                 let version = &resolved_compiler.version;
-                match verbosity {
+                match shell::verbosity() {
                     0 => sh_println!("- {version}")?,
                     _ => {
                         if let Some(evm) = &resolved_compiler.evm_version {
@@ -161,7 +150,7 @@ impl ResolveArgs {
                     }
                 }
 
-                if verbosity > 0 {
+                if shell::verbosity() > 0 {
                     let paths = &resolved_compiler.paths;
                     for (idx, path) in paths.iter().enumerate() {
                         if idx == paths.len() - 1 {
@@ -173,7 +162,7 @@ impl ResolveArgs {
                 }
             }
 
-            if verbosity == 0 {
+            if shell::verbosity() == 0 {
                 sh_println!()?
             }
         }

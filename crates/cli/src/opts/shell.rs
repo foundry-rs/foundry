@@ -1,28 +1,21 @@
 use clap::{ArgAction, Parser};
-use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell};
+use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity};
 
 // note: `verbose` and `quiet` cannot have `short` because of conflicts with multiple commands.
 
 /// Global shell options.
 #[derive(Clone, Copy, Debug, Parser)]
 pub struct ShellOpts {
-    /// Verbosity of the output.
+    /// Verbosity level of the log messages.
     ///
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
     ///
-    /// Depending on the context the verbosity levels may have different meanings.
-    #[arg(long, short, verbatim_doc_comment, conflicts_with = "quiet", action = ArgAction::Count, help_heading = "Display options")]
-    pub verbosity: u8,
+    /// Depending on the context the verbosity levels have different meanings.
+    #[clap(short, long, global = true, conflicts_with = "quiet", action = ArgAction::Count, help_heading = "Display options")]
+    pub verbosity: Verbosity,
 
     /// Do not print log messages.
-    #[clap(
-        short,
-        long,
-        global = true,
-        alias = "silent",
-        conflicts_with = "verbose",
-        help_heading = "Display options"
-    )]
+    #[clap(short, long, global = true, alias = "silent", help_heading = "Display options")]
     pub quiet: bool,
 
     /// Format log messages as JSON.
@@ -35,7 +28,7 @@ pub struct ShellOpts {
     )]
     pub json: bool,
 
-    /// Log messages coloring.
+    /// The color of the log messages.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
     pub color: Option<ColorChoice>,
 }

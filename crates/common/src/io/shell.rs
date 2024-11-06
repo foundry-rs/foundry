@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Returns the currently set verbosity level.
-pub fn verbosity() -> u8 {
+pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
 }
 
@@ -116,6 +116,9 @@ impl OutputFormat {
     }
 }
 
+/// The verbosity level.
+pub type Verbosity = u8;
+
 /// An abstraction around console output that remembers preferences for output
 /// verbosity and color.
 pub struct Shell {
@@ -130,7 +133,7 @@ pub struct Shell {
     output_mode: OutputMode,
 
     /// The verbosity level to use for message output.
-    verbosity: u8,
+    verbosity: Verbosity,
 
     /// Flag that indicates the current line needs to be cleared before
     /// printing. Used when a progress bar is currently displayed.
@@ -142,6 +145,7 @@ impl fmt::Debug for Shell {
         let mut s = f.debug_struct("Shell");
         s.field("output_format", &self.output_format);
         s.field("output_mode", &self.output_mode);
+        s.field("verbosity", &self.verbosity);
         if let ShellOut::Stream { color_choice, .. } = self.output {
             s.field("color_choice", &color_choice);
         }
@@ -186,7 +190,12 @@ impl Shell {
     /// output.
     #[inline]
     pub fn new() -> Self {
-        Self::new_with(OutputFormat::Text, OutputMode::Normal, ColorChoice::Auto, 0)
+        Self::new_with(
+            OutputFormat::Text,
+            OutputMode::Normal,
+            ColorChoice::Auto,
+            Verbosity::default(),
+        )
     }
 
     /// Creates a new shell with the given color choice and verbosity.
@@ -195,7 +204,7 @@ impl Shell {
         format: OutputFormat,
         mode: OutputMode,
         color: ColorChoice,
-        verbosity: u8,
+        verbosity: Verbosity,
     ) -> Self {
         Self {
             output: ShellOut::Stream {
@@ -283,7 +292,7 @@ impl Shell {
 
     /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
     #[inline]
-    pub fn verbosity(&self) -> u8 {
+    pub fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
 
