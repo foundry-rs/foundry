@@ -1,14 +1,18 @@
-use clap::Parser;
-use foundry_common::shell::{ColorChoice, OutputFormat, Shell, Verbosity};
+use clap::{ArgAction, Parser};
+use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell};
 
 // note: `verbose` and `quiet` cannot have `short` because of conflicts with multiple commands.
 
 /// Global shell options.
 #[derive(Clone, Copy, Debug, Parser)]
 pub struct ShellOpts {
-    /// Use verbose output.
-    #[clap(long, global = true, conflicts_with = "quiet", help_heading = "Display options")]
-    pub verbose: bool,
+    /// Verbosity of the output.
+    ///
+    /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
+    ///
+    /// Depending on the context the verbosity levels may have different meanings.
+    #[arg(long, short, verbatim_doc_comment, conflicts_with = "quiet", action = ArgAction::Count, help_heading = "Display options")]
+    pub verbosity: u8,
 
     /// Do not print log messages.
     #[clap(
@@ -38,11 +42,9 @@ pub struct ShellOpts {
 
 impl ShellOpts {
     pub fn shell(self) -> Shell {
-        let verbosity = match (self.verbose, self.quiet) {
-            (true, false) => Verbosity::Verbose,
-            (false, true) => Verbosity::Quiet,
-            (false, false) => Verbosity::Normal,
-            (true, true) => unreachable!(),
+        let mode = match self.quiet {
+            true => OutputMode::Quiet,
+            false => OutputMode::Normal,
         };
         let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
         let format = match self.json {
@@ -50,6 +52,6 @@ impl ShellOpts {
             false => OutputFormat::Text,
         };
 
-        Shell::new_with(format, color, verbosity)
+        Shell::new_with(format, mode, color, self.verbosity)
     }
 }

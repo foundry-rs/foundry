@@ -1,5 +1,6 @@
 use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
+use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, Graph};
 use foundry_config::Config;
 use semver::Version;
@@ -62,15 +63,11 @@ pub struct ResolveArgs {
     /// - 2: Print compiler version, source paths and max supported EVM version of the compiler.
     #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count, help_heading = "Display options")]
     pub verbosity: u8,
-
-    /// Print as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
 }
 
 impl ResolveArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, skip, verbosity, json } = self;
+        let Self { root, skip, verbosity } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
         let config = Config::load_with_root(&root);
@@ -140,7 +137,7 @@ impl ResolveArgs {
             }
         }
 
-        if json {
+        if shell::is_json() {
             sh_println!("{}", serde_json::to_string(&output)?)?;
             return Ok(());
         }
