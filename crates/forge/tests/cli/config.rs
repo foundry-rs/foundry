@@ -43,6 +43,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
+        gas_reports_include_tests: false,
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         auto_detect_remappings: true,
@@ -592,6 +593,44 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
             "forge-std/=lib/forge-std/src/".parse().unwrap()
         ]
     );
+});
+
+// Test that remappings within root of the project have priority over remappings of sub-projects.
+// E.g. `@utils/libraries` mapping from library shouldn't be added if project already has `@utils`
+// remapping.
+// See <https://github.com/foundry-rs/foundry/issues/9146>
+forgetest_init!(test_root_remappings_priority, |prj, cmd| {
+    let mut config = cmd.config();
+    // Add `@utils/` remapping in project config.
+    config.remappings = vec![
+        Remapping::from_str("@utils/=src/").unwrap().into(),
+        Remapping::from_str("@another-utils/libraries/=src/").unwrap().into(),
+    ];
+    let proj_toml_file = prj.paths().root.join("foundry.toml");
+    pretty_err(&proj_toml_file, fs::write(&proj_toml_file, config.to_string_pretty().unwrap()));
+
+    // Create a new lib in the `lib` folder with conflicting `@utils/libraries` remapping.
+    // This should be filtered out from final remappings as root project already has `@utils/`.
+    let nested = prj.paths().libraries[0].join("dep1");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested);
+    lib_config.remappings = vec![
+        Remapping::from_str("@utils/libraries/=src/").unwrap().into(),
+        Remapping::from_str("@another-utils/=src/").unwrap().into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+
+    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+Global:
+- @utils/=src/
+- @another-utils/libraries/=src/
+- @another-utils/=lib/dep1/src/
+- dep1/=lib/dep1/src/
+- forge-std/=lib/forge-std/src/
+
+
+"#]]);
 });
 
 // test to check that foundry.toml libs section updates on install

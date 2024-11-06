@@ -92,7 +92,7 @@ impl TestSummaryReporter {
             self.table.add_row(row);
         }
 
-        println!("\n{}", self.table);
+        let _ = sh_println!("\n{}", self.table);
     }
 }
 
@@ -126,6 +126,6 @@ pub(crate) fn print_invariant_metrics(test_metrics: &HashMap<String, InvariantMe
             }
         }
 
-        println!("{table}\n");
+        let _ = sh_println!("{table}\n");
     }
 }

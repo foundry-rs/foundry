@@ -15,7 +15,6 @@ impl EyreHandler for Handler {
         if f.alternate() {
             return core::fmt::Debug::fmt(error, f)
         }
-        writeln!(f)?;
         write!(f, "{}", error.red())?;
 
         if let Some(cause) = error.source() {

@@ -196,6 +196,8 @@ pub struct Config {
     pub gas_reports: Vec<String>,
     /// list of contracts to ignore for gas reports
     pub gas_reports_ignore: Vec<String>,
+    /// Whether to include gas reports for tests.
+    pub gas_reports_include_tests: bool,
     /// The Solc instance to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -2164,6 +2166,7 @@ impl Default for Config {
             evm_version: EvmVersion::Paris,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
+            gas_reports_include_tests: false,
             solc: None,
             vyper: Default::default(),
             auto_detect_solc: true,

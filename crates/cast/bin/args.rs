@@ -320,7 +320,7 @@ pub enum CastSubcommand {
         value: Option<String>,
 
         /// Decode the RLP data as int
-        #[arg(id = "int", long = "as_int", alias = "int")]
+        #[arg(long, alias = "int")]
         as_int: bool,
     },
 
@@ -368,10 +368,6 @@ pub enum CastSubcommand {
 
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,
-
-        /// Print the block as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -464,10 +460,6 @@ pub enum CastSubcommand {
         #[arg(long, conflicts_with = "field")]
         raw: bool,
 
-        /// Print as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
-
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -488,10 +480,6 @@ pub enum CastSubcommand {
         /// Exit immediately if the transaction was not found.
         #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
         cast_async: bool,
-
-        /// Print as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -523,17 +511,22 @@ pub enum CastSubcommand {
     ///
     /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
     /// string
-    #[command(visible_aliases = &["--calldata-decode","cdd"])]
+    #[command(visible_aliases = &["--calldata-decode", "cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
 
         /// The ABI-encoded calldata.
         calldata: String,
+    },
 
-        /// Print the decoded calldata as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
+    /// Decode ABI-encoded string.
+    ///
+    /// Similar to `calldata-decode --input`, but the function argument is a `string`
+    #[command(visible_aliases = &["--string-decode", "sd"])]
+    StringDecode {
+        /// The ABI-encoded string.
+        data: String,
     },
 
     /// Decode ABI-encoded input or output data.
@@ -552,10 +545,6 @@ pub enum CastSubcommand {
         /// Whether to decode the input or output data.
         #[arg(long, short, help_heading = "Decode input data instead of output data")]
         input: bool,
-
-        /// Print the decoded calldata as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
     },
 
     /// ABI encode the given function argument, excluding the selector.
@@ -642,10 +631,6 @@ pub enum CastSubcommand {
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
-
-        /// Print the decoded calldata as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.

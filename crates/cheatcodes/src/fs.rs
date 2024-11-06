@@ -5,11 +5,15 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_provider::network::ReceiptResponse;
+use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::interpreter::CreateInputs;
+use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -624,6 +628,171 @@ fn prompt(
             Err("Prompt timed out".into())
         }
     }
+}
+
+impl Cheatcode for getBroadcastCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![map_broadcast_tx_type(*txType)],
+        )?;
+
+        Ok(latest_broadcast.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(map_broadcast_tx_type(*txType));
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { contractName } = self;
+        let chain_id = ccx.ecx.env.cfg.chain_id;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            chain_id,
+            &ccx.state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeploymentsCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(CallKind::Create)
+            .with_tx_type(CallKind::Create2);
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        let deployed_addresses =
+            summaries.into_iter().map(|summary| summary.contractAddress).collect::<Vec<_>>();
+
+        Ok(deployed_addresses.abi_encode())
+    }
+}
+
+fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
+    match tx_type {
+        BroadcastTxType::Call => CallKind::Call,
+        BroadcastTxType::Create => CallKind::Create,
+        BroadcastTxType::Create2 => CallKind::Create2,
+        _ => unreachable!("invalid tx type"),
+    }
+}
+
+fn parse_broadcast_results(
+    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+) -> Vec<BroadcastTxSummary> {
+    results
+        .into_iter()
+        .map(|(tx, receipt)| BroadcastTxSummary {
+            txHash: receipt.transaction_hash,
+            blockNumber: receipt.block_number.unwrap_or_default(),
+            txType: match tx.opcode {
+                CallKind::Call => BroadcastTxType::Call,
+                CallKind::Create => BroadcastTxType::Create,
+                CallKind::Create2 => BroadcastTxType::Create2,
+                _ => unreachable!("invalid tx type"),
+            },
+            contractAddress: tx.contract_address.unwrap_or_default(),
+            success: receipt.status(),
+        })
+        .collect()
+}
+
+fn latest_broadcast(
+    contract_name: &String,
+    chain_id: u64,
+    broadcast_path: &Path,
+    filters: Vec<CallKind>,
+) -> Result<BroadcastTxSummary> {
+    let mut reader = BroadcastReader::new(contract_name.clone(), chain_id, broadcast_path)?;
+
+    for filter in filters {
+        reader = reader.with_tx_type(filter);
+    }
+
+    let broadcast = reader.read_latest()?;
+
+    let results = reader.into_tx_receipts(broadcast);
+
+    let summaries = parse_broadcast_results(results);
+
+    summaries
+        .first()
+        .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
+        .cloned()
 }
 
 #[cfg(test)]

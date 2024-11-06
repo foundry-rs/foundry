@@ -40,6 +40,9 @@ Display options:
           - always: Force color output
           - never:  Force disable color output
 
+      --json
+          Format log messages as JSON
+
   -q, --quiet
           Do not print log messages
 
@@ -1413,6 +1416,13 @@ casttest!(parse_units, |_prj, cmd| {
 
     cmd.cast_fuse().args(["--parse-units", "1.23", "3"]).assert_success().stdout_eq(str![[r#"
 1230
+
+"#]]);
+});
+
+casttest!(string_decode, |_prj, cmd| {
+    cmd.args(["string-decode", "0x88c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000054753303235000000000000000000000000000000000000000000000000000000"]).assert_success().stdout_eq(str![[r#"
+"GS025"
 
 "#]]);
 });
