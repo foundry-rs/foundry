@@ -22,6 +22,11 @@ pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
 }
 
+/// Set the verbosity level.
+pub fn set_verbosity(verbosity: Verbosity) {
+    Shell::get().set_verbosity(verbosity);
+}
+
 /// Returns whether the output mode is [`OutputMode::Quiet`].
 pub fn is_quiet() -> bool {
     Shell::get().output_mode().is_quiet()
@@ -294,6 +299,11 @@ impl Shell {
     #[inline]
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
+    }
+
+    /// Sets the verbosity level.
+    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+        self.verbosity = verbosity;
     }
 
     /// Gets the current color choice.
