@@ -6010,7 +6010,7 @@
       "func": {
         "id": "mockCallRevert_2",
         "description": "Reverts a call to an address with specified revert data.",
-        "declaration": "function mockCallRevert(address callee, bytes4 calldata data, bytes calldata revertData) external;",
+        "declaration": "function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "mockCallRevert(address,bytes4,bytes)",
@@ -6030,7 +6030,7 @@
       "func": {
         "id": "mockCallRevert_3",
         "description": "Reverts a call to an address with a specific `msg.value`, with specified revert data.",
-        "declaration": "function mockCallRevert(address callee, uint256 msgValue, bytes4 calldata data, bytes calldata revertData) external;",
+        "declaration": "function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "mockCallRevert(address,uint256,bytes4,bytes)",
@@ -6094,7 +6094,7 @@
       "func": {
         "id": "mockCall_2",
         "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
-        "declaration": "function mockCall(address callee, bytes4 calldata data, bytes calldata returnData) external;",
+        "declaration": "function mockCall(address callee, bytes4 data, bytes calldata returnData) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "mockCall(address,bytes4,bytes)",
@@ -6114,7 +6114,7 @@
       "func": {
         "id": "mockCall_3",
         "description": "Mocks a call to an address with a specific `msg.value`, returning specified data.\nCalldata match takes precedence over `msg.value` in case of ambiguity.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
-        "declaration": "function mockCall(address callee, uint256 msgValue, bytes4 calldata data, bytes calldata returnData) external;",
+        "declaration": "function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "mockCall(address,uint256,bytes4,bytes)",
@@ -6178,7 +6178,7 @@
       "func": {
         "id": "mockCalls_2",
         "description": "Mocks multiple calls to an address, returning specified data for each call.",
-        "declaration": "function mockCalls(address callee, bytes4 calldata data, bytes[] calldata returnData) external;",
+        "declaration": "function mockCalls(address callee, bytes4 data, bytes[] calldata returnData) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "mockCalls(address,bytes4,bytes[])",
@@ -6198,7 +6198,7 @@
       "func": {
         "id": "mockCalls_3",
         "description": "Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.",
-        "declaration": "function mockCalls(address callee, uint256 msgValue, bytes4 calldata data, bytes[] calldata returnData) external;",
+        "declaration": "function mockCalls(address callee, uint256 msgValue, bytes4 data, bytes[] calldata returnData) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "mockCalls(address,uint256,bytes4,bytes[])",

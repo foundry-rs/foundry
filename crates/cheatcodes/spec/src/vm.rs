@@ -534,14 +534,14 @@ interface Vm {
     ///
     /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCall(address callee, bytes4 calldata data, bytes calldata returnData) external;
+    function mockCall(address callee, bytes4 data, bytes calldata returnData) external;
 
     /// Mocks a call to an address with a specific `msg.value`, returning specified data.
     /// Calldata match takes precedence over `msg.value` in case of ambiguity.
     ///
     /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCall(address callee, uint256 msgValue, bytes4 calldata data, bytes calldata returnData) external;
+    function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
 
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCalls accepting bytes4 selector")))]
@@ -553,11 +553,11 @@ interface Vm {
 
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCalls(address callee, bytes4 calldata data, bytes[] calldata returnData) external;
+    function mockCalls(address callee, bytes4 data, bytes[] calldata returnData) external;
 
     /// Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCalls(address callee, uint256 msgValue, bytes4 calldata data, bytes[] calldata returnData) external;
+    function mockCalls(address callee, uint256 msgValue, bytes4 data, bytes[] calldata returnData) external;
 
     /// Reverts a call to an address with specified revert data.
     #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCallRevert accepting bytes4 selector")))]
@@ -570,11 +570,11 @@ interface Vm {
 
     /// Reverts a call to an address with specified revert data.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCallRevert(address callee, bytes4 calldata data, bytes calldata revertData) external;
+    function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;
 
      /// Reverts a call to an address with a specific `msg.value`, with specified revert data.
      #[cheatcode(group = Evm, safety = Unsafe)]
-     function mockCallRevert(address callee, uint256 msgValue, bytes4 calldata data, bytes calldata revertData)
+     function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData)
          external;
 
     /// Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls
