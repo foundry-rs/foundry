@@ -78,7 +78,7 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 ...
 | Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |--------------|------------------|-------------------|--------------------|---------------------|
-| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+| HugeContract |              194 |            49,344 |             24,382 |                -192 |
 ...
 "#
     ]);
@@ -91,7 +91,7 @@ forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
 ...
 | Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |--------------|------------------|-------------------|--------------------|---------------------|
-| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+| HugeContract |              194 |            49,344 |             24,382 |                -192 |
 ...
 "#
     ]);
@@ -114,7 +114,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ...
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |----------|------------------|-------------------|--------------------|---------------------|
-| Counter  |              247 |               277 |             24,329 |              48,875 |
+| Counter  |              236 |               263 |             24,340 |              48,889 |
 ...
 "#
     ]);
