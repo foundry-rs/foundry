@@ -12,7 +12,7 @@ use foundry_cli::{handler, utils};
 use foundry_common::{
     abi::get_event,
     ens::{namehash, ProviderEnsExt},
-    fmt::{format_uint_exp, print_tokens},
+    fmt::{format_tokens, format_tokens_raw, format_uint_exp},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
@@ -135,11 +135,11 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::ParseUnits { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::parse_units(&value, unit)?);
+            sh_println!("{}", SimpleCast::parse_units(&value, unit)?)?;
         }
         CastSubcommand::FormatUnits { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            println!("{}", SimpleCast::format_units(&value, unit)?);
+            sh_println!("{}", SimpleCast::format_units(&value, unit)?)?;
         }
         CastSubcommand::FromWei { value, unit } => {
             let value = stdin::unwrap_line(value)?;
@@ -189,7 +189,15 @@ async fn main_args(args: CastArgs) -> Result<()> {
         // ABI encoding & decoding
         CastSubcommand::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens, shell::is_json())
+            if shell::is_json() {
+                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
+                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
+            } else {
+                let tokens = format_tokens(&tokens);
+                tokens.for_each(|t| {
+                    let _ = sh_println!("{t}");
+                });
+            }
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -200,14 +208,30 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            print_tokens(&tokens, shell::is_json())
+            if shell::is_json() {
+                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
+                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
+            } else {
+                let tokens = format_tokens(&tokens);
+                tokens.for_each(|t| {
+                    let _ = sh_println!("{t}");
+                });
+            }
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
         CastSubcommand::StringDecode { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
-            print_tokens(&tokens, shell::is_json())
+            if shell::is_json() {
+                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
+                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
+            } else {
+                let tokens = format_tokens(&tokens);
+                tokens.for_each(|t| {
+                    let _ = sh_println!("{t}");
+                });
+            }
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
@@ -482,7 +506,15 @@ async fn main_args(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            print_tokens(&tokens, shell::is_json())
+            if shell::is_json() {
+                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
+                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
+            } else {
+                let tokens = format_tokens(&tokens);
+                tokens.for_each(|t| {
+                    let _ = sh_println!("{t}");
+                });
+            }
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;

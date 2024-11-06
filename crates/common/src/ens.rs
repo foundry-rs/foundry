@@ -123,7 +123,9 @@ pub trait ProviderEnsExt<T: Transport + Clone, N: Network, P: Provider<T, N>> {
             .call()
             .await
             .map_err(EnsError::Resolve)
-            .inspect_err(|e| eprintln!("{e:?}"))?
+            .inspect_err(|e| {
+                let _ = sh_eprintln!("{e:?}");
+            })?
             ._0;
         Ok(addr)
     }

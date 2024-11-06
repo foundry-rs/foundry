@@ -957,12 +957,7 @@ impl Config {
             return match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(res) => res,
                 Err(RecvTimeoutError::Timeout) => {
-                    eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(
-                            "Pulling Docker image for eof-solc, this might take some time..."
-                        )
-                    );
+                    // sh_warn!("Pulling Docker image for eof-solc, this might take some time...");
                     rx.recv().expect("sender dropped")
                 }
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
@@ -4897,6 +4892,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
+    #[allow(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {

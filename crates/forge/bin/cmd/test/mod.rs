@@ -908,7 +908,7 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
     let results = runner.list(filter);
 
     if shell::is_json() {
-        println!("{}", serde_json::to_string(&results)?);
+        sh_println!("{}", serde_json::to_string(&results)?)?;
     } else {
         for (file, contracts) in results.iter() {
             sh_println!("{file}")?;
