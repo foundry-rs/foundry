@@ -245,7 +245,7 @@ impl RunArgs {
             self.label,
             self.debug,
             self.decode_internal,
-            shell::verbosity() > 1,
+            shell::verbosity() > 0,
         )
         .await?;
 

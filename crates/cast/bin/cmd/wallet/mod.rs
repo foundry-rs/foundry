@@ -480,7 +480,7 @@ flag to set your key via:
                 .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {
-                        if shell::verbosity() > 1 {
+                        if shell::verbosity() > 0 {
                             sh_println!("Address:     {}", wallet.address())?;
                             sh_println!(
                                 "Private key: 0x{}",
