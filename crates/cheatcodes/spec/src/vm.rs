@@ -519,12 +519,12 @@ interface Vm {
     /// Calldata can either be strict or a partial match, e.g. if you only
     /// pass a Solidity selector to the expected calldata, then the entire Solidity
     /// function will be mocked.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCall accepting bytes4 selector")))]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
 
     /// Mocks a call to an address with a specific `msg.value`, returning specified data.
     /// Calldata match takes precedence over `msg.value` in case of ambiguity.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCall accepting bytes4 selector")))]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
 
     /// Mocks a call to an address, returning specified data.
@@ -544,38 +544,21 @@ interface Vm {
     function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
 
     /// Mocks multiple calls to an address, returning specified data for each call.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCalls accepting bytes4 selector")))]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
 
     /// Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCalls accepting bytes4 selector")))]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
 
-    /// Mocks multiple calls to an address, returning specified data for each call.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCalls(address callee, bytes4 data, bytes[] calldata returnData) external;
-
-    /// Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCalls(address callee, uint256 msgValue, bytes4 data, bytes[] calldata returnData) external;
-
     /// Reverts a call to an address with specified revert data.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCallRevert accepting bytes4 selector")))]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCallRevert(address callee, bytes calldata data, bytes calldata revertData) external;
 
     /// Reverts a call to an address with a specific `msg.value`, with specified revert data.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by mockCallRevert accepting bytes4 selector")))]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData)
         external;
-
-    /// Reverts a call to an address with specified revert data.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;
-
-     /// Reverts a call to an address with a specific `msg.value`, with specified revert data.
-     #[cheatcode(group = Evm, safety = Unsafe)]
-     function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData)
-         external;
 
     /// Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls
     /// `target` with the same calldata. This functionality is similar to a delegate call made to

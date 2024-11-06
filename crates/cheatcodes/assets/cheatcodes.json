@@ -5979,9 +5979,7 @@
         ]
       },
       "group": "evm",
-      "status": {
-        "deprecated": "replaced by mockCallRevert accepting bytes4 selector"
-      },
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -5998,48 +5996,6 @@
           60,
           208,
           55
-        ]
-      },
-      "group": "evm",
-      "status": {
-        "deprecated": "replaced by mockCallRevert accepting bytes4 selector"
-      },
-      "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "mockCallRevert_2",
-        "description": "Reverts a call to an address with specified revert data.",
-        "declaration": "function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "mockCallRevert(address,bytes4,bytes)",
-        "selector": "0x2dfba5df",
-        "selectorBytes": [
-          45,
-          251,
-          165,
-          223
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "mockCallRevert_3",
-        "description": "Reverts a call to an address with a specific `msg.value`, with specified revert data.",
-        "declaration": "function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "mockCallRevert(address,uint256,bytes4,bytes)",
-        "selector": "0x596c8f04",
-        "selectorBytes": [
-          89,
-          108,
-          143,
-          4
         ]
       },
       "group": "evm",
@@ -6063,9 +6019,7 @@
         ]
       },
       "group": "evm",
-      "status": {
-        "deprecated": "replaced by mockCall accepting bytes4 selector"
-      },
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -6085,9 +6039,7 @@
         ]
       },
       "group": "evm",
-      "status": {
-        "deprecated": "replaced by mockCall accepting bytes4 selector"
-      },
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -6147,9 +6099,7 @@
         ]
       },
       "group": "evm",
-      "status": {
-        "deprecated": "replaced by mockCalls accepting bytes4 selector"
-      },
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -6166,48 +6116,6 @@
           188,
           186,
           225
-        ]
-      },
-      "group": "evm",
-      "status": {
-        "deprecated": "replaced by mockCalls accepting bytes4 selector"
-      },
-      "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "mockCalls_2",
-        "description": "Mocks multiple calls to an address, returning specified data for each call.",
-        "declaration": "function mockCalls(address callee, bytes4 data, bytes[] calldata returnData) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "mockCalls(address,bytes4,bytes[])",
-        "selector": "0x87001438",
-        "selectorBytes": [
-          135,
-          0,
-          20,
-          56
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "mockCalls_3",
-        "description": "Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.",
-        "declaration": "function mockCalls(address callee, uint256 msgValue, bytes4 data, bytes[] calldata returnData) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "mockCalls(address,uint256,bytes4,bytes[])",
-        "selector": "0x7a5a1162",
-        "selectorBytes": [
-          122,
-          90,
-          17,
-          98
         ]
       },
       "group": "evm",
