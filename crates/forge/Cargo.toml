@@ -92,7 +92,7 @@ solang-parser.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml = { version = "0.8", features = ["preserve_order"] }
+toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = "0.22"
 watchexec = "4.1"
 watchexec-events = "3.0"

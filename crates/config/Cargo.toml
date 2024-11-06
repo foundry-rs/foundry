@@ -39,7 +39,7 @@ serde_json.workspace = true
 serde_regex = "1"
 serde.workspace = true
 thiserror.workspace = true
-toml = { version = "0.8", features = ["preserve_order"] }
+toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = "0.22"
 tracing.workspace = true
 walkdir.workspace = true
