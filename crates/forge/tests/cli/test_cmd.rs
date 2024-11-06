@@ -2536,13 +2536,13 @@ contract ReverterTest is Test {
 Compiler run successful!
 
 Ran 7 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: vm.expectRevert: Cannot expect a revert when using assumeNoRevert; counterexample: [..]] testAssumeThenExpect_fails(uint256) (runs: 0, [AVG_GAS])
-[FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: 44, [AVG_GAS])
-[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: 44, [AVG_GAS])
-[FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: 44, [AVG_GAS])
+[FAIL: vm.expectRevert: Cannot expect a revert when using assumeNoRevert; counterexample: [..]] testAssumeThenExpect_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
-[FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: 59, [AVG_GAS])
-[FAIL: vm.assumeNoRevert: Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: 0, [AVG_GAS])
+[FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: vm.assumeNoRevert: Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
 ...
 
 "#]]);
