@@ -130,13 +130,13 @@ Created new encrypted keystore file: [..]
 
 // tests that we can create a new wallet with default keystore location
 casttest!(new_wallet_default_keystore, |_prj, cmd| {
-    cmd.args(["wallet", "new", "--unsafe-password", "test", "--default-keystore"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
+        r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
-"#]]);
+"#
+    ]]);
 
     // Verify the default keystore directory was created
     let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");

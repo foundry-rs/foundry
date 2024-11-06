@@ -37,7 +37,7 @@ pub enum WalletSubcommands {
         /// Triggers a hidden password prompt for the JSON keystore.
         ///
         /// Deprecated: prompting for a hidden password is now the default.
-        #[arg(long, short, requires = "path", conflicts_with = "unsafe_password")]
+        #[arg(long, short, conflicts_with = "unsafe_password")]
         password: bool,
 
         /// Password for the JSON keystore in cleartext.
@@ -211,20 +211,26 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, .. } => {
+            Self::New { path, password, unsafe_password, number, .. } => {
                 let mut rng = thread_rng();
 
                 let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
-                if let Some(path) = path {
-                    let path = match dunce::canonicalize(path.clone()) {
-                        Ok(path) => path,
-                        // If the path doesn't exist, it will fail to be canonicalized,
-                        // so we attach more context to the error message.
+
+                // Determine the path
+                let path = if let Some(path) = path {
+                    match dunce::canonicalize(path.clone()) {
+                        Ok(path) => {
+                            if !path.is_dir() {
+                                // we require path to be an existing directory
+                                eyre::bail!("`{}` is not a directory", path.display());
+                            }
+                            Some(path)
+                        }
                         Err(e) => {
                             eyre::bail!("If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}", e);
                         }
                     }
-                } else if default_keystore {
+                } else if unsafe_password.is_some() || password {
                     let path = Config::foundry_keystores_dir().ok_or_else(|| {
                         eyre::eyre!("Could not find the default keystore directory.")
                     })?;
