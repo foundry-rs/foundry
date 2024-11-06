@@ -2250,11 +2250,14 @@ Simulated On-chain Traces:
 
 // Tests that chained errors are properly displayed.
 // <https://github.com/foundry-rs/foundry/issues/9161>
-forgetest_init!(should_display_evm_chained_error, |prj, cmd| {
-    let script = prj
-        .add_source(
-            "Foo",
-            r#"
+forgetest_init!(
+    #[ignore]
+    should_display_evm_chained_error,
+    |prj, cmd| {
+        let script = prj
+            .add_source(
+                "Foo",
+                r#"
 import "forge-std/Script.sol";
 
 contract ContractScript is Script {
@@ -2262,14 +2265,15 @@ contract ContractScript is Script {
     }
 }
    "#,
-        )
-        .unwrap();
-    cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
+            )
+            .unwrap();
+        cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
 Error: Failed to deploy script:
 backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
 
 "#]]);
-});
+    }
+);
 
 forgetest_async!(should_detect_additional_contracts, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;

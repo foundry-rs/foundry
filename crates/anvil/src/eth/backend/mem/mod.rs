@@ -230,8 +230,10 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
+            let env = env.read();
             Blockchain::new(
-                &env.read(),
+                &env,
+                env.handler_cfg.spec_id,
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
             )

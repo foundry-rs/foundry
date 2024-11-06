@@ -331,7 +331,7 @@ fn check(
         {
             let source_gas = test.result.kind.report();
             if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
-                eprintln!(
+                let _ = sh_println!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.contract_name(),
                     test.signature,
@@ -341,7 +341,7 @@ fn check(
                 has_diff = true;
             }
         } else {
-            eprintln!(
+            let _ = sh_println!(
                 "No matching snapshot entry found for \"{}::{}\" in snapshot file",
                 test.contract_name(),
                 test.signature
@@ -382,20 +382,20 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>) -> Result<()>
         overall_gas_change += gas_change;
         overall_gas_used += diff.target_gas_used.gas() as i128;
         let gas_diff = diff.gas_diff();
-        println!(
+        sh_println!(
             "{} (gas: {} ({})) ",
             diff.signature,
             fmt_change(gas_change),
             fmt_pct_change(gas_diff)
-        );
+        )?;
     }
 
     let overall_gas_diff = overall_gas_change as f64 / overall_gas_used as f64;
-    println!(
+    sh_println!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
         fmt_pct_change(overall_gas_diff)
-    );
+    )?;
     Ok(())
 }
 
