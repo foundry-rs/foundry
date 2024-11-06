@@ -4,7 +4,7 @@ use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbos
 // note: `verbose` and `quiet` cannot have `short` because of conflicts with multiple commands.
 
 /// Global shell options.
-#[derive(Clone, Copy, Debug, Parser)]
+#[derive(Clone, Copy, Debug, Default, Parser)]
 pub struct ShellOpts {
     /// Verbosity level of the log messages.
     ///
