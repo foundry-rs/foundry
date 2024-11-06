@@ -796,7 +796,7 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
 
-        // See <https://github.com/foundry-rs/foundry/issues/7014>
+    // See <https://github.com/foundry-rs/foundry/issues/7014>
     let output = cmd
         .forge_fuse()
         .args(["config", "--use", "0.8.17", "--json"])

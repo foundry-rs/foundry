@@ -156,7 +156,7 @@ Solidity:
 - 0.8.27
 
 Vyper:
-- 0.4.1
+- 0.4.0
 
 
 "#]]);
@@ -174,7 +174,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
         r#"
 Vyper:
 
-0.4.1:
+0.4.0:
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -206,7 +206,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
   ],
   "Vyper": [
     {
-      "version": "0.4.1",
+      "version": "0.4.0",
       "paths": [
         "src/Counter.vy",
         "src/ICounter.vyi"
@@ -242,7 +242,7 @@ Solidity:
 
 Vyper:
 
-0.4.1 (<= cancun):
+0.4.0 (<= cancun):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -287,7 +287,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
   ],
   "Vyper": [
     {
-      "version": "0.4.1",
+      "version": "0.4.0",
       "evm_version": "[..]",
       "paths": [
         "src/Counter.vy",
