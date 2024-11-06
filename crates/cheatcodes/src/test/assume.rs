@@ -104,27 +104,23 @@ fn assume_no_revert(
 ) -> Result {
     ensure!(state.expected_revert.is_none(), ASSUME_EXPECT_REJECT_MAGIC);
 
-    // if reason is not none, check if it is 4 bytes; if so, allow partial matches
-    let partial_match = reason.is_some() && reason.as_ref().unwrap().len() == 4;
-    // if assume_no_revert is not set, set it
-    if state.assume_no_revert.is_none() {
-        state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: vec![], reverted_by: None });
-        // if reason is not none, create a new AssumeNoRevertParams vec
-        if let Some(reason) = reason {
-            state.assume_no_revert.as_mut().unwrap().reasons =
-                vec![AcceptableRevertParameters { reason, partial_match, reverter }];
+    let params = reason.map(|reason| {
+        let partial_match = reason.len() == 4;
+        AcceptableRevertParameters { reason, partial_match, reverter }
+    });
+
+    match state.assume_no_revert {
+        Some(ref mut assume) => {
+            ensure!(!assume.reasons.is_empty() && params.is_some(), ASSUME_REJECT_MAGIC);
+            assume.reasons.push(params.unwrap());
         }
-    } else {
-        // otherwise, ensure that reasons vec is not none and new reason is also not none
-        let valid_assume =
-            !state.assume_no_revert.as_ref().unwrap().reasons.is_empty() && reason.is_some();
-        ensure!(valid_assume, ASSUME_REJECT_MAGIC);
-        // and append the new reason
-        state.assume_no_revert.as_mut().unwrap().reasons.push(AcceptableRevertParameters {
-            reason: reason.unwrap(),
-            partial_match,
-            reverter,
-        });
+        None => {
+            state.assume_no_revert = Some(AssumeNoRevert {
+                depth,
+                reasons: if let Some(params) = params { vec![params] } else { vec![] },
+                reverted_by: None,
+            });
+        }
     }
 
     Ok(Default::default())
