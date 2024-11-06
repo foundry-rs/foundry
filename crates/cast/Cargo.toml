@@ -79,7 +79,7 @@ comfy-table.workspace = true
 dunce.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
