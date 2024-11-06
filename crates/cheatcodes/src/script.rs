@@ -39,8 +39,11 @@ impl Cheatcode for attachDelegationCall {
         let mut authority_acc =
             ccx.ecx.journaled_state.load_account(*authority, &mut ccx.ecx.db)?;
 
-        let auth =
-            Authorization { address: *implementation, nonce: authority_acc.data.info.nonce, chain_id: ccx.ecx.env.cfg.chain_id };
+        let auth = Authorization {
+            address: *implementation,
+            nonce: authority_acc.data.info.nonce,
+            chain_id: ccx.ecx.env.cfg.chain_id,
+        };
         let signed_auth = SignedAuthorization::new_unchecked(
             auth,
             *v,
