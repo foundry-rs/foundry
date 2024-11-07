@@ -373,7 +373,11 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
+    /// Mapping of addresses to their signed authorization data for EIP-7702 delegated transactions
     pub delegations: HashMap<Address, SignedAuthorization>,
+    /// The currently active delegation address that will be used for the next transaction.
+    /// When a delegation is attached via `vm.attachDelegation()`, this address is set and used
+    /// to look up the authorization data from the `delegations` map when broadcasting transactions.
     pub active_delegation: Option<Address>,
 
     /// The gas price.
