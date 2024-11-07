@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_primitives::{utils::format_units, TxHash, U256};
-use alloy_provider::{PendingTransactionBuilder, Provider};
+use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::Result;
 use foundry_common::provider::RetryProvider;
@@ -40,12 +40,16 @@ pub async fn check_tx_status(
         }
 
         loop {
-            if let Ok(receipt) = PendingTransactionBuilder::new(provider.clone(), hash)
+            match PendingTransactionBuilder::new(provider.clone(), hash)
                 .with_timeout(Some(Duration::from_secs(timeout)))
                 .get_receipt()
                 .await
             {
-                return Ok(receipt.into())
+                Ok(receipt) => return Ok(receipt.into()),
+                // do nothing on timeout, we will check whether tx is dropped below
+                Err(PendingTransactionError::TxWatcher(WatchTxError::Timeout)) => {}
+                // treat other errors as fatal
+                Err(e) => return Err(e.into()),
             }
 
             if provider.get_transaction_by_hash(hash).await?.is_some() {

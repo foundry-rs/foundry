@@ -9,7 +9,7 @@ use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
@@ -137,7 +137,6 @@ pub fn build_using_cache(
 }
 
 pub fn print_result(
-    args: &VerifyBytecodeArgs,
     res: Option<VerificationType>,
     bytecode_type: BytecodeType,
     json_results: &mut Vec<JsonResult>,
@@ -145,7 +144,7 @@ pub fn print_result(
     config: &Config,
 ) {
     if let Some(res) = res {
-        if !args.json {
+        if !shell::is_json() {
             println!(
                 "{} with status {}",
                 format!("{bytecode_type:?} code matched").green().bold(),
@@ -155,7 +154,7 @@ pub fn print_result(
             let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
             json_results.push(json_res);
         }
-    } else if !args.json {
+    } else if !shell::is_json() {
         println!(
             "{}",
             format!(

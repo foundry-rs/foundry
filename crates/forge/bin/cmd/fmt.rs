@@ -129,7 +129,7 @@ impl FmtArgs {
             let new_format = diff.ratio() < 1.0;
             if self.check || path.is_none() {
                 if self.raw {
-                    print!("{output}");
+                    sh_print!("{output}")?;
                 }
 
                 // If new format then compute diff summary.

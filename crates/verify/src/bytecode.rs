@@ -16,6 +16,7 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
+use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_env};
@@ -74,10 +75,6 @@ pub struct VerifyBytecodeArgs {
     /// Verifier options.
     #[clap(flatten)]
     pub verifier: VerifierArgs,
-
-    /// Suppress logs and emit json results to stdout
-    #[clap(long, default_value = "false")]
-    pub json: bool,
 
     /// The project's root path.
     ///
@@ -144,7 +141,7 @@ impl VerifyBytecodeArgs {
             eyre::bail!("No bytecode found at address {}", self.address);
         }
 
-        if !self.json {
+        if !shell::is_json() {
             println!(
                 "Verifying bytecode for contract {} at address {}",
                 self.contract.name.clone().green(),
@@ -214,7 +211,7 @@ impl VerifyBytecodeArgs {
         crate::utils::check_args_len(&artifact, &constructor_args)?;
 
         if maybe_predeploy {
-            if !self.json {
+            if !shell::is_json() {
                 println!(
                     "{}",
                     format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", self.address)
@@ -290,7 +287,6 @@ impl VerifyBytecodeArgs {
             );
 
             crate::utils::print_result(
-                &self,
                 match_type,
                 BytecodeType::Runtime,
                 &mut json_results,
@@ -298,7 +294,7 @@ impl VerifyBytecodeArgs {
                 &config,
             );
 
-            if self.json {
+            if shell::is_json() {
                 sh_println!("{}", serde_json::to_string(&json_results)?)?;
             }
 
@@ -376,7 +372,6 @@ impl VerifyBytecodeArgs {
             );
 
             crate::utils::print_result(
-                &self,
                 match_type,
                 BytecodeType::Creation,
                 &mut json_results,
@@ -387,14 +382,13 @@ impl VerifyBytecodeArgs {
             // If the creation code does not match, the runtime also won't match. Hence return.
             if match_type.is_none() {
                 crate::utils::print_result(
-                    &self,
                     None,
                     BytecodeType::Runtime,
                     &mut json_results,
                     etherscan_metadata,
                     &config,
                 );
-                if self.json {
+                if shell::is_json() {
                     sh_println!("{}", serde_json::to_string(&json_results)?)?;
                 }
                 return Ok(());
@@ -488,7 +482,6 @@ impl VerifyBytecodeArgs {
             );
 
             crate::utils::print_result(
-                &self,
                 match_type,
                 BytecodeType::Runtime,
                 &mut json_results,
@@ -497,7 +490,7 @@ impl VerifyBytecodeArgs {
             );
         }
 
-        if self.json {
+        if shell::is_json() {
             sh_println!("{}", serde_json::to_string(&json_results)?)?;
         }
         Ok(())
