@@ -46,16 +46,14 @@ impl Remappings {
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    fn push(&mut self, remapping: Remapping) {
+    pub fn push(&mut self, remapping: Remapping) {
         if !self.remappings.iter().any(|existing| {
             // What we're doing here is filtering for ambiguous paths. For example, if we have
-            // @prb/=node_modules/@prb/ as existing, and
-            // @prb/math/=node_modules/@prb/math/src/  as the one being checked,
+            // @prb/math/=node_modules/@prb/math/src/ as existing, and
+            // @prb/=node_modules/@prb/  as the one being checked,
             // we want to keep the already existing one, which is the first one. This way we avoid
             // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
-            // Remappings are added from root of the project down to libraries, so
-            // we want to exclude any conflicting remappings added from libraries.
-            remapping.name.starts_with(&existing.name) && existing.context == remapping.context
+            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
             self.remappings.push(remapping)
         }
