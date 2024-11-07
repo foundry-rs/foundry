@@ -45,8 +45,8 @@ use foundry_config::{
     Config,
 };
 use foundry_evm::{
-    constants::get_create2_deployer,
     backend::Backend,
+    constants::get_create2_deployer,
     executors::ExecutorBuilder,
     inspectors::{
         cheatcodes::{BroadcastableTransactions, Wallets},
