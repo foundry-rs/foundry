@@ -19,7 +19,7 @@ use foundry_common::{
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
         SelectorType,
     },
-    stdin,
+    shell, stdin,
 };
 use foundry_config::Config;
 use std::time::Instant;
@@ -39,7 +39,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() {
     if let Err(err) = run() {
-        let _ = foundry_common::Shell::get().error(&err);
+        let _ = foundry_common::sh_err!("{err:?}");
         std::process::exit(1);
     }
 }
@@ -149,9 +149,9 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let value = stdin::unwrap_line(value)?;
             sh_println!("{}", SimpleCast::to_wei(&value, &unit)?)?
         }
-        CastSubcommand::FromRlp { value } => {
+        CastSubcommand::FromRlp { value, as_int } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_rlp(value)?)?
+            sh_println!("{}", SimpleCast::from_rlp(value, as_int)?)?
         }
         CastSubcommand::ToRlp { value } => {
             let value = stdin::unwrap_line(value)?;
@@ -187,9 +187,9 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
 
         // ABI encoding & decoding
-        CastSubcommand::AbiDecode { sig, calldata, input, json } => {
+        CastSubcommand::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -198,14 +198,20 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
-        CastSubcommand::CalldataDecode { sig, calldata, json } => {
+        CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
+        CastSubcommand::StringDecode { data } => {
+            let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
+            print_tokens(&tokens, shell::is_json())
+        }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
+        CastSubcommand::CreationCode(cmd) => cmd.run().await?,
+        CastSubcommand::ConstructorArgs(cmd) => cmd.run().await?,
         CastSubcommand::Bind(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
@@ -265,13 +271,13 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, json, rpc } => {
+        CastSubcommand::Block { block, full, field, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, json)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
                     .await?
             )?
         }
@@ -426,26 +432,26 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{}", serde_json::json!(receipt))?;
             }
         }
-        CastSubcommand::Receipt { tx_hash, field, json, cast_async, confirmations, rpc } => {
+        CastSubcommand::Receipt { tx_hash, field, cast_async, confirmations, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, None, cast_async, json)
+                    .receipt(tx_hash, field, confirmations, None, cast_async)
                     .await?
             )?
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, field, raw, json, rpc } => {
+        CastSubcommand::Tx { tx_hash, field, raw, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            sh_println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw, json).await?)?
+            sh_println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw).await?)?
         }
 
         // 4Byte
@@ -459,7 +465,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{sig}")?
             }
         }
-        CastSubcommand::FourByteDecode { calldata, json } => {
+        CastSubcommand::FourByteDecode { calldata } => {
             let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| {
@@ -476,7 +482,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            print_tokens(&tokens, json)
+            print_tokens(&tokens, shell::is_json())
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;

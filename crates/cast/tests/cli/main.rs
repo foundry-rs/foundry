@@ -40,6 +40,9 @@ Display options:
           - always: Force color output
           - never:  Force disable color output
 
+      --json
+          Format log messages as JSON
+
   -q, --quiet
           Do not print log messages
 
@@ -81,6 +84,9 @@ stateRoot            [..]
 timestamp            [..]
 withdrawalsRoot      [..]
 totalDifficulty      [..]
+blobGasUsed          [..]
+excessBlobGas        [..]
+requestsHash         [..]
 transactions:        [
 ...
 ]
@@ -1414,6 +1420,13 @@ casttest!(parse_units, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(string_decode, |_prj, cmd| {
+    cmd.args(["string-decode", "0x88c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000054753303235000000000000000000000000000000000000000000000000000000"]).assert_success().stdout_eq(str![[r#"
+"GS025"
+
+"#]]);
+});
+
 casttest!(format_units, |_prj, cmd| {
     cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
 1
@@ -1429,6 +1442,64 @@ casttest!(format_units, |_prj, cmd| {
 
     cmd.cast_fuse().args(["fun", "1230", "3"]).assert_success().stdout_eq(str![[r#"
 1.230
+
+"#]]);
+});
+
+// tests that fetches a sample contract creation code
+// <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
+casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "creation-code",
+        "--etherscan-api-key",
+        &next_mainnet_etherscan_api_key(),
+        "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033
+
+"#]]);
+});
+
+// tests that fetches a sample contract creation args bytes
+// <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
+casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "creation-code",
+        "--etherscan-api-key",
+        &next_mainnet_etherscan_api_key(),
+        "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--only-args",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
+
+"#]]);
+});
+
+// tests that displays a sample contract creation args
+// <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
+casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "constructor-args",
+        "--etherscan-api-key",
+        &next_mainnet_etherscan_api_key(),
+        "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
 
 "#]]);
 });

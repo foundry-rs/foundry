@@ -230,8 +230,10 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
+            let env = env.read();
             Blockchain::new(
-                &env.read(),
+                &env,
+                env.handler_cfg.spec_id,
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
             )
@@ -907,19 +909,27 @@ impl Backend {
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
+            let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
-            let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
-            self.blockchain.storage.write().best_number = best_number;
+            if let Some((number, hash)) = fork_num_and_hash {
+                // If loading state file on a fork, set best number to the fork block number.
+                // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
+                self.blockchain.storage.write().best_number = U64::from(number);
+                self.blockchain.storage.write().best_hash = hash;
+            } else {
+                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                self.blockchain.storage.write().best_number = best_number;
 
-            // Set the current best block hash;
-            let best_hash =
-                self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
-                    BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                        "Best hash not found for best number {best_number}",
-                    )))
-                })?;
+                // Set the current best block hash;
+                let best_hash =
+                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                        BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                            "Best hash not found for best number {best_number}",
+                        )))
+                    })?;
 
-            self.blockchain.storage.write().best_hash = best_hash;
+                self.blockchain.storage.write().best_hash = best_hash;
+            }
         }
 
         if !self.db.write().await.load_state(state.clone())? {
@@ -1880,7 +1890,7 @@ impl Backend {
             mix_hash,
             nonce,
             base_fee_per_gas,
-            withdrawals_root: _,
+            withdrawals_root,
             blob_gas_used,
             excess_blob_gas,
             parent_beacon_block_root,
@@ -1906,7 +1916,7 @@ impl Backend {
                 mix_hash: Some(mix_hash),
                 nonce: Some(nonce),
                 base_fee_per_gas,
-                withdrawals_root: None,
+                withdrawals_root,
                 blob_gas_used,
                 excess_blob_gas,
                 parent_beacon_block_root,
@@ -1917,7 +1927,7 @@ impl Backend {
                 transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
             uncles: vec![],
-            withdrawals: None,
+            withdrawals: withdrawals_root.map(|_| Default::default()),
         };
 
         let mut block = WithOtherFields::new(block);

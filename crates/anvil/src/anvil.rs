@@ -39,7 +39,7 @@ pub enum AnvilSubcommand {
 
 fn main() {
     if let Err(err) = run() {
-        let _ = foundry_common::Shell::get().error(&err);
+        let _ = foundry_common::sh_err!("{err:?}");
         std::process::exit(1);
     }
 }

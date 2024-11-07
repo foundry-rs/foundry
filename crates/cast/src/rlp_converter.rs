@@ -95,7 +95,8 @@ impl fmt::Display for Item {
 #[cfg(test)]
 mod test {
     use crate::rlp_converter::Item;
-    use alloy_rlp::Decodable;
+    use alloy_primitives::hex;
+    use alloy_rlp::{Bytes, Decodable};
     use serde_json::Result as JsonResult;
 
     // https://en.wikipedia.org/wiki/Set-theoretic_definition_of_natural_numbers
@@ -178,5 +179,25 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn rlp_data() {
+        // <https://github.com/foundry-rs/foundry/issues/9197>
+        let hex_val_rlp = hex!("820002");
+        let item = Item::decode(&mut &hex_val_rlp[..]).unwrap();
+
+        let data = hex!("0002");
+        let encoded = alloy_rlp::encode(&data[..]);
+        let decoded: Bytes = alloy_rlp::decode_exact(&encoded[..]).unwrap();
+        assert_eq!(Item::Data(decoded.to_vec()), item);
+
+        let hex_val_rlp = hex!("00");
+        let item = Item::decode(&mut &hex_val_rlp[..]).unwrap();
+
+        let data = hex!("00");
+        let encoded = alloy_rlp::encode(&data[..]);
+        let decoded: Bytes = alloy_rlp::decode_exact(&encoded[..]).unwrap();
+        assert_eq!(Item::Data(decoded.to_vec()), item);
     }
 }

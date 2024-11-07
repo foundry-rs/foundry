@@ -27,7 +27,7 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
@@ -123,17 +123,16 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, false).await?;
+    /// let data = cast.call(&tx, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call<'a>(
+    pub async fn call(
         &self,
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
-        json: bool,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
@@ -174,7 +173,7 @@ where
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             res.to_string()
-        } else if json {
+        } else if shell::is_json() {
             let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
@@ -208,7 +207,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(&provider);
-    /// let access_list = cast.access_list(&tx, None, false).await?;
+    /// let access_list = cast.access_list(&tx, None).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
@@ -217,11 +216,10 @@ where
         &self,
         req: &WithOtherFields<TransactionRequest>,
         block: Option<BlockId>,
-        to_json: bool,
     ) -> Result<String> {
         let access_list =
             self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
-        let res = if to_json {
+        let res = if shell::is_json() {
             serde_json::to_string(&access_list)?
         } else {
             let mut s =
@@ -329,7 +327,7 @@ where
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None, false).await?;
+    /// let block = cast.block(5, true, None).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -339,7 +337,6 @@ where
         block: B,
         full: bool,
         field: Option<String>,
-        to_json: bool,
     ) -> Result<String> {
         let block = block.into();
         if let Some(ref field) = field {
@@ -357,7 +354,7 @@ where
         let block = if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
-        } else if to_json {
+        } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
             block.pretty()
@@ -374,7 +371,6 @@ where
             false,
             // Select only select field
             Some(field),
-            false,
         )
         .await?;
 
@@ -408,14 +404,12 @@ where
             false,
             // Select only block hash
             Some(String::from("hash")),
-            false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
-                {
+                match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -453,7 +447,7 @@ where
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash"))).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -718,7 +712,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false, false).await?;
+    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -728,7 +722,6 @@ where
         tx_hash: String,
         field: Option<String>,
         raw: bool,
-        to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
         let tx = self
@@ -742,7 +735,7 @@ where
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
-        } else if to_json {
+        } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
         } else {
@@ -761,7 +754,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -773,7 +766,6 @@ where
         confs: u64,
         timeout: Option<u64>,
         cast_async: bool,
-        to_json: bool,
     ) -> Result<String> {
         let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
@@ -802,7 +794,7 @@ where
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
                 .ok_or_else(|| eyre::eyre!("invalid receipt field: {}", field))?
-        } else if to_json {
+        } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&receipt)?.to_string()
         } else {
@@ -878,10 +870,10 @@ where
         ))
     }
 
-    pub async fn filter_logs(&self, filter: Filter, to_json: bool) -> Result<String> {
+    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.provider.get_logs(&filter).await?;
 
-        let res = if to_json {
+        let res = if shell::is_json() {
             serde_json::to_string(&logs)?
         } else {
             let mut s = vec![];
@@ -969,16 +961,11 @@ where
     /// let filter =
     ///     Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
     /// let mut output = io::stdout();
-    /// cast.subscribe(filter, &mut output, false).await?;
+    /// cast.subscribe(filter, &mut output).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe(
-        &self,
-        filter: Filter,
-        output: &mut dyn io::Write,
-        to_json: bool,
-    ) -> Result<()> {
+    pub async fn subscribe(&self, filter: Filter, output: &mut dyn io::Write) -> Result<()> {
         // Initialize the subscription stream for logs
         let mut subscription = self.provider.subscribe_logs(&filter).await?.into_stream();
 
@@ -989,10 +976,11 @@ where
             None
         };
 
+        let format_json = shell::is_json();
         let to_block_number = filter.get_to_block();
 
         // If output should be JSON, start with an opening bracket
-        if to_json {
+        if format_json {
             write!(output, "[")?;
         }
 
@@ -1014,7 +1002,7 @@ where
                 },
                 // Process incoming log
                 log = subscription.next() => {
-                    if to_json {
+                    if format_json {
                         if !first {
                             write!(output, ",")?;
                         }
@@ -1037,7 +1025,7 @@ where
         }
 
         // If output was JSON, end with a closing bracket
-        if to_json {
+        if format_json {
             write!(output, "]")?;
         }
 
@@ -1448,23 +1436,31 @@ impl SimpleCast {
         Ok(ParseUnits::parse_units(value, unit)?.to_string())
     }
 
-    /// Decodes rlp encoded list with hex data
+    // Decodes RLP encoded data with validation for canonical integer representation
     ///
-    /// # Example
-    ///
+    /// # Examples
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
-    /// assert_eq!(Cast::from_rlp("0xc0").unwrap(), "[]");
-    /// assert_eq!(Cast::from_rlp("0x0f").unwrap(), "\"0x0f\"");
-    /// assert_eq!(Cast::from_rlp("0x33").unwrap(), "\"0x33\"");
-    /// assert_eq!(Cast::from_rlp("0xc161").unwrap(), "[\"0x61\"]");
-    /// assert_eq!(Cast::from_rlp("0xc26162").unwrap(), "[\"0x61\",\"0x62\"]");
+    /// assert_eq!(Cast::from_rlp("0xc0", false).unwrap(), "[]");
+    /// assert_eq!(Cast::from_rlp("0x0f", false).unwrap(), "\"0x0f\"");
+    /// assert_eq!(Cast::from_rlp("0x33", false).unwrap(), "\"0x33\"");
+    /// assert_eq!(Cast::from_rlp("0xc161", false).unwrap(), "[\"0x61\"]");
+    /// assert_eq!(Cast::from_rlp("820002", true).is_err(), true);
+    /// assert_eq!(Cast::from_rlp("820002", false).unwrap(), "\"0x0002\"");
+    /// assert_eq!(Cast::from_rlp("00", true).is_err(), true);
+    /// assert_eq!(Cast::from_rlp("00", false).unwrap(), "\"0x00\"");
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
+    pub fn from_rlp(value: impl AsRef<str>, as_int: bool) -> Result<String> {
         let bytes = hex::decode(value.as_ref()).wrap_err("Could not decode hex")?;
+
+        if as_int {
+            return Ok(U256::decode(&mut &bytes[..])?.to_string());
+        }
+
         let item = Item::decode(&mut &bytes[..]).wrap_err("Could not decode rlp")?;
+
         Ok(item.to_string())
     }
 
@@ -2288,7 +2284,7 @@ mod tests {
     #[test]
     fn from_rlp() {
         let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
-        let item = Cast::from_rlp(rlp).unwrap();
+        let item = Cast::from_rlp(rlp, false).unwrap();
         assert_eq!(
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
