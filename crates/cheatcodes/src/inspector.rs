@@ -46,7 +46,10 @@ use revm::{
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId, EOF_MAGIC_BYTES},
+    primitives::{
+        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId,
+        EOF_MAGIC_BYTES,
+    },
     EvmContext, InnerEvmContext, Inspector,
 };
 use serde_json::Value;
@@ -377,7 +380,8 @@ pub struct Cheatcodes {
     pub delegations: HashMap<Address, SignedAuthorization>,
     /// The currently active delegation address that will be used for the next transaction.
     /// When a delegation is attached via `vm.attachDelegation()`, this address is set and used
-    /// to look up the authorization data from the `delegations` map when broadcasting transactions.
+    /// to look up the authorization data from the `delegations` map when broadcasting
+    /// transactions.
     pub active_delegation: Option<Address>,
 
     /// The gas price.
@@ -1021,18 +1025,21 @@ where {
                         ..Default::default()
                     };
 
-                    if let Some(auth_list) = self.active_delegation.and_then(|addr| self.delegations.remove(&addr)) {
+                    if let Some(auth_list) =
+                        self.active_delegation.and_then(|addr| self.delegations.remove(&addr))
+                    {
                         tx_req.authorization_list = Some(vec![auth_list]);
                         tx_req.transaction_type = Some(4); // EIP-7702
-                        // known working values for 7702 on odyssey
-                        // TODO(7702): These gas values are temporary defaults that work for testing.
-                        // We should properly handle gas estimation for EIP-7702 transactions by
-                        // understanding minimum gas requirements from the spec 
-                        // Using provider.estimate_eip1559_fees() during broadcast
-                        // Respecting --gas-* CLI arguments
-                        tx_req.gas = Some(500_000);  // Using 500k to provide safe headroom for complex calls
+                                                           // known working values for 7702 on odyssey
+                                                           // TODO(7702): These gas values are temporary defaults that work for
+                                                           // testing.
+                                                           // We should properly handle gas estimation for EIP-7702 transactions by
+                                                           // understanding minimum gas requirements from the spec
+                                                           // Using provider.estimate_eip1559_fees() during broadcast
+                                                           // Respecting --gas-* CLI arguments
+                        tx_req.gas = Some(500_000); // Using 500k to provide safe headroom for complex calls
                         tx_req.max_fee_per_gas = Some(ecx.env.block.basefee.to());
-                        tx_req.max_priority_fee_per_gas = Some(2_000_000_252);  // 2 gwei priority
+                        tx_req.max_priority_fee_per_gas = Some(2_000_000_252); // 2 gwei priority
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
