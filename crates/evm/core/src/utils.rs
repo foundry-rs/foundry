@@ -1,7 +1,6 @@
 pub use crate::ic::*;
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256,
-    InspectorExt,
+    backend::DatabaseExt, constants::get_create2_deployer, precompiles::ALPHANET_P256, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
@@ -149,12 +148,16 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
+fn get_create2_factory_call_inputs(
+    salt: U256,
+    inputs: CreateInputs,
+    deployer: Address,
+) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
         caller: inputs.caller,
-        bytecode_address: DEFAULT_CREATE2_DEPLOYER,
-        target_address: DEFAULT_CREATE2_DEPLOYER,
+        bytecode_address: deployer,
+        target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value),
         input: calldata.into(),
@@ -190,8 +193,10 @@ pub fn create2_handler_register<I: InspectorExt>(
 
             let gas_limit = inputs.gas_limit;
 
+            // Get CREATE2 deployer.
+            let create2_deployer = get_create2_deployer();
             // Generate call inputs for CREATE2 factory.
-            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs);
+            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs, create2_deployer);
 
             // Call inspector to change input or return outcome.
             let outcome = ctx.external.call(&mut ctx.evm, &mut call_inputs);
@@ -202,7 +207,7 @@ pub fn create2_handler_register<I: InspectorExt>(
                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
 
             // Sanity check that CREATE2 deployer exists.
-            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.info.code_hash;
+            let code_hash = ctx.evm.load_account(create2_deployer)?.info.code_hash;
             if code_hash == KECCAK_EMPTY {
                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
                     result: InterpreterResult {
