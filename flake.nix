@@ -61,13 +61,7 @@
               # releases at build time.
               # Force svm-rs-builds to generate in offline mode and see how
               # much breaks.
-              prePatch = (attrs.prePatch or "") + ''
-                substituteInPlace \
-                  build.rs \
-                  --replace-fail \
-                  'generate();' \
-                  'generate_offline();'
-              '';
+              features = (attrs.features or [ ]) ++ [ "_offline" ];
             };
           };
           cargo = toolchain;
