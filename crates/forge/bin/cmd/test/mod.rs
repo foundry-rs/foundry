@@ -5,7 +5,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
-    gas_report::GasReport,
+    gas_report::{GasReport, GasReportKind},
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, Language},
@@ -54,7 +54,9 @@ mod summary;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::TestSummaryReporter;
 
+use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
+use forge::result::TestKind;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -99,6 +101,15 @@ pub struct TestArgs {
     #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
     decode_internal: Option<Option<Regex>>,
 
+    /// Dumps all debugger steps to file.
+    #[arg(
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    dump: Option<PathBuf>,
+
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
@@ -107,13 +118,9 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
-    /// Output test results in JSON format.
-    #[arg(long, help_heading = "Display options")]
-    json: bool,
-
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with = "json", help_heading = "Display options")]
-    junit: bool,
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report"], help_heading = "Display options")]
+    pub junit: bool,
 
     /// Stop running tests after the first failure.
     #[arg(long)]
@@ -181,13 +188,12 @@ impl TestArgs {
 
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json || self.junit))?;
         self.execute_tests().await
     }
 
     /// Returns sources which include any tests to be executed.
     /// If no filters are provided, sources are filtered by existence of test/invariant methods in
-    /// them, If filters are provided, sources are additionaly filtered by them.
+    /// them, If filters are provided, sources are additionally filtered by them.
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
@@ -201,7 +207,7 @@ impl TestArgs {
         let output = project.compile()?;
 
         if output.has_compiler_errors() {
-            println!("{output}");
+            sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
 
@@ -220,13 +226,13 @@ impl TestArgs {
 
         if test_sources.is_empty() {
             if filter.is_empty() {
-                println!(
+                sh_println!(
                     "No tests found in project! \
                         Forge looks for functions that starts with `test`."
-                );
+                )?;
             } else {
-                println!("No tests match the provided pattern:");
-                print!("{filter}");
+                sh_println!("No tests match the provided pattern:")?;
+                sh_print!("{filter}")?;
 
                 // Try to suggest a test when there's no match
                 if let Some(test_pattern) = &filter.args().test_pattern {
@@ -239,7 +245,7 @@ impl TestArgs {
                         .flat_map(|(_, abi)| abi.functions.into_keys())
                         .collect::<Vec<_>>();
                     if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        println!("\nDid you mean `{suggestion}`?");
+                        sh_println!("\nDid you mean `{suggestion}`?")?;
                     }
                 }
             }
@@ -286,9 +292,7 @@ impl TestArgs {
         let mut project = config.project()?;
 
         // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
             project = config.project()?;
@@ -299,9 +303,8 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler = ProjectCompiler::new()
-            .quiet_if(self.json || self.junit || self.opts.silent)
-            .files(sources_to_compile);
+        let compiler =
+            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -309,6 +312,17 @@ impl TestArgs {
         let project_root = &project.paths.root;
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
+
+        // Remove the snapshots directory if it exists.
+        // This is to ensure that we don't have any stale snapshots.
+        // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
+        // required for comparison.
+        if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
+            let snapshot_dir = project_root.join(&config.snapshots);
+            if snapshot_dir.exists() {
+                let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
+            }
+        }
 
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz.clone())
@@ -357,10 +371,10 @@ impl TestArgs {
 
         let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {
             if let Some(Some(regex)) = maybe_regex {
-                cli_warn!(
+                sh_warn!(
                     "specifying argument for --{flag} is deprecated and will be removed in the future, \
                      use --match-test instead"
-                );
+                )?;
 
                 let test_pattern = &mut filter.args_mut().test_pattern;
                 if test_pattern.is_some() {
@@ -413,11 +427,11 @@ impl TestArgs {
             // Generate SVG.
             inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
                 .wrap_err("failed to write svg")?;
-            println!("\nSaved to {file_name}");
+            sh_println!("Saved to {file_name}")?;
 
             // Open SVG in default program.
             if let Err(e) = opener::open(&file_name) {
-                eprintln!("\nFailed to open {file_name}; please open it manually: {e}");
+                sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
             }
         }
 
@@ -442,7 +456,11 @@ impl TestArgs {
             }
 
             let mut debugger = builder.build();
-            debugger.try_run()?;
+            if let Some(dump_path) = self.dump {
+                debugger.dump_to_file(&dump_path)?;
+            } else {
+                debugger.try_run_tui()?;
+            }
         }
 
         Ok(outcome)
@@ -458,10 +476,13 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
-            return list(runner, filter, self.json);
+            return list(runner, filter);
         }
 
         trace!(target: "forge::test", "running all tests");
+
+        // If we need to render to a serialized format, we should not print anything else to stdout.
+        let silent = self.gas_report && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -488,15 +509,27 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
-        if self.json {
-            let results = runner.test_collect(filter);
-            println!("{}", serde_json::to_string(&results)?);
+        // Run tests in a non-streaming fashion and collect results for serialization.
+        if !self.gas_report && shell::is_json() {
+            let mut results = runner.test_collect(filter);
+            results.values_mut().for_each(|suite_result| {
+                for test_result in suite_result.test_results.values_mut() {
+                    if verbosity >= 2 {
+                        // Decode logs at level 2 and above.
+                        test_result.decoded_logs = decode_console_logs(&test_result.logs);
+                    } else {
+                        // Empty logs for non verbose runs.
+                        test_result.logs = vec![];
+                    }
+                }
+            });
+            sh_println!("{}", serde_json::to_string(&results)?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
         if self.junit {
             let results = runner.test_collect(filter);
-            println!("{}", junit_xml_report(&results, verbosity).to_string()?);
+            sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
@@ -505,7 +538,7 @@ impl TestArgs {
 
         let libraries = runner.libraries.clone();
 
-        // Run tests.
+        // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let show_progress = config.show_progress;
@@ -542,9 +575,16 @@ impl TestArgs {
         }
         let mut decoder = builder.build();
 
-        let mut gas_report = self
-            .gas_report
-            .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
+        let mut gas_report = self.gas_report.then(|| {
+            GasReport::new(
+                config.gas_reports.clone(),
+                config.gas_reports_ignore.clone(),
+                config.gas_reports_include_tests,
+                if shell::is_json() { GasReportKind::JSON } else { GasReportKind::Markdown },
+            )
+        });
+
+        let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
@@ -563,30 +603,41 @@ impl TestArgs {
                 self.flamechart;
 
             // Print suite header.
-            println!();
-            for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", "Warning:".yellow().bold());
-            }
-            if !tests.is_empty() {
-                let len = tests.len();
-                let tests = if len > 1 { "tests" } else { "test" };
-                println!("Ran {len} {tests} for {contract_name}");
+            if !silent {
+                sh_println!()?;
+                for warning in suite_result.warnings.iter() {
+                    sh_warn!("{warning}")?;
+                }
+                if !tests.is_empty() {
+                    let len = tests.len();
+                    let tests = if len > 1 { "tests" } else { "test" };
+                    sh_println!("Ran {len} {tests} for {contract_name}")?;
+                }
             }
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
-                shell::println(result.short_result(name))?;
+                if !silent {
+                    sh_println!("{}", result.short_result(name))?;
 
-                // We only display logs at level 2 and above
-                if verbosity >= 2 {
-                    // We only decode logs from Hardhat and DS-style console events
-                    let console_logs = decode_console_logs(&result.logs);
-                    if !console_logs.is_empty() {
-                        println!("Logs:");
-                        for log in console_logs {
-                            println!("  {log}");
+                    // Display invariant metrics if invariant kind.
+                    if let TestKind::Invariant { runs: _, calls: _, reverts: _, metrics } =
+                        &result.kind
+                    {
+                        print_invariant_metrics(metrics);
+                    }
+
+                    // We only display logs at level 2 and above
+                    if verbosity >= 2 {
+                        // We only decode logs from Hardhat and DS-style console events
+                        let console_logs = decode_console_logs(&result.logs);
+                        if !console_logs.is_empty() {
+                            sh_println!("Logs:")?;
+                            for log in console_logs {
+                                sh_println!("  {log}")?;
+                            }
+                            sh_println!()?;
                         }
-                        println!();
                     }
                 }
 
@@ -628,10 +679,10 @@ impl TestArgs {
                     }
                 }
 
-                if !decoded_traces.is_empty() {
-                    shell::println("Traces:")?;
+                if !silent && !decoded_traces.is_empty() {
+                    sh_println!("Traces:")?;
                     for trace in &decoded_traces {
-                        shell::println(trace)?;
+                        sh_println!("{trace}")?;
                     }
                 }
 
@@ -655,10 +706,89 @@ impl TestArgs {
                         }
                     }
                 }
+
+                // Collect and merge gas snapshots.
+                for (group, new_snapshots) in result.gas_snapshots.iter() {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+
+            // Write gas snapshots to disk if any were collected.
+            if !gas_snapshots.is_empty() {
+                // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+                // Exiting early with code 1 if differences are found.
+                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                    let differences_found = gas_snapshots.clone().into_iter().fold(
+                        false,
+                        |mut found, (group, snapshots)| {
+                            // If the snapshot file doesn't exist, we can't compare so we skip.
+                            if !&config.snapshots.join(format!("{group}.json")).exists() {
+                                return false;
+                            }
+
+                            let previous_snapshots: BTreeMap<String, String> =
+                                fs::read_json_file(&config.snapshots.join(format!("{group}.json")))
+                                    .expect("Failed to read snapshots from disk");
+
+                            let diff: BTreeMap<_, _> = snapshots
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    previous_snapshots.get(k).and_then(|previous_snapshot| {
+                                        if previous_snapshot != v {
+                                            Some((
+                                                k.clone(),
+                                                (previous_snapshot.clone(), v.clone()),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .collect();
+
+                            if !diff.is_empty() {
+                                let _ = sh_eprintln!(
+                                    "{}",
+                                    format!("\n[{group}] Failed to match snapshots:").red().bold()
+                                );
+
+                                for (key, (previous_snapshot, snapshot)) in &diff {
+                                    let _ = sh_eprintln!(
+                                        "{}",
+                                        format!("- [{key}] {previous_snapshot} → {snapshot}").red()
+                                    );
+                                }
+
+                                found = true;
+                            }
+
+                            found
+                        },
+                    );
+
+                    if differences_found {
+                        sh_eprintln!()?;
+                        eyre::bail!("Snapshots differ from previous run");
+                    }
+                }
+
+                // Create `snapshots` directory if it doesn't exist.
+                fs::create_dir_all(&config.snapshots)?;
+
+                // Write gas snapshots to disk per group.
+                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    fs::write_pretty_json_file(
+                        &config.snapshots.join(format!("{group}.json")),
+                        &snapshots,
+                    )
+                    .expect("Failed to write gas snapshots to disk");
+                });
             }
 
             // Print suite summary.
-            shell::println(suite_result.summary())?;
+            if !silent {
+                sh_println!("{}", suite_result.summary())?;
+            }
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
@@ -675,16 +805,16 @@ impl TestArgs {
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
-            shell::println(&finalized)?;
+            sh_println!("{}", &finalized)?;
             outcome.gas_report = Some(finalized);
         }
 
-        if !outcome.results.is_empty() {
-            shell::println(outcome.summary(duration))?;
+        if !silent && !outcome.results.is_empty() {
+            sh_println!("{}", outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
-                shell::println("\n\nTest Summary:")?;
+                sh_println!("\n\nTest Summary:")?;
                 summary_table.print_summary(&outcome);
             }
         }
@@ -774,21 +904,17 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(
-    runner: MultiContractRunner,
-    filter: &ProjectPathsAwareFilter,
-    json: bool,
-) -> Result<TestOutcome> {
+fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
-    if json {
+    if shell::is_json() {
         println!("{}", serde_json::to_string(&results)?);
     } else {
         for (file, contracts) in results.iter() {
-            println!("{file}");
+            sh_println!("{file}")?;
             for (contract, tests) in contracts.iter() {
-                println!("  {contract}");
-                println!("    {}\n", tests.join("\n    "));
+                sh_println!("  {contract}")?;
+                sh_println!("    {}\n", tests.join("\n    "))?;
             }
         }
     }
@@ -865,34 +991,56 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 
 #[cfg(test)]
 mod tests {
+    use crate::opts::{Forge, ForgeSubcommand};
+
     use super::*;
     use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
     fn watch_parse() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
+        let args = match Forge::parse_from(["foundry-cli", "test", "-vw"]).cmd {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
         assert!(args.watch.watch.is_some());
     }
 
     #[test]
     fn fuzz_seed() {
-        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
+        let args = match Forge::parse_from(["foundry-cli", "test", "--fuzz-seed", "0x10"]).cmd {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
         assert!(args.fuzz_seed.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
     fn fuzz_seed_exists() {
-        let args: TestArgs =
-            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
+        let args = match Forge::parse_from([
+            "foundry-cli",
+            "test",
+            "-vvv",
+            "--gas-report",
+            "--fuzz-seed",
+            "0x10",
+        ])
+        .cmd
+        {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
         assert!(args.fuzz_seed.is_some());
     }
 
     #[test]
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
-            let args = TestArgs::parse_from(["foundry-cli", arg]);
+            let args = match Forge::parse_from(["foundry-cli", "test", arg]).cmd {
+                ForgeSubcommand::Test(args) => args,
+                _ => unreachable!(),
+            };
             assert_eq!(args.evm_opts.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
@@ -946,13 +1094,18 @@ contract FooBarTest is DSTest {
         )
         .unwrap();
 
-        let args = TestArgs::parse_from([
+        let args = match Forge::parse_from([
             "foundry-cli",
+            "test",
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
-            "--silent",
-        ]);
+        ])
+        .cmd
+        {
+            ForgeSubcommand::Test(args) => args,
+            _ => unreachable!(),
+        };
 
         let outcome = args.run().await.unwrap();
         let gas_report = outcome.gas_report.unwrap();
@@ -961,7 +1114,7 @@ contract FooBarTest is DSTest {
         let call_cnts = gas_report
             .contracts
             .values()
-            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.calls.len())))
+            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
             .collect::<Vec<_>>();
         // assert that all functions were called at least 100 times
         assert!(call_cnts.iter().all(|c| *c > 100));

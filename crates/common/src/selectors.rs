@@ -4,11 +4,11 @@
 
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::map::HashMap;
 use eyre::Context;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     fmt,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -16,7 +16,6 @@ use std::{
     },
     time::Duration,
 };
-
 const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
 const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
@@ -580,6 +579,7 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
 

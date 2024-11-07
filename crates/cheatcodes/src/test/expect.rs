@@ -1,5 +1,9 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
-use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
+use alloy_primitives::{
+    address, hex,
+    map::{hash_map::Entry, HashMap},
+    Address, Bytes, LogData as RawLog, U256,
+};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
@@ -7,7 +11,6 @@ use revm::interpreter::{
     return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
 };
 use spec::Vm;
-use std::collections::{hash_map::Entry, HashMap};
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -210,7 +213,7 @@ impl Cheatcode for expectCallMinGas_1Call {
 }
 
 impl Cheatcode for expectEmit_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
@@ -223,7 +226,7 @@ impl Cheatcode for expectEmit_0Call {
 }
 
 impl Cheatcode for expectEmit_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
@@ -236,21 +239,21 @@ impl Cheatcode for expectEmit_1Call {
 }
 
 impl Cheatcode for expectEmit_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), false)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
@@ -263,7 +266,7 @@ impl Cheatcode for expectEmitAnonymous_0Call {
 }
 
 impl Cheatcode for expectEmitAnonymous_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
@@ -276,28 +279,28 @@ impl Cheatcode for expectEmitAnonymous_1Call {
 }
 
 impl Cheatcode for expectEmitAnonymous_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, true)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_3Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true)
     }
 }
 
 impl Cheatcode for expectRevert_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false, None)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -311,7 +314,7 @@ impl Cheatcode for expectRevert_1Call {
 }
 
 impl Cheatcode for expectRevert_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -325,7 +328,7 @@ impl Cheatcode for expectRevert_2Call {
 }
 
 impl Cheatcode for expectRevert_3Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { reverter } = self;
         expect_revert(
             ccx.state,
@@ -339,7 +342,7 @@ impl Cheatcode for expectRevert_3Call {
 }
 
 impl Cheatcode for expectRevert_4Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, reverter } = self;
         expect_revert(
             ccx.state,
@@ -353,7 +356,7 @@ impl Cheatcode for expectRevert_4Call {
 }
 
 impl Cheatcode for expectRevert_5Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, reverter } = self;
         expect_revert(
             ccx.state,
@@ -367,7 +370,7 @@ impl Cheatcode for expectRevert_5Call {
 }
 
 impl Cheatcode for expectPartialRevert_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -381,7 +384,7 @@ impl Cheatcode for expectPartialRevert_0Call {
 }
 
 impl Cheatcode for expectPartialRevert_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, reverter } = self;
         expect_revert(
             ccx.state,
@@ -395,13 +398,13 @@ impl Cheatcode for expectPartialRevert_1Call {
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true, false, None)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -415,7 +418,7 @@ impl Cheatcode for _expectCheatcodeRevert_1Call {
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData } = self;
         expect_revert(
             ccx.state,
@@ -429,14 +432,14 @@ impl Cheatcode for _expectCheatcodeRevert_2Call {
 }
 
 impl Cheatcode for expectSafeMemoryCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
@@ -444,7 +447,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 }
 
 impl Cheatcode for expectSafeMemoryCallCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
     }
@@ -597,7 +600,7 @@ pub(crate) fn handle_expect_emit(
     let Some(expected) = &event_to_fill_or_check.log else {
         // Unless the caller is trying to match an anonymous event, the first topic must be
         // filled.
-        if event_to_fill_or_check.anonymous || log.topics().first().is_some() {
+        if event_to_fill_or_check.anonymous || !log.topics().is_empty() {
             event_to_fill_or_check.log = Some(log.data.clone());
             // If we only filled the expected log then we put it back at the same position.
             state.expected_emits.insert(index_to_fill_or_check, event_to_fill_or_check);

@@ -130,6 +130,10 @@ pub fn next_mainnet_etherscan_api_key() -> String {
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
     use NamedChain::*;
 
+    if matches!(chain, NamedChain::Base) {
+        return "https://mainnet.base.org".to_string();
+    }
+
     let idx = next() % num_keys();
     let is_infura = idx < INFURA_KEYS.len();
 
@@ -173,6 +177,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use alloy_primitives::address;

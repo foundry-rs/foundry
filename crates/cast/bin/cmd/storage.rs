@@ -92,7 +92,7 @@ impl StorageArgs {
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
-            println!("{}", cast.storage(address, slot, block).await?);
+            sh_println!("{}", cast.storage(address, slot, block).await?)?;
             return Ok(());
         }
 
@@ -120,7 +120,7 @@ impl StorageArgs {
 
         // Not a forge project or artifact not found
         // Get code from Etherscan
-        eprintln!("No matching artifacts found, fetching source code from Etherscan...");
+        sh_warn!("No matching artifacts found, fetching source code from Etherscan...")?;
 
         if !self.etherscan.has_key() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
@@ -161,7 +161,7 @@ impl StorageArgs {
 
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
-                eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
+                sh_warn!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.")?;
                 let solc = Solc::find_or_install(&MIN_SOLC)?;
                 project.compiler = SolcCompiler::Specific(solc);
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
@@ -223,7 +223,7 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     pretty: bool,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
-        eprintln!("Storage layout is empty.");
+        sh_warn!("Storage layout is empty.")?;
         Ok(())
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
@@ -255,7 +255,7 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
-        println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
+        sh_println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?)?;
         return Ok(())
     }
 
@@ -281,7 +281,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
         ]);
     }
 
-    println!("{table}");
+    sh_println!("{table}")?;
 
     Ok(())
 }

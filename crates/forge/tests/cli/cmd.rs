@@ -8,6 +8,7 @@ use foundry_config::{
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_mainnet_etherscan_api_key,
+    snapbox::IntoData,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
 use semver::Version;
@@ -29,8 +30,29 @@ Commands:
 ...
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Display options:
+      --color <COLOR>
+          Log messages coloring
+
+          Possible values:
+          - auto:   Intelligently guess whether to use color output (default)
+          - always: Force color output
+          - never:  Force disable color output
+
+      --json
+          Format log messages as JSON
+
+  -q, --quiet
+          Do not print log messages
+
+      --verbose
+          Use verbose output
 
 Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
 
@@ -224,12 +246,19 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -252,16 +281,12 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
 
     cmd.current_dir(&nested);
     cmd.arg("init").assert_failure().stderr_eq(str![[r#"
-Error: 
-The target directory is a part of or on its own an already initialized git repository,
+Error: The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
 ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
-
-If none of the previous steps worked, please open an issue at:
-https://github.com/foundry-rs/foundry/issues/new/choose
 
 "#]]);
 
@@ -276,7 +301,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -351,18 +376,23 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
 forgetest!(can_init_non_empty, |prj, cmd| {
     prj.create_file("README.md", "non-empty dir");
     cmd.arg("init").arg(prj.root()).assert_failure().stderr_eq(str![[r#"
-Error: 
-Cannot run `init` on a non-empty directory.
+Error: Cannot run `init` on a non-empty directory.
 Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -386,20 +416,26 @@ forgetest!(can_init_in_empty_repo, |prj, cmd| {
     assert!(root.join(".git").exists());
 
     cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
-Error: 
-Cannot run `init` on a non-empty directory.
+Error: Cannot run `init` on a non-empty directory.
 Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
 "#]]);
+
     assert!(root.join("lib/forge-std").exists());
 });
 
@@ -422,20 +458,26 @@ forgetest!(can_init_in_non_empty_repo, |prj, cmd| {
     prj.create_file(".gitignore", "not foundry .gitignore");
 
     cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
-Error: 
-Cannot run `init` on a non-empty directory.
+Error: Cannot run `init` on a non-empty directory.
 Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
 "#]]);
+
     assert!(root.join("lib/forge-std").exists());
 
     // not overwritten
@@ -451,7 +493,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -522,8 +564,7 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 remote: Not Found
 fatal: repository 'https://github.com/a/' not found
-Error: 
-git fetch exited with code 128
+Error: git fetch exited with code 128
 
 "#]]);
 });
@@ -547,7 +588,7 @@ forgetest!(can_clone, |prj, cmd| {
 Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -595,7 +636,7 @@ forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
 Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -740,9 +781,17 @@ Compiler run successful!
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "build",
+        "--extra-output",
+        "metadata",
+        "legacyAssembly",
+        "ir-optimized",
+        "--extra-output",
+        "ir",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -753,6 +802,7 @@ Compiler run successful!
     let artifact: ConfigurableContractArtifact =
         foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
+    assert!(artifact.legacy_assembly.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
 
@@ -763,6 +813,7 @@ Compiler run successful!
             "metadata",
             "ir-optimized",
             "evm.bytecode.sourceMap",
+            "evm.legacyAssembly",
             "--force",
         ])
         .root_arg()
@@ -784,6 +835,12 @@ Compiler run successful!
     let sourcemap =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.sourcemap"));
     std::fs::read_to_string(sourcemap).unwrap();
+
+    let legacy_assembly = prj
+        .paths()
+        .artifacts
+        .join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.legacyAssembly.json"));
+    std::fs::read_to_string(legacy_assembly).unwrap();
 });
 
 forgetest!(can_print_warnings, |prj, cmd| {
@@ -984,7 +1041,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 });
 
-// test that `forge build` does not print `(with warnings)` if there arent any
+// test that `forge build` does not print `(with warnings)` if there aren't any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
     let config = Config {
         ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
@@ -1058,8 +1115,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     prj.write_config(config);
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
 Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
 [FILE]
@@ -1137,8 +1193,7 @@ contract CTest is DSTest {
 
     // `forge build --force` which should fail
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
  [FILE]:7:19:
   |
@@ -1154,8 +1209,7 @@ Error (2314): Expected ';' but got identifier
 
     // still errors
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
  [FILE]:7:19:
   |
@@ -1195,8 +1249,7 @@ Compiler run successful!
     // introduce the error again but building without force
     prj.add_source("CTest.t.sol", syntax_err).unwrap();
     cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (2314): Expected ';' but got identifier
  [FILE]:7:19:
   |
@@ -1228,7 +1281,7 @@ forgetest!(can_install_and_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]]);
 
@@ -1296,7 +1349,7 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]]);
 
@@ -1418,11 +1471,7 @@ Compiler run successful!
     }
 );
 
-forgetest!(gas_report_all_contracts, |prj, cmd| {
-    prj.insert_ds_test();
-    prj.add_source(
-        "Contracts.sol",
-        r#"
+const GAS_REPORT_CONTRACTS: &str = r#"
 //SPDX-license-identifier: MIT
 
 import "./test.sol";
@@ -1505,9 +1554,11 @@ contract ContractThreeTest is DSTest {
         c3.baz();
     }
 }
-    "#,
-    )
-    .unwrap();
+"#;
+
+forgetest!(gas_report_all_contracts, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for all
     prj.write_config(Config {
@@ -1516,34 +1567,256 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
 
-    let first_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
-    let second_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
-    let third_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     prj.write_config(Config {
         gas_reports: (vec![
@@ -1553,125 +1826,168 @@ contract ContractThreeTest is DSTest {
         ]),
         ..Default::default()
     });
-    let fourth_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 });
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.add_source(
-        "Contracts.sol",
-        r#"
-//SPDX-license-identifier: MIT
-
-import "./test.sol";
-
-contract ContractOne {
-    int public i;
-
-    constructor() {
-        i = 0;
-    }
-
-    function foo() public{
-        while(i<5){
-            i++;
-        }
-    }
-}
-
-contract ContractOneTest is DSTest {
-    ContractOne c1;
-
-    function setUp() public {
-        c1 = new ContractOne();
-    }
-
-    function testFoo() public {
-        c1.foo();
-    }
-}
-
-
-contract ContractTwo {
-    int public i;
-
-    constructor() {
-        i = 0;
-    }
-
-    function bar() public{
-        while(i<50){
-            i++;
-        }
-    }
-}
-
-contract ContractTwoTest is DSTest {
-    ContractTwo c2;
-
-    function setUp() public {
-        c2 = new ContractTwo();
-    }
-
-    function testBar() public {
-        c2.bar();
-    }
-}
-
-contract ContractThree {
-    int public i;
-
-    constructor() {
-        i = 0;
-    }
-
-    function baz() public{
-        while(i<500){
-            i++;
-        }
-    }
-}
-
-contract ContractThreeTest is DSTest {
-    ContractThree c3;
-
-    function setUp() public {
-        c3 = new ContractThree();
-    }
-
-    function testBaz() public {
-        c3.baz();
-    }
-}
-    "#,
-    )
-    .unwrap();
+    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for One
     prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let first_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"),
-        "foo:\n{first_out}"
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
     );
 
     // report for Two
     prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let second_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz"),
-        "bar:\n{second_out}"
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
     );
 
     // report for Three
@@ -1680,104 +1996,45 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        !third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"),
-        "baz:\n{third_out}"
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
     );
 });
 
-forgetest!(gas_ignore_some_contracts, |prj, cmd| {
+forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     prj.insert_ds_test();
-    prj.add_source(
-        "Contracts.sol",
-        r#"
-//SPDX-license-identifier: MIT
-
-import "./test.sol";
-
-contract ContractOne {
-    int public i;
-
-    constructor() {
-        i = 0;
-    }
-
-    function foo() public{
-        while(i<5){
-            i++;
-        }
-    }
-}
-
-contract ContractOneTest is DSTest {
-    ContractOne c1;
-
-    function setUp() public {
-        c1 = new ContractOne();
-    }
-
-    function testFoo() public {
-        c1.foo();
-    }
-}
-
-
-contract ContractTwo {
-    int public i;
-
-    constructor() {
-        i = 0;
-    }
-
-    function bar() public{
-        while(i<50){
-            i++;
-        }
-    }
-}
-
-contract ContractTwoTest is DSTest {
-    ContractTwo c2;
-
-    function setUp() public {
-        c2 = new ContractTwo();
-    }
-
-    function testBar() public {
-        c2.bar();
-    }
-}
-
-contract ContractThree {
-    int public i;
-
-    constructor() {
-        i = 0;
-    }
-
-    function baz() public{
-        while(i<500){
-            i++;
-        }
-    }
-}
-
-contract ContractThreeTest is DSTest {
-    ContractThree c3;
-
-    function setUp() public {
-        c3 = new ContractThree();
-    }
-
-    function testBaz() public {
-        c3.baz();
-    }
-}
-    "#,
-    )
-    .unwrap();
+    prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // ignore ContractOne
     prj.write_config(Config {
@@ -1786,9 +2043,64 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 
     // ignore ContractTwo
     cmd.forge_fuse();
@@ -1798,13 +2110,70 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+...
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
     );
 
-    // ignore ContractThree
+    // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
+    // report for the contract is generated even if it's listed in the ignore
+    // list. This is addressed this way because getting a report you don't expect is
+    // preferable than not getting one you expect. A warning is printed to stderr
+    // indicating the "double listing".
     cmd.forge_fuse();
     prj.write_config(Config {
         gas_reports: (vec![
@@ -1816,9 +2185,209 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    cmd.arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+...
+"#]])
+        .stderr_eq(str![[r#"
+...
+Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
+...
+"#]]);
+    cmd.forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .arg("--json")
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45387,
+        "mean": 45387,
+        "median": 45387,
+        "max": 45387
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 103591,
+      "size": 256
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 260712,
+        "mean": 260712,
+        "median": 260712,
+        "max": 260712
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 103375,
+      "size": 255
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64984,
+        "mean": 64984,
+        "median": 64984,
+        "max": 64984
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        )
+        .stderr_eq(str![[r#"
+...
+Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
+...
+"#]]);
+});
+
+forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public a;
+    int256 public b;
+
+    function setNumber(uint256 x) public {
+        a = x;
+    }
+
+    function setNumber(int256 x) public {
+        b = x;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CounterTest.t.sol",
+        r#"
+import "./test.sol";
+import {Counter} from "./Counter.sol";
+
+contract CounterTest is DSTest {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(uint256(0));
+        counter.setNumber(int256(0));
+    }
+
+    function test_Increment() public {
+        counter.setNumber(uint256(counter.a() + 1));
+        counter.setNumber(int256(counter.b() + 1));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+| src/Counter.sol:Counter contract |                 |       |        |       |         |
+|----------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                  | Deployment Size |       |        |       |         |
+| 101137                           | 250             |       |        |       |         |
+| Function Name                    | min             | avg   | median | max   | # calls |
+| a                                | 2261            | 2261  | 2261   | 2261  | 1       |
+| b                                | 2305            | 2305  | 2305   | 2305  | 1       |
+| setNumber(int256)                | 23648           | 33604 | 33604  | 43560 | 2       |
+| setNumber(uint256)               | 23604           | 33560 | 33560  | 43516 | 2       |
+...
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Counter.sol:Counter",
+    "deployment": {
+      "gas": 101137,
+      "size": 250
+    },
+    "functions": {
+      "a()": {
+        "calls": 1,
+        "min": 2261,
+        "mean": 2261,
+        "median": 2261,
+        "max": 2261
+      },
+      "b()": {
+        "calls": 1,
+        "min": 2305,
+        "mean": 2305,
+        "median": 2305,
+        "max": 2305
+      },
+      "setNumber(int256)": {
+        "calls": 2,
+        "min": 23648,
+        "mean": 33604,
+        "median": 33604,
+        "max": 43560
+      },
+      "setNumber(uint256)": {
+        "calls": 2,
+        "min": 23604,
+        "mean": 33560,
+        "median": 33560,
+        "max": 43516
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
@@ -2114,9 +2683,9 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-| Contract | Size (B) | Margin (B) |
-|----------|----------|------------|
-| Counter  |      247 |     24,329 |
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+|----------|------------------|-------------------|--------------------|---------------------|
+| Counter  |              247 |               277 |             24,329 |              48,875 |
 
 
 "#]]);
@@ -2150,4 +2719,102 @@ interface Counter {
 
 "#]],
     );
+});
+
+// checks that `clean` also works with the "out" value set in Config
+forgetest_init!(gas_report_include_tests, |prj, cmd| {
+    prj.write_config(Config {
+        gas_reports_include_tests: true,
+        fuzz: FuzzConfig { runs: 1, ..Default::default() },
+        ..Default::default()
+    });
+
+    cmd.args(["test", "--mt", "test_Increment", "--gas-report"]).assert_success().stdout_eq(str![
+        [r#"
+...
+| src/Counter.sol:Counter contract |                 |       |        |       |         |
+|----------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                  | Deployment Size |       |        |       |         |
+| 106715                           | 277             |       |        |       |         |
+| Function Name                    | min             | avg   | median | max   | # calls |
+| increment                        | 43404           | 43404 | 43404  | 43404 | 1       |
+| number                           | 283             | 283   | 283    | 283   | 1       |
+| setNumber                        | 23582           | 23582 | 23582  | 23582 | 1       |
+
+
+| test/Counter.t.sol:CounterTest contract |                 |        |        |        |         |
+|-----------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                         | Deployment Size |        |        |        |         |
+| 965418                                  | 4661            |        |        |        |         |
+| Function Name                           | min             | avg    | median | max    | # calls |
+| setUp                                   | 168064          | 168064 | 168064 | 168064 | 1       |
+| test_Increment                          | 52367           | 52367  | 52367  | 52367  | 1       |
+...
+
+"#]
+    ]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "src/Counter.sol:Counter",
+    "deployment": {
+      "gas": 106715,
+      "size": 277
+    },
+    "functions": {
+      "increment()": {
+        "calls": 1,
+        "min": 43404,
+        "mean": 43404,
+        "median": 43404,
+        "max": 43404
+      },
+      "number()": {
+        "calls": 1,
+        "min": 283,
+        "mean": 283,
+        "median": 283,
+        "max": 283
+      },
+      "setNumber(uint256)": {
+        "calls": 1,
+        "min": 23582,
+        "mean": 23582,
+        "median": 23582,
+        "max": 23582
+      }
+    }
+  },
+  {
+    "contract": "test/Counter.t.sol:CounterTest",
+    "deployment": {
+      "gas": 965418,
+      "size": 4661
+    },
+    "functions": {
+      "setUp()": {
+        "calls": 1,
+        "min": 168064,
+        "mean": 168064,
+        "median": 168064,
+        "max": 168064
+      },
+      "test_Increment()": {
+        "calls": 1,
+        "min": 52367,
+        "mean": 52367,
+        "median": 52367,
+        "max": 52367
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
 });

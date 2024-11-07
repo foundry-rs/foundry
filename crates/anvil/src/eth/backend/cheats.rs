@@ -1,8 +1,8 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::Address;
+use alloy_primitives::{map::AddressHashSet, Address};
 use parking_lot::RwLock;
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 /// Manages user modifications that may affect the node's behavior
 ///
@@ -24,7 +24,7 @@ impl CheatsManager {
         let mut state = self.state.write();
         // When somebody **explicitly** impersonates an account we need to store it so we are able
         // to return it from `eth_accounts`. That's why we do not simply call `is_impersonated()`
-        // which does not check that list when auto impersonation is enabeld.
+        // which does not check that list when auto impersonation is enabled.
         if state.impersonated_accounts.contains(&addr) {
             // need to check if already impersonated, so we don't overwrite the code
             return true
@@ -55,7 +55,7 @@ impl CheatsManager {
     }
 
     /// Returns all accounts that are currently being impersonated.
-    pub fn impersonated_accounts(&self) -> HashSet<Address> {
+    pub fn impersonated_accounts(&self) -> AddressHashSet {
         self.state.read().impersonated_accounts.clone()
     }
 }
@@ -64,7 +64,7 @@ impl CheatsManager {
 #[derive(Clone, Debug, Default)]
 pub struct CheatsState {
     /// All accounts that are currently impersonated
-    pub impersonated_accounts: HashSet<Address>,
+    pub impersonated_accounts: AddressHashSet,
     /// If set to true will make the `is_impersonated` function always return true
     pub auto_impersonate_accounts: bool,
 }

@@ -11,7 +11,8 @@ use anvil_core::eth::{
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot,
+        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction,
+        StateSnapshot,
     },
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
@@ -35,19 +36,19 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
         None
     }
 
-    /// Clear the state and move it into a new `StateSnapshot`
-    fn clear_into_snapshot(&mut self) -> StateSnapshot;
+    /// Clear the state and move it into a new `StateSnapshot`.
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot;
 
-    /// Read the state snapshot
+    /// Read the state snapshot.
     ///
-    /// This clones all the states and returns a new `StateSnapshot`
-    fn read_as_snapshot(&self) -> StateSnapshot;
+    /// This clones all the states and returns a new `StateSnapshot`.
+    fn read_as_state_snapshot(&self) -> StateSnapshot;
 
     /// Clears the entire database
     fn clear(&mut self);
 
-    /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
+    /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
 }
 
 impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
@@ -62,17 +63,17 @@ where
         T::maybe_as_full_db(self)
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
 
     fn clear(&mut self) {}
 
-    fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
 /// Helper trait to reset the DB if it's forked
@@ -176,13 +177,13 @@ pub trait Db:
         Ok(true)
     }
 
-    /// Creates a new snapshot
-    fn snapshot(&mut self) -> U256;
+    /// Creates a new state snapshot.
+    fn snapshot_state(&mut self) -> U256;
 
-    /// Reverts a snapshot
+    /// Reverts a state snapshot.
     ///
-    /// Returns `true` if the snapshot was reverted
-    fn revert(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
+    /// Returns `true` if the state snapshot was reverted.
+    fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
@@ -228,11 +229,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         Ok(None)
     }
 
-    fn snapshot(&mut self) -> U256 {
+    fn snapshot_state(&mut self) -> U256 {
         U256::ZERO
     }
 
-    fn revert(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
+    fn revert_state(&mut self, _state_snapshot: U256, _action: RevertStateSnapshotAction) -> bool {
         false
     }
 
@@ -250,10 +251,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
         Some(&self.accounts)
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.accounts);
-        let mut accounts = HashMap::new();
-        let mut account_storage = HashMap::new();
+        let mut accounts = HashMap::default();
+        let mut account_storage = HashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
@@ -265,10 +266,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db_accounts = self.accounts.clone();
-        let mut accounts = HashMap::new();
-        let mut account_storage = HashMap::new();
+        let mut accounts = HashMap::default();
+        let mut account_storage = HashMap::default();
 
         for (addr, acc) in db_accounts {
             account_storage.insert(addr, acc.storage.clone());
@@ -282,11 +283,11 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
     }
 
     fn clear(&mut self) {
-        self.clear_into_snapshot();
+        self.clear_into_state_snapshot();
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        let StateSnapshot { accounts, mut storage, block_hashes } = state_snapshot;
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
@@ -330,7 +331,7 @@ impl StateDb {
     pub fn serialize_state(&mut self) -> StateSnapshot {
         // Using read_as_snapshot makes sures we don't clear the historical state from the current
         // instance.
-        self.read_as_snapshot()
+        self.read_as_state_snapshot()
     }
 }
 
@@ -362,20 +363,20 @@ impl MaybeFullDatabase for StateDb {
         self.0.maybe_as_full_db()
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        self.0.clear_into_snapshot()
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        self.0.clear_into_state_snapshot()
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
-        self.0.read_as_snapshot()
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.0.read_as_state_snapshot()
     }
 
     fn clear(&mut self) {
         self.0.clear()
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.0.init_from_snapshot(snapshot)
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.0.init_from_state_snapshot(state_snapshot)
     }
 }
 
@@ -556,5 +557,59 @@ impl IntoIterator for SerializableHistoricalStates {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_deser_block() {
+        let block = r#"{
+            "header": {
+                "parentHash": "0xceb0fe420d6f14a8eeec4319515b89acbb0bb4861cad9983d529ab4b1e4af929",
+                "ommersHash": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+                "beneficiary": "0x0000000000000000000000000000000000000000",
+                "stateRoot": "0xe1423fd180478ab4fd05a7103277d64496b15eb914ecafe71eeec871b552efd1",
+                "transactionsRoot": "0x2b5598ef261e5f88e4303bb2b3986b3d5c0ebf4cd9977daebccae82a6469b988",
+                "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa",
+                "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "difficulty": "0x0",
+                "number": "0x2",
+                "gasLimit": "0x1c9c380",
+                "gasUsed": "0x5208",
+                "timestamp": "0x66cdc823",
+                "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "nonce": "0x0000000000000000",
+                "baseFeePerGas": "0x342a1c58",
+                "blobGasUsed": "0x0",
+                "excessBlobGas": "0x0",
+                "extraData": "0x"
+            },
+            "transactions": [
+                {
+                    "EIP1559": {
+                        "chainId": "0x7a69",
+                        "nonce": "0x0",
+                        "gas": "0x5209",
+                        "maxFeePerGas": "0x77359401",
+                        "maxPriorityFeePerGas": "0x1",
+                        "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                        "value": "0x0",
+                        "accessList": [],
+                        "input": "0x",
+                        "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                        "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                        "yParity": "0x0",
+                        "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
+                    }
+                }
+            ],
+            "ommers": []
+        }
+        "#;
+
+        let _block: SerializableBlock = serde_json::from_str(block).unwrap();
     }
 }

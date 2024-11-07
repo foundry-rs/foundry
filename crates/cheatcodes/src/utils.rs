@@ -1,12 +1,13 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, U256};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
-use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
-use rand::Rng;
-use std::collections::HashMap;
+use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use proptest::prelude::Strategy;
+use rand::{Rng, RngCore};
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -71,44 +72,86 @@ impl Cheatcode for ensNamehashCall {
 
 impl Cheatcode for randomUint_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let rng = state.rng();
-        let random_number: U256 = rng.gen();
-        Ok(random_number.abi_encode())
+        random_uint(state, None, None)
     }
 }
 
 impl Cheatcode for randomUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
-        ensure!(min <= max, "min must be less than or equal to max");
-        // Generate random between range min..=max
-        let exclusive_modulo = max - min;
-        let rng = state.rng();
-        let mut random_number = rng.gen::<U256>();
-        if exclusive_modulo != U256::MAX {
-            let inclusive_modulo = exclusive_modulo + U256::from(1);
-            random_number %= inclusive_modulo;
-        }
-        random_number += min;
-        Ok(random_number.abi_encode())
+        random_uint(state, None, Some((min, max)))
+    }
+}
+
+impl Cheatcode for randomUint_2Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bits } = *self;
+        random_uint(state, Some(bits), None)
     }
 }
 
 impl Cheatcode for randomAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let rng = state.rng();
-        let addr = Address::random_with(rng);
-        Ok(addr.abi_encode())
+        Ok(DynSolValue::type_strategy(&DynSolType::Address)
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .abi_encode())
+    }
+}
+
+impl Cheatcode for randomInt_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        random_int(state, None)
+    }
+}
+
+impl Cheatcode for randomInt_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bits } = *self;
+        random_int(state, Some(bits))
+    }
+}
+
+impl Cheatcode for randomBoolCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_bool: bool = state.rng().gen();
+        Ok(rand_bool.abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { len } = *self;
+        ensure!(
+            len <= U256::from(usize::MAX),
+            format!("bytes length cannot exceed {}", usize::MAX)
+        );
+        let mut bytes = vec![0u8; len.to::<usize>()];
+        state.rng().fill_bytes(&mut bytes);
+        Ok(bytes.abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytes4Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u32 = state.rng().next_u32();
+        Ok(B32::from(rand_u32).abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytes8Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u64 = state.rng().next_u64();
+        Ok(B64::from(rand_u64).abi_encode())
     }
 }
 
 impl Cheatcode for pauseTracingCall {
-    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+    fn apply_full(
         &self,
-        ccx: &mut crate::CheatsCtxt<DB>,
-        executor: &mut E,
+        ccx: &mut crate::CheatsCtxt,
+        executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to pause
@@ -128,10 +171,10 @@ impl Cheatcode for pauseTracingCall {
 }
 
 impl Cheatcode for resumeTracingCall {
-    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+    fn apply_full(
         &self,
-        ccx: &mut crate::CheatsCtxt<DB>,
-        executor: &mut E,
+        ccx: &mut crate::CheatsCtxt,
+        executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to unpause
@@ -151,7 +194,7 @@ impl Cheatcode for resumeTracingCall {
 }
 
 impl Cheatcode for setArbitraryStorageCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target } = self;
         ccx.state.arbitrary_storage().mark_arbitrary(target);
 
@@ -160,7 +203,7 @@ impl Cheatcode for setArbitraryStorageCall {
 }
 
 impl Cheatcode for copyStorageCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { from, to } = self;
 
         ensure!(
@@ -180,4 +223,49 @@ impl Cheatcode for copyStorageCall {
 
         Ok(Default::default())
     }
+}
+
+/// Helper to generate a random `uint` value (with given bits or bounded if specified)
+/// from type strategy.
+fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256, U256)>) -> Result {
+    if let Some(bits) = bits {
+        // Generate random with specified bits.
+        ensure!(bits <= U256::from(256), "number of bits cannot exceed 256");
+        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(bits.to::<usize>()))
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .abi_encode())
+    }
+
+    if let Some((min, max)) = bounds {
+        ensure!(min <= max, "min must be less than or equal to max");
+        // Generate random between range min..=max
+        let exclusive_modulo = max - min;
+        let mut random_number: U256 = state.rng().gen();
+        if exclusive_modulo != U256::MAX {
+            let inclusive_modulo = exclusive_modulo + U256::from(1);
+            random_number %= inclusive_modulo;
+        }
+        random_number += min;
+        return Ok(random_number.abi_encode())
+    }
+
+    // Generate random `uint256` value.
+    Ok(DynSolValue::type_strategy(&DynSolType::Uint(256))
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
+}
+
+/// Helper to generate a random `int` value (with given bits if specified) from type strategy.
+fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
+    let no_bits = bits.unwrap_or(U256::from(256));
+    ensure!(no_bits <= U256::from(256), "number of bits cannot exceed 256");
+    Ok(DynSolValue::type_strategy(&DynSolType::Int(no_bits.to::<usize>()))
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
 }

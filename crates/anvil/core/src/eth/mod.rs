@@ -19,6 +19,7 @@ pub mod subscription;
 pub mod transaction;
 pub mod trie;
 pub mod utils;
+pub mod wallet;
 
 #[cfg(feature = "serde")]
 pub mod serde_helpers;
@@ -522,7 +523,7 @@ pub enum EthRequest {
     EvmSetTime(U256),
 
     /// Serializes the current state (including contracts code, contract's storage, accounts
-    /// properties, etc.) into a savable data blob
+    /// properties, etc.) into a saveable data blob
     #[cfg_attr(feature = "serde", serde(rename = "anvil_dumpState", alias = "hardhat_dumpState"))]
     DumpState(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<bool>>>),
 
@@ -769,6 +770,31 @@ pub enum EthRequest {
     /// Reorg the chain
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
     Reorg(ReorgOptions),
+
+    /// Wallet
+    #[cfg_attr(feature = "serde", serde(rename = "wallet_getCapabilities", with = "empty_params"))]
+    WalletGetCapabilities(()),
+
+    /// Wallet send_tx
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "wallet_sendTransaction",
+            alias = "odyssey_sendTransaction",
+            with = "sequence"
+        )
+    )]
+    WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
+
+    /// Add an address to the [`DelegationCapability`] of the wallet
+    ///
+    /// [`DelegationCapability`]: wallet::DelegationCapability  
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_addCapability", with = "sequence"))]
+    AnvilAddCapability(Address),
+
+    /// Set the executor (sponsor) wallet
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_setExecutor", with = "sequence"))]
+    AnvilSetExecutor(String),
 }
 
 /// Represents ethereum JSON-RPC API

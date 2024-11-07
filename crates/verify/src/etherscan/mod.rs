@@ -17,7 +17,6 @@ use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
     abi::encode_function_args,
     retry::{Retry, RetryError},
-    shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
@@ -424,7 +423,7 @@ impl EtherscanVerificationProvider {
         if maybe_creation_code.starts_with(bytecode) {
             let constructor_args = &maybe_creation_code[bytecode.len()..];
             let constructor_args = hex::encode(constructor_args);
-            shell::println(format!("Identified constructor arguments: {constructor_args}"))?;
+            sh_println!("Identified constructor arguments: {constructor_args}")?;
             Ok(constructor_args)
         } else {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")
@@ -451,6 +450,7 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use clap::Parser;
@@ -568,6 +568,7 @@ mod tests {
 
         cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
+...
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

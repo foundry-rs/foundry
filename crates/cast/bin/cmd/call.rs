@@ -69,12 +69,8 @@ pub struct CallArgs {
     #[arg(long, short)]
     block: Option<BlockId>,
 
-    /// Print the decoded output as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
-
     /// Enable Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
 
     #[command(subcommand)]
@@ -131,7 +127,6 @@ impl CallArgs {
             decode_internal,
             labels,
             data,
-            json,
             ..
         } = self;
 
@@ -200,12 +195,12 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(trace, &config, chain, labels, debug, decode_internal).await?;
+            handle_traces(trace, &config, chain, labels, debug, decode_internal, false).await?;
 
             return Ok(());
         }
 
-        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?);
+        sh_println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block).await?)?;
 
         Ok(())
     }

@@ -1,7 +1,7 @@
+use alloy_primitives::map::HashMap;
 use indicatif::{MultiProgress, ProgressBar};
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc, time::Duration};
-
+use std::{sync::Arc, time::Duration};
 /// State of [ProgressBar]s displayed for the given test run.
 /// Shows progress of all test suites matching filter.
 /// For each test within the test suite an individual progress bar is displayed.
@@ -48,7 +48,7 @@ impl TestsProgressState {
     pub fn end_suite_progress(&mut self, suite_name: &String, result_summary: String) {
         if let Some(suite_progress) = self.suites_progress.remove(suite_name) {
             self.multi.suspend(|| {
-                println!("{suite_name}\n  ↪ {result_summary}");
+                let _ = sh_println!("{suite_name}\n  ↪ {result_summary}");
             });
             suite_progress.finish_and_clear();
             // Increment test progress bar to reflect completed test suite.

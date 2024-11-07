@@ -1,14 +1,16 @@
 //! Coverage reports.
 
+use alloy_primitives::map::HashMap;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
-pub use foundry_evm::coverage::*;
 use std::{
-    collections::{hash_map, HashMap},
+    collections::hash_map,
     io::Write,
     path::{Path, PathBuf},
 };
+
+pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
@@ -53,7 +55,7 @@ impl CoverageReporter for SummaryReporter {
         }
 
         self.add_row("Total", self.total.clone());
-        println!("{}", self.table);
+        sh_println!("{}", self.table)?;
         Ok(())
     }
 }
@@ -86,7 +88,7 @@ impl<'a> LcovReporter<'a> {
     }
 }
 
-impl<'a> CoverageReporter for LcovReporter<'a> {
+impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (file, items) in report.items_by_source() {
             let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
@@ -137,7 +139,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
             writeln!(self.destination, "end_of_record")?;
         }
 
-        println!("Wrote LCOV report.");
+        sh_println!("Wrote LCOV report.")?;
 
         Ok(())
     }
@@ -149,30 +151,30 @@ pub struct DebugReporter;
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_source() {
-            println!("Uncovered for {}:", path.display());
+            sh_println!("Uncovered for {}:", path.display())?;
             items.iter().for_each(|item| {
                 if item.hits == 0 {
-                    println!("- {item}");
+                    let _ = sh_println!("- {item}");
                 }
             });
-            println!();
+            sh_println!()?;
         }
 
         for (contract_id, anchors) in &report.anchors {
-            println!("Anchors for {contract_id}:");
+            sh_println!("Anchors for {contract_id}:")?;
             anchors
                 .0
                 .iter()
                 .map(|anchor| (false, anchor))
                 .chain(anchors.1.iter().map(|anchor| (true, anchor)))
                 .for_each(|(is_deployed, anchor)| {
-                    println!("- {anchor}");
+                    let _ = sh_println!("- {anchor}");
                     if is_deployed {
-                        println!("- Creation code");
+                        let _ = sh_println!("- Creation code");
                     } else {
-                        println!("- Runtime code");
+                        let _ = sh_println!("- Runtime code");
                     }
-                    println!(
+                    let _ = sh_println!(
                         "  - Refers to item: {}",
                         report
                             .items
@@ -181,7 +183,7 @@ impl CoverageReporter for DebugReporter {
                             .map_or("None".to_owned(), |item| item.to_string())
                     );
                 });
-            println!();
+            sh_println!()?;
         }
 
         Ok(())
@@ -268,7 +270,7 @@ struct LineNumberCache {
 
 impl LineNumberCache {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, line_offsets: HashMap::new() }
+        Self { root, line_offsets: HashMap::default() }
     }
 
     pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {

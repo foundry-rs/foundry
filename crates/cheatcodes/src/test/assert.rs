@@ -2,7 +2,7 @@ use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::{
     abi::{format_units_int, format_units_uint},
-    backend::{DatabaseExt, GLOBAL_FAIL_SLOT},
+    backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
@@ -37,27 +37,27 @@ macro_rules! format_values {
     };
 }
 
-impl<'a, T: Display> ComparisonAssertionError<'a, T> {
+impl<T: Display> ComparisonAssertionError<'_, T> {
     fn format_for_values(&self) -> String {
         format_values!(self, T::to_string)
     }
 }
 
-impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
+impl<T: Display> ComparisonAssertionError<'_, Vec<T>> {
     fn format_for_arrays(&self) -> String {
         let formatter = |v: &Vec<T>| format!("[{}]", v.iter().format(", "));
         format_values!(self, formatter)
     }
 }
 
-impl<'a> ComparisonAssertionError<'a, U256> {
+impl ComparisonAssertionError<'_, U256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
         let formatter = |v: &U256| format_units_uint(v, decimals);
         format_values!(self, formatter)
     }
 }
 
-impl<'a> ComparisonAssertionError<'a, I256> {
+impl ComparisonAssertionError<'_, I256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
         let formatter = |v: &I256| format_units_int(v, decimals);
         format_values!(self, formatter)
@@ -169,10 +169,10 @@ impl EqRelAssertionError<I256> {
 
 type ComparisonResult<'a, T> = Result<Vec<u8>, ComparisonAssertionError<'a, T>>;
 
-fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
+fn handle_assertion_result<ERR>(
     result: core::result::Result<Vec<u8>, ERR>,
-    ccx: &mut CheatsCtxt<DB>,
-    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
     error_formatter: impl Fn(&ERR) -> String,
     error_msg: Option<&str>,
     format_error: bool,
@@ -224,10 +224,10 @@ macro_rules! impl_assertions {
     };
     (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr, $format_error:literal) => {
         impl crate::Cheatcode for $no_error {
-            fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+            fn apply_full(
                 &self,
-                ccx: &mut CheatsCtxt<DB>,
-                executor: &mut E,
+                ccx: &mut CheatsCtxt,
+                executor: &mut dyn CheatcodesExecutor,
             ) -> Result {
                 let Self { $($arg),* } = self;
                 handle_assertion_result($body, ccx, executor, $error_formatter, None, $format_error)
@@ -235,10 +235,10 @@ macro_rules! impl_assertions {
         }
 
         impl crate::Cheatcode for $with_error {
-            fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+            fn apply_full(
                 &self,
-                ccx: &mut CheatsCtxt<DB>,
-                executor: &mut E,
+                ccx: &mut CheatsCtxt,
+                executor: &mut dyn CheatcodesExecutor,
             ) -> Result {
                 let Self { $($arg),*, error} = self;
                 handle_assertion_result($body, ccx, executor, $error_formatter, Some(error), $format_error)

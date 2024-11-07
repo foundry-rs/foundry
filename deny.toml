@@ -53,6 +53,7 @@ allow = [
     "0BSD",
     "MPL-2.0",
     "CDDL-1.0",
+    "Zlib",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses

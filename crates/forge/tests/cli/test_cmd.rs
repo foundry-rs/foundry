@@ -1,6 +1,7 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
+use anvil::{spawn, NodeConfig};
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
@@ -272,6 +273,51 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+const SIMPLE_CONTRACT: &str = r#"
+import "./test.sol";
+import "./console.sol";
+
+contract SimpleContract {
+    uint256 public num;
+
+    function setValues(uint256 _num) public {
+        num = _num;
+    }
+}
+
+contract SimpleContractTest is DSTest {
+    function test() public {
+        SimpleContract c = new SimpleContract();
+        c.setValues(100);
+        console.log("Value set: ", 100);
+    }
+}
+   "#;
+
+forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+
+    // Assert that with verbose output the json output includes the traces
+    cmd.args(["test", "-vvv", "--json"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json": Json]);
+});
+
+forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+
+    // Assert that without verbose output the json output does not include the traces
+    cmd.args(["test", "--json"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json": Json]);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
@@ -597,43 +643,12 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 "#]]);
 });
 
-forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
-    prj.wipe_contracts();
-
-    prj.add_test(
-        "Contract.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract Destructing {
-    function destruct() public {
-        selfdestruct(payable(address(0)));
-    }
-}
-
-contract SelfDestructTest is Test {
-    function test() public {
-        Destructing d = new Destructing();
-        vm.store(address(d), bytes32(0), bytes32(uint256(1)));
-        d.destruct();
-        assertEq(address(d).code.length, 0);
-        assertEq(vm.load(address(d), bytes32(0)), bytes32(0));
-    }
-}
-   "#,
-    )
-    .unwrap();
-
-    cmd.args(["test", "-vvvv", "--isolate"]).assert_success();
-});
-
 forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_test(
         "Contract.t.sol",
         r#"
-pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract TransientTester {
@@ -2177,22 +2192,19 @@ Warning: the following cheatcode(s) are deprecated and will be removed in future
 
 forgetest_init!(requires_single_test, |prj, cmd| {
     cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamechart"]).assert_failure().stderr_eq(str![[r#"
-Error: 
-2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
 
 Use --match-contract and --match-path to further limit the search.
 
@@ -2201,7 +2213,382 @@ Use --match-contract and --match-path to further limit the search.
 
 forgetest_init!(deprecated_regex_arg, |prj, cmd| {
     cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
-warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
+Warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
 
 "#]]);
+});
+
+// Test a script that calls vm.rememberKeys
+forgetest_init!(script_testing, |prj, cmd| {
+    prj
+    .add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
+
+contract WalletScript is Script {
+function run() public {
+    string memory mnemonic = "test test test test test test test test test test test junk";
+    string memory derivationPath = "m/44'/60'/0'/0/";
+    address[] memory wallets = Vm(address(vm)).rememberKeys(mnemonic, derivationPath, 3);
+    for (uint256 i = 0; i < wallets.length; i++) {
+        console.log(wallets[i]);
+    }
+}
+}
+
+contract FooTest {
+    WalletScript public script;
+
+
+    function setUp() public {
+        script = new WalletScript();
+    }
+
+    function testWalletScript() public {
+        script.run();
+    }
+}
+
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "testWalletScript", "-vvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Foo.sol:FooTest
+[PASS] testWalletScript() ([GAS])
+Logs:
+  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/8995>
+forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
+    prj.add_source(
+        "ParentProxy.sol",
+        r#"
+import {Counter} from "./Counter.sol";
+
+abstract contract ParentProxy {
+    Counter impl;
+    bytes data;
+
+    constructor(Counter _implementation, bytes memory _data) {
+        impl = _implementation;
+        data = _data;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Proxy.sol",
+        r#"
+import {ParentProxy} from "./ParentProxy.sol";
+import {Counter} from "./Counter.sol";
+
+contract Proxy is ParentProxy {
+    constructor(Counter _implementation, bytes memory _data)
+        ParentProxy(_implementation, _data)
+    {}
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "MetadataTraceTest.t.sol",
+        r#"
+import {Counter} from "src/Counter.sol";
+import {Proxy} from "src/Proxy.sol";
+
+import {Test} from "forge-std/Test.sol";
+
+contract MetadataTraceTest is Test {
+    function test_proxy_trace() public {
+        Counter counter = new Counter();
+        new Proxy(counter, "");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
+[PASS] test_proxy_trace() ([GAS])
+Traces:
+  [152142] MetadataTraceTest::test_proxy_trace()
+    ├─ [49499] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 247 bytes of code
+    ├─ [37978] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 63 bytes of code
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Check consistent traces for running with no metadata.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-metadata"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
+[PASS] test_proxy_trace() ([GAS])
+Traces:
+  [130521] MetadataTraceTest::test_proxy_trace()
+    ├─ [38693] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 193 bytes of code
+    ├─ [27175] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 9 bytes of code
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Tests if dump of execution was created.
+forgetest!(test_debug_with_dump, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    let dump_path = prj.root().join("dump.json");
+
+    cmd.args(["test", "--debug", "testDummy", "--dump", dump_path.to_str().unwrap()]);
+    cmd.assert_success();
+
+    assert!(dump_path.exists());
+});
+
+forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let (_api, handle) = spawn(NodeConfig::test().silent()).await;
+
+    prj.insert_vm();
+    prj.insert_ds_test();
+    prj.insert_console();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+        contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "DeployCounter",
+        r#"
+        import "forge-std/Script.sol";
+        import "src/Counter.sol";
+
+        contract DeployCounter is Script {
+            function run() public {
+                vm.startBroadcast();
+
+                Counter counter = new Counter();
+
+                counter.increment();
+
+                counter.setNumber(10);
+
+                vm.stopBroadcast();
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    prj.add_script(
+        "DeployCounterWithCreate2",
+        r#"
+        import "forge-std/Script.sol";
+        import "src/Counter.sol";
+
+        contract DeployCounterWithCreate2 is Script {
+            function run() public {
+                vm.startBroadcast();
+
+                bytes32 salt = bytes32(uint256(1337));
+                Counter counter = new Counter{salt: salt}();
+
+                counter.increment();
+
+                counter.setNumber(20);
+
+                vm.stopBroadcast();
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    let test = r#"
+        import {Vm} from "../src/Vm.sol";
+        import {DSTest} from "../src/test.sol";
+        import {console} from "../src/console.sol";
+
+        contract GetBroadcastTest is DSTest {
+
+            Vm constant vm = Vm(HEVM_ADDRESS);
+
+            function test_getLatestBroacast() external {
+                // Gets the latest create
+                Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
+                    "Counter",
+                    31337,
+                    Vm.BroadcastTxType.Create
+                );
+
+                console.log("latest create");
+                console.log(broadcast.blockNumber);
+
+                assertEq(broadcast.blockNumber, 1);
+
+                // Gets the latest create2
+                Vm.BroadcastTxSummary memory broadcast2 = vm.getBroadcast(
+                    "Counter",
+                    31337,
+                    Vm.BroadcastTxType.Create2
+                );
+
+                console.log("latest create2");
+                console.log(broadcast2.blockNumber);
+                assertEq(broadcast2.blockNumber, 4);
+
+                // Gets the latest call
+                Vm.BroadcastTxSummary memory broadcast3 = vm.getBroadcast(
+                    "Counter",
+                    31337,
+                    Vm.BroadcastTxType.Call
+                );
+
+                console.log("latest call");
+                assertEq(broadcast3.blockNumber, 6);
+            }
+
+            function test_getBroadcasts() public {
+                // Gets all calls
+                Vm.BroadcastTxSummary[] memory broadcasts = vm.getBroadcasts(
+                    "Counter",
+                    31337,
+                    Vm.BroadcastTxType.Call
+                );
+
+                assertEq(broadcasts.length, 4);
+            }
+
+            function test_getAllBroadcasts() public {
+                // Gets all broadcasts
+                Vm.BroadcastTxSummary[] memory broadcasts2 = vm.getBroadcasts(
+                    "Counter",
+                    31337
+                );
+
+                assertEq(broadcasts2.length, 6);
+            }
+
+            function test_getLatestDeployment() public {
+                address deployedAddress = vm.getDeployment(
+                    "Counter",
+                    31337
+                );   
+
+                assertEq(deployedAddress, address(0x030D07c16e2c0a77f74ab16f3C8F10ACeF89FF81));
+            }
+
+            function test_getDeployments() public {
+                address[] memory deployments = vm.getDeployments(
+                    "Counter",
+                    31337
+                );
+
+                assertEq(deployments.length, 2);
+                assertEq(deployments[0], address(0x030D07c16e2c0a77f74ab16f3C8F10ACeF89FF81)); // Create2 address - latest deployment
+                assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
+            }
+            
+}
+    "#;
+
+    prj.add_test("GetBroadcast", test).unwrap();
+
+    let sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    cmd.args([
+        "script",
+        "DeployCounter",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        sender,
+        "--unlocked",
+        "--broadcast",
+        "--slow",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "DeployCounterWithCreate2",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--sender",
+            sender,
+            "--unlocked",
+            "--broadcast",
+            "--slow",
+        ])
+        .assert_success();
+
+    let broadcast_path = prj.root().join("broadcast");
+
+    // Check if the broadcast folder exists
+    assert!(broadcast_path.exists() && broadcast_path.is_dir());
+
+    cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
 });

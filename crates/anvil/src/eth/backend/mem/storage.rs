@@ -10,7 +10,12 @@ use crate::eth::{
     error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
-use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
+use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_primitives::{
+    map::{B256HashMap, HashMap},
+    Bytes, B256, U256, U64,
+};
 use alloy_rpc_types::{
     trace::{
         geth::{
@@ -35,12 +40,9 @@ use foundry_evm::{
     },
 };
 use parking_lot::RwLock;
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt,
-    sync::Arc,
-    time::Duration,
-};
+use revm::primitives::SpecId;
+use std::{collections::VecDeque, fmt, sync::Arc, time::Duration};
+// use yansi::Paint;
 
 // === various limits in number of blocks ===
 
@@ -52,9 +54,9 @@ const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
     /// The states at a certain block
-    states: HashMap<B256, StateDb>,
+    states: B256HashMap<StateDb>,
     /// states which data is moved to disk
-    on_disk_states: HashMap<B256, StateDb>,
+    on_disk_states: B256HashMap<StateDb>,
     /// How many states to store at most
     in_memory_limit: usize,
     /// minimum amount of states we keep in memory
@@ -147,8 +149,8 @@ impl InMemoryBlockStates {
             {
                 // only write to disk if supported
                 if !self.is_memory_only() {
-                    let snapshot = state.0.clear_into_snapshot();
-                    self.disk_cache.write(hash, snapshot);
+                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    self.disk_cache.write(hash, state_snapshot);
                     self.on_disk_states.insert(hash, state);
                     self.oldest_on_disk.push_back(hash);
                 }
@@ -170,7 +172,7 @@ impl InMemoryBlockStates {
         self.states.get(hash).or_else(|| {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
                 if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_snapshot(cached);
+                    state.init_from_state_snapshot(cached);
                     return Some(state);
                 }
             }
@@ -204,8 +206,8 @@ impl InMemoryBlockStates {
 
         // Get on-disk state snapshots
         self.on_disk_states.iter().for_each(|(hash, _)| {
-            if let Some(snapshot) = self.disk_cache.read(*hash) {
-                states.push((*hash, snapshot));
+            if let Some(state_snapshot) = self.disk_cache.read(*hash) {
+                states.push((*hash, state_snapshot));
             }
         });
 
@@ -214,9 +216,9 @@ impl InMemoryBlockStates {
 
     /// Load states from serialized data
     pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, snapshot) in states {
+        for (hash, state_snapshot) in states {
             let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_snapshot(snapshot);
+            state_db.init_from_state_snapshot(state_snapshot);
             self.insert(hash, state_db);
         }
     }
@@ -245,7 +247,7 @@ impl Default for InMemoryBlockStates {
 #[derive(Clone)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
-    pub blocks: HashMap<B256, Block>,
+    pub blocks: B256HashMap<Block>,
     /// mapping from block number -> block hash
     pub hashes: HashMap<U64, B256>,
     /// The current best hash
@@ -256,33 +258,46 @@ pub struct BlockchainStorage {
     pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
-    pub transactions: HashMap<TxHash, MinedTransaction>,
+    pub transactions: B256HashMap<MinedTransaction>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
 }
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+        let is_shanghai = spec_id >= SpecId::SHANGHAI;
+        let is_cancun = spec_id >= SpecId::CANCUN;
+        let is_prague = spec_id >= SpecId::PRAGUE;
+
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
             base_fee,
-            gas_limit: env.block.gas_limit.to::<u128>(),
+            gas_limit: env.block.gas_limit.to::<u64>(),
             beneficiary: env.block.coinbase,
             difficulty: env.block.difficulty,
             blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.block.get_blob_excess_gas().map(|v| v as u128),
+            excess_blob_gas: env.block.get_blob_excess_gas(),
+
+            parent_beacon_block_root: is_cancun.then_some(Default::default()),
+            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
-        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number: U64 = U64::from(0u64);
 
+        let mut blocks = B256HashMap::default();
+        blocks.insert(genesis_hash, block);
+
+        let mut hashes = HashMap::default();
+        hashes.insert(best_number, genesis_hash);
         Self {
-            blocks: HashMap::from([(genesis_hash, block)]),
-            hashes: HashMap::from([(best_number, genesis_hash)]),
+            blocks,
+            hashes,
             best_hash,
             best_number,
             genesis_hash,
@@ -292,9 +307,12 @@ impl BlockchainStorage {
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
+        let mut hashes = HashMap::default();
+        hashes.insert(U64::from(block_number), block_hash);
+
         Self {
-            blocks: Default::default(),
-            hashes: HashMap::from([(U64::from(block_number), block_hash)]),
+            blocks: B256HashMap::default(),
+            hashes,
             best_hash: block_hash,
             best_number: U64::from(block_number),
             genesis_hash: Default::default(),
@@ -416,8 +434,12 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
+    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+        Self {
+            storage: Arc::new(RwLock::new(BlockchainStorage::new(
+                env, spec_id, base_fee, timestamp,
+            ))),
+        }
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
@@ -569,11 +591,12 @@ impl MinedTransaction {
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
     pub inner: ReceiptResponse,
-    /// Output data fo the transaction
+    /// Output data for the transaction
     pub out: Option<Bytes>,
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
@@ -685,11 +708,8 @@ mod tests {
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
             TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
-        let block = Block::new::<MaybeImpersonatedTransaction>(
-            partial_header.clone(),
-            vec![tx.clone()],
-            vec![],
-        );
+        let block =
+            Block::new::<MaybeImpersonatedTransaction>(partial_header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 
@@ -702,7 +722,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit);
+        assert_eq!(loaded_block.header.gas_limit, { partial_header.gas_limit });
         let loaded_tx = loaded_block.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }

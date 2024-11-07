@@ -3,7 +3,8 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_test_utils::Filter;
+use foundry_config::{Config, InvariantConfig};
+use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
@@ -700,3 +701,230 @@ async fn test_no_reverts_in_counterexample() {
         }
     };
 }
+
+// Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
+forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
+    let config = Config {
+        invariant: {
+            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
+        },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add initial test that breaks invariant.
+    prj.add_test(
+        "AssumeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AssumeHandler is Test {
+    function fuzzMe(uint256 a) public {
+        require(false, "Invariant failure");
+    }
+}
+
+contract AssumeTest is Test {
+    function setUp() public {
+        AssumeHandler handler = new AssumeHandler();
+    }
+    function invariant_assume() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: revert: Invariant failure]
+...
+"#]]);
+
+    // Change test to use assume instead require. Same test should fail with too many inputs
+    // rejected message instead persisted failure revert.
+    prj.add_test(
+        "AssumeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AssumeHandler is Test {
+    function fuzzMe(uint256 a) public {
+        vm.assume(false);
+    }
+}
+
+contract AssumeTest is Test {
+    function setUp() public {
+        AssumeHandler handler = new AssumeHandler();
+    }
+    function invariant_assume() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_assume() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
+
+// Test too many inputs rejected for `assumePrecompile`/`assumeForgeAddress`.
+// <https://github.com/foundry-rs/foundry/issues/9054>
+forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
+    let config = Config {
+        invariant: {
+            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
+        },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add initial test that breaks invariant.
+    prj.add_test(
+        "AssumeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BalanceTestHandler is Test {
+    address public ref = address(1412323);
+    address alice;
+
+    constructor(address _alice) {
+        alice = _alice;
+    }
+
+    function increment(uint256 amount_, address addr) public {
+        assumeNotPrecompile(addr);
+        assumeNotForgeAddress(addr);
+        assertEq(alice.balance, 100_000 ether);
+    }
+}
+
+contract BalanceAssumeTest is Test {
+    function setUp() public {
+        address alice = makeAddr("alice");
+        vm.deal(alice, 100_000 ether);
+        targetSender(alice);
+        BalanceTestHandler handler = new BalanceTestHandler(alice);
+        targetContract(address(handler));
+    }
+
+    function invariant_balance() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
+
+// Test proper message displayed if `targetSelector`/`excludeSelector` called with empty selectors.
+// <https://github.com/foundry-rs/foundry/issues/9066>
+forgetest_init!(should_not_panic_if_no_selectors, |prj, cmd| {
+    prj.add_test(
+        "NoSelectorTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract TestHandler is Test {}
+
+contract NoSelectorTest is Test {
+    bytes4[] selectors;
+
+    function setUp() public {
+        TestHandler handler = new TestHandler();
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+        excludeSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+    }
+
+    function invariant_panic() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3607>
+forgetest_init!(should_show_invariant_metrics, |prj, cmd| {
+    prj.add_test(
+        "SelectorMetricsTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterTest is Test {
+    function setUp() public {
+        CounterHandler handler = new CounterHandler();
+        AnotherCounterHandler handler1 = new AnotherCounterHandler();
+        // targetContract(address(handler1));
+    }
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.show-metrics = true
+    function invariant_counter() public {}
+
+    /// forge-config: default.invariant.runs = 10
+    /// forge-config: default.invariant.show-metrics = true
+    function invariant_counter2() public {}
+}
+
+contract CounterHandler is Test {
+    function doSomething(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+
+    function doAnotherThing(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+}
+
+contract AnotherCounterHandler is Test {
+    function doWork(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+
+    function doWorkThing(uint256 a) public {
+        vm.assume(a < 10_000_000);
+        require(a < 100_000);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SelectorMetricsTest.t.sol:CounterTest
+[PASS] invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+| Contract              | Selector       | Calls | Reverts | Discards |
+|-----------------------|----------------|-------|---------|----------|
+| AnotherCounterHandler | doWork         |  [..] |    [..]   |   [..]   |
+| AnotherCounterHandler | doWorkThing    |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doAnotherThing |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doSomething    |  [..] |    [..]   |   [..]   |
+
+[PASS] invariant_counter2() (runs: 10, calls: 5000, reverts: [..])
+| Contract              | Selector       | Calls | Reverts | Discards |
+|-----------------------|----------------|-------|---------|----------|
+| AnotherCounterHandler | doWork         |  [..] |    [..]   |   [..]   |
+| AnotherCounterHandler | doWorkThing    |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doAnotherThing |  [..] |    [..]   |   [..]   |
+| CounterHandler        | doSomething    |  [..] |    [..]   |   [..]   |
+
+...
+"#]]);
+});

@@ -1,7 +1,7 @@
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
@@ -17,7 +17,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::RefCell, collections::BTreeMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -39,6 +39,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Stores gas snapshots for all fuzz cases
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
@@ -88,7 +90,7 @@ impl FuzzedExecutor {
         let execution_data = RefCell::new(FuzzTestData::default());
         let state = self.build_fuzz_state();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strat = proptest::prop_oneof![
+        let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
@@ -96,7 +98,7 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
-        let run_result = self.runner.clone().run(&strat, |calldata| {
+        let run_result = self.runner.clone().run(&strategy, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             // If running with progress then increment current run.
@@ -108,9 +110,11 @@ impl FuzzedExecutor {
                 FuzzOutcome::Case(case) => {
                     let mut data = execution_data.borrow_mut();
                     data.gas_by_case.push((case.case.gas, case.case.stipend));
+
                     if data.first_case.is_none() {
                         data.first_case.replace(case.case);
                     }
+
                     if let Some(call_traces) = case.traces {
                         if data.traces.len() == max_traces_to_collect {
                             data.traces.pop();
@@ -118,14 +122,17 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                         data.breakpoints.replace(case.breakpoints);
                     }
+
                     if show_logs {
                         data.logs.extend(case.logs);
                     }
+
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
                         opt => *opt = case.coverage,
                     }
+
                     data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
                     Ok(())

@@ -1,9 +1,9 @@
 use crate::{filter::GlobMatcher, serde_helpers};
 use foundry_compilers::{
-    artifacts::EvmVersion,
+    artifacts::{BytecodeHash, EvmVersion},
     multi::{MultiCompilerRestrictions, MultiCompilerSettings},
     settings::VyperRestrictions,
-    solc::{EvmVersionRestriction, SolcRestrictions},
+    solc::{Restriction, SolcRestrictions},
     RestrictionsWithVersion,
 };
 use semver::VersionReq;
@@ -43,6 +43,12 @@ impl SettingsOverrides {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum RestrictionsError {
+    #[error("specified both exact and relative restrictions for {0}")]
+    BothExactAndRelative(&'static str),
+}
+
 /// Restrictions for compilation of given paths.
 ///
 /// Only purpose of this type is to accept user input to later construct
@@ -52,25 +58,46 @@ pub struct CompilationRestrictions {
     pub paths: GlobMatcher,
     version: Option<VersionReq>,
     via_ir: Option<bool>,
+    bytecode_hash: Option<BytecodeHash>,
+
     min_optimizer_runs: Option<usize>,
+    optimizer_runs: Option<usize>,
     max_optimizer_runs: Option<usize>,
-    #[serde(flatten)]
-    evm_version: EvmVersionRestriction,
+
+    min_evm_version: Option<EvmVersion>,
+    evm_version: Option<EvmVersion>,
+    max_evm_version: Option<EvmVersion>,
 }
 
-impl From<CompilationRestrictions> for RestrictionsWithVersion<MultiCompilerRestrictions> {
-    fn from(value: CompilationRestrictions) -> Self {
-        Self {
+impl TryFrom<CompilationRestrictions> for RestrictionsWithVersion<MultiCompilerRestrictions> {
+    type Error = RestrictionsError;
+
+    fn try_from(value: CompilationRestrictions) -> Result<Self, Self::Error> {
+        let (min_evm, max_evm) =
+            match (value.min_evm_version, value.evm_version, value.max_evm_version) {
+                (None, None, Some(exact)) => (Some(exact), Some(exact)),
+                (min, max, None) => (min, max),
+                _ => return Err(RestrictionsError::BothExactAndRelative("evm_version")),
+            };
+        let (min_opt, max_opt) =
+            match (value.min_optimizer_runs, value.optimizer_runs, value.max_optimizer_runs) {
+                (None, None, Some(exact)) => (Some(exact), Some(exact)),
+                (min, max, None) => (min, max),
+                _ => return Err(RestrictionsError::BothExactAndRelative("optimizer_runs")),
+            };
+        Ok(Self {
             restrictions: MultiCompilerRestrictions {
                 solc: SolcRestrictions {
-                    evm_version: value.evm_version,
+                    evm_version: Restriction { min: min_evm, max: max_evm },
                     via_ir: value.via_ir,
-                    min_optimizer_runs: value.min_optimizer_runs,
-                    max_optimizer_runs: value.max_optimizer_runs,
+                    optimizer_runs: Restriction { min: min_opt, max: max_opt },
+                    bytecode_hash: value.bytecode_hash,
                 },
-                vyper: VyperRestrictions { evm_version: value.evm_version },
+                vyper: VyperRestrictions {
+                    evm_version: Restriction { min: min_evm, max: max_evm },
+                },
             },
             version: value.version,
-        }
+        })
     }
 }
