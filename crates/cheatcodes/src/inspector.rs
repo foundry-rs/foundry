@@ -1027,7 +1027,7 @@ where {
                         // Using provider.estimate_eip1559_fees() during broadcast
                         // Respecting --gas-* CLI arguments
                         tx_req.gas = Some(500_000);  // Using 500k to provide safe headroom for complex calls
-                        tx_req.max_fee_per_gas = Some(ecx.env.block.basefee.to());  // 3 gwei
+                        tx_req.max_fee_per_gas = Some(ecx.env.block.basefee.to());
                         tx_req.max_priority_fee_per_gas = Some(2_000_000_252);  // 2 gwei priority
                     }
 
