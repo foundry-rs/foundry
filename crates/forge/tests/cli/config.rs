@@ -569,6 +569,25 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
+
+    // check if lib path is absolute, it should deteect nested lib
+    let mut config = cmd.config();
+    config.libs = vec![nested];
+
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
+    similar_asserts::assert_eq!(
+        remappings,
+        vec![
+            // local to the lib
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
+            // global
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remappings local to the lib
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+        ]
+    );
 });
 
 // test remappings with closer paths are prioritised
