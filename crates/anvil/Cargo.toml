@@ -36,7 +36,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 
 # evm support
-bytes = "1.4.0"
+bytes.workspace = true
 k256.workspace = true
 revm = { workspace = true, features = [
     "std",
@@ -93,7 +93,7 @@ thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
-rand = "0.8"
+rand.workspace = true
 eyre.workspace = true
 
 # cli

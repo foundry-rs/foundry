@@ -50,7 +50,7 @@ alloy-rpc-types.workspace = true
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs = "5"
 eyre.workspace = true
-regex = "1"
+regex.workspace = true
 reqwest.workspace = true
 revm.workspace = true
 rustyline = "14"
