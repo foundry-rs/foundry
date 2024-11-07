@@ -80,10 +80,10 @@ dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
-inferno = { version = "0.11.19", default-features = false }
+inferno = { version = "0.11", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 reqwest = { workspace = true, features = ["json"] }
 semver.workspace = true
 serde_json.workspace = true
@@ -92,8 +92,8 @@ solang-parser.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml = { version = "0.8", features = ["preserve_order"] }
-toml_edit = "0.22.4"
+toml = { workspace = true, features = ["preserve_order"] }
+toml_edit = "0.22"
 watchexec = "4.1"
 watchexec-events = "3.0"
 watchexec-signals = "3.0"
