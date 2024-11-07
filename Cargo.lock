@@ -3902,6 +3902,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "walkdir",
+ "yansi",
 ]
 
 [[package]]

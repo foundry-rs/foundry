@@ -933,6 +933,7 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
+    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if self.eof {
             let (tx, rx) = mpsc::channel();
@@ -957,7 +958,14 @@ impl Config {
             return match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(res) => res,
                 Err(RecvTimeoutError::Timeout) => {
-                    // sh_warn!("Pulling Docker image for eof-solc, this might take some time...");
+                    // `sh_warn!` is a circular dependency, preventing us from using it here.
+                    eprintln!(
+                        "{}",
+                        yansi::Paint::yellow(
+                            "Pulling Docker image for eof-solc, this might take some time..."
+                        )
+                    );
+
                     rx.recv().expect("sender dropped")
                 }
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
