@@ -3,8 +3,8 @@ use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_block_explorers::Client;
-use foundry_cli::opts::EtherscanOpts;
-use foundry_common::{compile::ProjectCompiler, fs, shell};
+use foundry_cli::opts::{EtherscanOpts, GlobalOpts};
+use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{info::ContractInfo, utils::canonicalize};
 use foundry_config::{load_config_with_root, try_find_project_root, Config};
 use itertools::Itertools;
@@ -17,6 +17,10 @@ use std::{
 /// CLI arguments for `cast interface`.
 #[derive(Clone, Debug, Parser)]
 pub struct InterfaceArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The target contract, which can be one of:
     /// - A file path to an ABI JSON file.
     /// - A contract identifier in the form `<path>:<contractname>` or just `<contractname>`.
@@ -50,7 +54,7 @@ pub struct InterfaceArgs {
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, name, pragma, output: output_location, etherscan } = self;
+        let Self { contract, name, pragma, output: output_location, etherscan, global } = self;
 
         // Determine if the target contract is an ABI file, a local contract or an Ethereum address.
         let abis = if Path::new(&contract).is_file() &&
@@ -71,7 +75,7 @@ impl InterfaceArgs {
         let interfaces = get_interfaces(abis)?;
 
         // Print result or write to file.
-        let res = if shell::is_json() {
+        let res = if global.shell().is_json() {
             // Format as JSON.
             interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
         } else {

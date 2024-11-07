@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
-    opts::Dependency,
+    opts::{Dependency, GlobalOpts},
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
@@ -26,6 +26,10 @@ static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
     forge install [OPTIONS] <alias>=<github username>/<github project>@<tag>...
     forge install [OPTIONS] <https:// git url>...")]
 pub struct InstallArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The dependencies to install.
     ///
     /// A dependency can be a raw URL, or the path to a GitHub repository.

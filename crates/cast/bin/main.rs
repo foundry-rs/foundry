@@ -19,7 +19,7 @@ use foundry_common::{
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
         SelectorType,
     },
-    shell, stdin,
+    stdin,
 };
 use foundry_config::Config;
 use std::time::Instant;
@@ -50,7 +50,7 @@ fn run() -> Result<()> {
     utils::subscriber();
     utils::enable_paint();
     let args = CastArgs::parse();
-    args.shell.shell().set();
+    args.global.shell().set();
     main_args(args)
 }
 
@@ -189,7 +189,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         // ABI encoding & decoding
         CastSubcommand::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens, shell::is_json())
+            print_tokens(&tokens, args.global.shell().is_json())
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -200,14 +200,14 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            print_tokens(&tokens, shell::is_json())
+            print_tokens(&tokens, args.global.shell().is_json())
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
         CastSubcommand::StringDecode { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
-            print_tokens(&tokens, shell::is_json())
+            print_tokens(&tokens, args.global.shell().is_json())
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
@@ -482,7 +482,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            print_tokens(&tokens, shell::is_json())
+            print_tokens(&tokens, args.global.shell().is_json())
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;

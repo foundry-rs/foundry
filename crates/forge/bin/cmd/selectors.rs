@@ -3,7 +3,7 @@ use clap::Parser;
 use comfy_table::Table;
 use eyre::Result;
 use foundry_cli::{
-    opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
+    opts::{CompilerArgs, CoreBuildArgs, GlobalOpts, ProjectPathsArgs},
     utils::FoundryPathExt,
 };
 use foundry_common::{
@@ -19,6 +19,10 @@ pub enum SelectorsSubcommands {
     /// Check for selector collisions between contracts
     #[command(visible_alias = "co")]
     Collision {
+        /// Include the global options.
+        #[command(flatten)]
+        global: GlobalOpts,
+
         /// The first of the two contracts for which to look selector collisions for, in the form
         /// `(<path>:)?<contractname>`.
         first_contract: ContractInfo,
@@ -34,6 +38,10 @@ pub enum SelectorsSubcommands {
     /// Upload selectors to registry
     #[command(visible_alias = "up")]
     Upload {
+        /// Include the global options.
+        #[command(flatten)]
+        global: GlobalOpts,
+
         /// The name of the contract to upload selectors for.
         #[arg(required_unless_present = "all")]
         contract: Option<String>,
@@ -49,6 +57,10 @@ pub enum SelectorsSubcommands {
     /// List selectors from current workspace
     #[command(visible_alias = "ls")]
     List {
+        /// Include the global options.
+        #[command(flatten)]
+        global: GlobalOpts,
+
         /// The name of the contract to list selectors for.
         #[arg(help = "The name of the contract to list selectors for.")]
         contract: Option<String>,
@@ -60,6 +72,10 @@ pub enum SelectorsSubcommands {
     /// Find if a selector is present in the project
     #[command(visible_alias = "f")]
     Find {
+        /// Include the global options.
+        #[command(flatten)]
+        global: GlobalOpts,
+
         /// The selector to search for
         #[arg(help = "The selector to search for (with or without 0x prefix)")]
         selector: String,
@@ -72,7 +88,7 @@ pub enum SelectorsSubcommands {
 impl SelectorsSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::Upload { contract, all, project_paths } => {
+            Self::Upload { contract, all, project_paths, .. } => {
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
                     compiler: CompilerArgs {
@@ -130,7 +146,7 @@ impl SelectorsSubcommands {
                     }
                 }
             }
-            Self::Collision { mut first_contract, mut second_contract, build } => {
+            Self::Collision { mut first_contract, mut second_contract, build, .. } => {
                 // Compile the project with the two contracts included
                 let project = build.project()?;
                 let mut compiler = ProjectCompiler::new().quiet(true);
@@ -186,7 +202,7 @@ impl SelectorsSubcommands {
                     sh_println!("{table}")?;
                 }
             }
-            Self::List { contract, project_paths } => {
+            Self::List { contract, project_paths, .. } => {
                 sh_println!("Listing selectors for contracts in the project...")?;
                 let build_args = CoreBuildArgs {
                     project_paths,
@@ -272,7 +288,7 @@ impl SelectorsSubcommands {
                 }
             }
 
-            Self::Find { selector, project_paths } => {
+            Self::Find { selector, project_paths, .. } => {
                 sh_println!("Searching for selector {selector:?} in the project...")?;
 
                 let build_args = CoreBuildArgs {

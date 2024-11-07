@@ -3,7 +3,7 @@ use alloy_primitives::{map::HashMap, U256};
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
 use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
-use foundry_cli::utils::STATIC_FUZZ_SEED;
+use foundry_cli::{opts::GlobalOpts, utils::STATIC_FUZZ_SEED};
 use regex::Regex;
 use std::{
     cmp::Ordering,
@@ -24,6 +24,10 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
 /// CLI arguments for `forge snapshot`.
 #[derive(Clone, Debug, Parser)]
 pub struct GasSnapshotArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// Output a diff against a pre-existing gas snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.

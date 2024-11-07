@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use foundry_cli::opts::GlobalOpts;
 use foundry_common::fs;
 use std::path::Path;
 use yansi::Paint;
@@ -7,6 +8,10 @@ use yansi::Paint;
 /// CLI arguments for `forge generate`.
 #[derive(Debug, Parser)]
 pub struct GenerateArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    global: GlobalOpts,
+
     #[command(subcommand)]
     pub sub: GenerateSubcommands,
 }

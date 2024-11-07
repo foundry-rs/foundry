@@ -7,7 +7,10 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     Client,
 };
-use foundry_cli::{opts::EtherscanOpts, utils::Git};
+use foundry_cli::{
+    opts::{EtherscanOpts, GlobalOpts},
+    utils::Git,
+};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{
@@ -64,6 +67,10 @@ pub struct CloneMetadata {
 /// 6. Dump the `CloneMetadata` to the root directory of the cloned project as `.clone.meta` file.
 #[derive(Clone, Debug, Parser)]
 pub struct CloneArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The contract address to clone.
     pub address: Address,
 
@@ -92,8 +99,15 @@ pub struct CloneArgs {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { address, root, opts, etherscan, no_remappings_txt, keep_directory_structure } =
-            self;
+        let Self {
+            address,
+            root,
+            opts,
+            etherscan,
+            no_remappings_txt,
+            keep_directory_structure,
+            ..
+        } = self;
 
         // step 0. get the chain and api key from the config
         let config = Config::from(&etherscan);

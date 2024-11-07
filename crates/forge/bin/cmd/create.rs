@@ -10,9 +10,9 @@ use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge_verify::RetryArgs;
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
-    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
+    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, GlobalOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
@@ -37,6 +37,10 @@ merge_impl_figment_convert!(CreateArgs, opts, eth);
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
 pub struct CreateArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,
 
@@ -87,7 +91,7 @@ pub struct CreateArgs {
     eth: EthereumOpts,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     retry: RetryArgs,
@@ -180,7 +184,8 @@ impl CreateArgs {
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let mut verify = forge_verify::VerifyArgs {
+        let mut verify = VerifyArgs {
+            global: self.global,
             address: Default::default(),
             contract: Some(self.contract.clone()),
             compiler_version: None,
@@ -336,7 +341,8 @@ impl CreateArgs {
         } else {
             None
         };
-        let verify = forge_verify::VerifyArgs {
+        let verify = VerifyArgs {
+            global: self.global,
             address,
             contract: Some(self.contract),
             compiler_version: None,

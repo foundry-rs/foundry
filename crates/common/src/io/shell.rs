@@ -7,6 +7,7 @@ use anstream::AutoStream;
 use anstyle::Style;
 use clap::ValueEnum;
 use eyre::Result;
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     io::{prelude::*, IsTerminal},
@@ -17,19 +18,14 @@ use std::{
     },
 };
 
-/// Returns the currently set verbosity.
-pub fn verbosity() -> Verbosity {
-    Shell::get().verbosity()
-}
-
 /// Returns whether the verbosity level is [`Verbosity::Quiet`].
 pub fn is_quiet() -> bool {
-    verbosity().is_quiet()
+    Shell::get().is_quiet()
 }
 
 /// Returns whether the output format is [`OutputFormat::Json`].
 pub fn is_json() -> bool {
-    Shell::get().output_format().is_json()
+    Shell::get().is_json()
 }
 
 /// The global shell instance.
@@ -167,7 +163,7 @@ enum ShellOut {
 }
 
 /// Whether messages should use color output.
-#[derive(Debug, Default, PartialEq, Clone, Copy, ValueEnum)]
+#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize, Deserialize, ValueEnum)]
 pub enum ColorChoice {
     /// Intelligently guess whether to use color output (default).
     #[default]
@@ -243,6 +239,16 @@ impl Shell {
     #[inline]
     pub fn set_needs_clear(&self, needs_clear: bool) -> bool {
         self.needs_clear.swap(needs_clear, Ordering::Relaxed)
+    }
+
+    /// Returns `true` if the output format is JSON.
+    pub fn is_json(&self) -> bool {
+        self.output_format.is_json()
+    }
+
+    /// Returns `true` if the verbosity level is `Quiet`.
+    pub fn is_quiet(&self) -> bool {
+        self.verbosity.is_quiet()
     }
 
     /// Returns `true` if the `needs_clear` flag is set.

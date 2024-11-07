@@ -11,7 +11,7 @@ use alloy_provider::Provider;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts},
+    opts::{EtherscanOpts, GlobalOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, ContractsByArtifact};
@@ -45,6 +45,10 @@ impl Default for VerifierArgs {
 /// CLI arguments for `forge verify`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The address of the contract to verify.
     pub address: Address,
 
@@ -311,6 +315,10 @@ impl VerifyArgs {
 /// Check verification status arguments
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyCheckArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The verification ID.
     ///
     /// For Etherscan - Submission GUID.

@@ -1,5 +1,6 @@
 use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
+use foundry_cli::opts::GlobalOpts;
 use foundry_compilers::{artifacts::EvmVersion, Graph};
 use foundry_config::Config;
 use semver::Version;
@@ -9,6 +10,10 @@ use std::{collections::BTreeMap, path::PathBuf};
 /// CLI arguments for `forge compiler`.
 #[derive(Debug, Parser)]
 pub struct CompilerArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    global: GlobalOpts,
+
     #[command(subcommand)]
     pub sub: CompilerSubcommands,
 }

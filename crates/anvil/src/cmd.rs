@@ -10,7 +10,7 @@ use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
-use foundry_common::shell;
+use foundry_cli::opts::GlobalOpts;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -31,6 +31,10 @@ use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// Port number to listen on.
     #[arg(long, short, default_value = "8545", value_name = "NUM")]
     pub port: u16,
@@ -255,7 +259,7 @@ impl NodeArgs {
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
-            .set_silent(shell::is_quiet())
+            .set_silent(self.global.shell().is_quiet())
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)

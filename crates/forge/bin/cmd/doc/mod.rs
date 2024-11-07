@@ -4,7 +4,7 @@ use eyre::Result;
 use forge_doc::{
     ContractInheritance, Deployments, DocBuilder, GitSource, InferInlineHyperlinks, Inheritdoc,
 };
-use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
+use foundry_cli::opts::{GlobalOpts, GH_REPO_PREFIX_REGEX};
 use foundry_common::compile::ProjectCompiler;
 use foundry_config::{find_project_root, load_config_with_root, Config};
 use std::{path::PathBuf, process::Command};
@@ -14,6 +14,10 @@ use server::Server;
 
 #[derive(Clone, Debug, Parser)]
 pub struct DocArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,

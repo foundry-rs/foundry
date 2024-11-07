@@ -3,7 +3,7 @@ use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
-use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
+use foundry_cli::opts::{CompilerArgs, CoreBuildArgs, GlobalOpts};
 use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof};
 use foundry_compilers::{
     artifacts::{
@@ -22,6 +22,10 @@ use std::{fmt, sync::LazyLock};
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
 pub struct InspectArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.
     pub contract: ContractInfo,
 
@@ -40,7 +44,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, pretty } = self;
+        let Self { contract, field, build, pretty, .. } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 

@@ -1,7 +1,7 @@
 use super::build::BuildArgs;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::utils::LoadConfig;
+use foundry_cli::{opts::GlobalOpts, utils::LoadConfig};
 use foundry_common::evm::EvmArgs;
 use foundry_config::fix::fix_tomls;
 
@@ -10,6 +10,10 @@ foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 /// CLI arguments for `forge config`.
 #[derive(Clone, Debug, Parser)]
 pub struct ConfigArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// Print only a basic set of the currently set config values.
     #[arg(long)]
     basic: bool,

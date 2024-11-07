@@ -1,6 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
+use foundry_cli::opts::GlobalOpts;
 use soldeer_commands::Command;
 
 // CLI arguments for `forge soldeer`.
@@ -22,6 +23,10 @@ use soldeer_commands::Command;
     override_usage = "Native Solidity Package Manager, `run forge soldeer [COMMAND] --help` for more details"
 )]
 pub struct SoldeerArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    global: GlobalOpts,
+
     /// Command must be one of the following init/install/login/push/uninstall/update/version.
     #[command(subcommand)]
     command: Command,

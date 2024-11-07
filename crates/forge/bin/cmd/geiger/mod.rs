@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
 use eyre::{Result, WrapErr};
-use foundry_cli::utils::LoadConfig;
+use foundry_cli::{opts::GlobalOpts, utils::LoadConfig};
 use foundry_compilers::{resolver::parse::SolData, Graph};
 use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
@@ -17,6 +17,10 @@ mod visitor;
 /// CLI arguments for `forge geiger`.
 #[derive(Clone, Debug, Parser)]
 pub struct GeigerArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// Paths to files or directories to detect.
     #[arg(
         conflicts_with = "root",

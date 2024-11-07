@@ -130,6 +130,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
+                    global: args.global,
                     id: resp.result,
                     etherscan: args.etherscan,
                     retry: RETRY_CHECK_ON_VERIFY,

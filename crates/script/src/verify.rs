@@ -136,6 +136,7 @@ impl VerifyBundle {
                 );
 
                 let verify = VerifyArgs {
+                    global: Default::default(),
                     address: contract_address,
                     contract: Some(contract),
                     compiler_version: Some(version.to_string()),

@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{
+    opts::{CoreBuildArgs, GlobalOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
@@ -46,6 +49,10 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// Build source files from specified paths.
     #[serde(skip)]
     pub paths: Option<Vec<PathBuf>>,

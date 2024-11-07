@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{CoreBuildArgs, ProjectPathsArgs},
+    opts::{CoreBuildArgs, GlobalOpts, ProjectPathsArgs},
     utils::LoadConfig,
 };
 use foundry_common::{compile::with_compilation_reporter, fs};
@@ -15,6 +15,10 @@ use std::path::PathBuf;
 /// CLI arguments for `forge flatten`.
 #[derive(Clone, Debug, Parser)]
 pub struct FlattenArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The path to the contract to flatten.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
@@ -36,7 +40,7 @@ pub struct FlattenArgs {
 
 impl FlattenArgs {
     pub fn run(self) -> Result<()> {
-        let Self { target_path, output, project_paths } = self;
+        let Self { target_path, output, project_paths, .. } = self;
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };
