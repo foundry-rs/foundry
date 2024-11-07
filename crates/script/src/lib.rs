@@ -45,6 +45,7 @@ use foundry_config::{
     Config,
 };
 use foundry_evm::{
+    constants::get_create2_deployer,
     backend::Backend,
     executors::ExecutorBuilder,
     inspectors::{
@@ -73,9 +74,6 @@ mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
-
-// https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
-const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
@@ -205,9 +203,6 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
-    #[arg(long, value_name = "ADDRESS", default_value = DEPLOYER)]
-    pub create2_deployer: Address,
-
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -235,7 +230,7 @@ impl ScriptArgs {
             evm_opts.sender = sender;
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.create2_deployer).await?;
+        let script_config = ScriptConfig::new(config, evm_opts).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets })
     }
@@ -421,6 +416,7 @@ impl ScriptArgs {
             None => CONTRACT_MAX_SIZE,
         };
 
+        let create2_deployer = get_create2_deployer();
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
@@ -433,7 +429,7 @@ impl ScriptArgs {
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
             if let Some(TxKind::Call(to)) = to {
-                if to == self.create2_deployer {
+                if to == create2_deployer {
                     // Size of the salt prefix.
                     offset = 32;
                 } else {
@@ -548,18 +544,17 @@ pub struct ScriptConfig {
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
     pub backends: HashMap<String, Backend>,
-    pub create2_deployer: Address,
 }
 
 impl ScriptConfig {
-    pub async fn new(config: Config, evm_opts: EvmOpts, create2_deployer: Address) -> Result<Self> {
+    pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url).await?
         } else {
             // dapptools compatibility
             1
         };
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), create2_deployer })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -641,11 +636,7 @@ impl ScriptConfig {
             });
         }
 
-        Ok(ScriptRunner::new(
-            builder.build(env, db),
-            self.evm_opts.clone(),
-            self.create2_deployer.clone(),
-        ))
+        Ok(ScriptRunner::new(builder.build(env, db), self.evm_opts.clone()))
     }
 }
 

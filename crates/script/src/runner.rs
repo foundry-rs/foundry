@@ -7,7 +7,7 @@ use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_config::Config;
 use foundry_evm::{
-    constants::CALLER,
+    constants::{get_create2_deployer, CALLER},
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
@@ -20,12 +20,11 @@ use std::collections::VecDeque;
 pub struct ScriptRunner {
     pub executor: Executor,
     pub evm_opts: EvmOpts,
-    pub create2_deployer: Address,
 }
 
 impl ScriptRunner {
-    pub fn new(executor: Executor, evm_opts: EvmOpts, create2_deployer: Address) -> Self {
-        Self { executor, evm_opts, create2_deployer }
+    pub fn new(executor: Executor, evm_opts: EvmOpts) -> Self {
+        Self { executor, evm_opts }
     }
 
     /// Deploys the libraries and broadcast contract. Calls setUp method if requested.
@@ -84,8 +83,9 @@ impl ScriptRunner {
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
+                let create2_deployer = get_create2_deployer();
                 for library in libraries {
-                    let address = self.create2_deployer.create2_from_code(salt, library.as_ref());
+                    let address = create2_deployer.create2_from_code(salt, library.as_ref());
                     // Skip if already deployed
                     if !self.executor.is_empty_code(address)? {
                         continue;
@@ -95,7 +95,7 @@ impl ScriptRunner {
                         .executor
                         .transact_raw(
                             self.evm_opts.sender,
-                            self.create2_deployer,
+                            create2_deployer,
                             calldata.clone().into(),
                             U256::from(0),
                         )
@@ -111,7 +111,7 @@ impl ScriptRunner {
                             from: Some(self.evm_opts.sender),
                             input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
-                            to: Some(TxKind::Call(self.create2_deployer)),
+                            to: Some(TxKind::Call(create2_deployer)),
                             ..Default::default()
                         }
                         .into(),

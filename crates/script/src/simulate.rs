@@ -61,11 +61,7 @@ impl PreSimulationState {
                 let nonce = tx.transaction.nonce().expect("all transactions should have a sender");
                 let to = tx.transaction.to();
 
-                let mut builder = ScriptTransactionBuilder::new(
-                    tx.transaction,
-                    rpc,
-                    self.script_config.create2_deployer.clone(),
-                );
+                let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
                 if let Some(TxKind::Call(_)) = to {
                     builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;

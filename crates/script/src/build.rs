@@ -17,7 +17,7 @@ use foundry_compilers::{
     utils::source_files_iter,
     ArtifactId, ProjectCompileOutput,
 };
-use foundry_evm::traces::debug::ContractSources;
+use foundry_evm::{constants::get_create2_deployer, traces::debug::ContractSources};
 use foundry_linking::Linker;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
@@ -40,9 +40,10 @@ impl BuildData {
     /// Links contracts. Uses CREATE2 linking when possible, otherwise falls back to
     /// default linking with sender nonce and address.
     pub async fn link(self, script_config: &ScriptConfig) -> Result<LinkedBuildData> {
+        let create2_deployer = get_create2_deployer();
         let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
             let provider = try_get_http_provider(fork_url)?;
-            let deployer_code = provider.get_code_at(script_config.create2_deployer).await?;
+            let deployer_code = provider.get_code_at(create2_deployer).await?;
 
             !deployer_code.is_empty()
         } else {
@@ -57,7 +58,7 @@ impl BuildData {
                 self.get_linker()
                     .link_with_create2(
                         known_libraries.clone(),
-                        script_config.create2_deployer,
+                        create2_deployer,
                         script_config.config.create2_library_salt,
                         &self.target,
                     )

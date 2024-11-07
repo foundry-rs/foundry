@@ -4,7 +4,7 @@ use alloy_primitives::{hex, Address, TxKind, B256};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
+use foundry_evm::{constants::get_create2_deployer, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
@@ -12,21 +12,16 @@ use std::collections::BTreeMap;
 #[derive(Debug)]
 pub struct ScriptTransactionBuilder {
     transaction: TransactionWithMetadata,
-    create2_deployer: Address,
 }
 
 impl ScriptTransactionBuilder {
-    pub fn new(
-        transaction: TransactionMaybeSigned,
-        rpc: String,
-        create2_deployer: Address,
-    ) -> Self {
+    pub fn new(transaction: TransactionMaybeSigned, rpc: String) -> Self {
         let mut transaction = TransactionWithMetadata::from_tx_request(transaction);
         transaction.rpc = rpc;
         // If tx.gas is already set that means it was specified in script
         transaction.is_fixed_gas_limit = transaction.tx().gas().is_some();
 
-        Self { transaction, create2_deployer }
+        Self { transaction }
     }
 
     /// Populate the transaction as CALL tx
@@ -36,13 +31,14 @@ impl ScriptTransactionBuilder {
         decoder: &CallTraceDecoder,
     ) -> Result<()> {
         if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
-            if to == self.create2_deployer {
+            let create2_deployer = get_create2_deployer();
+            if to == create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);
 
                     self.set_create(
                         true,
-                        self.create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
+                        create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
                         local_contracts,
                     )?;
                 }
@@ -178,6 +174,6 @@ impl ScriptTransactionBuilder {
 
 impl From<TransactionWithMetadata> for ScriptTransactionBuilder {
     fn from(transaction: TransactionWithMetadata) -> Self {
-        Self { transaction, create2_deployer: DEFAULT_CREATE2_DEPLOYER }
+        Self { transaction }
     }
 }
