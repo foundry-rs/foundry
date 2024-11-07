@@ -1,4 +1,4 @@
-use alloy_primitives::{address, b256, hex, Address, B256};
+use alloy_primitives::{address, b256, hex, hex::FromHex, Address, B256};
 
 /// The cheatcode handler address.
 ///
@@ -46,6 +46,17 @@ pub const DEFAULT_CREATE2_DEPLOYER: Address = address!("4e59b44847b379578588920c
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
 /// The runtime code of the default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
+
+/// The address that deploys the default CREATE2 deployer contract.
+pub fn get_create2_deployer() -> Address {
+    match std::env::var("FOUNDRY_CREATE2_DEPLOYER") {
+        Ok(addr) => Address::from_hex(addr).unwrap_or_else(|_| {
+            error!("env FOUNDRY_CREATE2_DEPLOYER is set, but not a valid Ethereum address, use {DEFAULT_CREATE2_DEPLOYER} instead");
+            DEFAULT_CREATE2_DEPLOYER
+        }),
+        Err(_) => DEFAULT_CREATE2_DEPLOYER,
+    }
+}
 
 #[cfg(test)]
 mod tests {
