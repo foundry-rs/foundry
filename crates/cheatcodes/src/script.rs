@@ -63,6 +63,9 @@ impl Cheatcode for attachDelegationCall {
         authority_acc.info.code_hash = bytecode.hash_slow();
         authority_acc.mark_touch();
 
+        ccx.state.delegations.insert(*implementation, signed_auth);
+        ccx.state.active_delegation = Some(*implementation);
+
         Ok(Default::default())
     }
 }
@@ -76,7 +79,6 @@ impl Cheatcode for signDelegationCall {
         let authority = signer.address();
         let nonce =
             ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?.data.info.nonce;
-
         let auth =
             Authorization { address: *implementation, nonce, chain_id: ccx.ecx.env.cfg.chain_id };
         let hash = auth.signature_hash();
