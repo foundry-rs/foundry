@@ -168,7 +168,7 @@ fn get_create2_factory_call_inputs(
     }
 }
 
-/// Used for routing certain CREATE2 invocations through [DEFAULT_CREATE2_DEPLOYER].
+/// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
 ///
 /// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
 /// true. Keeps track of overridden frames and handles outcome in the overridden insert_call_outcome
