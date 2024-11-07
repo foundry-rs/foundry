@@ -560,6 +560,19 @@ interface Vm {
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData)
         external;
 
+    /// Reverts a call to an address with specified revert data.
+    ///
+    /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;
+
+    /// Reverts a call to an address with a specific `msg.value`, with specified revert data.
+    ///
+    /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData)
+        external;
+
     /// Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls
     /// `target` with the same calldata. This functionality is similar to a delegate call made to
     /// `target` contract from `callee`.

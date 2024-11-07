@@ -6004,6 +6004,46 @@
     },
     {
       "func": {
+        "id": "mockCallRevert_2",
+        "description": "Reverts a call to an address with specified revert data.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCallRevert(address,bytes4,bytes)",
+        "selector": "0x2dfba5df",
+        "selectorBytes": [
+          45,
+          251,
+          165,
+          223
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCallRevert_3",
+        "description": "Reverts a call to an address with a specific `msg.value`, with specified revert data.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCallRevert(address,uint256,bytes4,bytes)",
+        "selector": "0x596c8f04",
+        "selectorBytes": [
+          89,
+          108,
+          143,
+          4
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "mockCall_0",
         "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.",
         "declaration": "function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;",

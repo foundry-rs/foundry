@@ -137,6 +137,40 @@ impl Cheatcode for mockCallRevert_1Call {
     }
 }
 
+impl Cheatcode for mockCallRevert_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { callee, data, revertData } = self;
+        let _ = make_acc_non_empty(callee, ccx.ecx)?;
+
+        mock_call(
+            ccx.state,
+            callee,
+            &Bytes::from(*data),
+            None,
+            revertData,
+            InstructionResult::Revert,
+        );
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for mockCallRevert_3Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { callee, msgValue, data, revertData } = self;
+        let _ = make_acc_non_empty(callee, ccx.ecx)?;
+
+        mock_call(
+            ccx.state,
+            callee,
+            &Bytes::from(*data),
+            Some(msgValue),
+            revertData,
+            InstructionResult::Revert,
+        );
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for mockFunctionCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { callee, target, data } = self;
