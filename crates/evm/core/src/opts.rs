@@ -66,6 +66,9 @@ pub struct EvmOpts {
 
     /// whether to enable Alphanet features.
     pub alphanet: bool,
+
+    /// Optional CREATE2 deployer override
+    pub create2_deployer: Address,
 }
 
 impl EvmOpts {
