@@ -282,6 +282,7 @@ pub struct InspectorStackInner {
     pub tracer: Option<TracingInspector>,
     pub enable_isolation: bool,
     pub alphanet: bool,
+    pub create2_deployer: Address,
 
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -396,6 +397,12 @@ impl InspectorStack {
     #[inline]
     pub fn alphanet(&mut self, yes: bool) {
         self.alphanet = yes;
+    }
+
+    /// Set the CREATE2 deployer address.
+    #[inline]
+    pub fn set_create2_deployer(&mut self, deployer: Address) {
+        self.create2_deployer = deployer;
     }
 
     /// Set whether to enable the log collector.
@@ -1123,6 +1130,10 @@ impl InspectorExt for InspectorStack {
 
     fn is_alphanet(&self) -> bool {
         self.alphanet
+    }
+
+    fn create2_deployer(&self) -> Address {
+        self.create2_deployer
     }
 }
 
