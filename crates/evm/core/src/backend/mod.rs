@@ -7,12 +7,11 @@ use crate::{
     utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
     InspectorExt,
 };
-use alloy_consensus::Transaction;
+use alloy_consensus::Transaction as TransactionTrait;
 use alloy_genesis::GenesisAccount;
-use alloy_network::{AnyRpcBlock, TransactionResponse};
+use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction, TransactionRequest};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
@@ -871,7 +870,7 @@ impl Backend {
         env: Env,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<Option<Transaction>> {
+    ) -> eyre::Result<Option<Transaction<AnyTxEnvelope>>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -884,16 +883,18 @@ impl Backend {
         for tx in full_block.inner.transactions.into_transactions() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from) || tx.ty() == SYSTEM_TRANSACTION_TYPE {
+            if is_known_system_sender(tx.from) ||
+                tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+            {
                 trace!(tx=?tx.tx_hash(), "skipping system transaction");
                 continue;
             }
 
-            if tx.hash == tx_hash {
+            if tx.tx_hash() == tx_hash {
                 // found the target transaction
                 return Ok(Some(tx.inner))
             }
-            trace!(tx=?tx.hash, "committing transaction");
+            trace!(tx=?tx.tx_hash(), "committing transaction");
 
             commit_transaction(
                 &tx.inner,
@@ -1912,9 +1913,9 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
+fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.miner;
+    env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
@@ -1927,7 +1928,7 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction(
-    tx: &Transaction,
+    tx: &Transaction<AnyTxEnvelope>,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
