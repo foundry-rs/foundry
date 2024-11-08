@@ -64,8 +64,11 @@ pub struct CompilationRestrictions {
     optimizer_runs: Option<usize>,
     max_optimizer_runs: Option<usize>,
 
+    #[serde(default, with = "serde_helpers::display_from_str_opt")]
     min_evm_version: Option<EvmVersion>,
+    #[serde(default, with = "serde_helpers::display_from_str_opt")]
     evm_version: Option<EvmVersion>,
+    #[serde(default, with = "serde_helpers::display_from_str_opt")]
     max_evm_version: Option<EvmVersion>,
 }
 
@@ -74,13 +77,13 @@ impl TryFrom<CompilationRestrictions> for RestrictionsWithVersion<MultiCompilerR
 
     fn try_from(value: CompilationRestrictions) -> Result<Self, Self::Error> {
         let (min_evm, max_evm) =
-            match (value.min_evm_version, value.evm_version, value.max_evm_version) {
+            match (value.min_evm_version, value.max_evm_version, value.evm_version) {
                 (None, None, Some(exact)) => (Some(exact), Some(exact)),
                 (min, max, None) => (min, max),
                 _ => return Err(RestrictionsError::BothExactAndRelative("evm_version")),
             };
         let (min_opt, max_opt) =
-            match (value.min_optimizer_runs, value.optimizer_runs, value.max_optimizer_runs) {
+            match (value.min_optimizer_runs, value.max_optimizer_runs, value.optimizer_runs) {
                 (None, None, Some(exact)) => (Some(exact), Some(exact)),
                 (min, max, None) => (min, max),
                 _ => return Err(RestrictionsError::BothExactAndRelative("optimizer_runs")),
