@@ -3,12 +3,10 @@ use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256,
     InspectorExt,
 };
+use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, TxKind, U256};
-use alloy_provider::{
-    network::{BlockResponse, HeaderResponse},
-    Network,
-};
+use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;

@@ -29,6 +29,7 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-provider.workspace = true
+alloy-consensus.workspace = true
 alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-sol-types.workspace = true
