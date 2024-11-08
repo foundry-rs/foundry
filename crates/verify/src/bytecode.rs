@@ -8,8 +8,11 @@ use crate::{
     verify::VerifierArgs,
 };
 use alloy_primitives::{hex, Address, Bytes, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Transaction};
+use alloy_provider::{
+    network::{AnyTxEnvelope, TransactionBuilder},
+    Provider,
+};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Transaction, TransactionRequest};
 use clap::{Parser, ValueHint};
 use eyre::{OptionExt, Result};
 use foundry_cli::{
@@ -19,7 +22,10 @@ use foundry_cli::{
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_env};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    utils::{configure_tx_env, configure_tx_req_env},
+};
 use revm_primitives::AccountInfo;
 use std::path::PathBuf;
 use yansi::Paint;
@@ -241,21 +247,21 @@ impl VerifyBytecodeArgs {
 
             // Setup genesis tx and env.
             let deployer = Address::with_last_byte(0x1);
-            let mut gen_tx = Transaction {
-                from: deployer,
-                to: None,
-                input: Bytes::from(local_bytecode_vec),
-                ..Default::default()
-            };
+            let mut gen_tx_req = TransactionRequest::default()
+                .with_from(deployer)
+                .with_input(Bytes::from(local_bytecode_vec))
+                .into_create();
 
             if let Some(ref block) = genesis_block {
                 configure_env_block(&mut env, block);
-                gen_tx.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
-                gen_tx.gas = block.header.gas_limit;
-                gen_tx.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
+                gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
+                gen_tx_req.gas = Some(block.header.gas_limit);
+                gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            configure_tx_env(&mut env, &gen_tx);
+            // configure_tx_rq_env(&mut env, &gen_tx);
+
+            configure_tx_req_env(&mut env, &gen_tx_req);
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -265,8 +271,12 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address =
-                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), &gen_tx)?;
+            let fork_address = crate::utils::deploy_contract(
+                &mut executor,
+                &env,
+                config.evm_spec_id(),
+                &gen_tx_req,
+            )?;
 
             // Compare runtime bytecode
             let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(

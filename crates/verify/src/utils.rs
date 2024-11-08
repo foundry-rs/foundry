@@ -347,7 +347,7 @@ pub async fn get_tracing_executor(
 
 pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.miner;
+    env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
@@ -362,7 +362,7 @@ pub fn deploy_contract(
 ) -> Result<Address, eyre::ErrReport> {
     let env_with_handler = EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(spec_id));
 
-    if let Some(to) = transaction.to {
+    if let Some(to) = transaction {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
         }

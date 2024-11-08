@@ -4,7 +4,7 @@ use alloy_consensus::{
     AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope,
     TxType,
 };
-use alloy_network::{AnyRpcBlock, ReceiptResponse};
+use alloy_network::{AnyRpcBlock, AnyTxEnvelope, ReceiptResponse};
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64};
 use alloy_rpc_types::{
     AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Header, Log, Transaction,
@@ -356,7 +356,6 @@ yParity              {}",
                 self.inner.tx_hash().pretty(),
                 self.input().pretty(),
                 self.nonce().pretty(),
-                // self.inner.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
                 tx.signature().r().pretty(),
                 tx.signature().s().pretty(),
                 self.to().pretty(),
@@ -535,6 +534,24 @@ value                {}",
                 self.value().pretty(),
             ),
         }
+    }
+}
+
+impl UIfmt for Transaction<AnyTxEnvelope> {
+    fn pretty(&self) -> String {
+        let tx = match &self.inner {
+            AnyTxEnvelope::Ethereum(envelop) => Transaction {
+                inner: envelop.clone(),
+                block_hash: self.block_hash,
+                block_number: self.block_number,
+                from: self.from,
+                effective_gas_price: self.effective_gas_price,
+                transaction_index: self.transaction_index,
+            },
+            AnyTxEnvelope::Unknown(_) => return "Unknown transaction type".to_string(),
+        };
+
+        tx.pretty()
     }
 }
 

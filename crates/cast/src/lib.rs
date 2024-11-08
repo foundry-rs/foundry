@@ -995,7 +995,7 @@ where
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number  > to_block {
+                        if block.number  > to_block {
                             break;
                         }
                     }
