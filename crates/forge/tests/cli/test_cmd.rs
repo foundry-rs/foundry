@@ -932,6 +932,30 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9285>
+forgetest_init!(should_not_record_setup_failures, |prj, cmd| {
+    prj.add_test(
+        "ReplayFailures.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SetupFailureTest is Test {
+    function setUp() public {
+        require(2 > 1);
+    }
+
+    function testA() public pure {
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_success();
+    // Test failure filter should not be persisted if `setUp` failed.
+    assert!(!prj.root().join("cache/test-failures").exists());
+});
+
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
     prj.wipe_contracts();

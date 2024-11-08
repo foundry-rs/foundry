@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ShellOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -938,10 +938,12 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut filter = String::new();
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
-            if let Some(test_match) = test_name.split("(").next() {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
+            if test_name.is_any_test() {
+                if let Some(test_match) = test_name.split("(").next() {
+                    filter.push_str(test_match);
+                    if failures.peek().is_some() {
+                        filter.push('|');
+                    }
                 }
             }
         }
