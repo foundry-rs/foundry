@@ -3761,7 +3761,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=c41bb8e#c41bb8e2a473a1d0a0e813d47031f3e8b5312196"
+source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3798,7 +3798,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=c41bb8e#c41bb8e2a473a1d0a0e813d47031f3e8b5312196"
+source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3807,7 +3807,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=c41bb8e#c41bb8e2a473a1d0a0e813d47031f3e8b5312196"
+source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3830,7 +3830,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=c41bb8e#c41bb8e2a473a1d0a0e813d47031f3e8b5312196"
+source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3844,7 +3844,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=c41bb8e#c41bb8e2a473a1d0a0e813d47031f3e8b5312196"
+source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
