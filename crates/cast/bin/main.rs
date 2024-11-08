@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -189,15 +190,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         // ABI encoding & decoding
         CastSubcommand::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            if shell::is_json() {
-                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
-                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
-            } else {
-                let tokens = format_tokens(&tokens);
-                tokens.for_each(|t| {
-                    let _ = sh_println!("{t}");
-                });
-            }
+            print_tokens(&tokens);
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -208,30 +201,14 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            if shell::is_json() {
-                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
-                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
-            } else {
-                let tokens = format_tokens(&tokens);
-                tokens.for_each(|t| {
-                    let _ = sh_println!("{t}");
-                });
-            }
+            print_tokens(&tokens);
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
         CastSubcommand::StringDecode { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
-            if shell::is_json() {
-                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
-                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
-            } else {
-                let tokens = format_tokens(&tokens);
-                tokens.for_each(|t| {
-                    let _ = sh_println!("{t}");
-                });
-            }
+            print_tokens(&tokens);
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
@@ -506,15 +483,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            if shell::is_json() {
-                let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
-                sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap())?;
-            } else {
-                let tokens = format_tokens(&tokens);
-                tokens.for_each(|t| {
-                    let _ = sh_println!("{t}");
-                });
-            }
+            print_tokens(&tokens);
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;
@@ -650,5 +619,22 @@ async fn main_args(args: CastArgs) -> Result<()> {
             sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
         }
     };
+
+    /// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether
+    /// the shell is in JSON mode.
+    ///
+    /// This is included here to avoid a cyclic dependency between `fmt` and `common`.
+    fn print_tokens(tokens: &[DynSolValue]) {
+        if shell::is_json() {
+            let tokens: Vec<String> = format_tokens_raw(tokens).collect();
+            let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
+        } else {
+            let tokens = format_tokens(tokens);
+            tokens.for_each(|t| {
+                let _ = sh_println!("{t}");
+            });
+        }
+    }
+
     Ok(())
 }
