@@ -36,7 +36,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_network::EthereumWallet;
+use alloy_network::{AnyRpcBlock, EthereumWallet};
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
@@ -53,10 +53,9 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, AnyNetworkBlock, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
-    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
-    Transaction, TransactionReceipt,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
+    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -1709,10 +1708,7 @@ impl Backend {
         }
     }
 
-    pub async fn block_by_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx);
@@ -1728,7 +1724,7 @@ impl Backend {
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    ) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx);
@@ -1741,7 +1737,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyNetworkBlock> {
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyRpcBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
@@ -1777,7 +1773,7 @@ impl Backend {
     pub async fn block_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    ) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx);
@@ -1796,7 +1792,7 @@ impl Backend {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    ) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx);
@@ -1849,14 +1845,14 @@ impl Backend {
         self.blockchain.get_block_by_hash(&hash)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyNetworkBlock> {
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyRpcBlock> {
         let block = self.get_block(number)?;
         let mut block = self.convert_block(block);
         block.transactions.convert_to_hashes();
         Some(block)
     }
 
-    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyNetworkBlock> {
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyRpcBlock> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
         let mut block = self.convert_block(block);
@@ -1866,7 +1862,7 @@ impl Backend {
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format.
-    pub fn convert_block(&self, block: Block) -> AnyNetworkBlock {
+    pub fn convert_block(&self, block: Block) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;

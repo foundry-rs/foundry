@@ -3,7 +3,7 @@ use crate::eth::{
     macros::node_info,
     EthApi,
 };
-use alloy_network::BlockResponse;
+use alloy_network::{AnyRpcBlock, BlockResponse};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::{
     trace::{
@@ -16,8 +16,7 @@ use alloy_rpc_types::{
             RewardAction, TraceOutput,
         },
     },
-    AnyNetworkBlock, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    Transaction,
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, Transaction,
 };
 use alloy_serde::WithOtherFields;
 use itertools::Itertools;
@@ -90,7 +89,7 @@ impl EthApi {
     pub async fn erigon_get_header_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    ) -> Result<Option<AnyRpcBlock>> {
         node_info!("ots_getApiLevel");
 
         self.backend.block_by_number(number).await
@@ -352,7 +351,7 @@ impl EthApi {
     ///     based on the existing list.
     ///
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build_ots_block_details(&self, block: AnyNetworkBlock) -> Result<BlockDetails> {
+    pub async fn build_ots_block_details(&self, block: AnyRpcBlock) -> Result<BlockDetails> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
@@ -399,7 +398,7 @@ impl EthApi {
     /// [`ots_getBlockTransactions`]: https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails
     pub async fn build_ots_block_tx(
         &self,
-        mut block: AnyNetworkBlock,
+        mut block: AnyRpcBlock,
         page: usize,
         page_size: usize,
     ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {

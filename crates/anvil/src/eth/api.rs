@@ -34,7 +34,7 @@ use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelop
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
-    eip2718::Decodable2718, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
+    eip2718::Decodable2718, AnyRpcBlock, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
 };
 use alloy_primitives::{
     map::{HashMap, HashSet},
@@ -56,9 +56,8 @@ use alloy_rpc_types::{
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
-    AccessList, AccessListResult, AnyNetworkBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
-    Transaction,
+    AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Transaction,
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signature;
@@ -741,7 +740,7 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
     }
@@ -749,7 +748,7 @@ impl EthApi {
     /// Returns a _full_ block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash_full(hash).await
     }
@@ -757,7 +756,7 @@ impl EthApi {
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(Some(self.pending_block().await));
@@ -769,10 +768,7 @@ impl EthApi {
     /// Returns a _full_ block with given number
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number_full(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(self.pending_block_full().await);
@@ -1261,7 +1257,7 @@ impl EthApi {
         &self,
         block_hash: B256,
         idx: Index,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockHashAndIndex");
         let number =
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
@@ -1281,7 +1277,7 @@ impl EthApi {
         &self,
         block_number: BlockNumber,
         idx: Index,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockNumberAndIndex");
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
@@ -2166,10 +2162,7 @@ impl EthApi {
     /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
     /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
     /// and `ganache` may change the `0x0` placeholder.
-    pub async fn evm_mine_detailed(
-        &self,
-        opts: Option<MineOptions>,
-    ) -> Result<Vec<AnyNetworkBlock>> {
+    pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
         node_info!("evm_mine_detailed");
 
         let mined_blocks = self.do_evm_mine(opts).await?;
@@ -2794,14 +2787,14 @@ impl EthApi {
     }
 
     /// Returns the pending block with tx hashes
-    async fn pending_block(&self) -> AnyNetworkBlock {
+    async fn pending_block(&self) -> AnyRpcBlock {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let info = self.backend.pending_block(transactions).await;
         self.backend.convert_block(info.block)
     }
 
     /// Returns the full pending block with `Transaction` objects
-    async fn pending_block_full(&self) -> Option<AnyNetworkBlock> {
+    async fn pending_block_full(&self) -> Option<AnyRpcBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
             self.backend.pending_block(transactions).await;

@@ -7,7 +7,9 @@ use crate::{
     utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
     InspectorExt,
 };
+use alloy_consensus::Transaction;
 use alloy_genesis::GenesisAccount;
+use alloy_network::{AnyRpcBlock, TransactionResponse};
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
 use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -839,7 +841,7 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, Block<WithOtherFields<Transaction>>)> {
+    ) -> eyre::Result<(u64, AnyRpcBlock)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
@@ -850,13 +852,11 @@ impl Backend {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block.inner))
+            Ok((fork_block, block))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block.header.number;
-
-            let block = block.inner;
 
             Ok((number, block))
         }
@@ -884,10 +884,8 @@ impl Backend {
         for tx in full_block.inner.transactions.into_transactions() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from) ||
-                tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
-            {
-                trace!(tx=?tx.hash, "skipping system transaction");
+            if is_known_system_sender(tx.from) || tx.ty() == SYSTEM_TRANSACTION_TYPE {
+                trace!(tx=?tx.tx_hash(), "skipping system transaction");
                 continue;
             }
 
@@ -1939,7 +1937,7 @@ fn commit_transaction(
 ) -> eyre::Result<()> {
     // TODO: Remove after https://github.com/foundry-rs/foundry/pull/9131
     // if the tx has the blob_versioned_hashes field, we assume it's a Cancun block
-    if tx.blob_versioned_hashes.is_some() {
+    if tx.blob_versioned_hashes().is_some() {
         env.handler_cfg.spec_id = SpecId::CANCUN;
     }
 

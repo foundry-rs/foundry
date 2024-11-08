@@ -1,8 +1,8 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{AnyNetworkBlock, BlockId, Transaction};
+use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_rpc_types::{BlockId, Transaction};
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
@@ -345,7 +345,7 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyNetworkBlock) {
+pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.coinbase = block.header.miner;
     env.block.difficulty = block.header.difficulty;
