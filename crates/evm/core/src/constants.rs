@@ -1,4 +1,5 @@
 use alloy_primitives::{address, b256, hex, hex::FromHex, Address, B256};
+use std::sync::LazyLock;
 
 /// The cheatcode handler address.
 ///
@@ -47,8 +48,9 @@ pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f3
 /// The runtime code of the default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
 
-/// The address that deploys the default CREATE2 deployer contract.
-pub fn get_create2_deployer() -> Address {
+/// The lazily initialized CREATE2 deployer address that can be configured via environment
+/// variable or the default one.
+pub static CREATE2_DEPLOYER: LazyLock<Address> = LazyLock::new(|| {
     match std::env::var("FOUNDRY_CREATE2_DEPLOYER") {
         Ok(addr) => Address::from_hex(addr).unwrap_or_else(|_| {
             error!("env FOUNDRY_CREATE2_DEPLOYER is set, but not a valid Ethereum address, use {DEFAULT_CREATE2_DEPLOYER} instead");
@@ -56,6 +58,11 @@ pub fn get_create2_deployer() -> Address {
         }),
         Err(_) => DEFAULT_CREATE2_DEPLOYER,
     }
+});
+
+/// The address that deploys the default CREATE2 deployer contract.
+pub fn get_create2_deployer() -> Address {
+    *CREATE2_DEPLOYER
 }
 
 #[cfg(test)]
