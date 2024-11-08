@@ -4,24 +4,24 @@ use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-        TxEip7702,
+        RlpEcdsaTx, TxEip7702,
     },
-    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930,
-    TxEnvelope, TxLegacy, TxReceipt, TxType,
+    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559,
+    TxEip2930, TxEnvelope, TxLegacy, TxReceipt, TxType,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_primitives::{
-    Address, Bloom, Bytes, Log, Parity, Signature, TxHash, TxKind, B256, U256, U64,
+    Address, Bloom, Bytes, Log, PrimitiveSignature, TxHash, TxKind, B256, U256, U64,
 };
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
     request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, AnyTransactionReceipt,
-    ConversionError, Signature as RpcSignature, Transaction as RpcTransaction, TransactionReceipt,
+    ConversionError, Transaction as RpcTransaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::TxDeposit;
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use revm::{
     interpreter::InstructionResult,
     primitives::{OptimismFields, TxEnv},
@@ -277,162 +277,67 @@ pub fn to_alloy_transaction_with_hash_and_sender(
     hash: B256,
     from: Address,
 ) -> RpcTransaction {
+    // Common
+    let hash = transaction.hash();
+    let to = transaction.to();
+    let kind = transaction.kind();
+    let nonce = transaction.nonce();
+    let value = transaction.value();
+    let gas_price = transaction.gas_price();
+    let gas_limit = transaction.gas_limit();
+    let input = transaction.data().clone();
+    let chain_id = transaction.chain_id();
+    let transaction_type = transaction.r#type();
+    let max_fee_per_blob_gas = transaction.max_fee_per_blob_gas();
+
     match transaction {
         TypedTransaction::Legacy(t) => RpcTransaction {
-            hash,
-            nonce: t.tx().nonce,
             block_hash: None,
             block_number: None,
             transaction_index: None,
             from,
-            to: t.tx().to.to().copied(),
-            value: t.tx().value,
-            gas_price: Some(t.tx().gas_price),
-            max_fee_per_gas: Some(t.tx().gas_price),
-            max_priority_fee_per_gas: Some(t.tx().gas_price),
-            gas: t.tx().gas_limit,
-            input: t.tx().input.clone(),
-            chain_id: t.tx().chain_id,
-            signature: Some(RpcSignature {
-                r: t.signature().r(),
-                s: t.signature().s(),
-                v: U256::from(t.signature().v().to_u64()),
-                y_parity: None,
-            }),
-            access_list: None,
-            transaction_type: Some(0),
-            max_fee_per_blob_gas: None,
-            blob_versioned_hashes: None,
-            authorization_list: None,
+            effective_gas_price: None,
+            inner: TxEnvelope::Legacy(t),
         },
         TypedTransaction::EIP2930(t) => RpcTransaction {
-            hash,
-            nonce: t.tx().nonce,
             block_hash: None,
             block_number: None,
             transaction_index: None,
             from,
-            to: t.tx().to.to().copied(),
-            value: t.tx().value,
-            gas_price: Some(t.tx().gas_price),
-            max_fee_per_gas: Some(t.tx().gas_price),
-            max_priority_fee_per_gas: Some(t.tx().gas_price),
-            gas: t.tx().gas_limit,
-            input: t.tx().input.clone(),
-            chain_id: Some(t.tx().chain_id),
-            signature: Some(RpcSignature {
-                r: t.signature().r(),
-                s: t.signature().s(),
-                v: U256::from(t.signature().v().to_u64()),
-                y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
-            }),
-            access_list: Some(t.tx().access_list.clone()),
-            transaction_type: Some(1),
-            max_fee_per_blob_gas: None,
-            blob_versioned_hashes: None,
-            authorization_list: None,
+            effective_gas_price: None,
+            inner: TxEnvelope::Eip2930(t),
         },
         TypedTransaction::EIP1559(t) => RpcTransaction {
-            hash,
-            nonce: t.tx().nonce,
             block_hash: None,
             block_number: None,
             transaction_index: None,
             from,
-            to: t.tx().to.to().copied(),
-            value: t.tx().value,
-            gas_price: None,
-            max_fee_per_gas: Some(t.tx().max_fee_per_gas),
-            max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
-            gas: t.tx().gas_limit,
-            input: t.tx().input.clone(),
-            chain_id: Some(t.tx().chain_id),
-            signature: Some(RpcSignature {
-                r: t.signature().r(),
-                s: t.signature().s(),
-                v: U256::from(t.signature().v().to_u64()),
-                y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
-            }),
-            access_list: Some(t.tx().access_list.clone()),
-            transaction_type: Some(2),
-            max_fee_per_blob_gas: None,
-            blob_versioned_hashes: None,
-            authorization_list: None,
+            effective_gas_price: None,
+            inner: TxEnvelope::Eip1559(t),
         },
         TypedTransaction::EIP4844(t) => RpcTransaction {
-            hash,
-            nonce: t.tx().tx().nonce,
             block_hash: None,
             block_number: None,
             transaction_index: None,
             from,
-            to: Some(t.tx().tx().to),
-            value: t.tx().tx().value,
-            gas_price: Some(t.tx().tx().max_fee_per_gas),
-            max_fee_per_gas: Some(t.tx().tx().max_fee_per_gas),
-            max_priority_fee_per_gas: Some(t.tx().tx().max_priority_fee_per_gas),
-            gas: t.tx().tx().gas_limit,
-            input: t.tx().tx().input.clone(),
-            chain_id: Some(t.tx().tx().chain_id),
-            signature: Some(RpcSignature {
-                r: t.signature().r(),
-                s: t.signature().s(),
-                v: U256::from(t.signature().v().to_u64()),
-                y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
-            }),
-            access_list: Some(t.tx().tx().access_list.clone()),
-            transaction_type: Some(3),
-            max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
-            blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
-            authorization_list: None,
+            effective_gas_price: None,
+            inner: TxEnvelope::Eip4844(t),
         },
         TypedTransaction::EIP7702(t) => RpcTransaction {
-            hash,
-            nonce: t.tx().nonce,
             block_hash: None,
             block_number: None,
             transaction_index: None,
             from,
-            to: Some(t.tx().to),
-            value: t.tx().value,
-            gas_price: Some(t.tx().max_fee_per_gas),
-            max_fee_per_gas: Some(t.tx().max_fee_per_gas),
-            max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
-            gas: t.tx().gas_limit,
-            input: t.tx().input.clone(),
-            chain_id: Some(t.tx().chain_id),
-            signature: Some(RpcSignature {
-                r: t.signature().r(),
-                s: t.signature().s(),
-                v: U256::from(t.signature().v().to_u64()),
-                y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
-            }),
-            access_list: Some(t.tx().access_list.clone()),
-            transaction_type: Some(4),
-            authorization_list: Some(t.tx().authorization_list.clone()),
-            ..Default::default()
+            effective_gas_price: None,
+            inner: TxEnvelope::Eip7702(t),
         },
         TypedTransaction::Deposit(t) => RpcTransaction {
-            hash,
-            nonce: t.nonce,
             block_hash: None,
             block_number: None,
             transaction_index: None,
             from,
-            to: t.kind.to().copied(),
-            value: t.value,
-            gas_price: None,
-            max_fee_per_gas: None,
-            max_priority_fee_per_gas: None,
-            gas: t.gas_limit,
-            input: t.input.clone().0.into(),
-            chain_id: t.chain_id().map(u64::from),
-            signature: None,
-            access_list: None,
-            transaction_type: None,
-            max_fee_per_blob_gas: None,
-            blob_versioned_hashes: None,
-            authorization_list: None,
+            effective_gas_price: None,
+            inner: OpTxEnvelope::Deposit(t),
         },
     }
 }
@@ -681,7 +586,8 @@ impl TryFrom<TypedTransaction> for TransactionRequest {
     type Error = ConversionError;
 
     fn try_from(value: TypedTransaction) -> Result<Self, Self::Error> {
-        let from = value.recover().map_err(|_| ConversionError::InvalidSignature)?;
+        let from =
+            value.recover().map_err(|_| ConversionError::Custom("InvalidSignature".to_string()))?;
         let essentials = value.essentials();
         let tx_type = value.r#type();
         Ok(Self {
@@ -992,19 +898,18 @@ impl TypedTransaction {
     }
 
     /// Returns the Signature of the transaction
-    pub fn signature(&self) -> Signature {
+    pub fn signature(&self) -> PrimitiveSignature {
         match self {
             Self::Legacy(tx) => *tx.signature(),
             Self::EIP2930(tx) => *tx.signature(),
             Self::EIP1559(tx) => *tx.signature(),
             Self::EIP4844(tx) => *tx.signature(),
             Self::EIP7702(tx) => *tx.signature(),
-            Self::Deposit(_) => Signature::from_scalars_and_parity(
+            Self::Deposit(_) => PrimitiveSignature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                Parity::Parity(false),
-            )
-            .unwrap(),
+                false,
+            ),
         }
     }
 }
@@ -1013,7 +918,7 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
     type Error = ConversionError;
 
     fn try_from(tx: WithOtherFields<RpcTransaction>) -> Result<Self, Self::Error> {
-        if tx.transaction_type.is_some_and(|t| t == 0x7E) {
+        if tx.ty() == 0x7E {
             let mint = tx
                 .other
                 .get_deserialized::<U256>("mint")
@@ -1029,13 +934,13 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
                 })?;
 
             let deposit = DepositTransaction {
-                nonce: tx.nonce,
+                nonce: tx.nonce(),
                 is_system_tx: true,
                 from: tx.from,
-                kind: tx.to.map(TxKind::Call).unwrap_or(TxKind::Create),
-                value: tx.value,
-                gas_limit: tx.gas,
-                input: tx.input.clone(),
+                kind: tx.kind(),
+                value: tx.value(),
+                gas_limit: tx.gas_limit(),
+                input: tx.input().clone(),
                 mint,
                 source_hash,
             };
@@ -1044,115 +949,128 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
         }
 
         let tx = tx.inner;
-        match tx.transaction_type.unwrap_or_default().try_into()? {
+        let sig_hash = match tx.inner {
+            TxEnvelope::Legacy(ref t) => (t.signature().clone(), *t.hash()),
+            TxEnvelope::Eip2930(ref t) => (t.signature().clone(), *t.hash()),
+            TxEnvelope::Eip1559(ref t) => (t.signature().clone(), *t.hash()),
+            TxEnvelope::Eip4844(ref t) => (t.signature().clone(), *t.hash()),
+            TxEnvelope::Eip7702(ref t) => (t.signature().clone(), *t.hash()),
+            _ => {
+                return Err(ConversionError::Custom(
+                    "UnsupportedTxType - MissingSignature".to_string(),
+                ))
+            }
+        };
+        match tx.inner.tx_type() {
             TxType::Legacy => {
                 let legacy = TxLegacy {
-                    chain_id: tx.chain_id,
-                    nonce: tx.nonce,
-                    gas_price: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
-                    gas_limit: tx.gas,
-                    value: tx.value,
-                    input: tx.input,
-                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
+                    chain_id: tx.chain_id(),
+                    nonce: tx.nonce(),
+                    gas_price: tx
+                        .gas_price()
+                        .ok_or(ConversionError::Custom("MissingGasPrice".to_string()))?,
+                    gas_limit: tx.gas_limit(),
+                    value: tx.value(),
+                    input: tx.input().clone(),
+                    to: tx.kind(),
                 };
-                let signature = tx
-                    .signature
-                    .ok_or(ConversionError::MissingSignature)?
-                    .try_into()
-                    .map_err(ConversionError::SignatureError)?;
-                Ok(Self::Legacy(Signed::new_unchecked(legacy, signature, tx.hash)))
+
+                Ok(Self::Legacy(Signed::new_unchecked(legacy, sig_hash.0, sig_hash.1)))
             }
             TxType::Eip1559 => {
                 let eip1559 = TxEip1559 {
-                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
-                    nonce: tx.nonce,
-                    max_fee_per_gas: tx
-                        .max_fee_per_gas
-                        .ok_or(ConversionError::MissingMaxFeePerGas)?,
-                    max_priority_fee_per_gas: tx
-                        .max_priority_fee_per_gas
-                        .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
-                    gas_limit: tx.gas,
-                    value: tx.value,
-                    input: tx.input,
-                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
-                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                    chain_id: tx
+                        .chain_id()
+                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
+                    nonce: tx.nonce(),
+                    max_fee_per_gas: tx.max_fee_per_gas(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas().ok_or(
+                        ConversionError::Custom("MissingMaxPriorityFeePerGas".to_string()),
+                    )?,
+                    gas_limit: tx.gas_limit(),
+                    value: tx.value(),
+                    input: tx.input().clone(),
+                    to: tx.kind(),
+                    access_list: tx
+                        .access_list()
+                        .cloned()
+                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
                 };
-                let signature = tx
-                    .signature
-                    .ok_or(ConversionError::MissingSignature)?
-                    .try_into()
-                    .map_err(ConversionError::SignatureError)?;
-                Ok(Self::EIP1559(Signed::new_unchecked(eip1559, signature, tx.hash)))
+                Ok(Self::EIP1559(Signed::new_unchecked(eip1559, sig_hash.0, sig_hash.1)))
             }
             TxType::Eip2930 => {
                 let eip2930 = TxEip2930 {
-                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
-                    nonce: tx.nonce,
-                    gas_price: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
-                    gas_limit: tx.gas,
-                    value: tx.value,
-                    input: tx.input,
-                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
-                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                    chain_id: tx
+                        .chain_id()
+                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
+                    nonce: tx.nonce(),
+                    gas_price: tx
+                        .gas_price()
+                        .ok_or(ConversionError::Custom("MissingGasPrice".to_string()))?,
+                    gas_limit: tx.gas_limit(),
+                    value: tx.value(),
+                    input: tx.input().clone(),
+                    to: tx.kind(),
+                    access_list: tx
+                        .access_list()
+                        .cloned()
+                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
                 };
-                let signature = tx
-                    .signature
-                    .ok_or(ConversionError::MissingSignature)?
-                    .try_into()
-                    .map_err(ConversionError::SignatureError)?;
-                Ok(Self::EIP2930(Signed::new_unchecked(eip2930, signature, tx.hash)))
+                Ok(Self::EIP2930(Signed::new_unchecked(eip2930, sig_hash.0, sig_hash.1)))
             }
             TxType::Eip4844 => {
                 let eip4844 = TxEip4844 {
-                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
-                    nonce: tx.nonce,
-                    gas_limit: tx.gas,
-                    max_fee_per_gas: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
-                    max_priority_fee_per_gas: tx
-                        .max_priority_fee_per_gas
-                        .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
+                    chain_id: tx
+                        .chain_id()
+                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
+                    nonce: tx.nonce(),
+                    max_fee_per_gas: tx.max_fee_per_gas(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas().ok_or(
+                        ConversionError::Custom("MissingMaxPriorityFeePerGas".to_string()),
+                    )?,
                     max_fee_per_blob_gas: tx
-                        .max_fee_per_blob_gas
-                        .ok_or(ConversionError::MissingMaxFeePerBlobGas)?,
-                    to: tx.to.ok_or(ConversionError::MissingTo)?,
-                    value: tx.value,
-                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                        .max_fee_per_blob_gas()
+                        .ok_or(ConversionError::Custom("MissingMaxFeePerBlobGas".to_string()))?,
+                    to: tx.to().ok_or(ConversionError::Custom("MissingTo".to_string()))?,
+                    value: tx.value(),
+                    gas_limit: tx.gas_limit(),
+                    access_list: tx
+                        .access_list()
+                        .cloned()
+                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
                     blob_versioned_hashes: tx
-                        .blob_versioned_hashes
-                        .ok_or(ConversionError::MissingBlobVersionedHashes)?,
-                    input: tx.input,
+                        .blob_versioned_hashes()
+                        .ok_or(ConversionError::Custom("MissingBlobVersionedHashes".to_string()))?
+                        .to_vec(),
+                    input: tx.input().clone(),
                 };
                 Ok(Self::EIP4844(Signed::new_unchecked(
                     TxEip4844Variant::TxEip4844(eip4844),
-                    tx.signature
-                        .ok_or(ConversionError::MissingSignature)?
-                        .try_into()
-                        .map_err(ConversionError::SignatureError)?,
-                    tx.hash,
+                    sig_hash.0,
+                    sig_hash.1,
                 )))
             }
             TxType::Eip7702 => {
                 let eip7702 = TxEip7702 {
-                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
-                    nonce: tx.nonce,
-                    gas_limit: tx.gas,
-                    max_fee_per_gas: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
-                    max_priority_fee_per_gas: tx
-                        .max_priority_fee_per_gas
-                        .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
-                    to: tx.to.ok_or(ConversionError::MissingTo)?,
-                    value: tx.value,
-                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
-                    input: tx.input,
-                    authorization_list: tx.authorization_list.unwrap_or_default(),
+                    chain_id: tx
+                        .chain_id()
+                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
+                    nonce: tx.nonce(),
+                    max_fee_per_gas: tx.max_fee_per_gas(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas().ok_or(
+                        ConversionError::Custom("MissingMaxPriorityFeePerGas".to_string()),
+                    )?,
+                    to: tx.to().ok_or(ConversionError::Custom("MissingTo".to_string()))?,
+                    value: tx.value(),
+                    gas_limit: tx.gas_limit(),
+                    access_list: tx
+                        .access_list()
+                        .cloned()
+                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
+                    input: tx.input().clone(),
+                    authorization_list: tx.authorization_list().unwrap_or_default().to_vec(),
                 };
-                let signature = tx
-                    .signature
-                    .ok_or(ConversionError::MissingSignature)?
-                    .try_into()
-                    .map_err(ConversionError::SignatureError)?;
-                Ok(Self::EIP7702(Signed::new_unchecked(eip7702, signature, tx.hash)))
+                Ok(Self::EIP7702(Signed::new_unchecked(eip7702, sig_hash.0, sig_hash.1)))
             }
         }
     }
@@ -1201,7 +1119,8 @@ impl Encodable2718 for TypedTransaction {
             Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::EIP7702(tx) => {
-                let payload_length = tx.tx().fields_len() + tx.signature().rlp_vrs_len();
+                let payload_length =
+                    tx.tx().rlp_encoded_fields_length() + tx.signature().rlp_rs_len();
                 Header { list: true, payload_length }.length() + payload_length + 1
             }
             Self::Deposit(tx) => 1 + tx.length(),
@@ -1225,7 +1144,7 @@ impl Encodable2718 for TypedTransaction {
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         match ty {
-            0x04 => return Ok(Self::EIP7702(TxEip7702::decode_signed_fields(buf)?)),
+            0x04 => return Ok(Self::EIP7702(TxEip7702::rlp_decode_signed(buf)?)),
             0x7E => return Ok(Self::Deposit(DepositTransaction::decode(buf)?)),
             _ => {}
         }
@@ -1703,7 +1622,7 @@ mod tests {
             chain_id: Some(4),
         };
 
-        let signature = Signature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap();
+        let signature = PrimitiveSignature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap();
 
         let tx = TypedTransaction::Legacy(Signed::new_unchecked(
             tx,
