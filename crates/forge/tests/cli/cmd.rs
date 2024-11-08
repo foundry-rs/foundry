@@ -2818,3 +2818,83 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
             .is_json(),
         );
 });
+
+// <https://github.com/foundry-rs/foundry/issues/9115>
+forgetest_init!(gas_report_with_fallback, |prj, cmd| {
+    prj.add_test(
+        "DelegateProxyTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ProxiedContract {
+    uint256 public amount;
+
+    function deposit(uint256 aba) external {
+        amount = amount * 2;
+    }
+
+    function deposit() external {
+    }
+}
+
+contract DelegateProxy {
+    address internal implementation;
+
+    constructor(address counter) {
+        implementation = counter;
+    }
+
+    function deposit() external {
+    }
+
+    fallback() external payable {
+        address addr = implementation;
+
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), addr, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch result
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+}
+
+contract GasReportFallbackTest is Test {
+    function test_fallback_gas_report() public {
+        ProxiedContract proxied = ProxiedContract(address(new DelegateProxy(address(new ProxiedContract()))));
+        proxied.deposit(100);
+        proxied.deposit();
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_fallback_gas_report", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DelegateProxyTest.sol:GasReportFallbackTest
+[PASS] test_fallback_gas_report() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| test/DelegateProxyTest.sol:DelegateProxy contract |                 |       |        |       |         |
+|---------------------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                                   | Deployment Size |       |        |       |         |
+| 108698                                            | 315             |       |        |       |         |
+| Function Name                                     | min             | avg   | median | max   | # calls |
+| deposit                                           | 21160           | 21160 | 21160  | 21160 | 1       |
+| fallback                                          | 29396           | 29396 | 29396  | 29396 | 1       |
+
+
+| test/DelegateProxyTest.sol:ProxiedContract contract |                 |      |        |      |         |
+|-----------------------------------------------------|-----------------|------|--------|------|---------|
+| Deployment Cost                                     | Deployment Size |      |        |      |         |
+| 106511                                              | 276             |      |        |      |         |
+| Function Name                                       | min             | avg  | median | max  | # calls |
+| deposit                                             | 3320            | 3320 | 3320   | 3320 | 1       |
+...
+
+"#]]);
+});
