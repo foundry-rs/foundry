@@ -1,7 +1,5 @@
 pub use crate::ic::*;
-use crate::{
-    backend::DatabaseExt, constants::get_create2_deployer, precompiles::ALPHANET_P256, InspectorExt,
-};
+use crate::{backend::DatabaseExt, precompiles::ALPHANET_P256, InspectorExt};
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::AnyTxEnvelope;
@@ -194,7 +192,7 @@ pub fn create2_handler_register<I: InspectorExt>(
             let gas_limit = inputs.gas_limit;
 
             // Get CREATE2 deployer.
-            let create2_deployer = get_create2_deployer();
+            let create2_deployer = ctx.external.create2_deployer();
             // Generate call inputs for CREATE2 factory.
             let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs, create2_deployer);
 
