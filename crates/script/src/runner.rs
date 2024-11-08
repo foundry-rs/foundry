@@ -7,7 +7,7 @@ use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_config::Config;
 use foundry_evm::{
-    constants::{get_create2_deployer, CALLER},
+    constants::CALLER,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
@@ -83,7 +83,7 @@ impl ScriptRunner {
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
-                let create2_deployer = get_create2_deployer();
+                let create2_deployer = self.evm_opts.create2_deployer;
                 for library in libraries {
                     let address = create2_deployer.create2_from_code(salt, library.as_ref());
                     // Skip if already deployed
