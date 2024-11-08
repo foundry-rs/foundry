@@ -1030,16 +1030,6 @@ where {
                     {
                         tx_req.authorization_list = Some(vec![auth_list]);
                         tx_req.transaction_type = Some(4); // EIP-7702
-                                                           // known working values for 7702 on odyssey
-                                                           // TODO(7702): These gas values are temporary defaults that work for
-                                                           // testing.
-                                                           // We should properly handle gas estimation for EIP-7702 transactions by
-                                                           // understanding minimum gas requirements from the spec
-                                                           // Using provider.estimate_eip1559_fees() during broadcast
-                                                           // Respecting --gas-* CLI arguments
-                        tx_req.gas = Some(500_000); // Using 500k to provide safe headroom for complex calls
-                        tx_req.max_fee_per_gas = Some(ecx.env.block.basefee.to());
-                        tx_req.max_priority_fee_per_gas = Some(2_000_000_252); // 2 gwei priority
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
