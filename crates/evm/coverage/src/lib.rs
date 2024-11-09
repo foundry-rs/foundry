@@ -6,6 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
 use alloy_primitives::{map::HashMap, Bytes, B256};
@@ -237,7 +240,7 @@ impl HitMap {
         if let (Some(len1), Some(len2)) = (len1, len2) {
             let len = std::cmp::max(len1.0, len2.0);
             let ok = hm1.bytecode.0[..*len] == hm2.bytecode.0[..*len];
-            println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
+            let _ = sh_println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
             return ok;
         }
         true

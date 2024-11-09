@@ -65,7 +65,7 @@ impl EtherscanIdentifier {
             // filter out vyper files
             .filter(|(_, metadata)| !metadata.is_vyper())
             .map(|(address, metadata)| async move {
-                println!("Compiling: {} {address}", metadata.contract_name);
+                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
                 let root = tempfile::tempdir()?;
                 let root_path = root.path();
                 let project = etherscan_project(metadata, root_path)?;

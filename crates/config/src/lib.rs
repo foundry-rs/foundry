@@ -933,6 +933,7 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
+    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if self.eof {
             let (tx, rx) = mpsc::channel();
@@ -957,12 +958,14 @@ impl Config {
             return match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(res) => res,
                 Err(RecvTimeoutError::Timeout) => {
+                    // `sh_warn!` is a circular dependency, preventing us from using it here.
                     eprintln!(
                         "{}",
                         yansi::Paint::yellow(
                             "Pulling Docker image for eof-solc, this might take some time..."
                         )
                     );
+
                     rx.recv().expect("sender dropped")
                 }
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
@@ -1091,23 +1094,6 @@ impl Config {
     }
 
     /// Returns all configured remappings.
-    ///
-    /// **Note:** this will add an additional `<src>/=<src path>` remapping here, see
-    /// [Self::get_source_dir_remapping()]
-    ///
-    /// So that
-    ///
-    /// ```solidity
-    /// import "./math/math.sol";
-    /// import "contracts/tokens/token.sol";
-    /// ```
-    ///
-    /// in `contracts/contract.sol` are resolved to
-    ///
-    /// ```text
-    /// contracts/tokens/token.sol
-    /// contracts/math/math.sol
-    /// ```
     pub fn get_all_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.remappings.iter().map(|m| m.clone().into())
     }
@@ -4897,6 +4883,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
+    #[allow(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {
