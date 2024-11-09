@@ -39,6 +39,9 @@ impl ScriptRunner {
     ) -> Result<(Address, ScriptResult)> {
         trace!(target: "script", "executing setUP()");
 
+        // set CREATE2 deployer from EvmOpts.
+        self.executor.inspector_mut().set_create2_deployer(self.evm_opts.create2_deployer);
+
         if !is_broadcast {
             if self.evm_opts.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
