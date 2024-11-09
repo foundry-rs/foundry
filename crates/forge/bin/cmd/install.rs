@@ -97,10 +97,8 @@ impl DependencyInstallOpts {
             let _ = sh_println!("Missing dependencies found. Installing now...\n");
             self.no_commit = true;
             if self.install(config, Vec::new()).is_err() {
-                let _ = sh_warn!(
-                    "{}",
-                    "Your project has missing dependencies that could not be installed."
-                );
+                let _ =
+                    sh_warn!("Your project has missing dependencies that could not be installed.");
             }
             true
         } else {

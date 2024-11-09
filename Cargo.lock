@@ -3424,6 +3424,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "forge-fmt",
+ "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "itertools 0.13.0",
