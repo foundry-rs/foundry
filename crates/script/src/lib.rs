@@ -46,7 +46,6 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
-    constants::DEFAULT_CREATE2_DEPLOYER,
     executors::ExecutorBuilder,
     inspectors::{
         cheatcodes::{BroadcastableTransactions, Wallets},
@@ -233,9 +232,7 @@ impl ScriptArgs {
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         }
-        evm_opts.create2_deployer = self
-            .create2_deployer
-            .unwrap_or_else(|| config.create2_deployer.unwrap_or(DEFAULT_CREATE2_DEPLOYER));
+        evm_opts.create2_deployer = self.create2_deployer.unwrap_or(config.create2_deployer);
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 

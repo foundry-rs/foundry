@@ -440,6 +440,9 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
+    /// The CREATE2 deployer address to use.
+    pub create2_deployer: Address,
+
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
 
@@ -474,10 +477,6 @@ pub struct Config {
 
     /// Whether to enable Alphanet features.
     pub alphanet: bool,
-
-    /// The CREATE2 deployer address to use.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub create2_deployer: Option<Address>,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
@@ -556,6 +555,10 @@ impl Config {
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+
+    /// Default create2 deployer
+    pub const DEFAULT_CREATE2_DEPLOYER: Address =
+        address!("4e59b44847b379578588920ca78fbf26c0b4956c");
 
     /// Docker image with eof-enabled solc binary
     pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
@@ -2308,6 +2311,7 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
+            create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],
             dependencies: Default::default(),
             soldeer: Default::default(),
@@ -2317,7 +2321,6 @@ impl Default for Config {
             extra_args: vec![],
             eof_version: None,
             alphanet: false,
-            create2_deployer: None,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
