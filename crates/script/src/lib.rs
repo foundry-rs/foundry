@@ -306,7 +306,7 @@ impl ScriptArgs {
                 create2_deployer,
             )?;
 
-            pre_simulation.fill_metadata().await?.bundle().await?
+            pre_simulation.fill_metadata(create2_deployer).await?.bundle().await?
         };
 
         // Exit early in case user didn't provide any broadcast/verify related flags.

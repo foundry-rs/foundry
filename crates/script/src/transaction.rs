@@ -4,7 +4,7 @@ use alloy_primitives::{hex, Address, TxKind, B256};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
-use foundry_evm::{constants::get_create2_deployer, traces::CallTraceDecoder};
+use foundry_evm::traces::CallTraceDecoder;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
@@ -29,9 +29,9 @@ impl ScriptTransactionBuilder {
         &mut self,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
+        create2_deployer: Address,
     ) -> Result<()> {
         if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
-            let create2_deployer = get_create2_deployer();
             if to == create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);
