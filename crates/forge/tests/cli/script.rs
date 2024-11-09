@@ -242,7 +242,7 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [44291] → new GasWaster@0x810090f35DFA6B18b5EB59d298e2A2443a2811E2
+  [44291] → new GasWaster@[..]
     └─ ← [Return] 221 bytes of code
 
   [224] GasWaster::wasteGas(200000 [2e5])
@@ -349,7 +349,7 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [44291] → new GasWaster@0x810090f35DFA6B18b5EB59d298e2A2443a2811E2
+  [44291] → new GasWaster@[..]
     └─ ← [Return] 221 bytes of code
 
   [224] GasWaster::wasteGas(200000 [2e5])
