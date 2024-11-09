@@ -70,9 +70,9 @@ impl TimeManager {
     /// Fails if it's before (or at the same time) the last timestamp
     pub fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), BlockchainError> {
         trace!(target: "time", "override next timestamp {}", timestamp);
-        if timestamp <= *self.last_timestamp.read() {
+        if timestamp < *self.last_timestamp.read() {
             return Err(BlockchainError::TimestampError(format!(
-                "{timestamp} is lower than or equal to previous block's timestamp"
+                "{timestamp} is lower than previous block's timestamp"
             )))
         }
         self.next_exact_timestamp.write().replace(timestamp);
@@ -112,7 +112,7 @@ impl TimeManager {
                 (current.saturating_add(self.offset()) as u64, false)
             };
         // Ensures that the timestamp is always increasing
-        if next_timestamp <= last_timestamp {
+        if next_timestamp < last_timestamp {
             next_timestamp = last_timestamp + 1;
         }
         let next_offset = update_offset.then_some((next_timestamp as i128) - current);

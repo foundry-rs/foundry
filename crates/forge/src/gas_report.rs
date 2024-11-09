@@ -9,8 +9,8 @@ use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
 use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
-use yansi::Paint;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GasReportKind {
@@ -35,6 +35,8 @@ pub struct GasReport {
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
     ignore: HashSet<String>,
+    /// Whether to include gas reports for tests.
+    include_tests: bool,
     /// All contracts that were analyzed grouped by their identifier
     /// ``test/Counter.t.sol:CounterTest
     pub contracts: BTreeMap<String, ContractInfo>,
@@ -44,13 +46,14 @@ impl GasReport {
     pub fn new(
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
+        include_tests: bool,
         report_kind: GasReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
         let report_type = report_kind;
-        Self { report_any, report_type, report_for, ignore, ..Default::default() }
+        Self { report_any, report_type, report_for, ignore, include_tests, ..Default::default() }
     }
 
     /// Whether the given contract should be reported.
@@ -64,10 +67,8 @@ impl GasReport {
                 // list. This is addressed this way because getting a report you don't expect is
                 // preferable than not getting one you expect. A warning is printed to stderr
                 // indicating the "double listing".
-                eprintln!(
-                    "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
-                    "warning".yellow().bold(),
-                    contract_name
+                let _ = sh_warn!(
+                    "{contract_name} is listed in both 'gas_reports' and 'gas_reports_ignore'."
                 );
             }
             return contains_anyway;
@@ -121,7 +122,7 @@ impl GasReport {
         } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
-            if !name.test_function_kind().is_known() {
+            if self.include_tests || !name.test_function_kind().is_known() {
                 trace!(contract_name, signature, "adding gas info");
                 let gas_info = contract_info
                     .functions
@@ -156,56 +157,106 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for (name, contract) in &self.contracts {
-            if contract.functions.is_empty() {
-                trace!(name, "gas report contract without functions");
-                continue;
+        match self.report_type {
+            GasReportKind::Markdown => {
+                for (name, contract) in &self.contracts {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        continue;
+                    }
+
+                    let table = self.format_table_output(contract, name);
+                    writeln!(f, "{table}")?;
+                    writeln!(f, "\n")?;
+                }
             }
-
-            if self.report_type == GasReportKind::JSON {
-                writeln!(f, "{}", serde_json::to_string(&contract).unwrap())?;
-                continue;
+            GasReportKind::JSON => {
+                writeln!(f, "{}", &self.format_json_output())?;
             }
-
-            let mut table = Table::new();
-            table.load_preset(ASCII_MARKDOWN);
-            table.set_header([Cell::new(format!("{name} contract"))
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Green)]);
-            table.add_row([
-                Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
-                Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            ]);
-            table.add_row([contract.gas.to_string(), contract.size.to_string()]);
-
-            table.add_row([
-                Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
-                Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
-                Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
-                Cell::new("# calls").add_attribute(Attribute::Bold),
-            ]);
-            contract.functions.iter().for_each(|(fname, sigs)| {
-                sigs.iter().for_each(|(sig, gas_info)| {
-                    // show function signature if overloaded else name
-                    let fn_display =
-                        if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
-
-                    table.add_row([
-                        Cell::new(fn_display).add_attribute(Attribute::Bold),
-                        Cell::new(gas_info.min.to_string()).fg(Color::Green),
-                        Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
-                        Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
-                        Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                        Cell::new(gas_info.calls.to_string()),
-                    ]);
-                })
-            });
-            writeln!(f, "{table}")?;
-            writeln!(f, "\n")?;
         }
+
         Ok(())
+    }
+}
+
+impl GasReport {
+    fn format_json_output(&self) -> String {
+        serde_json::to_string(
+            &self
+                .contracts
+                .iter()
+                .filter_map(|(name, contract)| {
+                    if contract.functions.is_empty() {
+                        trace!(name, "gas report contract without functions");
+                        return None;
+                    }
+
+                    let functions = contract
+                        .functions
+                        .iter()
+                        .flat_map(|(_, sigs)| {
+                            sigs.iter().map(|(sig, gas_info)| {
+                                let display_name = sig.replace(':', "");
+                                (display_name, gas_info)
+                            })
+                        })
+                        .collect::<BTreeMap<_, _>>();
+
+                    Some(json!({
+                        "contract": name,
+                        "deployment": {
+                            "gas": contract.gas,
+                            "size": contract.size,
+                        },
+                        "functions": functions,
+                    }))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    // Helper function to format the table output
+    fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
+        let mut table = Table::new();
+        table.load_preset(ASCII_MARKDOWN);
+        table.set_header([Cell::new(format!("{name} contract"))
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Green)]);
+
+        table.add_row([
+            Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
+        ]);
+        table.add_row([contract.gas.to_string(), contract.size.to_string()]);
+
+        table.add_row([
+            Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
+            Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
+            Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
+            Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
+            Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
+            Cell::new("# calls").add_attribute(Attribute::Bold),
+        ]);
+
+        contract.functions.iter().for_each(|(fname, sigs)| {
+            sigs.iter().for_each(|(sig, gas_info)| {
+                // Show function signature if overloaded else display function name.
+                let display_name =
+                    if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
+
+                table.add_row([
+                    Cell::new(display_name).add_attribute(Attribute::Bold),
+                    Cell::new(gas_info.min.to_string()).fg(Color::Green),
+                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
+                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
+                    Cell::new(gas_info.max.to_string()).fg(Color::Red),
+                    Cell::new(gas_info.calls.to_string()),
+                ]);
+            })
+        });
+
+        table
     }
 }
 

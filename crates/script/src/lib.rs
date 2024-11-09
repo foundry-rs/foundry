@@ -6,9 +6,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
-use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
@@ -22,6 +24,7 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
+use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
@@ -43,15 +46,15 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     executors::ExecutorBuilder,
     inspectors::{
-        cheatcodes::{BroadcastableTransactions, ScriptWallets},
+        cheatcodes::{BroadcastableTransactions, Wallets},
         CheatsConfig,
     },
     opts::EvmOpts,
     traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
-use serde::{Deserialize, Serialize};
-use yansi::Paint;
+use serde::Serialize;
+use std::path::PathBuf;
 
 mod broadcast;
 mod build;
@@ -149,6 +152,15 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// Dumps all debugger steps to file.
+    #[arg(
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    pub dump: Option<PathBuf>,
+
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
     #[arg(long)]
@@ -167,10 +179,6 @@ pub struct ScriptArgs {
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long)]
     pub verify: bool,
-
-    /// Output results in JSON format.
-    #[arg(long)]
-    pub json: bool,
 
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
     /// specified in wei, or as a string with a unit type.
@@ -207,7 +215,7 @@ pub struct ScriptArgs {
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
-            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -244,10 +252,13 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                return pre_simulation.run_debugger()
+                return match pre_simulation.args.dump.clone() {
+                    Some(ref path) => pre_simulation.run_debug_file_dumper(path),
+                    None => pre_simulation.run_debugger(),
+                };
             }
 
-            if pre_simulation.args.json {
+            if shell::is_json() {
                 pre_simulation.show_json()?;
             } else {
                 pre_simulation.show_traces().await?;
@@ -266,7 +277,7 @@ impl ScriptArgs {
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 return Ok(());
             }
 
@@ -280,7 +291,7 @@ impl ScriptArgs {
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
-            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             return Ok(());
         }
 
@@ -423,12 +434,9 @@ impl ScriptArgs {
 
                 if deployment_size > max_size {
                     prompt_user = self.should_broadcast();
-                    shell::println(format!(
-                        "{}",
-                        format!(
-                            "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ).red()
-                    ))?;
+                    sh_err!(
+                        "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
+                    )?;
                 }
             }
         }
@@ -516,12 +524,6 @@ struct JsonResult<'a> {
     result: &'a ScriptResult,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
-}
-
 #[derive(Clone, Debug)]
 pub struct ScriptConfig {
     pub config: Config,
@@ -560,7 +562,7 @@ impl ScriptConfig {
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
-        script_wallets: ScriptWallets,
+        script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
     ) -> Result<ScriptRunner> {
@@ -569,7 +571,7 @@ impl ScriptConfig {
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(ContractsByArtifact, ScriptWallets, ArtifactId)>,
+        cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -611,12 +613,12 @@ impl ScriptConfig {
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),
-                            Some(script_wallets),
                             Some(target.name),
                             Some(target.version),
                         )
                         .into(),
                     )
+                    .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });
         }

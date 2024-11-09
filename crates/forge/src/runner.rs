@@ -519,6 +519,11 @@ impl ContractRunner<'_> {
                 invariant_contract.call_after_invariant,
             ) {
                 if !success {
+                    let _= sh_warn!("\
+                            Replayed invariant failure from {:?} file. \
+                            Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
+                        failure_file.as_path()
+                    );
                     // If sequence still fails then replay error to collect traces and
                     // exit without executing new runs.
                     let _ = replay_run(
@@ -623,6 +628,7 @@ impl ContractRunner<'_> {
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
+            invariant_result.metrics,
         )
     }
 

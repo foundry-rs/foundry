@@ -10,6 +10,8 @@ use crate::eth::{
     error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
+use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
     map::{B256HashMap, HashMap},
     Bytes, B256, U256, U64,
@@ -38,6 +40,7 @@ use foundry_evm::{
     },
 };
 use parking_lot::RwLock;
+use revm::primitives::SpecId;
 use std::{collections::VecDeque, fmt, sync::Arc, time::Duration};
 // use yansi::Paint;
 
@@ -262,7 +265,11 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+        let is_shanghai = spec_id >= SpecId::SHANGHAI;
+        let is_cancun = spec_id >= SpecId::CANCUN;
+        let is_prague = spec_id >= SpecId::PRAGUE;
+
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
@@ -272,9 +279,13 @@ impl BlockchainStorage {
             difficulty: env.block.difficulty,
             blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
             excess_blob_gas: env.block.get_blob_excess_gas(),
+
+            parent_beacon_block_root: is_cancun.then_some(Default::default()),
+            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
-        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
+        let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number: U64 = U64::from(0u64);
@@ -423,8 +434,12 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<u64>, timestamp: u64) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
+    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+        Self {
+            storage: Arc::new(RwLock::new(BlockchainStorage::new(
+                env, spec_id, base_fee, timestamp,
+            ))),
+        }
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
@@ -693,11 +708,8 @@ mod tests {
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
             TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
-        let block = Block::new::<MaybeImpersonatedTransaction>(
-            partial_header.clone(),
-            vec![tx.clone()],
-            vec![],
-        );
+        let block =
+            Block::new::<MaybeImpersonatedTransaction>(partial_header.clone(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 

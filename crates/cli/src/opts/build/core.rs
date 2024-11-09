@@ -105,11 +105,6 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
 
-    /// Don't print anything on startup.
-    #[arg(long, help_heading = "Compiler options")]
-    #[serde(skip)]
-    pub silent: bool,
-
     /// Generate build info files.
     #[arg(long, help_heading = "Project options")]
     #[serde(skip)]
@@ -186,7 +181,8 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         };
 
         // remappings should stack
-        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
+        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
+            .with_figment(&figment);
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);

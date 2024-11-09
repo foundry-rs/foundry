@@ -44,6 +44,7 @@ pub mod bind_json;
 pub mod build;
 pub mod cache;
 pub mod clone;
+pub mod compiler;
 pub mod config;
 pub mod coverage;
 pub mod create;
