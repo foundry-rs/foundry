@@ -1321,3 +1321,95 @@ contract AContractTest is DSTest {
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/9270>
+// Test that constructor with no statements is not counted in functions coverage.
+forgetest!(test_ignore_empty_constructors_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    constructor() {}
+
+    function increment() public {}
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructors() public {
+        AContract a = new AContract();
+        a.increment();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert there's only one function (`increment`) reported.
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (1/1) |
+| Total             | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (1/1) |
+
+"#]]);
+});
+
+// Test coverage for `receive` functions.
+forgetest!(test_receive_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public counter = 0;
+
+    constructor() {
+        counter = 1;
+    }
+
+    receive() external payable {
+        counter = msg.value;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructors() public {
+        AContract a = new AContract();
+        address(a).call{value: 5}("");
+        require(a.counter() == 5);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert both constructor and receive functions coverage reported.
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+});

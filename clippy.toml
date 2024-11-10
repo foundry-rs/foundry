@@ -3,10 +3,10 @@ msrv = "1.80"
 # so it is safe to ignore it as well
 ignore-interior-mutability = ["bytes::Bytes", "alloy_primitives::Bytes"]
 
-# disallowed-macros = [
-#     # See `foundry_common::shell`
-#     { path = "std::print", reason = "use `sh_print` or similar macros instead" },
-#     { path = "std::eprint", reason = "use `sh_eprint` or similar macros instead" },
-#     { path = "std::println", reason = "use `sh_println` or similar macros instead" },
-#     { path = "std::eprintln", reason = "use `sh_eprintln` or similar macros instead" },
-# ]
+disallowed-macros = [
+    # See `foundry_common::shell`
+    { path = "std::print", reason = "use `sh_print` or similar macros instead" },
+    { path = "std::eprint", reason = "use `sh_eprint` or similar macros instead" },
+    { path = "std::println", reason = "use `sh_println` or similar macros instead" },
+    { path = "std::eprintln", reason = "use `sh_eprintln` or similar macros instead" },
+]

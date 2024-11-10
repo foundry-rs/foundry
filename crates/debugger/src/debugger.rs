@@ -48,7 +48,7 @@ impl Debugger {
         let code = match self.try_run_tui() {
             Ok(ExitReason::CharExit) => 0,
             Err(e) => {
-                println!("{e}");
+                let _ = sh_eprintln!("{e}");
                 1
             }
         };
