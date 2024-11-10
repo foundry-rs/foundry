@@ -113,7 +113,7 @@ impl PreSimulationState {
         let futs = transactions
             .into_iter()
             .map(|mut transaction| async {
-                let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();                
+                let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
                 let tx = transaction.tx_mut();
 
                 if let Some(tx) = tx.as_unsigned_mut() {
