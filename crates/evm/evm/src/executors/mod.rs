@@ -31,8 +31,8 @@ use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
     primitives::{
-        BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TxEnv, TxKind,
+        AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,
+        ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
     },
 };
 use std::borrow::Cow;
@@ -199,6 +199,16 @@ impl Executor {
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
+    }
+
+    /// Sets EIP-7702 authorization list in the transaction environment.
+    pub fn set_delegation(
+        &mut self,
+        authorization_list: &[SignedAuthorization],
+    ) -> BackendResult<()> {
+        self.env.tx.authorization_list =
+            Some(AuthorizationList::Signed(authorization_list.to_vec()));
+        Ok(())
     }
 
     /// Set the nonce of an account.

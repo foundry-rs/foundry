@@ -115,6 +115,12 @@ impl PreSimulationState {
             .map(|mut transaction| async {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
 
+                if let Some(tx) = transaction.tx_mut().as_unsigned_mut() {
+                    if let Some(authorization_list) = &tx.authorization_list {
+                        runner.executor.set_delegation(authorization_list)?;
+                    }
+                }
+
                 let tx = transaction.tx_mut();
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
