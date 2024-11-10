@@ -391,13 +391,11 @@ impl CallTraceDecoder {
                 };
             };
 
-            // If traced contract is a fallback contract, then check if it has the decoded
-            // functions. If not, then replace call data signature with `fallback`.
+            // If traced contract is a fallback contract, check if it has the decoded function.
+            // If not, then replace call data signature with `fallback`.
             let mut call_data = self.decode_function_input(trace, func);
             if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
-                if functions.iter().any(|decoded_function| {
-                    !fallback_functions.contains(&decoded_function.signature())
-                }) {
+                if !fallback_functions.contains(&func.signature()) {
                     call_data.signature = "fallback()".into();
                 }
             }
