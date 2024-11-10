@@ -9,7 +9,7 @@ use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
     #[serde(flatten)]
@@ -67,8 +67,14 @@ pub struct EvmOpts {
     /// whether to enable Alphanet features.
     pub alphanet: bool,
 
-    /// Optional CREATE2 deployer override
+    /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
+}
+
+impl Default for EvmOpts {
+    fn default() -> Self {
+        Self { create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER, ..Default::default() }
+    }
 }
 
 impl EvmOpts {
