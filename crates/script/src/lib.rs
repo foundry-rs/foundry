@@ -198,7 +198,7 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    /// The CREATE2 deployer address to use
+    /// The CREATE2 deployer address to use, this will override the one in the config.
     #[arg(long, value_name = "ADDRESS")]
     pub create2_deployer: Option<Address>,
 
@@ -232,7 +232,10 @@ impl ScriptArgs {
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         }
-        evm_opts.create2_deployer = self.create2_deployer.unwrap_or(config.create2_deployer);
+
+        if let Some(create2_deployer) = self.create2_deployer {
+            evm_opts.create2_deployer = create2_deployer;
+        }
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
