@@ -2443,12 +2443,26 @@ contract GasReportFallbackTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test", "--mt", "test_fallback_gas_report", "--gas-report"])
+    cmd.args(["test", "--mt", "test_fallback_gas_report", "-vvvv", "--gas-report"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/DelegateProxyTest.sol:GasReportFallbackTest
 [PASS] test_fallback_gas_report() ([GAS])
+Traces:
+  [331067] GasReportFallbackTest::test_fallback_gas_report()
+    ├─ [106511] → new ProxiedContract@[..]
+    │   └─ ← [Return] 246 bytes of code
+    ├─ [108698] → new DelegateProxy@[..]
+    │   └─ ← [Return] 143 bytes of code
+    ├─ [29396] DelegateProxy::fallback(100)
+    │   ├─ [3320] ProxiedContract::deposit(100) [delegatecall]
+    │   │   └─ ← [Stop] 
+    │   └─ ← [Return] 
+    ├─ [21160] DelegateProxy::deposit()
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 | test/DelegateProxyTest.sol:DelegateProxy contract |                 |       |        |       |         |
 |---------------------------------------------------|-----------------|-------|--------|-------|---------|
