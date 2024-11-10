@@ -1029,7 +1029,6 @@ where {
                         self.active_delegation.and_then(|addr| self.delegations.remove(&addr))
                     {
                         tx_req.authorization_list = Some(vec![auth_list]);
-                        tx_req.transaction_type = Some(4); // EIP-7702
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
