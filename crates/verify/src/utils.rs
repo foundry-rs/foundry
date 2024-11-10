@@ -9,7 +9,7 @@ use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
@@ -137,7 +137,6 @@ pub fn build_using_cache(
 }
 
 pub fn print_result(
-    args: &VerifyBytecodeArgs,
     res: Option<VerificationType>,
     bytecode_type: BytecodeType,
     json_results: &mut Vec<JsonResult>,
@@ -145,8 +144,8 @@ pub fn print_result(
     config: &Config,
 ) {
     if let Some(res) = res {
-        if !args.json {
-            println!(
+        if !shell::is_json() {
+            let _ = sh_println!(
                 "{} with status {}",
                 format!("{bytecode_type:?} code matched").green().bold(),
                 res.green().bold()
@@ -155,18 +154,13 @@ pub fn print_result(
             let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
             json_results.push(json_res);
         }
-    } else if !args.json {
-        println!(
-            "{}",
-            format!(
-                "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
-            )
-            .red()
-            .bold()
+    } else if !shell::is_json() {
+        let _ = sh_err!(
+            "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
         );
         let mismatches = find_mismatch_in_settings(etherscan_config, config);
         for mismatch in mismatches {
-            println!("{}", mismatch.red().bold());
+            let _ = sh_eprintln!("{}", mismatch.red().bold());
         }
     } else {
         let json_res = JsonResult {

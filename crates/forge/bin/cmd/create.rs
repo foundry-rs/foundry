@@ -18,6 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self},
     fmt::parse_tokens,
+    shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use foundry_config::{
@@ -56,10 +57,6 @@ pub struct CreateArgs {
         value_name = "PATH",
     )]
     constructor_args_path: Option<PathBuf>,
-
-    /// Print the deployment information as JSON.
-    #[arg(long, help_heading = "Display options")]
-    json: bool,
 
     /// Verify contract after creation.
     #[arg(long)]
@@ -109,7 +106,7 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output = compile::compile_target(&target_path, &project, self.json)?;
+        let mut output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
         let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 
@@ -315,24 +312,24 @@ impl CreateArgs {
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         let address = deployed_contract;
-        if self.json {
+        if shell::is_json() {
             let output = json!({
                 "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
-            println!("{output}");
+            sh_println!("{output}")?;
         } else {
-            println!("Deployer: {deployer_address}");
-            println!("Deployed to: {address}");
-            println!("Transaction hash: {:?}", receipt.transaction_hash);
+            sh_println!("Deployer: {deployer_address}")?;
+            sh_println!("Deployed to: {address}")?;
+            sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
         if !self.verify {
             return Ok(());
         }
 
-        println!("Starting contract verification...");
+        sh_println!("Starting contract verification...")?;
 
         let num_of_optimizations = if self.opts.compiler.optimize.unwrap_or_default() {
             self.opts.compiler.optimizer_runs
@@ -361,7 +358,7 @@ impl CreateArgs {
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
         };
-        println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
+        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
     }
 

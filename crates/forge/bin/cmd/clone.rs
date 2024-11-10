@@ -616,6 +616,7 @@ mod tests {
     use foundry_test_utils::rpc::next_mainnet_etherscan_api_key;
     use std::collections::BTreeMap;
 
+    #[allow(clippy::disallowed_macros)]
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         println!("project_root: {root:#?}");
         compile_project(root).expect("compilation failure")

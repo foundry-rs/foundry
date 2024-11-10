@@ -205,17 +205,17 @@ alloy-transport-ipc = { version = "0.5.4", default-features = false }
 alloy-transport-ws = { version = "0.5.4", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "0.8.9"
-alloy-json-abi = "0.8.9"
-alloy-primitives = { version = "0.8.9", features = [
+alloy-dyn-abi = "0.8.11"
+alloy-json-abi = "0.8.11"
+alloy-primitives = { version = "0.8.11", features = [
     "getrandom",
     "rand",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "0.8.9"
-alloy-sol-macro-input = "0.8.9"
-alloy-sol-types = "0.8.9"
-syn-solidity = "0.8.9"
+alloy-sol-macro-expander = "0.8.11"
+alloy-sol-macro-input = "0.8.11"
+alloy-sol-types = "0.8.11"
+syn-solidity = "0.8.11"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
@@ -226,12 +226,12 @@ op-alloy-rpc-types = "0.5.0"
 op-alloy-consensus = "0.5.0"
 
 ## cli
-anstream = "0.6.15"
-anstyle = "1.0.8"
+anstream = "0.6"
+anstyle = "1.0"
 terminal_size = "0.4"
 
 # macros
-proc-macro2 = "1.0.82"
+proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
@@ -243,8 +243,9 @@ divan = "0.1"
 
 # misc
 auto_impl = "1"
+bytes = "1.8"
 walkdir = "2"
-prettyplease = "0.2.20"
+prettyplease = "0.2"
 ahash = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
@@ -260,25 +261,26 @@ evmole = "0.5"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
-hyper = "1.0"
-indexmap = "2.2"
+hyper = "1.5"
+indexmap = "2.6"
 itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"
 mesc = "0.3"
-num-format = "0.4.4"
+num-format = "0.4"
 parking_lot = "0.12"
 proptest = "1"
 rand = "0.8"
 rayon = "1"
+regex = { version = "1", default-features = false }
 reqwest = { version = "0.12", default-features = false }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-similar-asserts = "1.5"
-soldeer-commands = "=0.4.1"
+similar-asserts = "1.6"
+soldeer-commands = "=0.5.0"
 strum = "0.26"
-tempfile = "3.10"
+tempfile = "3.13"
 tikv-jemallocator = "0.6"
 tokio = "1"
 toml = "0.8"

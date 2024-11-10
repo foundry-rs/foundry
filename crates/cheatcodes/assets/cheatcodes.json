@@ -4604,9 +4604,9 @@
       "func": {
         "id": "exists",
         "description": "Returns true if the given path points to an existing entity, else returns false.",
-        "declaration": "function exists(string calldata path) external returns (bool result);",
+        "declaration": "function exists(string calldata path) external view returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "exists(string)",
         "selector": "0x261a323e",
         "selectorBytes": [
@@ -5324,9 +5324,9 @@
       "func": {
         "id": "getBroadcast",
         "description": "Returns the most recent broadcast for the given contract on `chainId` matching `txType`.\nFor example:\nThe most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.\nThe most recent call can be fetched by passing `txType` as `CALL`.",
-        "declaration": "function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);",
+        "declaration": "function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getBroadcast(string,uint64,uint8)",
         "selector": "0x3dc90cb3",
         "selectorBytes": [
@@ -5344,9 +5344,9 @@
       "func": {
         "id": "getBroadcasts_0",
         "description": "Returns all broadcasts for the given contract on `chainId` with the specified `txType`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
-        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary[] memory);",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getBroadcasts(string,uint64,uint8)",
         "selector": "0xf7afe919",
         "selectorBytes": [
@@ -5364,9 +5364,9 @@
       "func": {
         "id": "getBroadcasts_1",
         "description": "Returns all broadcasts for the given contract on `chainId`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
-        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getBroadcasts(string,uint64)",
         "selector": "0xf2fa4a26",
         "selectorBytes": [
@@ -5424,9 +5424,9 @@
       "func": {
         "id": "getDeployment_0",
         "description": "Returns the most recent deployment for the current `chainId`.",
-        "declaration": "function getDeployment(string memory contractName) external returns (address deployedAddress);",
+        "declaration": "function getDeployment(string memory contractName) external view returns (address deployedAddress);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getDeployment(string)",
         "selector": "0xa8091d97",
         "selectorBytes": [
@@ -5444,9 +5444,9 @@
       "func": {
         "id": "getDeployment_1",
         "description": "Returns the most recent deployment for the given contract on `chainId`",
-        "declaration": "function getDeployment(string memory contractName, uint64 chainId) external returns (address deployedAddress);",
+        "declaration": "function getDeployment(string memory contractName, uint64 chainId) external view returns (address deployedAddress);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getDeployment(string,uint64)",
         "selector": "0x0debd5d6",
         "selectorBytes": [
@@ -5464,9 +5464,9 @@
       "func": {
         "id": "getDeployments",
         "description": "Returns all deployments for the given contract on `chainId`\nSorted in descending order of deployment time i.e descending order of BroadcastTxSummary.blockNumber.\nThe most recent deployment is the first element, and the oldest is the last.",
-        "declaration": "function getDeployments(string memory contractName, uint64 chainId) external returns (address[] memory deployedAddresses);",
+        "declaration": "function getDeployments(string memory contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getDeployments(string,uint64)",
         "selector": "0x74e133dd",
         "selectorBytes": [
@@ -5704,9 +5704,9 @@
       "func": {
         "id": "isDir",
         "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
-        "declaration": "function isDir(string calldata path) external returns (bool result);",
+        "declaration": "function isDir(string calldata path) external view returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "isDir(string)",
         "selector": "0x7d15d019",
         "selectorBytes": [
@@ -5724,9 +5724,9 @@
       "func": {
         "id": "isFile",
         "description": "Returns true if the path exists on disk and is pointing at a regular file, else returns false.",
-        "declaration": "function isFile(string calldata path) external returns (bool result);",
+        "declaration": "function isFile(string calldata path) external view returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "isFile(string)",
         "selector": "0xe0eb04d4",
         "selectorBytes": [
@@ -6024,6 +6024,46 @@
     },
     {
       "func": {
+        "id": "mockCallRevert_2",
+        "description": "Reverts a call to an address with specified revert data.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCallRevert(address,bytes4,bytes)",
+        "selector": "0x2dfba5df",
+        "selectorBytes": [
+          45,
+          251,
+          165,
+          223
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCallRevert_3",
+        "description": "Reverts a call to an address with a specific `msg.value`, with specified revert data.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCallRevert(address,uint256,bytes4,bytes)",
+        "selector": "0x596c8f04",
+        "selectorBytes": [
+          89,
+          108,
+          143,
+          4
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "mockCall_0",
         "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.",
         "declaration": "function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;",
@@ -6056,6 +6096,46 @@
           64,
           155,
           145
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCall_2",
+        "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCall(address callee, bytes4 data, bytes calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCall(address,bytes4,bytes)",
+        "selector": "0x08e0c537",
+        "selectorBytes": [
+          8,
+          224,
+          197,
+          55
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCall_3",
+        "description": "Mocks a call to an address with a specific `msg.value`, returning specified data.\nCalldata match takes precedence over `msg.value` in case of ambiguity.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCall(address,uint256,bytes4,bytes)",
+        "selector": "0xe7b36a3d",
+        "selectorBytes": [
+          231,
+          179,
+          106,
+          61
         ]
       },
       "group": "evm",
@@ -9852,9 +9932,9 @@
       "func": {
         "id": "unixTime",
         "description": "Returns the time since unix epoch in milliseconds.",
-        "declaration": "function unixTime() external returns (uint256 milliseconds);",
+        "declaration": "function unixTime() external view returns (uint256 milliseconds);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "unixTime()",
         "selector": "0x625387dc",
         "selectorBytes": [

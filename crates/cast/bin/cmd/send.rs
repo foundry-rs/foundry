@@ -39,10 +39,6 @@ pub struct SendTxArgs {
     #[arg(long, default_value = "1")]
     confirmations: u64,
 
-    /// Print the transaction receipt as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
-
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
 
@@ -98,7 +94,6 @@ impl SendTxArgs {
             mut args,
             tx,
             confirmations,
-            json: to_json,
             command,
             unlocked,
             path,
@@ -159,7 +154,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -178,7 +173,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .on_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout).await
         }
     }
 }
@@ -189,7 +184,6 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     cast_async: bool,
     confs: u64,
     timeout: u64,
-    to_json: bool,
 ) -> Result<()> {
     let cast = Cast::new(provider);
     let pending_tx = cast.send(tx).await?;
@@ -199,9 +193,8 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     if cast_async {
         sh_println!("{tx_hash:#x}")?;
     } else {
-        let receipt = cast
-            .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false, to_json)
-            .await?;
+        let receipt =
+            cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
         sh_println!("{receipt}")?;
     }
 
