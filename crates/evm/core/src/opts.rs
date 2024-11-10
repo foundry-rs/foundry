@@ -1,5 +1,5 @@
 use super::fork::environment;
-use crate::fork::CreateFork;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
@@ -91,7 +91,7 @@ impl Default for EvmOpts {
             isolate: false,
             disable_block_gas_limit: false,
             alphanet: false,
-            create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
+            create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }
 }
