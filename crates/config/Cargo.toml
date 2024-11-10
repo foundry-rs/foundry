@@ -32,21 +32,21 @@ glob = "0.3"
 Inflector = "0.11"
 number_prefix = "0.4"
 mesc.workspace = true
-regex = "1"
+regex.workspace = true
 reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde_regex = "1"
 serde.workspace = true
 thiserror.workspace = true
-toml = { version = "0.8", features = ["preserve_order"] }
-toml_edit = "0.22.4"
+toml = { workspace = true, features = ["preserve_order"] }
+toml_edit = "0.22"
 tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-path-slash = "0.2.1"
+path-slash = "0.2"
 
 [dev-dependencies]
 similar-asserts.workspace = true

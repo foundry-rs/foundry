@@ -50,15 +50,15 @@ impl<'a> ContractVisitor<'a> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
 
-        // TODO(onbjerg): Figure out why we cannot find anchors for the receive function
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
-        if kind == "receive" {
-            return Ok(())
-        }
 
         match &node.body {
             Some(body) => {
+                // Do not add coverage item for constructors without statements.
+                if kind == "constructor" && !has_statements(body) {
+                    return Ok(())
+                }
                 self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
                 self.visit_block(body)
             }
