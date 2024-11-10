@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::TxEnvelope;
-use alloy_eips::{eip2718::Encodable2718, eip7702::constants::PER_EMPTY_ACCOUNT_COST};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
     map::{AddressHashMap, AddressHashSet},
@@ -41,18 +41,11 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
 
-    let auth_list_cost = tx
-        .authorization_list
-        .as_ref()
-        .map(|list| list.len() as u64 * PER_EMPTY_ACCOUNT_COST)
-        .unwrap_or(0);
-    // estimate normal execution cost
-    let execution_cost =
+    tx.set_gas_limit(
         provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier /
-            100;
-
-    tx.set_gas_limit(execution_cost + auth_list_cost);
+            100,
+    );
     Ok(())
 }
 

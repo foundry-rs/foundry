@@ -1,6 +1,5 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_eips::eip7702::constants::PER_EMPTY_ACCOUNT_COST;
 use alloy_primitives::{hex, Address, TxKind, B256};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
@@ -160,13 +159,8 @@ impl ScriptTransactionBuilder {
 
         if !self.transaction.is_fixed_gas_limit {
             if let Some(unsigned) = self.transaction.transaction.as_unsigned_mut() {
-                let mut gas = result.gas_used;
-                // if this is a 7702 tx, add the per-account auth costs
-                if let Some(auth_list) = unsigned.authorization_list.as_ref() {
-                    gas += auth_list.len() as u64 * PER_EMPTY_ACCOUNT_COST;
-                }
                 // We inflate the gas used by the user specified percentage
-                unsigned.gas = Some(gas * gas_estimate_multiplier / 100);
+                unsigned.gas = Some(result.gas_used * gas_estimate_multiplier / 100);
             }
         }
 
