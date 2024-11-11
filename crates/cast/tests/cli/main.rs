@@ -6,8 +6,8 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file,
     rpc::{
-        next_http_rpc_endpoint, next_mainnet_etherscan_api_key, next_rpc_endpoint,
-        next_ws_rpc_endpoint,
+        next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
+        next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -1500,6 +1500,33 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3473>
+casttest!(test_non_mainnet_traces, |_prj, cmd| {
+    cmd.args([
+        "run",
+        "0x8346762a8c1d7ce70be23c1b68ff920ffb6bca8fd62323e6c1d108f209e0b45d",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Optimism).as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key(NamedChain::Optimism).as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [429891] FuturesMarket::modifyPositionWithTracking(79573547589616810 [7.957e16], 0x4b57454e54410000000000000000000000000000000000000000000000000000)
+    ├─ [9111] SystemStatus::requireFuturesMarketActive(0x7345544800000000000000000000000000000000000000000000000000000000) [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [2789] SystemStatus::requireSynthActive(0x7345544800000000000000000000000000000000000000000000000000000000) [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [70705] ExchangeCircuitBreaker::rateWithBreakCircuit(0x7345544800000000000000000000000000000000000000000000000000000000)
+    │   ├─ [399] SystemStatus::systemSuspended() [staticcall]
+    │   │   └─ ← [Return] false
+...
 
 "#]]);
 });
