@@ -197,12 +197,12 @@ impl VerifyArgs {
             let args = EtherscanVerificationProvider::default()
                 .create_verify_request(&self, &context)
                 .await?;
-            println!("{}", args.source);
+            sh_println!("{}", args.source)?;
             return Ok(())
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{}` deployed on {chain}", self.address);
+        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
         self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
@@ -333,7 +333,10 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        println!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default());
+        sh_println!(
+            "Checking verification status on {}",
+            self.etherscan.chain.unwrap_or_default()
+        )?;
         self.verifier.verifier.client(&self.etherscan.key())?.check(self).await
     }
 }

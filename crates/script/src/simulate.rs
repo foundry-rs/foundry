@@ -112,10 +112,10 @@ impl PreSimulationState {
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
-            .map(|mut transaction| async {
+            .map(|transaction| async {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
 
-                let tx = transaction.tx_mut();
+                let tx = transaction.tx();
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
                     .simulate(
@@ -151,8 +151,8 @@ impl PreSimulationState {
             .collect::<Vec<_>>();
 
         if self.script_config.evm_opts.verbosity > 3 {
-            println!("==========================");
-            println!("Simulated On-chain Traces:\n");
+            sh_println!("==========================")?;
+            sh_println!("Simulated On-chain Traces:\n")?;
         }
 
         let mut abort = false;
@@ -163,7 +163,7 @@ impl PreSimulationState {
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, &self.execution_artifacts.decoder).await?;
-                    println!("{}", render_trace_arena(trace));
+                    sh_println!("{}", render_trace_arena(trace))?;
                 }
             }
 

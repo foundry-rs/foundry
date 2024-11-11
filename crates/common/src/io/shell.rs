@@ -27,6 +27,11 @@ pub fn is_quiet() -> bool {
     verbosity().is_quiet()
 }
 
+/// Returns whether the output format is [`OutputFormat::Json`].
+pub fn is_json() -> bool {
+    Shell::get().output_format().is_json()
+}
+
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 
@@ -95,12 +100,39 @@ impl Verbosity {
     }
 }
 
+/// The requested output format.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum OutputFormat {
+    /// Plain text output.
+    #[default]
+    Text,
+    /// JSON output.
+    Json,
+}
+
+impl OutputFormat {
+    /// Returns true if the output format is `Text`.
+    #[inline]
+    pub fn is_text(self) -> bool {
+        self == Self::Text
+    }
+
+    /// Returns true if the output format is `Json`.
+    #[inline]
+    pub fn is_json(self) -> bool {
+        self == Self::Json
+    }
+}
+
 /// An abstraction around console output that remembers preferences for output
 /// verbosity and color.
 pub struct Shell {
     /// Wrapper around stdout/stderr. This helps with supporting sending
     /// output to a memory buffer which is useful for tests.
     output: ShellOut,
+
+    /// The format to use for message output.
+    output_format: OutputFormat,
 
     /// How verbose messages should be.
     verbosity: Verbosity,
@@ -158,12 +190,12 @@ impl Shell {
     /// output.
     #[inline]
     pub fn new() -> Self {
-        Self::new_with(ColorChoice::Auto, Verbosity::Verbose)
+        Self::new_with(OutputFormat::Text, ColorChoice::Auto, Verbosity::Verbose)
     }
 
     /// Creates a new shell with the given color choice and verbosity.
     #[inline]
-    pub fn new_with(color: ColorChoice, verbosity: Verbosity) -> Self {
+    pub fn new_with(format: OutputFormat, color: ColorChoice, verbosity: Verbosity) -> Self {
         Self {
             output: ShellOut::Stream {
                 stdout: AutoStream::new(std::io::stdout(), color.to_anstream_color_choice()),
@@ -171,6 +203,7 @@ impl Shell {
                 color_choice: color,
                 stderr_tty: std::io::stderr().is_terminal(),
             },
+            output_format: format,
             verbosity,
             needs_clear: AtomicBool::new(false),
         }
@@ -181,14 +214,15 @@ impl Shell {
     pub fn empty() -> Self {
         Self {
             output: ShellOut::Empty(std::io::empty()),
+            output_format: OutputFormat::Text,
             verbosity: Verbosity::Quiet,
             needs_clear: AtomicBool::new(false),
         }
     }
 
-    /// Get a static reference to the global shell.
+    /// Acquire a lock to the global shell.
     ///
-    /// Initializes the global shell with the default values if it has not been set yet.
+    /// Initializes it with the default values if it has not been set yet.
     pub fn get() -> impl DerefMut<Target = Self> + 'static {
         GLOBAL_SHELL.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -200,10 +234,9 @@ impl Shell {
     /// Panics if the global shell has already been set.
     #[track_caller]
     pub fn set(self) {
-        if GLOBAL_SHELL.get().is_some() {
-            panic!("attempted to set global shell twice");
-        }
-        GLOBAL_SHELL.get_or_init(|| Mutex::new(self));
+        GLOBAL_SHELL
+            .set(Mutex::new(self))
+            .unwrap_or_else(|_| panic!("attempted to set global shell twice"))
     }
 
     /// Sets whether the next print should clear the current line and returns the previous value.
@@ -237,6 +270,11 @@ impl Shell {
     #[inline]
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
+    }
+
+    /// Gets the output format of the shell.
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format
     }
 
     /// Gets the current color choice.
@@ -411,22 +449,16 @@ impl ShellOut {
 
     /// Write a styled fragment
     fn write_stdout(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
-        let style = style.render();
-        let reset = anstyle::Reset.render();
-
         let mut buffer = Vec::new();
-        write!(buffer, "{style}{fragment}{reset}")?;
+        write!(buffer, "{style}{fragment}{style:#}")?;
         self.stdout().write_all(&buffer)?;
         Ok(())
     }
 
     /// Write a styled fragment
     fn write_stderr(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
-        let style = style.render();
-        let reset = anstyle::Reset.render();
-
         let mut buffer = Vec::new();
-        write!(buffer, "{style}{fragment}{reset}")?;
+        write!(buffer, "{style}{fragment}{style:#}")?;
         self.stderr().write_all(&buffer)?;
         Ok(())
     }
@@ -456,19 +488,17 @@ impl ShellOut {
         style: &Style,
         justified: bool,
     ) -> Result<Vec<u8>> {
-        let style = style.render();
-        let bold = (anstyle::Style::new() | anstyle::Effects::BOLD).render();
-        let reset = anstyle::Reset.render();
+        let bold = anstyle::Style::new().bold();
 
         let mut buffer = Vec::new();
         if justified {
-            write!(&mut buffer, "{style}{status:>12}{reset}")?;
+            write!(buffer, "{style}{status:>12}{style:#}")?;
         } else {
-            write!(&mut buffer, "{style}{status}{reset}{bold}:{reset}")?;
+            write!(buffer, "{style}{status}{style:#}{bold}:{bold:#}")?;
         }
         match message {
             Some(message) => {
-                writeln!(&mut buffer, " {message}")?;
+                writeln!(buffer, " {message}")?;
             }
             None => write!(buffer, " ")?,
         }

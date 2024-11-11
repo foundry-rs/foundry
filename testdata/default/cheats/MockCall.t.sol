@@ -176,7 +176,7 @@ contract MockCallTest is DSTest {
         Mock mock = Mock(address(100));
 
         vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10));
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode());
+        vm.mockCall(address(mock), mock.noReturnValue.selector, abi.encode());
 
         assertEq(mock.add(1, 2), 10);
         mock.noReturnValue();
@@ -197,7 +197,7 @@ contract MockCallRevertTest is DSTest {
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
 
-        vm.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(address(target), target.numberB.selector, ERROR_MESSAGE);
 
         // post-mock
         assertEq(target.numberA(), 1);

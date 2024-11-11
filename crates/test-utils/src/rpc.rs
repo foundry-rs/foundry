@@ -177,7 +177,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
+#[allow(clippy::needless_return, clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use alloy_primitives::address;
@@ -190,7 +190,7 @@ mod tests {
         let mut first_abi = None;
         let mut failed = Vec::new();
         for (i, &key) in ETHERSCAN_MAINNET_KEYS.iter().enumerate() {
-            eprintln!("trying key {i} ({key})");
+            println!("trying key {i} ({key})");
 
             let client = foundry_block_explorers::Client::builder()
                 .chain(Chain::mainnet())

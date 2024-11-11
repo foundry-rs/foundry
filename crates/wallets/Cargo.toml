@@ -27,7 +27,7 @@ alloy-dyn-abi.workspace = true
 
 # aws-kms
 alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
-aws-config = { version = "1", optional = true } # default-features are necessary
+aws-config = { version = "1", optional = true }                                 # default-features are necessary
 aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # gcp-kms
@@ -39,7 +39,7 @@ gcloud-sdk = { version = "0.25", features = [
 
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-derive_builder = "0.20.0"
+derive_builder = "0.20"
 eyre.workspace = true
 rpassword = "7"
 serde.workspace = true

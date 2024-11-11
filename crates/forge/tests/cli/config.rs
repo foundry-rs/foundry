@@ -43,6 +43,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
+        gas_reports_include_tests: false,
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         auto_detect_remappings: true,
@@ -261,7 +262,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
         cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
             r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
-    Installed solmate
+    Installed solmate[..]
 
 "#
         ]]);
@@ -568,6 +569,25 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
+
+    // check if lib path is absolute, it should deteect nested lib
+    let mut config = cmd.config();
+    config.libs = vec![nested];
+
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
+    similar_asserts::assert_eq!(
+        remappings,
+        vec![
+            // local to the lib
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
+            // global
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remappings local to the lib
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+        ]
+    );
 });
 
 // test remappings with closer paths are prioritised
@@ -756,4 +776,40 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
+});
+
+// Tests that root paths are properly resolved even if submodule specifies remappings for them.
+// See <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(test_submodule_root_path_remappings, |prj, cmd| {
+    prj.add_script(
+        "BaseScript.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract BaseScript is Script {
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "MyScript.sol",
+        r#"
+import "script/BaseScript.sol";
+
+contract MyScript is BaseScript {
+}
+   "#,
+    )
+    .unwrap();
+
+    let nested = prj.paths().libraries[0].join("another-dep");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested);
+    lib_config.remappings = vec![
+        Remapping::from_str("test/=test/").unwrap().into(),
+        Remapping::from_str("script/=script/").unwrap().into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+    cmd.forge_fuse().args(["build"]).assert_success();
 });

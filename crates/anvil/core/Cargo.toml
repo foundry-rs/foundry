@@ -34,10 +34,10 @@ op-alloy-consensus.workspace = true
 
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
-bytes = "1.4"
+bytes.workspace = true
 
 # misc
-rand = "0.8"
+rand.workspace = true
 thiserror.workspace = true
 
 [features]

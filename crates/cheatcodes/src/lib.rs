@@ -7,7 +7,11 @@
 #![allow(elided_lifetimes_in_paths)] // Cheats context uses 3 lifetimes
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 pub extern crate foundry_cheatcodes_spec as spec;
+
 #[macro_use]
 extern crate tracing;
 

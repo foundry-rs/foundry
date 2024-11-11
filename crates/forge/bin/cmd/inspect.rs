@@ -87,7 +87,7 @@ impl InspectArgs {
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
                 if pretty {
                     let source = foundry_cli::utils::abi_to_solidity(abi, &contract.name)?;
-                    println!("{source}");
+                    sh_println!("{source}")?;
                 } else {
                     print_json(abi)?;
                 }
@@ -201,7 +201,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool
         ]);
     }
 
-    println!("{table}");
+    sh_println!("{table}")?;
     Ok(())
 }
 
@@ -390,12 +390,12 @@ impl ContractArtifactField {
 }
 
 fn print_json(obj: &impl serde::Serialize) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(obj)?);
+    sh_println!("{}", serde_json::to_string_pretty(obj)?)?;
     Ok(())
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
-    println!("{}", get_json_str(obj, key)?);
+    sh_println!("{}", get_json_str(obj, key)?)?;
     Ok(())
 }
 
@@ -408,9 +408,9 @@ fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
 
     if pretty {
-        println!("{}", YUL_COMMENTS.replace_all(yul, ""));
+        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
     } else {
-        println!("{yul}");
+        sh_println!("{yul}")?;
     }
 
     Ok(())
@@ -450,7 +450,7 @@ fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
 
     let eof = Eof::decode(bytecode).wrap_err("Failed to decode EOF")?;
 
-    println!("{}", pretty_eof(&eof)?);
+    sh_println!("{}", pretty_eof(&eof)?)?;
 
     Ok(())
 }

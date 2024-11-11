@@ -132,15 +132,23 @@ macro_rules! sh_eprintln {
 #[macro_export]
 macro_rules! __sh_dispatch {
     ($f:ident $fmt:literal $($args:tt)*) => {
-        $crate::Shell::$f(&mut *$crate::Shell::get(), ::core::format_args!($fmt $($args)*))
+        $crate::__sh_dispatch!(@impl $f &mut *$crate::Shell::get(), $fmt $($args)*)
     };
 
     ($f:ident $shell:expr, $($args:tt)*) => {
-        $crate::Shell::$f($shell, ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(@impl $f $shell, $($args)*)
     };
 
     ($f:ident $($args:tt)*) => {
-        $crate::Shell::$f(&mut *$crate::Shell::get(), ::core::format_args!($($args)*))
+        $crate::__sh_dispatch!(@impl $f &mut *$crate::Shell::get(), $($args)*)
+    };
+
+    // Ensure that the global shell lock is held for as little time as possible.
+    // Also avoids deadlocks in case of nested calls.
+    (@impl $f:ident $shell:expr, $($args:tt)*) => {
+        match ::core::format_args!($($args)*) {
+            fmt => $crate::Shell::$f($shell, fmt),
+        }
     };
 }
 
@@ -167,6 +175,11 @@ mod tests {
         sh_eprintln!()?;
         sh_eprintln!("eprintln")?;
         sh_eprintln!("eprintln {}", "arg")?;
+
+        sh_println!("{:?}", {
+            sh_println!("hi")?;
+            "nested"
+        })?;
 
         Ok(())
     }

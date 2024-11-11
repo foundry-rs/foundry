@@ -64,9 +64,12 @@ impl Miner {
         matches!(*mode, MiningMode::Auto(_))
     }
 
-    pub fn is_interval(&self) -> bool {
+    pub fn get_interval(&self) -> Option<u64> {
         let mode = self.mode.read();
-        matches!(*mode, MiningMode::FixedBlockTime(_))
+        if let MiningMode::FixedBlockTime(ref mm) = *mode {
+            return Some(mm.interval.period().as_secs())
+        }
+        None
     }
 
     /// Sets the mining mode to operate in

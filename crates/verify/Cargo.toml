@@ -36,7 +36,7 @@ reqwest = { workspace = true, features = ["json"] }
 async-trait.workspace = true
 futures.workspace = true
 semver.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 yansi.workspace = true
 itertools.workspace = true
 
