@@ -49,13 +49,13 @@ impl CreationCodeArgs {
         let Self { contract, etherscan, rpc, disassemble, without_args, only_args, abi_path } =
             self;
 
-        let config = Config::from(&etherscan);
-        let chain = config.chain.unwrap_or_default();
-        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, api_key)?;
-
+        let mut etherscan = etherscan;
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
+        let api_key = etherscan.key().unwrap_or_default();
+        let chain = provider.get_chain_id().await?;
+        etherscan.chain = Some(chain.into());
+        let client = Client::new(chain.into(), api_key)?;
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 

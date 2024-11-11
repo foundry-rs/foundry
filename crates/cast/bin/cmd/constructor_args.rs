@@ -1,5 +1,6 @@
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
+use alloy_provider::Provider;
 use clap::{command, Parser};
 use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;
@@ -36,13 +37,13 @@ impl ConstructorArgsArgs {
     pub async fn run(self) -> Result<()> {
         let Self { contract, etherscan, rpc, abi_path } = self;
 
-        let config = Config::from(&etherscan);
-        let chain = config.chain.unwrap_or_default();
-        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, api_key)?;
-
+        let mut etherscan = etherscan;
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
+        let api_key = etherscan.key().unwrap_or_default();
+        let chain = provider.get_chain_id().await?;
+        etherscan.chain = Some(chain.into());
+        let client = Client::new(chain.into(), api_key)?;
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 
