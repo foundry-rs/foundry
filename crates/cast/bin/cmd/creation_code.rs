@@ -49,19 +49,25 @@ impl CreationCodeArgs {
         let Self { contract, etherscan, rpc, disassemble, without_args, only_args, abi_path } =
             self;
 
-        let config = Config::from(&etherscan);
-        let chain = config.chain.unwrap_or_default();
-        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, api_key)?;
-
+        let mut etherscan = etherscan;
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
+        let api_key = etherscan.key().unwrap_or_default();
+        let chain = provider.get_chain_id().await?;
+        etherscan.chain = Some(chain.into());
+        let client = Client::new(chain.into(), api_key)?;
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 
-        let bytecode =
-            parse_code_output(bytecode, contract, &etherscan, abi_path, without_args, only_args)
-                .await?;
+        let bytecode = parse_code_output(
+            bytecode,
+            contract,
+            &etherscan,
+            abi_path.as_deref(),
+            without_args,
+            only_args,
+        )
+        .await?;
 
         if disassemble {
             let _ = sh_println!("{}", SimpleCast::disassemble(&bytecode)?);
@@ -77,11 +83,11 @@ impl CreationCodeArgs {
 /// - The complete bytecode
 /// - The bytecode without constructor arguments
 /// - Only the constructor arguments
-async fn parse_code_output(
+pub async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
     etherscan: &EtherscanOpts,
-    abi_path: Option<String>,
+    abi_path: Option<&str>,
     without_args: bool,
     only_args: bool,
 ) -> Result<Bytes> {
@@ -90,7 +96,7 @@ async fn parse_code_output(
     }
 
     let abi = if let Some(abi_path) = abi_path {
-        load_abi_from_file(&abi_path, None)?
+        load_abi_from_file(abi_path, None)?
     } else {
         fetch_abi_from_etherscan(contract, etherscan).await?
     };
