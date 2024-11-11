@@ -6,8 +6,8 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file,
     rpc::{
-        next_http_rpc_endpoint, next_mainnet_etherscan_api_key, next_rpc_endpoint,
-        next_ws_rpc_endpoint,
+        next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
+        next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -1500,6 +1500,31 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3473>
+casttest!(test_non_mainnet_traces, |prj, cmd| {
+    prj.clear();
+    cmd.args([
+        "run",
+        "0xa003e419e2d7502269eb5eda56947b580120e00abfd5b5460d08f8af44a0c24f",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Optimism).as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key(NamedChain::Optimism).as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [33841] FiatTokenProxy::fallback(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8])
+    ├─ [26673] FiatTokenV2_2::approve(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8]) [delegatecall]
+    │   ├─ emit Approval(owner: 0x9a95Af47C51562acfb2107F44d7967DF253197df, spender: 0x111111125421cA6dc452d289314280a0f8842A65, value: 164054805 [1.64e8])
+    │   └─ ← [Return] true
+    └─ ← [Return] true
+...
 
 "#]]);
 });
