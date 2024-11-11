@@ -4,7 +4,7 @@ use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EthereumOpts, GlobalOpts, TransactionOpts},
+    opts::{EthereumOpts, TransactionOpts},
     utils,
 };
 use foundry_common::ens::NameOrAddress;
@@ -14,10 +14,6 @@ use std::str::FromStr;
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
 pub struct AccessListArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The destination of the transaction.
     #[arg(
         value_name = "TO",

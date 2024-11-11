@@ -1,8 +1,5 @@
 use super::ProjectPathsArgs;
-use crate::{
-    opts::{CompilerArgs, GlobalOpts},
-    utils::LoadConfig,
-};
+use crate::{opts::CompilerArgs, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
@@ -28,10 +25,6 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Build options")]
 pub struct CoreBuildArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// Clear the cache and artifacts folder and recompile.
     #[arg(long, help_heading = "Cache options")]
     #[serde(skip)]

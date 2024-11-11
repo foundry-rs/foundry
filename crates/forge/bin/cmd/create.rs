@@ -185,7 +185,6 @@ impl CreateArgs {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
         let mut verify = VerifyArgs {
-            global: self.global,
             address: Default::default(),
             contract: Some(self.contract.clone()),
             compiler_version: None,
@@ -342,7 +341,6 @@ impl CreateArgs {
             None
         };
         let verify = VerifyArgs {
-            global: self.global,
             address,
             contract: Some(self.contract),
             compiler_version: None,

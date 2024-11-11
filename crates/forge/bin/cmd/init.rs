@@ -1,7 +1,7 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::GlobalOpts, utils::Git};
+use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
@@ -11,10 +11,6 @@ use yansi::Paint;
 /// CLI arguments for `forge init`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct InitArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The root directory of the new project.
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
     pub root: PathBuf,

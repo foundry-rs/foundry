@@ -5,10 +5,7 @@ use ethers_contract_abigen::{
 };
 use eyre::{Result, WrapErr};
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
-use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalOpts},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use regex::Regex;
@@ -25,10 +22,6 @@ const DEFAULT_CRATE_VERSION: &str = "0.1.0";
 /// CLI arguments for `forge bind`.
 #[derive(Clone, Debug, Parser)]
 pub struct BindArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// Path to where the contract artifacts are stored.
     #[arg(
         long = "bindings-path",

@@ -1,7 +1,6 @@
 use alloy_primitives::{hex, keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use foundry_cli::opts::GlobalOpts;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use regex::RegexSetBuilder;
 use std::{
@@ -19,10 +18,6 @@ const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 /// CLI arguments for `cast create2`.
 #[derive(Clone, Debug, Parser)]
 pub struct Create2Args {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// Prefix for the contract address.
     #[arg(
         long,

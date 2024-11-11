@@ -1,16 +1,12 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::GlobalOpts, utils::LoadConfig};
+use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
 use std::{collections::BTreeMap, path::PathBuf};
 
 /// CLI arguments for `forge remappings`.
 #[derive(Clone, Debug, Parser)]
 pub struct RemappingArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,

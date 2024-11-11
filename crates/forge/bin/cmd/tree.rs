@@ -1,9 +1,6 @@
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{
-    opts::{GlobalOpts, ProjectPathsArgs},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::ProjectPathsArgs, utils::LoadConfig};
 use foundry_compilers::{
     resolver::{parse::SolData, Charset, TreeOptions},
     Graph,
@@ -12,10 +9,6 @@ use foundry_compilers::{
 /// CLI arguments for `forge tree`.
 #[derive(Clone, Debug, Parser)]
 pub struct TreeArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// Do not de-duplicate (repeats all shared dependencies)
     #[arg(long)]
     no_dedupe: bool,

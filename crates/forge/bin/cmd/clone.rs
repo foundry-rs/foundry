@@ -7,10 +7,7 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     Client,
 };
-use foundry_cli::{
-    opts::{EtherscanOpts, GlobalOpts},
-    utils::Git,
-};
+use foundry_cli::{opts::EtherscanOpts, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{
@@ -67,10 +64,6 @@ pub struct CloneMetadata {
 /// 6. Dump the `CloneMetadata` to the root directory of the cloned project as `.clone.meta` file.
 #[derive(Clone, Debug, Parser)]
 pub struct CloneArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The contract address to clone.
     pub address: Address,
 

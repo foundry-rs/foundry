@@ -13,10 +13,7 @@ use forge::{
     utils::IcPcMap,
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_cli::{
-    opts::GlobalOpts,
-    utils::{LoadConfig, STATIC_FUZZ_SEED},
-};
+use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
@@ -36,10 +33,6 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 /// CLI arguments for `forge coverage`.
 #[derive(Clone, Debug, Parser)]
 pub struct CoverageArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The report type to use for coverage.
     ///
     /// This flag can be used multiple times.

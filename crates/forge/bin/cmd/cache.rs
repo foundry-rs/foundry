@@ -4,7 +4,6 @@ use clap::{
     Arg, Command, Parser, Subcommand,
 };
 use eyre::Result;
-use foundry_cli::opts::GlobalOpts;
 use foundry_config::{cache, Chain, Config, NamedChain};
 use std::{ffi::OsStr, str::FromStr};
 use strum::VariantNames;
@@ -12,10 +11,6 @@ use strum::VariantNames;
 /// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     #[command(subcommand)]
     pub sub: CacheSubcommands,
 }

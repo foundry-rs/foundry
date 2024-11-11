@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{Dependency, GlobalOpts},
+    opts::Dependency,
     utils::{Git, LoadConfig},
 };
 use foundry_config::impl_figment_convert_basic;
@@ -10,10 +10,6 @@ use std::path::PathBuf;
 /// CLI arguments for `forge remove`.
 #[derive(Clone, Debug, Parser)]
 pub struct RemoveArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The dependencies you want to remove.
     #[arg(required = true)]
     dependencies: Vec<Dependency>,

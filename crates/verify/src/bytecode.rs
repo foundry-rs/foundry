@@ -13,7 +13,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag, Transaction};
 use clap::{Parser, ValueHint};
 use eyre::{OptionExt, Result};
 use foundry_cli::{
-    opts::{EtherscanOpts, GlobalOpts},
+    opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
 use foundry_common::shell;
@@ -29,10 +29,6 @@ impl_figment_convert!(VerifyBytecodeArgs);
 /// CLI arguments for `forge verify-bytecode`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyBytecodeArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The address of the contract to verify.
     pub address: Address,
 

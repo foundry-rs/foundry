@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
-    opts::{Dependency, GlobalOpts},
+    opts::Dependency,
     utils::{Git, LoadConfig},
 };
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -10,10 +10,6 @@ use std::path::PathBuf;
 /// CLI arguments for `forge update`.
 #[derive(Clone, Debug, Parser)]
 pub struct UpdateArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The dependencies you want to update.
     dependencies: Vec<Dependency>,
 

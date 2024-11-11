@@ -1,10 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use forge_fmt::{format_to, parse};
-use foundry_cli::{
-    opts::GlobalOpts,
-    utils::{FoundryPathExt, LoadConfig},
-};
+use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::fs;
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
@@ -21,10 +18,6 @@ use yansi::{Color, Paint, Style};
 /// CLI arguments for `forge fmt`.
 #[derive(Clone, Debug, Parser)]
 pub struct FmtArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// Path to the file, directory or '-' to read from stdin.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,

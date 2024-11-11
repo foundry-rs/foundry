@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::retry::RETRY_VERIFY_ON_CREATE;
-use foundry_cli::opts::{CoreBuildArgs, GlobalOpts};
+use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
 
@@ -11,10 +11,6 @@ foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
 /// CLI arguments for `forge debug`.
 #[derive(Clone, Debug, Parser)]
 pub struct DebugArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
