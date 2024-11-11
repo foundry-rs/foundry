@@ -10,7 +10,10 @@ use alloy_signer_local::{
 use cast::revm::primitives::Authorization;
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{opts::RpcOpts, utils};
+use foundry_cli::{
+    opts::{GlobalOpts, RpcOpts},
+    utils,
+};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
@@ -31,6 +34,10 @@ pub enum WalletSubcommands {
     /// Create a new random keypair.
     #[command(visible_alias = "n")]
     New {
+        /// Include the global options.
+        #[command(flatten)]
+        global: GlobalOpts,
+
         /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
 
@@ -54,6 +61,10 @@ pub enum WalletSubcommands {
     /// Generates a random BIP39 mnemonic phrase
     #[command(visible_alias = "nm")]
     NewMnemonic {
+        /// Include the global options.
+        #[command(flatten)]
+        global: GlobalOpts,
+
         /// Number of words for the mnemonic
         #[arg(long, short, default_value = "12")]
         words: usize,
@@ -211,10 +222,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, .. } => {
+            Self::New { path, unsafe_password, number, global, .. } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
+                let mut json_values = if global.shell().is_json() { Some(vec![]) } else { None };
                 if let Some(path) = path {
                     let path = match dunce::canonicalize(path.clone()) {
                         Ok(path) => path,
@@ -286,7 +297,7 @@ impl WalletSubcommands {
                     }
                 }
             }
-            Self::NewMnemonic { words, accounts, entropy } => {
+            Self::NewMnemonic { words, accounts, entropy, global } => {
                 let phrase = if let Some(entropy) = entropy {
                     let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
@@ -295,7 +306,7 @@ impl WalletSubcommands {
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
 
-                let format_json = shell::is_json();
+                let format_json = global.shell().is_json();
 
                 if !format_json {
                     sh_println!("{}", "Generating mnemonic from provided entropy...".yellow())?;

@@ -35,6 +35,7 @@ fn run() -> Result<()> {
     utils::enable_paint();
 
     let args = Forge::parse();
+    args.global.spawn()?;
     args.global.shell().set();
     init_execution_context(&args.cmd);
 

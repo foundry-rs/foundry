@@ -49,6 +49,7 @@ fn run() -> Result<()> {
     utils::load_dotenv();
 
     let mut args = Anvil::parse();
+    args.global.spawn()?;
     args.global.shell().set();
     args.node.evm_opts.resolve_rpc_alias();
 

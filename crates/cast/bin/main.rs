@@ -49,7 +49,9 @@ fn run() -> Result<()> {
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
+
     let args = CastArgs::parse();
+    args.global.spawn()?;
     args.global.shell().set();
     main_args(args)
 }

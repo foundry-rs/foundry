@@ -1,5 +1,6 @@
 use clap::Parser;
 use foundry_common::shell::{ColorChoice, OutputFormat, Shell, Verbosity};
+use rayon::{current_num_threads, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 /// Global options.
@@ -33,9 +34,29 @@ pub struct GlobalOpts {
     /// Log messages coloring.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
     color: Option<ColorChoice>,
+
+    /// Number of threads to use.
+    /// If 0, the number of threads will be equal to the number of logical CPUs.
+    /// If set to a value greater than 0, it will use that number of threads capped at the number
+    /// of logical CPUs.
+    /// If not provided it will not spawn the global thread pool.
+    #[clap(long, global = true, visible_alias = "threads", help_heading = "Concurrency options")]
+    jobs: Option<usize>,
 }
 
 impl GlobalOpts {
+    /// Spawn a new global thread pool.
+    pub fn spawn(self) -> Result<(), rayon::ThreadPoolBuildError> {
+        if let Some(jobs) = self.jobs {
+            let threads = current_num_threads();
+            let num_threads = if jobs == 0 { threads } else { jobs.min(threads) };
+            return ThreadPoolBuilder::new().num_threads(num_threads).build_global();
+        }
+
+        Ok(())
+    }
+
+    /// Create a new shell instance.
     pub fn shell(self) -> Shell {
         let verbosity = match (self.verbose, self.quiet) {
             (true, false) => Verbosity::Verbose,

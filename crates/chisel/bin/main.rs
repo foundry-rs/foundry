@@ -118,7 +118,9 @@ fn run() -> eyre::Result<()> {
     handler::install();
     utils::subscriber();
     utils::load_dotenv();
+
     let args = Chisel::parse();
+    args.global.spawn()?;
     args.global.shell().set();
     main_args(args)
 }

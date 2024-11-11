@@ -37,6 +37,7 @@ dotenvy = "0.15"
 eyre.workspace = true
 futures.workspace = true
 indicatif = "0.17"
+rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde.workspace = true
 strsim = "0.11"
