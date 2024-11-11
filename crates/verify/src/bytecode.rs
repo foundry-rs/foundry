@@ -11,7 +11,7 @@ use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{network::TransactionBuilder, Provider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use clap::{Parser, ValueHint};
-use eyre::{OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
@@ -255,7 +255,8 @@ impl VerifyBytecodeArgs {
 
             // configure_tx_rq_env(&mut env, &gen_tx);
 
-            configure_tx_req_env(&mut env, &gen_tx_req);
+            configure_tx_req_env(&mut env, &gen_tx_req)
+                .wrap_err("Failed to configure tx request env")?;
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -468,13 +469,14 @@ impl VerifyBytecodeArgs {
             }
 
             // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env, &transaction);
+            configure_tx_req_env(&mut env, &transaction)
+                .wrap_err("Failed to configure tx request env")?;
 
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
                 config.evm_spec_id(),
-                transaction.to.clone(),
+                transaction.to,
             )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.
