@@ -59,9 +59,15 @@ impl CreationCodeArgs {
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 
-        let bytecode =
-            parse_code_output(bytecode, contract, &etherscan, abi_path, without_args, only_args)
-                .await?;
+        let bytecode = parse_code_output(
+            bytecode,
+            contract,
+            &etherscan,
+            abi_path.as_deref(),
+            without_args,
+            only_args,
+        )
+        .await?;
 
         if disassemble {
             let _ = sh_println!("{}", SimpleCast::disassemble(&bytecode)?);
@@ -81,7 +87,7 @@ pub async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
     etherscan: &EtherscanOpts,
-    abi_path: Option<String>,
+    abi_path: Option<&str>,
     without_args: bool,
     only_args: bool,
 ) -> Result<Bytes> {
@@ -90,7 +96,7 @@ pub async fn parse_code_output(
     }
 
     let abi = if let Some(abi_path) = abi_path {
-        load_abi_from_file(&abi_path, None)?
+        load_abi_from_file(abi_path, None)?
     } else {
         fetch_abi_from_etherscan(contract, etherscan).await?
     };

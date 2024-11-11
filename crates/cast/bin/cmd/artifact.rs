@@ -57,8 +57,8 @@ impl ArtifactArgs {
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
 
-        let abi = if let Some(abi_path) = abi_path.clone() {
-            load_abi_from_file(&abi_path, None)?
+        let abi = if let Some(ref abi_path) = abi_path {
+            load_abi_from_file(abi_path, None)?
         } else {
             fetch_abi_from_etherscan(contract, &etherscan).await?
         };
@@ -67,7 +67,8 @@ impl ArtifactArgs {
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
         let bytecode =
-            parse_code_output(bytecode, contract, &etherscan, abi_path, true, false).await?;
+            parse_code_output(bytecode, contract, &etherscan, abi_path.as_deref(), true, false)
+                .await?;
 
         let artifact = json!({
             "abi": abi,
