@@ -278,17 +278,17 @@ pub fn to_alloy_transaction_with_hash_and_sender(
     from: Address,
 ) -> RpcTransaction {
     // Common
-    let hash = transaction.hash();
-    let to = transaction.to();
-    let kind = transaction.kind();
-    let nonce = transaction.nonce();
-    let value = transaction.value();
-    let gas_price = transaction.gas_price();
-    let gas_limit = transaction.gas_limit();
-    let input = transaction.data().clone();
-    let chain_id = transaction.chain_id();
-    let transaction_type = transaction.r#type();
-    let max_fee_per_blob_gas = transaction.max_fee_per_blob_gas();
+    // let hash = transaction.hash();
+    // let to = transaction.to();
+    // let kind = transaction.kind();
+    // let nonce = transaction.nonce();
+    // let value = transaction.value();
+    // let gas_price = transaction.gas_price();
+    // let gas_limit = transaction.gas_limit();
+    // let input = transaction.data().clone();
+    // let chain_id = transaction.chain_id();
+    // let transaction_type = transaction.r#type();
+    // let max_fee_per_blob_gas = transaction.max_fee_per_blob_gas();
 
     match transaction {
         TypedTransaction::Legacy(t) => RpcTransaction {
@@ -331,14 +331,17 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             effective_gas_price: None,
             inner: TxEnvelope::Eip7702(t),
         },
-        TypedTransaction::Deposit(t) => RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from,
-            effective_gas_price: None,
-            inner: OpTxEnvelope::Deposit(t),
-        },
+        TypedTransaction::Deposit(_t) => {
+            todo!()
+            // RpcTransaction {
+            //     block_hash: None,
+            //     block_number: None,
+            //     transaction_index: None,
+            //     from,
+            //     effective_gas_price: None,
+            //     inner: OpTxEnvelope::Deposit(t),
+            // }
+        }
     }
 }
 
