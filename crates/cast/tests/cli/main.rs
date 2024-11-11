@@ -1505,10 +1505,11 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/3473>
-casttest!(test_non_mainnet_traces, |_prj, cmd| {
+casttest!(test_non_mainnet_traces, |prj, cmd| {
+    prj.clear();
     cmd.args([
         "run",
-        "0x8346762a8c1d7ce70be23c1b68ff920ffb6bca8fd62323e6c1d108f209e0b45d",
+        "0xa003e419e2d7502269eb5eda56947b580120e00abfd5b5460d08f8af44a0c24f",
         "--rpc-url",
         next_rpc_endpoint(NamedChain::Optimism).as_str(),
         "--etherscan-api-key",
@@ -1518,14 +1519,11 @@ casttest!(test_non_mainnet_traces, |_prj, cmd| {
     .stdout_eq(str![[r#"
 Executing previous transactions from the block.
 Traces:
-  [429891] FuturesMarket::modifyPositionWithTracking(79573547589616810 [7.957e16], 0x4b57454e54410000000000000000000000000000000000000000000000000000)
-    ├─ [9111] SystemStatus::requireFuturesMarketActive(0x7345544800000000000000000000000000000000000000000000000000000000) [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [2789] SystemStatus::requireSynthActive(0x7345544800000000000000000000000000000000000000000000000000000000) [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [70705] ExchangeCircuitBreaker::rateWithBreakCircuit(0x7345544800000000000000000000000000000000000000000000000000000000)
-    │   ├─ [399] SystemStatus::systemSuspended() [staticcall]
-    │   │   └─ ← [Return] false
+  [33841] FiatTokenProxy::fallback(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8])
+    ├─ [26673] FiatTokenV2_2::approve(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8]) [delegatecall]
+    │   ├─ emit Approval(owner: 0x9a95Af47C51562acfb2107F44d7967DF253197df, spender: 0x111111125421cA6dc452d289314280a0f8842A65, value: 164054805 [1.64e8])
+    │   └─ ← [Return] true
+    └─ ← [Return] true
 ...
 
 "#]]);

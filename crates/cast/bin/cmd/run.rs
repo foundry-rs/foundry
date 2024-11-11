@@ -5,7 +5,7 @@ use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::RpcOpts,
+    opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
@@ -58,9 +58,8 @@ pub struct RunArgs {
     #[arg(long, short)]
     label: Vec<String>,
 
-    /// Etherscan API key.
-    #[arg(long)]
-    pub etherscan_api_key: Option<String>,
+    #[command(flatten)]
+    etherscan: EtherscanOpts,
 
     #[command(flatten)]
     rpc: RpcOpts,
@@ -68,7 +67,7 @@ pub struct RunArgs {
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[arg(long, short)]
+    #[arg(long)]
     evm_version: Option<EvmVersion>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -102,7 +101,6 @@ impl RunArgs {
         let figment = Into::<Figment>::into(&self.rpc).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::try_from(figment)?.sanitized();
-        config.etherscan_api_key = self.etherscan_api_key;
 
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
@@ -272,6 +270,10 @@ impl figment::Provider for RunArgs {
 
         if self.alphanet {
             map.insert("alphanet".into(), self.alphanet.into());
+        }
+
+        if let Some(api_key) = &self.etherscan.key {
+            map.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
         if let Some(evm_version) = self.evm_version {
