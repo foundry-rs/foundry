@@ -58,6 +58,10 @@ pub struct RunArgs {
     #[arg(long, short)]
     label: Vec<String>,
 
+    /// Etherscan API key.
+    #[arg(long)]
+    pub etherscan_api_key: Option<String>,
+
     #[command(flatten)]
     rpc: RpcOpts,
 
@@ -98,6 +102,7 @@ impl RunArgs {
         let figment = Into::<Figment>::into(&self.rpc).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::try_from(figment)?.sanitized();
+        config.etherscan_api_key = self.etherscan_api_key;
 
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };

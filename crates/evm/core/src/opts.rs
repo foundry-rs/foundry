@@ -192,10 +192,6 @@ impl EvmOpts {
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
-            if url.contains("mainnet") {
-                trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::mainnet());
-            }
             trace!(?url, "retrieving chain via eth_chainId");
             let provider = ProviderBuilder::new(url.as_str())
                 .compute_units_per_second(self.get_compute_units_per_second())
@@ -205,6 +201,14 @@ impl EvmOpts {
 
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
+            }
+
+            // Provider URLs could be of the format `{CHAIN_IDENTIFIER}-mainnet`
+            // (e.g. Alchemy `opt-mainnet`, `arb-mainnet`), fallback to this method only
+            // if we're not able to retrieve chain id from `RetryProvider`.
+            if url.contains("mainnet") {
+                trace!(?url, "auto detected mainnet chain");
+                return Some(Chain::mainnet());
             }
         }
 
