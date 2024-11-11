@@ -13,7 +13,6 @@ use foundry_evm::{
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;
-use yansi::Paint;
 
 /// Drives script execution
 #[derive(Debug)]
@@ -248,7 +247,7 @@ impl ScriptRunner {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
-                    println!("{}", format!("\nFailed with `{reason}`:\n").red());
+                    sh_err!("Failed with `{reason}`:\n")?;
                     (Address::ZERO, raw)
                 }
                 Err(e) => eyre::bail!("Failed deploying contract: {e:?}"),

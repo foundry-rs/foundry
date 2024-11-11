@@ -1582,7 +1582,7 @@ interface Vm {
 
     /// Returns true if the given path points to an existing entity, else returns false.
     #[cheatcode(group = Filesystem)]
-    function exists(string calldata path) external returns (bool result);
+    function exists(string calldata path) external view returns (bool result);
 
     /// Given a path, query the file system to get information about a file, directory, etc.
     #[cheatcode(group = Filesystem)]
@@ -1590,11 +1590,11 @@ interface Vm {
 
     /// Returns true if the path exists on disk and is pointing at a directory, else returns false.
     #[cheatcode(group = Filesystem)]
-    function isDir(string calldata path) external returns (bool result);
+    function isDir(string calldata path) external view returns (bool result);
 
     /// Returns true if the path exists on disk and is pointing at a regular file, else returns false.
     #[cheatcode(group = Filesystem)]
-    function isFile(string calldata path) external returns (bool result);
+    function isFile(string calldata path) external view returns (bool result);
 
     /// Get the path of the current project root.
     #[cheatcode(group = Filesystem)]
@@ -1602,7 +1602,7 @@ interface Vm {
 
     /// Returns the time since unix epoch in milliseconds.
     #[cheatcode(group = Filesystem)]
-    function unixTime() external returns (uint256 milliseconds);
+    function unixTime() external view returns (uint256 milliseconds);
 
     // -------- Reading and writing --------
 
@@ -1732,27 +1732,27 @@ interface Vm {
     ///
     /// The most recent call can be fetched by passing `txType` as `CALL`.
     #[cheatcode(group = Filesystem)]
-    function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary memory);
+    function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);
 
     /// Returns all broadcasts for the given contract on `chainId` with the specified `txType`.
     ///
     /// Sorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.
     #[cheatcode(group = Filesystem)]
-    function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external returns (BroadcastTxSummary[] memory);
+    function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);
 
     /// Returns all broadcasts for the given contract on `chainId`.
     ///
     /// Sorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.
     #[cheatcode(group = Filesystem)]
-    function getBroadcasts(string memory contractName, uint64 chainId) external returns (BroadcastTxSummary[] memory);
+    function getBroadcasts(string memory contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);
 
     /// Returns the most recent deployment for the current `chainId`.
     #[cheatcode(group = Filesystem)]
-    function getDeployment(string memory contractName) external returns (address deployedAddress);
+    function getDeployment(string memory contractName) external view returns (address deployedAddress);
 
     /// Returns the most recent deployment for the given contract on `chainId`
     #[cheatcode(group = Filesystem)]
-    function getDeployment(string memory contractName, uint64 chainId) external returns (address deployedAddress);
+    function getDeployment(string memory contractName, uint64 chainId) external view returns (address deployedAddress);
 
     /// Returns all deployments for the given contract on `chainId`
     ///
@@ -1760,7 +1760,7 @@ interface Vm {
     ///
     /// The most recent deployment is the first element, and the oldest is the last.
     #[cheatcode(group = Filesystem)]
-    function getDeployments(string memory contractName, uint64 chainId) external returns (address[] memory deployedAddresses);
+    function getDeployments(string memory contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
 
     // -------- Foreign Function Interface --------
 

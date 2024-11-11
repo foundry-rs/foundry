@@ -492,24 +492,20 @@ pub struct SelectorImportResponse {
 impl SelectorImportResponse {
     /// Print info about the functions which were uploaded or already known
     pub fn describe(&self) {
-        self.result
-            .function
-            .imported
-            .iter()
-            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
-        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
-        self.result
-            .function
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
-        self.result
-            .event
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
+        self.result.function.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Function {k}: {v}");
+        });
+        self.result.event.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Event {k}: {v}");
+        });
+        self.result.function.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Function {k}: {v}");
+        });
+        self.result.event.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Event {k}: {v}");
+        });
 
-        println!("Selectors successfully uploaded to OpenChain");
+        let _ = sh_println!("Selectors successfully uploaded to OpenChain");
     }
 }
 
@@ -579,6 +575,7 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_macros)]
 #[allow(clippy::needless_return)]
 mod tests {
     use super::*;
