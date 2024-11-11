@@ -3,7 +3,7 @@
 use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
 use alloy_consensus::Account;
 use alloy_eips::eip2930::AccessListResult;
-use alloy_network::{AnyRpcBlock, BlockResponse};
+use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
 use alloy_primitives::{
     map::{FbHashMap, HashMap},
     Address, Bytes, StorageValue, B256, U256,
@@ -19,7 +19,7 @@ use alloy_rpc_types::{
         parity::LocalizedTransactionTrace as Trace,
     },
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
-    FeeHistory, Filter, Log, Transaction,
+    FeeHistory, Filter, Log,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
@@ -291,7 +291,7 @@ impl ClientFork {
         &self,
         number: u64,
         index: usize,
-    ) -> Result<Option<WithOtherFields<Transaction>>, TransportError> {
+    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         if let Some(block) = self.block_by_number(number).await? {
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
@@ -315,7 +315,7 @@ impl ClientFork {
         &self,
         hash: B256,
         index: usize,
-    ) -> Result<Option<WithOtherFields<Transaction>>, TransportError> {
+    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         if let Some(block) = self.block_by_hash(hash).await? {
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
@@ -338,7 +338,7 @@ impl ClientFork {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<WithOtherFields<Transaction>>, TransportError> {
+    ) -> Result<Option<AnyRpcTransaction>, TransportError> {
         trace!(target: "backend::fork", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.storage_read().transactions.get(&hash).cloned() {
             return Ok(tx);
@@ -523,7 +523,7 @@ impl ClientFork {
                 BlockTransactions::Full(txs) => txs.to_owned(),
                 _ => vec![],
             };
-            storage.transactions.extend(block_txs.iter().map(|tx| (tx.hash, tx.clone())));
+            storage.transactions.extend(block_txs.iter().map(|tx| (tx.tx_hash(), tx.clone())));
             storage.hashes.insert(block_number, hash);
             storage.blocks.insert(hash, block.clone());
             return Ok(Some(block));
@@ -684,7 +684,7 @@ pub struct ForkedStorage {
     pub uncles: FbHashMap<32, Vec<AnyRpcBlock>>,
     pub blocks: FbHashMap<32, AnyRpcBlock>,
     pub hashes: HashMap<u64, B256>,
-    pub transactions: FbHashMap<32, WithOtherFields<Transaction>>,
+    pub transactions: FbHashMap<32, AnyRpcTransaction>,
     pub transaction_receipts: FbHashMap<32, ReceiptResponse>,
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,

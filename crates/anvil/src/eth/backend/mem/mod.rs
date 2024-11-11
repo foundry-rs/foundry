@@ -34,9 +34,13 @@ use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
-use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
+use alloy_consensus::{
+    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_network::{AnyRpcBlock, EthereumWallet};
+use alloy_network::{
+    AnyHeader, AnyRpcBlock, AnyRpcTransaction, EthereumWallet, TransactionBuilder,
+};
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
@@ -1745,7 +1749,7 @@ impl Backend {
     pub(crate) async fn mined_transactions_by_block_number(
         &self,
         number: BlockNumber,
-    ) -> Option<Vec<WithOtherFields<Transaction>>> {
+    ) -> Option<Vec<AnyRpcTransaction>> {
         if let Some(block) = self.get_block(number) {
             return self.mined_transactions_in_block(&block);
         }
@@ -1756,7 +1760,7 @@ impl Backend {
     pub(crate) fn mined_transactions_in_block(
         &self,
         block: &Block,
-    ) -> Option<Vec<WithOtherFields<Transaction>>> {
+    ) -> Option<Vec<AnyRpcTransaction>> {
         let mut transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
@@ -1894,31 +1898,33 @@ impl Backend {
 
         let block = AlloyBlock {
             header: AlloyHeader {
+                inner: AnyHeader {
+                    parent_hash,
+                    ommers_hash,
+                    beneficiary,
+                    state_root,
+                    transactions_root,
+                    receipts_root,
+                    number,
+                    gas_used,
+                    gas_limit,
+                    extra_data,
+                    logs_bloom,
+                    timestamp,
+                    difficulty,
+                    mix_hash: Some(mix_hash),
+                    nonce: Some(nonce),
+                    base_fee_per_gas,
+                    withdrawals_root,
+                    blob_gas_used,
+                    excess_blob_gas,
+                    parent_beacon_block_root,
+                    requests_hash,
+                },
                 hash,
-                parent_hash,
-                uncles_hash: ommers_hash,
-                miner: beneficiary,
-                state_root,
-                transactions_root,
-                receipts_root,
-                number,
-                gas_used,
-                gas_limit,
-                extra_data: extra_data.0.into(),
-                logs_bloom,
-                timestamp,
                 total_difficulty: Some(self.total_difficulty()),
-                difficulty,
-                mix_hash: Some(mix_hash),
-                nonce: Some(nonce),
-                base_fee_per_gas,
-                withdrawals_root,
-                blob_gas_used,
-                excess_blob_gas,
-                parent_beacon_block_root,
-                requests_hash,
+                size: Some(size),
             },
-            size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
                 transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
@@ -2026,7 +2032,7 @@ impl Backend {
                 if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
                         number: block_number,
-                        coinbase: block.header.miner,
+                        coinbase: block.header.beneficiary,
                         timestamp: U256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
                         prevrandao: block.header.mix_hash,
@@ -2465,7 +2471,7 @@ impl Backend {
         &self,
         number: BlockNumber,
         index: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AnyRpcTransaction>, BlockchainError> {
         if let Some(block) = self.mined_block_by_number(number) {
             return Ok(self.mined_transaction_by_block_hash_and_index(block.header.hash, index));
         }
@@ -2484,7 +2490,7 @@ impl Backend {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AnyRpcTransaction>, BlockchainError> {
         if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
             return Ok(tx);
         }
@@ -2500,7 +2506,7 @@ impl Backend {
         &self,
         block_hash: B256,
         index: Index,
-    ) -> Option<WithOtherFields<Transaction>> {
+    ) -> Option<AnyRpcTransaction> {
         let (info, block, tx) = {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
@@ -2522,7 +2528,7 @@ impl Backend {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AnyRpcTransaction>, BlockchainError> {
         trace!(target: "backend", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
             return Ok(tx);
@@ -2535,7 +2541,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
+    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<AnyRpcTransaction> {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
@@ -2600,7 +2606,7 @@ impl Backend {
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
                         let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
-                        StorageProof { key: JsonStorageKey(key), value, proof }
+                        StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),
             };
@@ -2745,7 +2751,10 @@ impl TransactionValidator for Backend {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
+                        !meets_eip155(
+                            chain_id.to::<u64>(),
+                            alloy_primitives::Parity::from(legacy.signature().v()),
+                        )
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2884,56 +2893,57 @@ pub fn transaction_build(
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
-) -> WithOtherFields<Transaction> {
-    let mut transaction: Transaction = eth_transaction.clone().into();
-    if info.is_some() && transaction.transaction_type == Some(0x7E) {
-        transaction.nonce = info.as_ref().unwrap().nonce;
-    }
+) -> AnyRpcTransaction {
+    todo!()
+    // let mut transaction: Transaction = eth_transaction.clone().into();
+    // if info.is_some() && transaction.transaction_type == Some(0x7E) {
+    //     transaction.nonce = info.as_ref().unwrap().nonce;
+    // }
 
-    if eth_transaction.is_dynamic_fee() {
-        if block.is_none() && info.is_none() {
-            // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-            transaction.gas_price = transaction.max_fee_per_gas;
-        } else {
-            // if transaction is already mined, gas price is considered base fee + priority fee: the
-            // effective gas price.
-            let base_fee = base_fee.map_or(0u128, |g| g as u128);
-            let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
-            transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
-        }
-    } else {
-        transaction.max_fee_per_gas = None;
-        transaction.max_priority_fee_per_gas = None;
-    }
+    // if eth_transaction.is_dynamic_fee() {
+    //     if block.is_none() && info.is_none() {
+    //         // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
+    //         transaction.gas_price = transaction.max_fee_per_gas;
+    //     } else {
+    //         // if transaction is already mined, gas price is considered base fee + priority fee:
+    // the         // effective gas price.
+    //         let base_fee = base_fee.map_or(0u128, |g| g as u128);
+    //         let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
+    //         transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
+    //     }
+    // } else {
+    //     transaction.max_fee_per_gas = None;
+    //     transaction.max_priority_fee_per_gas = None;
+    // }
 
-    transaction.block_hash =
-        block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
+    // transaction.block_hash =
+    //     block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
 
-    transaction.block_number = block.as_ref().map(|block| block.header.number);
+    // transaction.block_number = block.as_ref().map(|block| block.header.number);
 
-    transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
+    // transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
 
-    // need to check if the signature of the transaction is impersonated, if so then we
-    // can't recover the sender, instead we use the sender from the executed transaction and set the
-    // impersonated hash.
-    if eth_transaction.is_impersonated() {
-        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
-        transaction.hash = eth_transaction.impersonated_hash(transaction.from);
-    } else {
-        transaction.from = eth_transaction.recover().expect("can recover signed tx");
-    }
+    // // need to check if the signature of the transaction is impersonated, if so then we
+    // // can't recover the sender, instead we use the sender from the executed transaction and set
+    // the // impersonated hash.
+    // if eth_transaction.is_impersonated() {
+    //     transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
+    //     transaction.hash = eth_transaction.impersonated_hash(transaction.from);
+    // } else {
+    //     transaction.from = eth_transaction.recover().expect("can recover signed tx");
+    // }
 
-    // if a specific hash was provided we update the transaction's hash
-    // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
-    // which would result in different hashes
-    // Note: for impersonated transactions this only concerns pending transactions because there's
-    // no `info` yet.
-    if let Some(tx_hash) = tx_hash {
-        transaction.hash = tx_hash;
-    }
+    // // if a specific hash was provided we update the transaction's hash
+    // // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
+    // // which would result in different hashes
+    // // Note: for impersonated transactions this only concerns pending transactions because
+    // there's // no `info` yet.
+    // if let Some(tx_hash) = tx_hash {
+    //     transaction.hash = tx_hash;
+    // }
 
-    transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
-    WithOtherFields::new(transaction)
+    // transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
+    // WithOtherFields::new(transaction)
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.

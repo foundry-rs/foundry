@@ -10,6 +10,7 @@ use alloy_consensus::{
     TxEip2930, TxEnvelope, TxLegacy, TxReceipt, TxType,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
+use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
 use alloy_primitives::{
     Address, Bloom, Bytes, Log, PrimitiveSignature, TxHash, TxKind, B256, U256, U64,
 };
@@ -608,6 +609,25 @@ impl TryFrom<TypedTransaction> for TransactionRequest {
             transaction_type: tx_type,
             ..Default::default()
         })
+    }
+}
+
+impl TryFrom<AnyRpcTransaction> for TypedTransaction {
+    type Error = ConversionError;
+
+    fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
+        let AnyRpcTransaction { inner, .. } = value;
+        match inner.inner {
+            AnyTxEnvelope::Ethereum(tx) => match tx {
+                TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
+                TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
+                TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
+                TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+                TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
+                _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
+            },
+            AnyTxEnvelope::Unknown(_) => Err(ConversionError::Custom("UnknownTxType".to_string())),
+        }
     }
 }
 

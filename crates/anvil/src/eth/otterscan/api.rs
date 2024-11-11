@@ -3,7 +3,11 @@ use crate::eth::{
     macros::node_info,
     EthApi,
 };
-use alloy_network::{AnyRpcBlock, BlockResponse};
+use alloy_consensus::Transaction as TransactionTrait;
+use alloy_network::{
+    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
+    TransactionResponse,
+};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::{
     trace::{
@@ -16,9 +20,8 @@ use alloy_rpc_types::{
             RewardAction, TraceOutput,
         },
     },
-    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, Transaction,
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
 };
-use alloy_serde::WithOtherFields;
 use itertools::Itertools;
 
 use futures::future::join_all;
@@ -145,7 +148,10 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<BlockDetails> {
+    pub async fn ots_get_block_details(
+        &self,
+        number: BlockNumber,
+    ) -> Result<BlockDetails<AnyRpcHeader>> {
         node_info!("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {
@@ -159,7 +165,10 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details_by_hash(&self, hash: B256) -> Result<BlockDetails> {
+    pub async fn ots_get_block_details_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<BlockDetails<AnyRpcHeader>> {
         node_info!("ots_getBlockDetailsByHash");
 
         if let Some(block) = self.backend.block_by_hash(hash).await? {
@@ -177,7 +186,7 @@ impl EthApi {
         number: u64,
         page: usize,
         page_size: usize,
-    ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {
+    ) -> Result<OtsBlockTransactions<AnyRpcTransaction, AnyRpcHeader>> {
         node_info!("ots_getBlockTransactions");
 
         match self.backend.block_by_number_full(number.into()).await? {
@@ -192,7 +201,7 @@ impl EthApi {
         address: Address,
         block_number: u64,
         page_size: usize,
-    ) -> Result<TransactionsWithReceipts> {
+    ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
         node_info!("ots_searchTransactionsBefore");
 
         let best = self.backend.best_number();
@@ -235,7 +244,7 @@ impl EthApi {
         address: Address,
         block_number: u64,
         page_size: usize,
-    ) -> Result<TransactionsWithReceipts> {
+    ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
         node_info!("ots_searchTransactionsAfter");
 
         let best = self.backend.best_number();
@@ -294,8 +303,8 @@ impl EthApi {
         for n in (from..=to).rev() {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
-                    if U256::from(tx.nonce) == nonce && tx.from == address {
-                        return Ok(Some(tx.hash));
+                    if U256::from(tx.nonce()) == nonce && tx.from == address {
+                        return Ok(Some(tx.tx_hash()));
                     }
                 }
             }
@@ -351,7 +360,10 @@ impl EthApi {
     ///     based on the existing list.
     ///
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build_ots_block_details(&self, block: AnyRpcBlock) -> Result<BlockDetails> {
+    pub async fn build_ots_block_details(
+        &self,
+        block: AnyRpcBlock,
+    ) -> Result<BlockDetails<alloy_rpc_types::Header<AnyHeader>>> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
@@ -374,15 +386,10 @@ impl EthApi {
             .iter()
             .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
 
-        let Block { header, uncles, transactions, size, withdrawals } = block.inner;
+        let Block { header, uncles, transactions, withdrawals } = block.inner;
 
-        let block = OtsSlimBlock {
-            header,
-            uncles,
-            transaction_count: transactions.len(),
-            size,
-            withdrawals,
-        };
+        let block =
+            OtsSlimBlock { header, uncles, transaction_count: transactions.len(), withdrawals };
 
         Ok(BlockDetails {
             block,
@@ -401,7 +408,7 @@ impl EthApi {
         mut block: AnyRpcBlock,
         page: usize,
         page_size: usize,
-    ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {
+    ) -> Result<OtsBlockTransactions<AnyRpcTransaction, AnyRpcHeader>> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
@@ -435,8 +442,7 @@ impl EthApi {
         let transaction_count = block.transactions().len();
         let fullblock = OtsBlock { block: block.inner, transaction_count };
 
-        let ots_block_txs =
-            OtsBlockTransactions::<WithOtherFields<Transaction>> { fullblock, receipts };
+        let ots_block_txs = OtsBlockTransactions { fullblock, receipts };
 
         Ok(ots_block_txs)
     }
@@ -446,7 +452,7 @@ impl EthApi {
         hashes: Vec<B256>,
         first_page: bool,
         last_page: bool,
-    ) -> Result<TransactionsWithReceipts> {
+    ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
         let txs_futs = hashes.iter().map(|hash| async { self.transaction_by_hash(*hash).await });
 
         let txs = join_all(txs_futs)

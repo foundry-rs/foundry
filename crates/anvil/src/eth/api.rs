@@ -30,15 +30,16 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
-    eip2718::Decodable2718, AnyRpcBlock, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
+    eip2718::Decodable2718, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Ethereum,
+    NetworkWallet, TransactionBuilder, TransactionResponse,
 };
 use alloy_primitives::{
     map::{HashMap, HashSet},
-    Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64,
+    Address, Bytes, PrimitiveSignature as Signature, TxHash, TxKind, B256, B64, U256, U64,
 };
 use alloy_provider::utils::{
     eip1559_default_estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
@@ -60,7 +61,6 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Transaction,
 };
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -473,13 +473,11 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
-                let nil_signature: alloy_primitives::Signature =
-                    alloy_primitives::Signature::from_scalars_and_parity(
-                        B256::with_last_byte(1),
-                        B256::with_last_byte(1),
-                        Parity::Parity(false),
-                    )
-                    .unwrap();
+                let nil_signature = Signature::from_scalars_and_parity(
+                    B256::with_last_byte(1),
+                    B256::with_last_byte(1),
+                    false,
+                );
                 return build_typed_transaction(request, nil_signature)
             }
             _ => {
@@ -512,10 +510,12 @@ impl EthApi {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => TxEnvelope::try_from(tx.inner)
-                    .map_or(Err(BlockchainError::FailedToDecodeTransaction), |tx| {
-                        Ok(Some(tx.encoded_2718().into()))
-                    }),
+                Some(tx) => {
+                    let mut out = Vec::<u8>::new();
+                    tx.inner.inner.encode_2718(&mut out);
+
+                    Ok(Some(out.into()))
+                }
                 None => Ok(None),
             },
         }
@@ -1180,10 +1180,7 @@ impl EthApi {
     /// this will also scan the mempool for a matching pending transaction
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub async fn transaction_by_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
@@ -1213,7 +1210,7 @@ impl EthApi {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockHashAndIndex");
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
@@ -1225,7 +1222,7 @@ impl EthApi {
         &self,
         block: BlockNumber,
         idx: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
     }
@@ -1539,7 +1536,7 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockHashAndIndex");
         match self.backend.transaction_by_block_hash_and_index(block_hash, index).await? {
-            Some(tx) => self.inner_raw_transaction(tx.hash).await,
+            Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
     }
@@ -1554,7 +1551,7 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockNumberAndIndex");
         match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
-            Some(tx) => self.inner_raw_transaction(tx.hash).await,
+            Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
     }
@@ -2180,7 +2177,7 @@ impl EthApi {
                     BlockTransactions::Hashes(_) | BlockTransactions::Uncle => unreachable!(),
                 };
                 for tx in block_txs.iter_mut() {
-                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
+                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.tx_hash()) {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
                             if !receipt
@@ -2346,7 +2343,7 @@ impl EthApi {
     pub async fn txpool_content(&self) -> Result<TxpoolContent> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> Transaction {
+        fn convert(tx: Arc<PoolTransaction>) -> Result<Transaction> {
             let from = *tx.pending_transaction.sender();
             let mut tx = transaction_build(
                 Some(tx.hash()),
@@ -2359,18 +2356,32 @@ impl EthApi {
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
             tx.from = from;
-            tx.inner
+
+            match tx.inner.inner {
+                AnyTxEnvelope::Ethereum(ref envelope) => {
+                    let tx = Transaction {
+                        block_hash: tx.block_hash,
+                        block_number: tx.block_number,
+                        from: tx.from,
+                        transaction_index: tx.transaction_index,
+                        effective_gas_price: tx.effective_gas_price,
+                        inner: envelope.clone(),
+                    };
+                    Ok(tx)
+                }
+                AnyTxEnvelope::Unknown(_) => Err(BlockchainError::UnknownTransactionType),
+            }
         }
 
         for pending in self.pool.ready_transactions() {
             let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(pending));
+            entry.insert(key, convert(pending)?);
         }
         for queued in self.pool.pending_transactions() {
             let entry = content.pending.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(queued));
+            entry.insert(key, convert(queued)?);
         }
 
         Ok(content)
@@ -2909,7 +2920,7 @@ impl EthApi {
             TypedTransactionRequest::Legacy(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                Parity::NonEip155(false),
+                false,
             ),
             TypedTransactionRequest::EIP2930(_) |
             TypedTransactionRequest::EIP1559(_) |
@@ -2917,10 +2928,9 @@ impl EthApi {
             TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                Parity::Parity(false),
+                false,
             ),
         }
-        .unwrap()
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`

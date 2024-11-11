@@ -1018,6 +1018,7 @@ dependencies = [
  "alloy-consensus 0.6.2",
  "alloy-dyn-abi",
  "alloy-eips 0.6.2",
+ "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",

@@ -15,12 +15,12 @@ use crate::{
     mem::{self, in_memory_db::MemDb},
     EthereumHardfork, FeeManager, PrecompileFactory,
 };
+use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{hex, map::HashMap, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{Block, BlockNumberOrTag};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
@@ -1291,12 +1291,15 @@ latest block number: {latest_block}"
     /// we only use the gas limit value of the block if it is non-zero and the block gas
     /// limit is enabled, since there are networks where this is not used and is always
     /// `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-    pub(crate) fn fork_gas_limit(&self, block: &Block<WithOtherFields<Transaction>>) -> u128 {
+    pub(crate) fn fork_gas_limit<T: TransactionResponse, H: BlockHeader>(
+        &self,
+        block: &Block<T, H>,
+    ) -> u128 {
         if !self.disable_block_gas_limit {
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
-            } else if block.header.gas_limit > 0 {
-                return block.header.gas_limit as u128;
+            } else if block.header.gas_limit() > 0 {
+                return block.header.gas_limit() as u128;
             }
         }
 
@@ -1335,19 +1338,21 @@ async fn derive_block_and_transactions(
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
-                .get_block_by_number(transaction_block_number.into(), true)
+                .get_block_by_number(
+                    transaction_block_number.into(),
+                    alloy_rpc_types::BlockTransactionsKind::Full,
+                )
                 .await?
                 .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
 
             // Filter out transactions that are after the fork transaction
-            let filtered_transactions: Vec<&alloy_serde::WithOtherFields<Transaction>> =
-                transaction_block
-                    .transactions
-                    .as_transactions()
-                    .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
-                    .iter()
-                    .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
-                    .collect();
+            let filtered_transactions = transaction_block
+                .transactions
+                .as_transactions()
+                .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
+                .iter()
+                .take_while_inclusive(|&transaction| transaction.tx_hash() != transaction_hash.0)
+                .collect::<Vec<_>>();
 
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions
