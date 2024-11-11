@@ -376,13 +376,9 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// Mapping of addresses to their signed authorization data for EIP-7702 delegated transactions
-    pub delegations: HashMap<Address, SignedAuthorization>,
-    /// The currently active delegation address that will be used for the next transaction.
-    /// When a delegation is attached via `vm.attachDelegation()`, this address is set and used
-    /// to look up the authorization data from the `delegations` map when broadcasting
-    /// transactions.
-    pub active_delegation: Option<Address>,
+    /// Currently active EIP-7702 delegation that will be consumed when building the next transaction.
+    /// Set by `vm.attachDelegation()` and consumed via `.take()` during transaction construction.
+    pub active_delegation: Option<SignedAuthorization>,
 
     /// The gas price.
     ///
@@ -508,7 +504,6 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
-            delegations: Default::default(),
             active_delegation: Default::default(),
             gas_price: Default::default(),
             prank: Default::default(),
@@ -1025,9 +1020,7 @@ where {
                         ..Default::default()
                     };
 
-                    if let Some(auth_list) =
-                        self.active_delegation.and_then(|addr| self.delegations.remove(&addr))
-                    {
+                    if let Some(auth_list) = self.active_delegation.take() {
                         tx_req.authorization_list = Some(vec![auth_list]);
                     }
 

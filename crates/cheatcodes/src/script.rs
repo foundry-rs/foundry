@@ -63,8 +63,7 @@ impl Cheatcode for attachDelegationCall {
         authority_acc.info.code_hash = bytecode.hash_slow();
         authority_acc.mark_touch();
 
-        ccx.state.delegations.insert(*implementation, signed_auth);
-        ccx.state.active_delegation = Some(*implementation);
+        ccx.state.active_delegation = Some(signed_auth);
 
         Ok(Default::default())
     }
