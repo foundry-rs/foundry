@@ -3,7 +3,7 @@
 #![allow(rustdoc::private_doc_tests)]
 
 use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
-use alloy_network::{AnyNetwork, AnyRpcBlock};
+use alloy_network::{AnyHeader, AnyNetwork};
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
@@ -129,13 +129,13 @@ impl TaskManager {
         P: Provider<T, AnyNetwork> + 'static,
         T: Transport + Clone,
     {
-        self.spawn_block_subscription(provider, move |block| {
+        self.spawn_block_subscription(provider, move |header| {
             let api = api.clone();
             async move {
                 let _ = api
                     .anvil_reset(Some(Forking {
                         json_rpc_url: None,
-                        block_number: Some(block.header.number),
+                        block_number: Some(header.number),
                     }))
                     .await;
             }
@@ -149,7 +149,7 @@ impl TaskManager {
     where
         P: Provider<T, AnyNetwork> + 'static,
         T: Transport + Clone,
-        F: Fn(AnyRpcBlock) -> Fut + Unpin + Send + Sync + 'static,
+        F: Fn(alloy_rpc_types::Header<AnyHeader>) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
         let shutdown = self.on_shutdown.clone();

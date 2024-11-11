@@ -21,7 +21,7 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
+use op_alloy_consensus::TxDeposit;
 use revm::{
     interpreter::InstructionResult,
     primitives::{OptimismFields, TxEnv},
@@ -953,11 +953,11 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
 
         let tx = tx.inner;
         let sig_hash = match tx.inner {
-            TxEnvelope::Legacy(ref t) => (t.signature().clone(), *t.hash()),
-            TxEnvelope::Eip2930(ref t) => (t.signature().clone(), *t.hash()),
-            TxEnvelope::Eip1559(ref t) => (t.signature().clone(), *t.hash()),
-            TxEnvelope::Eip4844(ref t) => (t.signature().clone(), *t.hash()),
-            TxEnvelope::Eip7702(ref t) => (t.signature().clone(), *t.hash()),
+            TxEnvelope::Legacy(ref t) => (*t.signature(), *t.hash()),
+            TxEnvelope::Eip2930(ref t) => (*t.signature(), *t.hash()),
+            TxEnvelope::Eip1559(ref t) => (*t.signature(), *t.hash()),
+            TxEnvelope::Eip4844(ref t) => (*t.signature(), *t.hash()),
+            TxEnvelope::Eip7702(ref t) => (*t.signature(), *t.hash()),
             _ => {
                 return Err(ConversionError::Custom(
                     "UnsupportedTxType - MissingSignature".to_string(),
@@ -1121,11 +1121,7 @@ impl Encodable2718 for TypedTransaction {
             Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            Self::EIP7702(tx) => {
-                let payload_length =
-                    tx.tx().rlp_encoded_fields_length() + tx.signature().rlp_rs_len();
-                Header { list: true, payload_length }.length() + payload_length + 1
-            }
+            Self::EIP7702(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
             Self::Deposit(tx) => 1 + tx.length(),
         }
     }
@@ -1136,7 +1132,7 @@ impl Encodable2718 for TypedTransaction {
             Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            Self::EIP7702(tx) => tx.tx().encode_with_signature(tx.signature(), out, false),
+            Self::EIP7702(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::Deposit(tx) => {
                 tx.encode_2718(out);
             }
