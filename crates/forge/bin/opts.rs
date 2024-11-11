@@ -30,7 +30,7 @@ const VERSION_MESSAGE: &str = concat!(
 )]
 pub struct Forge {
     /// Include the global options.
-    #[clap(flatten)]
+    #[command(flatten)]
     pub global: GlobalOpts,
 
     #[command(subcommand)]

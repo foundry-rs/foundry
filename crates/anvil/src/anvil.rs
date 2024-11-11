@@ -14,7 +14,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
 pub struct Anvil {
     /// Include the global options.
-    #[clap(flatten)]
+    #[command(flatten)]
     pub global: GlobalOpts,
 
     #[command(flatten)]

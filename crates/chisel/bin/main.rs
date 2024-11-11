@@ -51,7 +51,7 @@ const VERSION_MESSAGE: &str = concat!(
 #[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
     /// Include the global options.
-    #[clap(flatten)]
+    #[command(flatten)]
     pub global: GlobalOpts,
 
     #[command(subcommand)]
