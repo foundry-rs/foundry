@@ -1023,6 +1023,8 @@ where {
 
                     if let Some(auth_list) = self.active_delegation.take() {
                         tx_req.authorization_list = Some(vec![auth_list]);
+                    } else {
+                        tx_req.authorization_list = None;
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
