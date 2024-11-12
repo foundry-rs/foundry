@@ -7,7 +7,6 @@ use crate::{
 use alloy_primitives::map::HashSet;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
-use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
@@ -91,17 +90,6 @@ impl GasReport {
         let trace = &node.trace;
 
         if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
-            return;
-        }
-
-        // Only include top-level calls which account for calldata and base (21.000) cost.
-        // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1 &&
-            (trace.kind == CallKind::Call ||
-                trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2 ||
-                trace.kind == CallKind::EOFCreate)
-        {
             return;
         }
 
