@@ -56,7 +56,7 @@ impl Cheatcode for attachDelegationCall {
             return Err("invalid signature".into());
         }
 
-        // write delegation code
+        authority_acc.data.info.nonce += 1;
         let bytecode = Bytecode::new_eip7702(*implementation);
         ccx.ecx.journaled_state.set_code(*authority, bytecode);
 
