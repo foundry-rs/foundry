@@ -40,20 +40,49 @@ pub struct GlobalOpts {
     /// If set to a value greater than 0, it will use that number of threads capped at the number
     /// of logical CPUs.
     /// If not provided it will not spawn the global thread pool.
-    #[clap(long, global = true, visible_alias = "threads", help_heading = "Concurrency options")]
+    #[clap(
+        short,
+        long,
+        global = true,
+        visible_alias = "threads",
+        help_heading = "Concurrency options"
+    )]
     jobs: Option<usize>,
 }
 
 impl GlobalOpts {
     /// Spawn a new global thread pool.
-    pub fn spawn(self) -> Result<(), rayon::ThreadPoolBuildError> {
-        if let Some(jobs) = self.jobs {
-            let threads = current_num_threads();
-            let num_threads = if jobs == 0 { threads } else { jobs.min(threads) };
-            return ThreadPoolBuilder::new().num_threads(num_threads).build_global();
+    pub fn try_spawn(self) -> Result<(), rayon::ThreadPoolBuildError> {
+        if let Some(jobs) = self.try_jobs() {
+            trace!(target: "forge::cli", "executing with {} max threads", jobs);
+            ThreadPoolBuilder::new().num_threads(jobs).build_global()
+        } else {
+            // If `--jobs` is not provided, do not spawn the global thread pool.
+            Ok(())
+        }
+    }
+
+    /// Get the number of threads to use.
+    ///
+    /// Try to use the number of threads specified by `--jobs` if provided, otherwise use the number
+    /// of logical CPUs. If running tests, use at least 2 threads.
+    pub fn try_jobs(&self) -> Option<usize> {
+        let num_threads = self.jobs.map(|jobs| {
+            if jobs == 0 {
+                current_num_threads()
+            } else {
+                jobs.min(current_num_threads())
+            }
+        });
+
+        // If we are running tests, we want to use at least 2 threads.
+        if cfg!(test) {
+            if let Some(num_threads) = num_threads {
+                return Some(num_threads.min(2));
+            }
         }
 
-        Ok(())
+        num_threads
     }
 
     /// Create a new shell instance.
