@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_chains::NamedChain;
-use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, b256, bytes, uint, Address, Bytes, TxHash, TxKind, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -1406,7 +1406,7 @@ async fn test_immutable_fork_transaction_hash() {
                 api.backend.mined_transaction_by_block_hash_and_index(hash, expected.1.into())
             })
             .unwrap();
-        assert_eq!(tx.inner.hash.to_string(), expected.0.to_string());
+        assert_eq!(tx.tx_hash().to_string(), expected.0.to_string());
     }
 }
 

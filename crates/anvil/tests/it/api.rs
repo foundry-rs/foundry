@@ -266,7 +266,7 @@ async fn can_call_on_pending_block() {
             .call()
             .await
             .unwrap();
-        assert_eq!(block.header.miner, ret_coinbase);
+        assert_eq!(block.header.beneficiary, ret_coinbase);
     }
 }
 
