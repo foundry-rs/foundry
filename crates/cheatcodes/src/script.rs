@@ -36,8 +36,7 @@ impl Cheatcode for attachDelegationCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, authority, v, r, s } = self;
 
-        let mut authority_acc =
-            ccx.ecx.journaled_state.load_account(*authority, &mut ccx.ecx.db)?;
+        let authority_acc = ccx.ecx.journaled_state.load_account(*authority, &mut ccx.ecx.db)?;
 
         let auth = Authorization {
             address: *implementation,
@@ -59,9 +58,7 @@ impl Cheatcode for attachDelegationCall {
 
         // write delegation code
         let bytecode = Bytecode::new_eip7702(*implementation);
-        authority_acc.info.code = Some(bytecode.clone());
-        authority_acc.info.code_hash = bytecode.hash_slow();
-        authority_acc.mark_touch();
+        ccx.ecx.journaled_state.set_code(*authority, bytecode);
 
         ccx.state.active_delegation = Some(signed_auth);
 
