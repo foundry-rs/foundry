@@ -376,8 +376,9 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// Currently active EIP-7702 delegation that will be consumed when building the next transaction.
-    /// Set by `vm.attachDelegation()` and consumed via `.take()` during transaction construction.
+    /// Currently active EIP-7702 delegation that will be consumed when building the next
+    /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
+    /// transaction construction.
     pub active_delegation: Option<SignedAuthorization>,
 
     /// The gas price.
