@@ -8348,9 +8348,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1925813f3dd013d212fa9ad184911846f99236dbfc8a6d79c8a54dfa0bb1a948"
+checksum = "f5969c09f89ae6f0e18d5904e5bdbb8842ba948dad0f8202edb7ea510e35654d"
 dependencies = [
  "bon",
  "clap",
