@@ -5,11 +5,12 @@
 version = 2
 yanked = "warn"
 ignore = [
-    # https://github.com/watchexec/watchexec/issues/852
-    "RUSTSEC-2024-0350",
-    "RUSTSEC-2024-0351",
     # proc-macro-error is unmaintained
     "RUSTSEC-2024-0370",
+    # instant is unmaintained
+    "RUSTSEC-2024-0384",
+    # derivative is unmaintained
+    "RUSTSEC-2024-0388",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -45,6 +46,7 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
+    "Unicode-3.0",
     "Unicode-DFS-2016",
     "OpenSSL",
     "Unlicense",
@@ -67,9 +69,6 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-    { allow = ["CC0-1.0"], name = "constant_time_eq" },
-    { allow = ["CC0-1.0"], name = "secp256k1" },
-    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
 ]
 #copyleft = "deny"
 
