@@ -59,8 +59,8 @@ pub struct GlobalOpts {
 impl GlobalOpts {
     /// Spawn a new global thread pool.
     pub fn try_spawn(self) -> Result<(), rayon::ThreadPoolBuildError> {
-        if let Some(jobs) = self.try_jobs() {
-            trace!(target: "forge::cli", "executing with {} max threads", jobs);
+        if let Some(jobs) = self.jobs() {
+            trace!(target: "forge::cli", "starting global thread pool with up to {} threads", jobs);
             ThreadPoolBuilder::new().num_threads(jobs).build_global()
         } else {
             // If `--jobs` is not provided, do not spawn the global thread pool.
@@ -72,7 +72,7 @@ impl GlobalOpts {
     ///
     /// Try to use the number of threads specified by `--jobs` if provided, otherwise use the number
     /// of logical CPUs. If running tests, use at least 2 threads.
-    pub fn try_jobs(&self) -> Option<usize> {
+    pub fn jobs(&self) -> Option<usize> {
         let num_threads = self.jobs.map(|jobs| {
             if jobs == 0 {
                 current_num_threads()

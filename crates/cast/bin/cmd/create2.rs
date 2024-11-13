@@ -1,10 +1,11 @@
 use alloy_primitives::{hex, keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
+use foundry_cli::opts::GlobalOpts;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use regex::RegexSetBuilder;
 use std::{
-    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -18,6 +19,10 @@ const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 /// CLI arguments for `cast create2`.
 #[derive(Clone, Debug, Parser)]
 pub struct Create2Args {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// Prefix for the contract address.
     #[arg(
         long,
@@ -73,10 +78,6 @@ pub struct Create2Args {
     #[arg(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
     init_code_hash: Option<String>,
 
-    /// Number of threads to use. Defaults to and caps at the number of logical cores.
-    #[arg(short, long)]
-    jobs: Option<NonZeroUsize>,
-
     /// Address of the caller. Used for the first 20 bytes of the salt.
     #[arg(long, value_name = "ADDRESS")]
     caller: Option<Address>,
@@ -99,6 +100,7 @@ pub struct Create2Output {
 impl Create2Args {
     pub fn run(self) -> Result<Create2Output> {
         let Self {
+            global,
             starts_with,
             ends_with,
             matching,
@@ -107,7 +109,6 @@ impl Create2Args {
             salt,
             init_code,
             init_code_hash,
-            jobs,
             caller,
             seed,
             no_random,
@@ -168,13 +169,7 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        if let Some(jobs) = jobs {
-            n_threads = n_threads.min(jobs.get());
-        }
-        if cfg!(test) {
-            n_threads = n_threads.min(2);
-        }
+        let n_threads = global.jobs().unwrap_or(1);
 
         let mut salt = B256::ZERO;
         let remaining = if let Some(caller_address) = caller {
@@ -198,19 +193,21 @@ impl Create2Args {
         sh_println!(
             "Starting to generate deterministic contract address with {n_threads} threads..."
         )?;
-        let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
 
         // Loops through all possible salts in parallel until a result is found.
         // Each thread iterates over `(i..).step_by(n_threads)`.
-        for i in 0..n_threads {
-            // Create local copies for the thread.
-            let increment = n_threads;
-            let regex = regex.clone();
-            let regex_len = regex.patterns().len();
-            let found = Arc::clone(&found);
-            handles.push(std::thread::spawn(move || {
+        // Collect the first successful result from the parallel iterator.
+        let result = (0..n_threads)
+            .into_par_iter()
+            .find_map_any(|i| {
+                // Create local copies for the thread.
+                let increment = n_threads;
+                let regex = regex.clone();
+                let regex_len = regex.patterns().len();
+                let found = Arc::clone(&found);
+
                 // Read the first bytes of the salt as a usize to be able to increment it.
                 struct B256Aligned(B256, [usize; 0]);
                 let mut salt = B256Aligned(salt, []);
@@ -225,7 +222,7 @@ impl Create2Args {
                 loop {
                     // Stop if a result was found in another thread.
                     if found.load(Ordering::Relaxed) {
-                        break None;
+                        return None;
                     }
 
                     // Calculate the `CREATE2` address.
@@ -240,17 +237,18 @@ impl Create2Args {
                     if regex.matches(s).into_iter().count() == regex_len {
                         // Notify other threads that we found a result.
                         found.store(true, Ordering::Relaxed);
-                        break Some((addr, salt.0));
+                        // Return the successful address and salt.
+                        return Some((addr, salt.0));
                     }
 
                     // Increment the salt for the next iteration.
                     *salt_word = salt_word.wrapping_add(increment);
                 }
-            }));
-        }
+            })
+            .expect("Failed to find a matching address");
 
-        let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
-        let (address, salt) = results.into_iter().next().unwrap();
+        // Extract the address and salt from the result.
+        let (address, salt) = result;
         sh_println!("Successfully found contract address in {:?}", timer.elapsed())?;
         sh_println!("Address: {address}")?;
         sh_println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;

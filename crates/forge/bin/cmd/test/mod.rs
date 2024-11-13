@@ -271,13 +271,6 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        // Set number of max threads to execute tests.
-        // If not specified then the number of threads determined by rayon will be used.
-        // This makes use of the global thread pool.
-        if let Some(test_threads) = config.threads {
-            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
-        }
-
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -894,7 +887,7 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
-        if let Some(threads) = self.global.try_jobs() {
+        if let Some(threads) = self.global.jobs() {
             dict.insert("threads".to_string(), threads.into());
         }
 
