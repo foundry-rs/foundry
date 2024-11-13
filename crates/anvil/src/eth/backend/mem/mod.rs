@@ -39,9 +39,7 @@ use alloy_consensus::{
     TxEip4844Variant, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, EthereumWallet, TransactionBuilder,
-};
+use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, EthereumWallet};
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
