@@ -31,11 +31,11 @@ pub struct VerifierArgs {
     #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
     pub verifier: VerificationProviderType,
 
-    /// The verifier URL, if using a custom provider
+    /// The verifier API KEY, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_KEY")]
     pub verifier_api_key: Option<String>,
 
-    /// The verifier URL, if using a custom provider
+    /// The verifier URL, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
 }

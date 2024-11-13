@@ -160,7 +160,7 @@ pub enum VerificationProviderType {
     Sourcify,
     Blockscout,
     Oklink,
-    /// Custom verifier type, compatible with Etherscan API.
+    /// Custom verification provider, compatible with Etherscan API.
     Custom,
 }
 
