@@ -932,6 +932,30 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9285>
+forgetest_init!(should_not_record_setup_failures, |prj, cmd| {
+    prj.add_test(
+        "ReplayFailures.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SetupFailureTest is Test {
+    function setUp() public {
+        require(2 > 1);
+    }
+
+    function testA() public pure {
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_success();
+    // Test failure filter should not be persisted if `setUp` failed.
+    assert!(!prj.root().join("cache/test-failures").exists());
+});
+
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
     prj.wipe_contracts();
@@ -2591,4 +2615,27 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
     assert!(broadcast_path.exists() && broadcast_path.is_dir());
 
     cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
+});
+
+// See <https://github.com/foundry-rs/foundry/issues/9297>
+forgetest_init!(test_roll_scroll_fork_with_cancun, |prj, cmd| {
+    prj.add_test(
+        "ScrollForkTest.t.sol",
+        r#"
+
+import {Test} from "forge-std/Test.sol";
+
+contract ScrollForkTest is Test {
+    function test_roll_scroll_fork_to_tx() public {
+        vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
+        bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
+        vm.rollFork(targetTxHash);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
+        .assert_success();
 });

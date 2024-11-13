@@ -1921,8 +1921,9 @@ fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
-    env.block.blob_excess_gas_and_price =
-        block.header.excess_blob_gas.map(BlobExcessGasAndPrice::new);
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+        env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas));
+    }
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled

@@ -1,6 +1,6 @@
 //! RPC API keys utilities.
 
-use foundry_config::NamedChain;
+use foundry_config::{NamedChain, NamedChain::Optimism};
 use rand::seq::SliceRandom;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -75,6 +75,10 @@ static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     keys
 });
 
+// List of etherscan keys for Optimism.
+static ETHERSCAN_OPTIMISM_KEYS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| vec!["JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46"]);
+
 /// Returns the next index to use.
 fn next() -> usize {
     static NEXT_INDEX: AtomicUsize = AtomicUsize::new(0);
@@ -127,6 +131,16 @@ pub fn next_mainnet_etherscan_api_key() -> String {
     ETHERSCAN_MAINNET_KEYS[idx].to_string()
 }
 
+/// Returns the next etherscan api key for given chain.
+pub fn next_etherscan_api_key(chain: NamedChain) -> String {
+    let keys = match chain {
+        Optimism => &ETHERSCAN_OPTIMISM_KEYS,
+        _ => &ETHERSCAN_MAINNET_KEYS,
+    };
+    let idx = next() % keys.len();
+    keys[idx].to_string()
+}
+
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
     use NamedChain::*;
 
@@ -177,7 +191,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
+#[allow(clippy::needless_return, clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use alloy_primitives::address;
@@ -190,7 +204,7 @@ mod tests {
         let mut first_abi = None;
         let mut failed = Vec::new();
         for (i, &key) in ETHERSCAN_MAINNET_KEYS.iter().enumerate() {
-            eprintln!("trying key {i} ({key})");
+            println!("trying key {i} ({key})");
 
             let client = foundry_block_explorers::Client::builder()
                 .chain(Chain::mainnet())

@@ -211,6 +211,7 @@ async fn can_check_blob_fields_on_genesis() {
     assert_eq!(block.header.excess_blob_gas, Some(0));
 }
 
+#[allow(clippy::disallowed_macros)]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
@@ -253,6 +254,7 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
     );
 }
 
+#[allow(clippy::disallowed_macros)]
 #[tokio::test(flavor = "multi_thread")]
 async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));

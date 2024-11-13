@@ -38,7 +38,7 @@ Options:
 
 Display options:
       --color <COLOR>
-          Log messages coloring
+          The color of the log messages
 
           Possible values:
           - auto:   Intelligently guess whether to use color output (default)
@@ -51,8 +51,18 @@ Display options:
   -q, --quiet
           Do not print log messages
 
-      --verbose
-          Use verbose output
+  -v, --verbosity...
+          Verbosity level of the log messages.
+          
+          Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
+          
+          Depending on the context the verbosity levels have different meanings.
+          
+          For example, the verbosity levels of the EVM are:
+          - 2 (-vv): Print logs for all tests.
+          - 3 (-vvv): Print execution traces for failing tests.
+          - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
+          - 5 (-vvvvv): Print execution and setup traces for all tests.
 
 Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
 
@@ -2388,6 +2398,276 @@ contract CounterTest is DSTest {
 "#]]
         .is_json(),
     );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9115>
+forgetest_init!(gas_report_with_fallback, |prj, cmd| {
+    prj.add_test(
+        "DelegateProxyTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ProxiedContract {
+    uint256 public amount;
+
+    function deposit(uint256 aba) external {
+        amount = amount * 2;
+    }
+
+    function deposit() external {
+    }
+}
+
+contract DelegateProxy {
+    address internal implementation;
+
+    constructor(address counter) {
+        implementation = counter;
+    }
+
+    function deposit() external {
+    }
+
+    fallback() external payable {
+        address addr = implementation;
+
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), addr, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch result
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+}
+
+contract GasReportFallbackTest is Test {
+    function test_fallback_gas_report() public {
+        ProxiedContract proxied = ProxiedContract(address(new DelegateProxy(address(new ProxiedContract()))));
+        proxied.deposit(100);
+        proxied.deposit();
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_fallback_gas_report", "-vvvv", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DelegateProxyTest.sol:GasReportFallbackTest
+[PASS] test_fallback_gas_report() ([GAS])
+Traces:
+  [331067] GasReportFallbackTest::test_fallback_gas_report()
+    ├─ [106511] → new ProxiedContract@[..]
+    │   └─ ← [Return] 246 bytes of code
+    ├─ [108698] → new DelegateProxy@[..]
+    │   └─ ← [Return] 143 bytes of code
+    ├─ [29396] DelegateProxy::fallback(100)
+    │   ├─ [3320] ProxiedContract::deposit(100) [delegatecall]
+    │   │   └─ ← [Stop] 
+    │   └─ ← [Return] 
+    ├─ [21160] DelegateProxy::deposit()
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| test/DelegateProxyTest.sol:DelegateProxy contract |                 |       |        |       |         |
+|---------------------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                                   | Deployment Size |       |        |       |         |
+| 108698                                            | 315             |       |        |       |         |
+| Function Name                                     | min             | avg   | median | max   | # calls |
+| deposit                                           | 21160           | 21160 | 21160  | 21160 | 1       |
+| fallback                                          | 29396           | 29396 | 29396  | 29396 | 1       |
+
+
+| test/DelegateProxyTest.sol:ProxiedContract contract |                 |      |        |      |         |
+|-----------------------------------------------------|-----------------|------|--------|------|---------|
+| Deployment Cost                                     | Deployment Size |      |        |      |         |
+| 106511                                              | 276             |      |        |      |         |
+| Function Name                                       | min             | avg  | median | max  | # calls |
+| deposit                                             | 3320            | 3320 | 3320   | 3320 | 1       |
+...
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fallback_gas_report", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "test/DelegateProxyTest.sol:DelegateProxy",
+    "deployment": {
+      "gas": 108698,
+      "size": 315
+    },
+    "functions": {
+      "deposit()": {
+        "calls": 1,
+        "min": 21160,
+        "mean": 21160,
+        "median": 21160,
+        "max": 21160
+      },
+      "fallback()": {
+        "calls": 1,
+        "min": 29396,
+        "mean": 29396,
+        "median": 29396,
+        "max": 29396
+      }
+    }
+  },
+  {
+    "contract": "test/DelegateProxyTest.sol:ProxiedContract",
+    "deployment": {
+      "gas": 106511,
+      "size": 276
+    },
+    "functions": {
+      "deposit(uint256)": {
+        "calls": 1,
+        "min": 3320,
+        "mean": 3320,
+        "median": 3320,
+        "max": 3320
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9300>
+forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
+    prj.add_test(
+        "NestedDeployTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract Child {
+    AnotherChild public child;
+    constructor() {
+        child = new AnotherChild();
+    }
+    function w() external {
+        child.w();
+    }
+}
+contract AnotherChild {
+    function w() external {}
+}
+contract Parent {
+    Child public immutable child;
+    constructor() {
+        child = new Child();
+    }
+}
+contract NestedDeploy is Test {
+    function test_nested_create_gas_report() external {
+        Parent p = new Parent();
+        p.child().child().w();
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_nested_create_gas_report", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/NestedDeployTest.sol:NestedDeploy
+[PASS] test_nested_create_gas_report() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| test/NestedDeployTest.sol:AnotherChild contract |                 |       |        |       |         |
+|-------------------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                                 | Deployment Size |       |        |       |         |
+| 0                                               | 130             |       |        |       |         |
+| Function Name                                   | min             | avg   | median | max   | # calls |
+| w                                               | 21162           | 21162 | 21162  | 21162 | 1       |
+
+
+| test/NestedDeployTest.sol:Child contract |                 |     |        |     |         |
+|------------------------------------------|-----------------|-----|--------|-----|---------|
+| Deployment Cost                          | Deployment Size |     |        |     |         |
+| 0                                        | 498             |     |        |     |         |
+| Function Name                            | min             | avg | median | max | # calls |
+| child                                    | 325             | 325 | 325    | 325 | 1       |
+
+
+| test/NestedDeployTest.sol:Parent contract |                 |     |        |     |         |
+|-------------------------------------------|-----------------|-----|--------|-----|---------|
+| Deployment Cost                           | Deployment Size |     |        |     |         |
+| 254857                                    | 770             |     |        |     |         |
+| Function Name                             | min             | avg | median | max | # calls |
+| child                                     | 182             | 182 | 182    | 182 | 1       |
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_nested_create_gas_report", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "test/NestedDeployTest.sol:AnotherChild",
+    "deployment": {
+      "gas": 0,
+      "size": 130
+    },
+    "functions": {
+      "w()": {
+        "calls": 1,
+        "min": 21162,
+        "mean": 21162,
+        "median": 21162,
+        "max": 21162
+      }
+    }
+  },
+  {
+    "contract": "test/NestedDeployTest.sol:Child",
+    "deployment": {
+      "gas": 0,
+      "size": 498
+    },
+    "functions": {
+      "child()": {
+        "calls": 1,
+        "min": 325,
+        "mean": 325,
+        "median": 325,
+        "max": 325
+      }
+    }
+  },
+  {
+    "contract": "test/NestedDeployTest.sol:Parent",
+    "deployment": {
+      "gas": 254857,
+      "size": 770
+    },
+    "functions": {
+      "child()": {
+        "calls": 1,
+        "min": 182,
+        "mean": 182,
+        "median": 182,
+        "max": 182
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {

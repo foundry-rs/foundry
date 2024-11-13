@@ -105,7 +105,7 @@ impl DocBuilder {
             .collect::<Vec<_>>();
 
         if sources.is_empty() {
-            println!("No sources detected at {}", self.sources.display());
+            sh_println!("No sources detected at {}", self.sources.display())?;
             return Ok(())
         }
 

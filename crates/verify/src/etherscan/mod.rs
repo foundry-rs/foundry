@@ -66,11 +66,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
         if !args.skip_is_verified_check &&
             self.is_contract_verified(&etherscan, &verify_args).await?
         {
-            println!(
+            sh_println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
                 verify_args.address.to_checksum(None)
-            );
+            )?;
 
             return Ok(())
         }
@@ -80,10 +80,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| async {
-                println!(
+                sh_println!(
                     "\nSubmitting verification for [{}] {}.",
-                    verify_args.contract_name, verify_args.address
-                );
+                    verify_args.contract_name,
+                    verify_args.address
+                )?;
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -110,10 +111,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
-                    eprintln!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                    sh_err!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
+                        `{}`",
+                        resp.message,
+                        resp.result
+                    )?;
                     std::process::exit(1);
                 }
 
@@ -122,12 +125,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            println!(
+            sh_println!(
                 "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(args.address)
-            );
+            )?;
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
@@ -140,7 +143,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 return self.check(check_args).await
             }
         } else {
-            println!("Contract source code already verified");
+            sh_println!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -167,9 +170,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     trace!(?resp, "Received verification response");
 
-                    eprintln!(
+                    let _ = sh_println!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
+                        resp.message,
+                        resp.result
                     );
 
                     if resp.result == "Pending in queue" {
@@ -181,7 +185,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     if resp.result == "Already Verified" {
-                        println!("Contract source code already verified");
+                        let _ = sh_println!("Contract source code already verified");
                         return Ok(())
                     }
 
@@ -190,7 +194,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     if resp.result == "Pass - Verified" {
-                        println!("Contract successfully verified");
+                        let _ = sh_println!("Contract successfully verified");
                     }
 
                     Ok(())

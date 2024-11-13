@@ -2006,9 +2006,6 @@ name = "cc"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aeb932158bd710538c73702db6945cb68a8fb08c519e6e12706b94263b36db8"
-dependencies = [
- "shlex",
-]
 
 [[package]]
 name = "cfg-if"
@@ -3436,6 +3433,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "forge-fmt",
+ "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "itertools 0.13.0",
@@ -8379,10 +8377,11 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.4.1"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8daf7e07f2b6002f8410811915a2f6142f2d1084764dd88cba3f4ebf22232975"
+checksum = "f5969c09f89ae6f0e18d5904e5bdbb8842ba948dad0f8202edb7ea510e35654d"
 dependencies = [
+ "bon",
  "clap",
  "cliclack",
  "derive_more",
@@ -8393,9 +8392,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea249d0281f3755c3c2b095ad94a554a782cc29138f46c407b8080cfd3918996"
+checksum = "434b034d411ea9d1cd9bd77fa2978a42e4c4ae486f47738a545079f11a32c879"
 dependencies = [
  "bon",
  "chrono",
