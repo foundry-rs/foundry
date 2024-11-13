@@ -2534,6 +2534,132 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
         );
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9300>
+forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
+    prj.add_test(
+        "NestedDeployTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract Child {
+    AnotherChild public child;
+    constructor() {
+        child = new AnotherChild();
+    }
+    function w() external {
+        child.w();
+    }
+}
+contract AnotherChild {
+    function w() external {}
+}
+contract Parent {
+    Child public immutable child;
+    constructor() {
+        child = new Child();
+    }
+}
+contract NestedDeploy is Test {
+    function test_nested_create_gas_report() external {
+        Parent p = new Parent();
+        p.child().child().w();
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_nested_create_gas_report", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/NestedDeployTest.sol:NestedDeploy
+[PASS] test_nested_create_gas_report() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| test/NestedDeployTest.sol:AnotherChild contract |                 |       |        |       |         |
+|-------------------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                                 | Deployment Size |       |        |       |         |
+| 0                                               | 130             |       |        |       |         |
+| Function Name                                   | min             | avg   | median | max   | # calls |
+| w                                               | 21162           | 21162 | 21162  | 21162 | 1       |
+
+
+| test/NestedDeployTest.sol:Child contract |                 |     |        |     |         |
+|------------------------------------------|-----------------|-----|--------|-----|---------|
+| Deployment Cost                          | Deployment Size |     |        |     |         |
+| 0                                        | 498             |     |        |     |         |
+| Function Name                            | min             | avg | median | max | # calls |
+| child                                    | 325             | 325 | 325    | 325 | 1       |
+
+
+| test/NestedDeployTest.sol:Parent contract |                 |     |        |     |         |
+|-------------------------------------------|-----------------|-----|--------|-----|---------|
+| Deployment Cost                           | Deployment Size |     |        |     |         |
+| 254857                                    | 770             |     |        |     |         |
+| Function Name                             | min             | avg | median | max | # calls |
+| child                                     | 182             | 182 | 182    | 182 | 1       |
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_nested_create_gas_report", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "test/NestedDeployTest.sol:AnotherChild",
+    "deployment": {
+      "gas": 0,
+      "size": 130
+    },
+    "functions": {
+      "w()": {
+        "calls": 1,
+        "min": 21162,
+        "mean": 21162,
+        "median": 21162,
+        "max": 21162
+      }
+    }
+  },
+  {
+    "contract": "test/NestedDeployTest.sol:Child",
+    "deployment": {
+      "gas": 0,
+      "size": 498
+    },
+    "functions": {
+      "child()": {
+        "calls": 1,
+        "min": 325,
+        "mean": 325,
+        "median": 325,
+        "max": 325
+      }
+    }
+  },
+  {
+    "contract": "test/NestedDeployTest.sol:Parent",
+    "deployment": {
+      "gas": 254857,
+      "size": 770
+    },
+    "functions": {
+      "child()": {
+        "calls": 1,
+        "min": 182,
+        "mean": 182,
+        "median": 182,
+        "max": 182
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
+});
+
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     let remapping = prj.paths().libraries[0].join("myDependency");
     let config = Config {
