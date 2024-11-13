@@ -2,7 +2,7 @@ use super::build::BuildArgs;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, shell};
 use foundry_config::fix::fix_tomls;
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
@@ -13,10 +13,6 @@ pub struct ConfigArgs {
     /// Print only a basic set of the currently set config values.
     #[arg(long)]
     basic: bool,
-
-    /// Print currently set config values as JSON.
-    #[arg(long)]
-    json: bool,
 
     /// Attempt to fix any configuration warnings.
     #[arg(long)]
@@ -46,12 +42,12 @@ impl ConfigArgs {
 
         let s = if self.basic {
             let config = config.into_basic();
-            if self.json {
+            if shell::is_json() {
                 serde_json::to_string_pretty(&config)?
             } else {
                 config.to_string_pretty()?
             }
-        } else if self.json {
+        } else if shell::is_json() {
             serde_json::to_string_pretty(&config)?
         } else {
             config.to_string_pretty()?

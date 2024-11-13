@@ -793,7 +793,7 @@ pub enum CastSubcommand {
         who: Option<String>,
 
         /// Perform a reverse lookup to verify that the name is correct.
-        #[arg(long, short)]
+        #[arg(long)]
         verify: bool,
 
         #[command(flatten)]
@@ -807,7 +807,7 @@ pub enum CastSubcommand {
         who: Option<Address>,
 
         /// Perform a normal lookup to verify that the address is correct.
-        #[arg(long, short)]
+        #[arg(long)]
         verify: bool,
 
         #[command(flatten)]
