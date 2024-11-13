@@ -12,7 +12,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
-    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, GlobalOpts, TransactionOpts},
+    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
@@ -37,10 +37,6 @@ merge_impl_figment_convert!(CreateArgs, opts, eth);
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
 pub struct CreateArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    pub global: GlobalOpts,
-
     /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,
 

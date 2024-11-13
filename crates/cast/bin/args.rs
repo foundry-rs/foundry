@@ -1,5 +1,5 @@
 use crate::cmd::{
-    access_list::AccessListArgs, bind::BindArgs, call::CallArgs,
+    access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
@@ -794,7 +794,7 @@ pub enum CastSubcommand {
         who: Option<String>,
 
         /// Perform a reverse lookup to verify that the name is correct.
-        #[arg(long, short)]
+        #[arg(long)]
         verify: bool,
 
         #[command(flatten)]
@@ -808,7 +808,7 @@ pub enum CastSubcommand {
         who: Option<Address>,
 
         /// Perform a normal lookup to verify that the address is correct.
-        #[arg(long, short)]
+        #[arg(long)]
         verify: bool,
 
         #[command(flatten)]
@@ -927,6 +927,10 @@ pub enum CastSubcommand {
     /// Download a contract creation code from Etherscan and RPC.
     #[command(visible_alias = "cc")]
     CreationCode(CreationCodeArgs),
+
+    /// Generate an artifact file, that can be used to deploy a contract locally.
+    #[command(visible_alias = "ar")]
+    Artifact(ArtifactArgs),
 
     /// Display constructor arguments used for the contract initialization.
     #[command(visible_alias = "cra")]

@@ -326,6 +326,7 @@ impl EthApi {
             EthRequest::SetIntervalMining(interval) => {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
+            EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
@@ -1663,6 +1664,14 @@ impl EthApi {
     pub fn anvil_get_auto_mine(&self) -> Result<bool> {
         node_info!("anvil_getAutomine");
         Ok(self.miner.is_auto_mine())
+    }
+
+    /// Returns the value of mining interval, if set.
+    ///
+    /// Handler for ETH RPC call: `anvil_getIntervalMining`.
+    pub fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
+        node_info!("anvil_getIntervalMining");
+        Ok(self.miner.get_interval())
     }
 
     /// Enables or disables, based on the single boolean argument, the automatic mining of new

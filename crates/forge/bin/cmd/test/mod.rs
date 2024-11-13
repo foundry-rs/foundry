@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -908,7 +908,7 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
     let results = runner.list(filter);
 
     if shell::is_json() {
-        println!("{}", serde_json::to_string(&results)?);
+        sh_println!("{}", serde_json::to_string(&results)?)?;
     } else {
         for (file, contracts) in results.iter() {
             sh_println!("{file}")?;
@@ -935,10 +935,12 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut filter = String::new();
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
-            if let Some(test_match) = test_name.split("(").next() {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
+            if test_name.is_any_test() {
+                if let Some(test_match) = test_name.split("(").next() {
+                    filter.push_str(test_match);
+                    if failures.peek().is_some() {
+                        filter.push('|');
+                    }
                 }
             }
         }
@@ -991,56 +993,34 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 
 #[cfg(test)]
 mod tests {
-    use crate::opts::{Forge, ForgeSubcommand};
-
     use super::*;
     use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
     fn watch_parse() {
-        let args = match Forge::parse_from(["foundry-cli", "test", "-vw"]).cmd {
-            ForgeSubcommand::Test(args) => args,
-            _ => unreachable!(),
-        };
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "-vw"]);
         assert!(args.watch.watch.is_some());
     }
 
     #[test]
     fn fuzz_seed() {
-        let args = match Forge::parse_from(["foundry-cli", "test", "--fuzz-seed", "0x10"]).cmd {
-            ForgeSubcommand::Test(args) => args,
-            _ => unreachable!(),
-        };
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
     #[test]
     fn fuzz_seed_exists() {
-        let args = match Forge::parse_from([
-            "foundry-cli",
-            "test",
-            "-vvv",
-            "--gas-report",
-            "--fuzz-seed",
-            "0x10",
-        ])
-        .cmd
-        {
-            ForgeSubcommand::Test(args) => args,
-            _ => unreachable!(),
-        };
+        let args: TestArgs =
+            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
     }
 
     #[test]
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
-            let args = match Forge::parse_from(["foundry-cli", "test", arg]).cmd {
-                ForgeSubcommand::Test(args) => args,
-                _ => unreachable!(),
-            };
+            let args = TestArgs::parse_from(["foundry-cli", arg]);
             assert_eq!(args.evm_opts.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
@@ -1094,19 +1074,12 @@ contract FooBarTest is DSTest {
         )
         .unwrap();
 
-        let args = match Forge::parse_from([
+        let args = TestArgs::parse_from([
             "foundry-cli",
-            "test",
             "--gas-report",
             "--root",
             &prj.root().to_string_lossy(),
-        ])
-        .cmd
-        {
-            ForgeSubcommand::Test(args) => args,
-            _ => unreachable!(),
-        };
-
+        ]);
         let outcome = args.run().await.unwrap();
         let gas_report = outcome.gas_report.unwrap();
 

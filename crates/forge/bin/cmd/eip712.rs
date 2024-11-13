@@ -1,9 +1,6 @@
 use clap::{Parser, ValueHint};
 use eyre::{Ok, OptionExt, Result};
-use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalOpts},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{
@@ -21,10 +18,6 @@ foundry_config::impl_figment_convert!(Eip712Args, opts);
 /// CLI arguments for `forge eip712`.
 #[derive(Clone, Debug, Parser)]
 pub struct Eip712Args {
-    /// Include the global options.
-    #[command(flatten)]
-    global: GlobalOpts,
-
     /// The path to the file from which to read struct definitions.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,

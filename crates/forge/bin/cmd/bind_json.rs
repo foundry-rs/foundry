@@ -1,10 +1,7 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalOpts},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::with_compilation_reporter, fs};
 use foundry_compilers::{
     artifacts::{
@@ -33,10 +30,6 @@ foundry_config::impl_figment_convert!(BindJsonArgs, opts);
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
 pub struct BindJsonArgs {
-    /// Include the global options.
-    #[command(flatten)]
-    global: GlobalOpts,
-
     /// The path to write bindings to.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub out: Option<PathBuf>,

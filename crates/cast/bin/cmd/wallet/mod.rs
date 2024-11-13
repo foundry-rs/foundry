@@ -14,7 +14,7 @@ use foundry_cli::{
     opts::{GlobalOpts, RpcOpts},
     utils,
 };
-use foundry_common::{fs, sh_println};
+use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use rand::thread_rng;
@@ -193,10 +193,6 @@ pub enum WalletSubcommands {
         /// specified mnemonic index (if integer) or derivation path.
         #[arg(value_name = "MNEMONIC_INDEX_OR_DERIVATION_PATH")]
         mnemonic_index_or_derivation_path_override: Option<String>,
-
-        /// Verbose mode, print the address and private key.
-        #[arg(short = 'v', long)]
-        verbose: bool,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -473,7 +469,6 @@ flag to set your key via:
                 wallet,
                 mnemonic_override,
                 mnemonic_index_or_derivation_path_override,
-                verbose,
             } => {
                 let (index_override, derivation_path_override) =
                     match mnemonic_index_or_derivation_path_override {
@@ -496,7 +491,7 @@ flag to set your key via:
                 .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {
-                        if verbose {
+                        if shell::verbosity() > 0 {
                             sh_println!("Address:     {}", wallet.address())?;
                             sh_println!(
                                 "Private key: 0x{}",

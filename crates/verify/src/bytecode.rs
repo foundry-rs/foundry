@@ -22,7 +22,6 @@ use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_env};
 use revm_primitives::AccountInfo;
 use std::path::PathBuf;
-use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
 
@@ -143,11 +142,11 @@ impl VerifyBytecodeArgs {
         }
 
         if !shell::is_json() {
-            println!(
+            sh_println!(
                 "Verifying bytecode for contract {} at address {}",
-                self.contract.name.clone().green(),
-                self.address.green()
-            );
+                self.contract.name,
+                self.address
+            )?;
         }
 
         let mut json_results: Vec<JsonResult> = vec![];
@@ -213,12 +212,10 @@ impl VerifyBytecodeArgs {
 
         if maybe_predeploy {
             if !shell::is_json() {
-                println!(
-                    "{}",
-                    format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", self.address)
-                        .yellow()
-                        .bold()
-                )
+                sh_warn!(
+                    "Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.",
+                    self.address
+                )?;
             }
 
             // Append constructor args to the local_bytecode.
