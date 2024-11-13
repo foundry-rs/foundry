@@ -44,7 +44,7 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, sig, args, tx, eth, block, .. } = self;
+        let Self { to, sig, args, tx, eth, block } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
