@@ -83,6 +83,7 @@ impl Retry {
 
     fn handle_err(&mut self, err: Error) {
         self.retries -= 1;
-        warn!("erroneous attempt ({} tries remaining): {}", self.retries, err.root_cause());
+        let _ =
+            sh_warn!("erroneous attempt ({} tries remaining): {}", self.retries, err.root_cause());
     }
 }
