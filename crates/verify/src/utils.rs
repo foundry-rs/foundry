@@ -353,11 +353,21 @@ pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
 }
 
 pub fn into_tx_request(tx: Transaction<AnyTxEnvelope>) -> TransactionRequest {
-    let req = TransactionRequest::default()
+    let mut req = TransactionRequest::default()
         .from(tx.from)
+        .with_gas_limit(tx.gas_limit())
         .with_kind(tx.kind())
         .with_input(tx.input().clone())
         .with_nonce(tx.nonce());
+
+    if tx.ty() == 0 {
+        req.gas_price = tx.gas_price();
+    } else if tx.ty() == 2 {
+        req.max_fee_per_gas = Some(tx.max_fee_per_gas());
+        req.max_priority_fee_per_gas = tx.max_priority_fee_per_gas();
+    }
+
+    req.transaction_type = Some(tx.ty());
 
     req
 }

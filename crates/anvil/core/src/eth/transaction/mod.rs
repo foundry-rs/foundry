@@ -275,7 +275,7 @@ impl From<MaybeImpersonatedTransaction> for RpcTransaction {
 
 pub fn to_alloy_transaction_with_hash_and_sender(
     transaction: TypedTransaction,
-    hash: B256,
+    _hash: B256,
     from: Address,
 ) -> RpcTransaction {
     // Common
