@@ -632,7 +632,7 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 }
 
 impl TypedTransaction {
-    /// Returns true if the transaction uses dynamic fees: EIP1559 or EIP4844
+    /// Returns true if the transaction uses dynamic fees: EIP1559, EIP4844 or EIP7702
     pub fn is_dynamic_fee(&self) -> bool {
         matches!(self, Self::EIP1559(_) | Self::EIP4844(_) | Self::EIP7702(_))
     }

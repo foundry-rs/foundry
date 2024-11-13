@@ -35,11 +35,12 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait,
+    TxEip4844Variant, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcTransaction, EthereumWallet, TransactionBuilder,
+    AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, EthereumWallet, TransactionBuilder,
 };
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
@@ -2885,8 +2886,69 @@ impl TransactionValidator for Backend {
     }
 }
 
-/// Creates a `Transaction` as it's expected for the `eth` RPC api from storage data
-#[allow(clippy::too_many_arguments)]
+/// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
+// #[allow(clippy::too_many_arguments)]
+// pub fn transaction_build(
+//     tx_hash: Option<B256>,
+//     eth_transaction: MaybeImpersonatedTransaction,
+//     block: Option<&Block>,
+//     info: Option<TransactionInfo>,
+//     base_fee: Option<u64>,
+// ) -> AnyRpcTransaction {
+//     // todo!()
+//     let mut transaction: Transaction = eth_transaction.clone().into();
+//     if info.is_some() && transaction.transaction_type == Some(0x7E) {
+//         transaction.nonce = info.as_ref().unwrap().nonce;
+//     }
+
+//     if eth_transaction.is_dynamic_fee() {
+//         if block.is_none() && info.is_none() {
+//             // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
+//             transaction.gas_price = transaction.max_fee_per_gas;
+//         } else {
+//             // if transaction is already mined, gas price is considered base fee + priority fee:
+//             // the         // effective gas price.
+//             let base_fee = base_fee.map_or(0u128, |g| g as u128);
+//             let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
+//             transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
+//         }
+//     } else {
+//         transaction.max_fee_per_gas = None;
+//         transaction.max_priority_fee_per_gas = None;
+//     }
+
+//     transaction.block_hash =
+//         block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
+
+//     transaction.block_number = block.as_ref().map(|block| block.header.number);
+
+//     transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
+
+//     // need to check if the signature of the transaction is impersonated, if so then we
+//     // can't recover the sender, instead we use the sender from the executed transaction and set
+//     // the // impersonated hash.
+//     if eth_transaction.is_impersonated() {
+//         transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
+//         transaction.hash = eth_transaction.impersonated_hash(transaction.from);
+//     } else {
+//         transaction.from = eth_transaction.recover().expect("can recover signed tx");
+//     }
+
+//     // if a specific hash was provided we update the transaction's hash
+//     // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
+//     // which would result in different hashes
+//     // Note: for impersonated transactions this only concerns pending transactions because
+//     // there's // no `info` yet.
+//     if let Some(tx_hash) = tx_hash {
+//         transaction.hash = tx_hash;
+//     }
+
+//     transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
+//     WithOtherFields::new(transaction)
+// }
+
+/// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
+// #[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
     eth_transaction: MaybeImpersonatedTransaction,
@@ -2894,56 +2956,233 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
-    todo!()
-    // let mut transaction: Transaction = eth_transaction.clone().into();
-    // if info.is_some() && transaction.transaction_type == Some(0x7E) {
-    //     transaction.nonce = info.as_ref().unwrap().nonce;
-    // }
+    let transaction: Transaction = eth_transaction.clone().into();
 
-    // if eth_transaction.is_dynamic_fee() {
-    //     if block.is_none() && info.is_none() {
-    //         // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-    //         transaction.gas_price = transaction.max_fee_per_gas;
-    //     } else {
-    //         // if transaction is already mined, gas price is considered base fee + priority fee:
-    // the         // effective gas price.
-    //         let base_fee = base_fee.map_or(0u128, |g| g as u128);
-    //         let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
-    //         transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
-    //     }
-    // } else {
-    //     transaction.max_fee_per_gas = None;
-    //     transaction.max_priority_fee_per_gas = None;
-    // }
+    let envelope = transaction.inner;
 
-    // transaction.block_hash =
-    //     block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
+    let envelope = match envelope {
+        TxEnvelope::Legacy(mut signed_tx) => {
+            let mut hash = *signed_tx.hash();
+            let tx = signed_tx.tx_mut();
+            if info.is_some() && tx.ty() == 0x7E {
+                tx.nonce = info.as_ref().unwrap().nonce;
+            }
 
-    // transaction.block_number = block.as_ref().map(|block| block.header.number);
+            if eth_transaction.is_dynamic_fee() {
+                if block.is_none() && info.is_none() {
+                    // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
+                    tx.gas_price = tx.max_fee_per_gas();
+                } else {
+                    // if transaction is already mined, gas price is considered base fee + priority
+                    // fee: the effective gas price.
+                    let base_fee = base_fee.map_or(0u128, |g| g as u128);
+                    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
+                    tx.gas_price = base_fee.saturating_add(max_priority_fee_per_gas);
+                }
+            }
 
-    // transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
+            tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
 
-    // // need to check if the signature of the transaction is impersonated, if so then we
-    // // can't recover the sender, instead we use the sender from the executed transaction and set
-    // the // impersonated hash.
-    // if eth_transaction.is_impersonated() {
-    //     transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
-    //     transaction.hash = eth_transaction.impersonated_hash(transaction.from);
-    // } else {
-    //     transaction.from = eth_transaction.recover().expect("can recover signed tx");
-    // }
+            // need to check if the signature of the transaction is impersonated, if so then we
+            // can't recover the sender, instead we use the sender from the executed transaction and
+            // set the // impersonated hash.
+            if eth_transaction.is_impersonated() {
+                hash = eth_transaction.impersonated_hash(transaction.from);
+            }
 
-    // // if a specific hash was provided we update the transaction's hash
-    // // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
-    // // which would result in different hashes
-    // // Note: for impersonated transactions this only concerns pending transactions because
-    // there's // no `info` yet.
-    // if let Some(tx_hash) = tx_hash {
-    //     transaction.hash = tx_hash;
-    // }
+            // if a specific hash was provided we update the transaction's hash
+            // This is important for impersonated transactions since they all use the
+            // `BYPASS_SIGNATURE` which would result in different hashes
+            // Note: for impersonated transactions this only concerns pending transactions because
+            // there's // no `info` yet.
+            if let Some(tx_hash) = tx_hash {
+                hash = tx_hash;
+            }
 
-    // transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
-    // WithOtherFields::new(transaction)
+            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
+
+            AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
+        }
+        TxEnvelope::Eip1559(mut signed_tx) => {
+            let mut hash = *signed_tx.hash();
+            let tx = signed_tx.tx_mut();
+            if info.is_some() && tx.ty() == 0x7E {
+                tx.nonce = info.as_ref().unwrap().nonce;
+            }
+
+            tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
+
+            // need to check if the signature of the transaction is impersonated, if so then we
+            // can't recover the sender, instead we use the sender from the executed transaction and
+            // set the // impersonated hash.
+            if eth_transaction.is_impersonated() {
+                hash = eth_transaction.impersonated_hash(transaction.from);
+            }
+
+            // if a specific hash was provided we update the transaction's hash
+            // This is important for impersonated transactions since they all use the
+            // `BYPASS_SIGNATURE` which would result in different hashes
+            // Note: for impersonated transactions this only concerns pending transactions because
+            // there's // no `info` yet.
+            if let Some(tx_hash) = tx_hash {
+                hash = tx_hash;
+            }
+
+            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
+
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
+        }
+        TxEnvelope::Eip2930(mut signed_tx) => {
+            let mut hash = *signed_tx.hash();
+            let tx = signed_tx.tx_mut();
+            if info.is_some() && tx.ty() == 0x7E {
+                tx.nonce = info.as_ref().unwrap().nonce;
+            }
+
+            if eth_transaction.is_dynamic_fee() {
+                if block.is_none() && info.is_none() {
+                    // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
+                    tx.gas_price = tx.max_fee_per_gas();
+                } else {
+                    // if transaction is already mined, gas price is considered base fee + priority
+                    // fee: the effective gas price.
+                    let base_fee = base_fee.map_or(0u128, |g| g as u128);
+                    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
+                    tx.gas_price = base_fee.saturating_add(max_priority_fee_per_gas);
+                }
+            }
+
+            tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
+
+            // need to check if the signature of the transaction is impersonated, if so then we
+            // can't recover the sender, instead we use the sender from the executed transaction and
+            // set the // impersonated hash.
+            if eth_transaction.is_impersonated() {
+                hash = eth_transaction.impersonated_hash(transaction.from);
+            }
+
+            // if a specific hash was provided we update the transaction's hash
+            // This is important for impersonated transactions since they all use the
+            // `BYPASS_SIGNATURE` which would result in different hashes
+            // Note: for impersonated transactions this only concerns pending transactions because
+            // there's // no `info` yet.
+            if let Some(tx_hash) = tx_hash {
+                hash = tx_hash;
+            }
+
+            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
+
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
+        }
+        TxEnvelope::Eip4844(mut signed_tx) => {
+            let mut hash = *signed_tx.hash();
+            let tx_variant = signed_tx.tx_mut();
+
+            match tx_variant {
+                TxEip4844Variant::TxEip4844(tx) => {
+                    if info.is_some() && tx.ty() == 0x7E {
+                        tx.nonce = info.as_ref().unwrap().nonce;
+                    }
+                    tx.to = if let Some(to) =
+                        info.as_ref().map_or(eth_transaction.to(), |status| status.to)
+                    {
+                        to
+                    } else {
+                        Address::ZERO
+                    };
+                }
+
+                TxEip4844Variant::TxEip4844WithSidecar(tx) => {
+                    if info.is_some() && tx.ty() == 0x7E {
+                        tx.tx.nonce = info.as_ref().unwrap().nonce;
+                    }
+                    tx.tx.to = if let Some(to) =
+                        info.as_ref().map_or(eth_transaction.to(), |status| status.to)
+                    {
+                        to
+                    } else {
+                        Address::ZERO
+                    };
+                }
+            }
+
+            // need to check if the signature of the transaction is impersonated, if so then we
+            // can't recover the sender, instead we use the sender from the executed transaction and
+            // set the // impersonated hash.
+            if eth_transaction.is_impersonated() {
+                hash = eth_transaction.impersonated_hash(transaction.from);
+            }
+
+            // if a specific hash was provided we update the transaction's hash
+            // This is important for impersonated transactions since they all use the
+            // `BYPASS_SIGNATURE` which would result in different hashes
+            // Note: for impersonated transactions this only concerns pending transactions because
+            // there's // no `info` yet.
+            if let Some(tx_hash) = tx_hash {
+                hash = tx_hash;
+            }
+
+            let new_signed =
+                Signed::new_unchecked(tx_variant.clone(), *signed_tx.signature(), hash);
+
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
+        }
+        TxEnvelope::Eip7702(mut signed_tx) => {
+            let mut hash = *signed_tx.hash();
+            let tx = signed_tx.tx_mut();
+            if info.is_some() && tx.ty() == 0x7E {
+                tx.nonce = info.as_ref().unwrap().nonce;
+            }
+
+            tx.to = if let Some(to) = info.as_ref().map_or(eth_transaction.to(), |status| status.to)
+            {
+                to
+            } else {
+                Address::ZERO
+            };
+
+            // need to check if the signature of the transaction is impersonated, if so then we
+            // can't recover the sender, instead we use the sender from the executed transaction and
+            // set the // impersonated hash.
+            if eth_transaction.is_impersonated() {
+                hash = eth_transaction.impersonated_hash(transaction.from);
+            }
+
+            // if a specific hash was provided we update the transaction's hash
+            // This is important for impersonated transactions since they all use the
+            // `BYPASS_SIGNATURE` which would result in different hashes
+            // Note: for impersonated transactions this only concerns pending transactions because
+            // there's // no `info` yet.
+            if let Some(tx_hash) = tx_hash {
+                hash = tx_hash;
+            }
+
+            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
+
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
+        }
+        _ => unreachable!("unknown tx type"),
+    };
+
+    let tx = Transaction {
+        inner: envelope,
+        block_hash: block
+            .as_ref()
+            .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+        block_number: block.as_ref().map(|block| block.header.number),
+        transaction_index: info.as_ref().map(|info| info.transaction_index),
+        // need to check if the signature of the transaction is impersonated, if so then we
+        // can't recover the sender, instead we use the sender from the executed transaction and
+        // set the // impersonated hash.
+        from: if eth_transaction.is_impersonated() {
+            info.as_ref().map(|info| info.from).unwrap_or_default()
+        } else {
+            eth_transaction.recover().expect("can recover signed tx")
+        },
+        // deprecated
+        effective_gas_price: None,
+    };
+    WithOtherFields::new(tx)
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.
