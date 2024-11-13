@@ -218,10 +218,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, global, .. } => {
+            Self::New { path, unsafe_password, number, .. } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if global.shell().is_json() { Some(vec![]) } else { None };
+                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
                 if let Some(path) = path {
                     let path = match dunce::canonicalize(path.clone()) {
                         Ok(path) => path,
@@ -302,7 +302,7 @@ impl WalletSubcommands {
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
 
-                let format_json = global.shell().is_json();
+                let format_json = shell::is_json();
 
                 if !format_json {
                     sh_println!("{}", "Generating mnemonic from provided entropy...".yellow())?;

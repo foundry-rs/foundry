@@ -92,15 +92,8 @@ pub struct CloneArgs {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let Self {
-            address,
-            root,
-            opts,
-            etherscan,
-            no_remappings_txt,
-            keep_directory_structure,
-            ..
-        } = self;
+        let Self { address, root, opts, etherscan, no_remappings_txt, keep_directory_structure } =
+            self;
 
         // step 0. get the chain and api key from the config
         let config = Config::from(&etherscan);
