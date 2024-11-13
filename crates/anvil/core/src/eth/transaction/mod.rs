@@ -22,7 +22,7 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::TxDeposit;
+use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use revm::{
     interpreter::InstructionResult,
     primitives::{OptimismFields, TxEnv},
@@ -617,6 +617,7 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
         let AnyRpcTransaction { inner, .. } = value;
+        let from = inner.from;
         match inner.inner {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
@@ -626,9 +627,45 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
                 _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
             },
-            AnyTxEnvelope::Unknown(_) => Err(ConversionError::Custom("UnknownTxType".to_string())),
+            AnyTxEnvelope::Unknown(tx) => {
+                // Try to convert to deposit transaction
+                if tx.ty() == DEPOSIT_TX_TYPE_ID {
+                    let nonce = get_field::<U64>(&tx.inner.fields, "nonce")?;
+                    let source_hash = get_field::<B256>(&tx.inner.fields, "sourceHash")?;
+                    let to = get_field::<Address>(&tx.inner.fields, "to")?;
+                    let mint = get_field::<U256>(&tx.inner.fields, "mint")?;
+                    let value = get_field::<U256>(&tx.inner.fields, "value")?;
+                    let gas_limit = get_field::<U64>(&tx.inner.fields, "gas")?;
+                    let input = get_field::<Bytes>(&tx.inner.fields, "input")?;
+
+                    let deposit_tx = DepositTransaction {
+                        nonce: nonce.to(),
+                        source_hash,
+                        from,
+                        kind: TxKind::from(to),
+                        mint,
+                        value,
+                        gas_limit: gas_limit.to(),
+                        is_system_tx: true,
+                        input,
+                    };
+
+                    return Ok(Self::Deposit(deposit_tx));
+                };
+
+                Err(ConversionError::Custom("UnknownTxType".to_string()))
+            }
         }
     }
+}
+fn get_field<T: serde::de::DeserializeOwned>(
+    fields: &OtherFields,
+    key: &str,
+) -> Result<T, ConversionError> {
+    fields
+        .get_deserialized::<T>(key)
+        .ok_or_else(|| ConversionError::Custom(format!("Missing{key}")))?
+        .map_err(|e| ConversionError::Custom(format!("Failed to deserialize {key}: {e}")))
 }
 
 impl TypedTransaction {

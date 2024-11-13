@@ -222,8 +222,8 @@ alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
 ## op-alloy 
-op-alloy-rpc-types = "0.5.0"
-op-alloy-consensus = "0.5.0"
+op-alloy-rpc-types = "0.6.5"
+op-alloy-consensus = "0.6.5"
 
 ## cli
 anstream = "0.6"
