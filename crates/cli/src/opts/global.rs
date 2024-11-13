@@ -21,14 +21,7 @@ pub struct GlobalOpts {
     pub verbosity: Verbosity,
 
     /// Do not print log messages.
-    #[clap(
-        short,
-        long,
-        global = true,
-        alias = "silent",
-        conflicts_with = "verbose",
-        help_heading = "Display options"
-    )]
+    #[clap(short, long, global = true, alias = "silent", help_heading = "Display options")]
     quiet: bool,
 
     /// Format log messages as JSON.
@@ -41,19 +34,22 @@ pub struct GlobalOpts {
     )]
     json: bool,
 
-    /// Log messages coloring.
+    /// The color of the log messages.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
     color: Option<ColorChoice>,
 
     /// Number of threads to use.
+    ///
     /// If 0, the number of threads will be equal to the number of logical CPUs.
     /// If set to a value greater than 0, it will use that number of threads capped at the number
     /// of logical CPUs.
+    ///
     /// If not provided it will not spawn the global thread pool.
     #[clap(
         short,
         long,
         global = true,
+        verbatim_doc_comment,
         visible_alias = "threads",
         help_heading = "Concurrency options"
     )]

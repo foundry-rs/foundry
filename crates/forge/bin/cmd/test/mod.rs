@@ -17,7 +17,7 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
-    opts::CoreBuildArgs,
+    opts::{CoreBuildArgs, GlobalOpts},
     utils::{self, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
@@ -65,6 +65,10 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The contract file you want to test, it's a shortcut for --match-path.
     #[arg(value_hint = ValueHint::FilePath)]
     pub path: Option<GlobMatcher>,
@@ -144,11 +148,6 @@ pub struct TestArgs {
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
-
-    /// Max concurrent threads to use.
-    /// Default value is the number of available CPUs.
-    #[arg(long, short = 'j', visible_alias = "jobs")]
-    pub threads: Option<usize>,
 
     /// Show test execution progress.
     #[arg(long)]
@@ -274,9 +273,9 @@ impl TestArgs {
 
         // Set number of max threads to execute tests.
         // If not specified then the number of threads determined by rayon will be used.
+        // This makes use of the global thread pool.
         if let Some(test_threads) = config.threads {
             trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
-            rayon::ThreadPoolBuilder::new().num_threads(test_threads).build_global()?;
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -895,7 +894,7 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
-        if let Some(threads) = self.threads {
+        if let Some(threads) = self.global.try_jobs() {
             dict.insert("threads".to_string(), threads.into());
         }
 

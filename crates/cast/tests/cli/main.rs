@@ -59,6 +59,18 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests.
 
+Concurrency options:
+  -j, --jobs <JOBS>
+          Number of threads to use.
+          
+          If 0, the number of threads will be equal to the number of logical CPUs.
+          If set to a value greater than 0, it will use that number of threads capped at the number
+          of logical CPUs.
+          
+          If not provided it will not spawn the global thread pool.
+          
+          [aliases: threads]
+
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
 "#]]);
