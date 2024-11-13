@@ -88,7 +88,6 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxE
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner {
         configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
     }
-    panic!("unsupported transaction type");
 }
 
 /// Configures the env for the given RPC transaction request.
