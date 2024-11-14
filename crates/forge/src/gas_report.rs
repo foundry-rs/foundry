@@ -94,31 +94,32 @@ impl GasReport {
             return;
         }
 
-        // Only include top-level calls which account for calldata and base (21.000) cost.
-        // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1 &&
-            (trace.kind == CallKind::Call ||
-                trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2 ||
-                trace.kind == CallKind::EOFCreate)
-        {
-            return;
-        }
-
         let Some(name) = decoder.contracts.get(&node.trace.address) else { return };
         let contract_name = name.rsplit(':').next().unwrap_or(name);
 
         if !self.should_report(contract_name) {
             return;
         }
+        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let is_create_call = trace.kind.is_any_create();
+
+        // Record contract deployment size.
+        if is_create_call {
+            trace!(contract_name, "adding create size info");
+            contract_info.size = trace.data.len();
+        }
+
+        // Only include top-level calls which account for calldata and base (21.000) cost.
+        // Only include Calls and Creates as only these calls are isolated in inspector.
+        if trace.depth > 1 && (trace.kind == CallKind::Call || is_create_call) {
+            return;
+        }
 
         let decoded = || decoder.decode_function(&node.trace);
 
-        let contract_info = self.contracts.entry(name.to_string()).or_default();
-        if trace.kind.is_any_create() {
+        if is_create_call {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
-            contract_info.size = trace.data.len();
         } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions

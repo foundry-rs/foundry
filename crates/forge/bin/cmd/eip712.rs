@@ -126,7 +126,9 @@ impl Resolver {
     /// Returns `None` if struct contains any fields that are not supported by EIP-712 (e.g.
     /// mappings or function pointers).
     pub fn resolve_struct_eip712(&self, id: usize) -> Result<Option<String>> {
-        self.resolve_eip712_inner(id, &mut Default::default(), true, None)
+        let mut subtypes = BTreeMap::new();
+        subtypes.insert(self.structs[&id].name.clone(), id);
+        self.resolve_eip712_inner(id, &mut subtypes, true, None)
     }
 
     fn resolve_eip712_inner(
@@ -205,8 +207,17 @@ impl Resolver {
                         // If we've already seen struct with this ID, just use assigned name.
                         if let Some((name, _)) = subtypes.iter().find(|(_, id)| **id == def.id) {
                             name.clone()
-                        // Otherwise, try assigning a new name.
                         } else {
+                            // Otherwise, assign new name.
+                            let mut i = 0;
+                            let mut name = def.name.clone();
+                            while subtypes.contains_key(&name) {
+                                i += 1;
+                                name = format!("{}_{i}", def.name);
+                            }
+
+                            subtypes.insert(name.clone(), def.id);
+
                             // iterate over members to check if they are resolvable and to populate subtypes
                             for member in &def.members {
                                 if self.resolve_type(
@@ -218,14 +229,6 @@ impl Resolver {
                                     return Ok(None)
                                 }
                             }
-                            let mut i = 0;
-                            let mut name = def.name.clone();
-                            while subtypes.contains_key(&name) {
-                                i += 1;
-                                name = format!("{}_{i}", def.name);
-                            }
-
-                            subtypes.insert(name.clone(), def.id);
                             name
                         };
 

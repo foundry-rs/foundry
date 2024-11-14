@@ -8348,9 +8348,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1925813f3dd013d212fa9ad184911846f99236dbfc8a6d79c8a54dfa0bb1a948"
+checksum = "f5969c09f89ae6f0e18d5904e5bdbb8842ba948dad0f8202edb7ea510e35654d"
 dependencies = [
  "bon",
  "clap",
@@ -8363,9 +8363,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "434b034d411ea9d1cd9bd77fa2978a42e4c4ae486f47738a545079f11a32c879"
+checksum = "e63aeee0e78b5fba04f005d23a58d20f897720212bd21ad744201cacb9dd34f8"
 dependencies = [
  "bon",
  "chrono",
@@ -9193,7 +9193,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3637e734239e12ab152cd269302500bd063f37624ee210cd04b4936ed671f3b1"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -9716,7 +9716,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

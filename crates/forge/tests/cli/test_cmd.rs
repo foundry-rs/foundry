@@ -2616,3 +2616,26 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 
     cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
 });
+
+// See <https://github.com/foundry-rs/foundry/issues/9297>
+forgetest_init!(test_roll_scroll_fork_with_cancun, |prj, cmd| {
+    prj.add_test(
+        "ScrollForkTest.t.sol",
+        r#"
+
+import {Test} from "forge-std/Test.sol";
+
+contract ScrollForkTest is Test {
+    function test_roll_scroll_fork_to_tx() public {
+        vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
+        bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
+        vm.rollFork(targetTxHash);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
+        .assert_success();
+});
