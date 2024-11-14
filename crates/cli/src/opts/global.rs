@@ -60,8 +60,15 @@ impl GlobalOpts {
     /// Spawn a new global thread pool.
     pub fn try_spawn(self) -> Result<(), rayon::ThreadPoolBuildError> {
         if let Some(jobs) = self.jobs() {
+            // Attempt to spawn the global thread pool with the specified number of threads.
+            // If it is already initialized simply return.
+            if ThreadPoolBuilder::new().num_threads(jobs).build_global().is_err() {
+                return Ok(());
+            }
+
             trace!(target: "forge::cli", "starting global thread pool with up to {} threads", jobs);
-            ThreadPoolBuilder::new().num_threads(jobs).build_global()
+
+            Ok(())
         } else {
             // If `--jobs` is not provided, do not spawn the global thread pool.
             Ok(())
