@@ -219,7 +219,7 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
 
 fn encode_full_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
-    let v = U256::from(sig.v());
+    let v = U256::from(sig.v() as u64 + 27);
     let r = B256::from(sig.r());
     let s = B256::from(sig.s());
     (v, r, s).abi_encode()
