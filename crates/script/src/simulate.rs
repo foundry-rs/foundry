@@ -116,10 +116,6 @@ impl PreSimulationState {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
                 let tx = transaction.tx_mut();
 
-                if let Some(authorization_list) = tx.authorization_list() {
-                    runner.executor.set_delegation(&authorization_list)?;
-                }
-
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
                     .simulate(
@@ -128,6 +124,7 @@ impl PreSimulationState {
                         to,
                         tx.input().map(Bytes::copy_from_slice),
                         tx.value(),
+                        tx.authorization_list(),
                     )
                     .wrap_err("Internal EVM error during simulation")?;
 

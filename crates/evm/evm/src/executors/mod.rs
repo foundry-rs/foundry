@@ -201,16 +201,6 @@ impl Executor {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
-    /// Sets EIP-7702 authorization list in the transaction environment.
-    pub fn set_delegation(
-        &mut self,
-        authorization_list: &[SignedAuthorization],
-    ) -> BackendResult<()> {
-        self.env.tx.authorization_list =
-            Some(AuthorizationList::Signed(authorization_list.to_vec()));
-        Ok(())
-    }
-
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
@@ -385,6 +375,21 @@ impl Executor {
         value: U256,
     ) -> eyre::Result<RawCallResult> {
         let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.call_with_env(env)
+    }
+
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization list.
+    pub fn call_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, to.into(), calldata, value);
+        env.tx.authorization_list = Some(AuthorizationList::Signed(authorization_list));
         self.call_with_env(env)
     }
 
