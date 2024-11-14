@@ -38,7 +38,6 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
-use rayon::current_num_threads;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -895,7 +894,7 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
-        if let Some(threads) = self.global.jobs().or(Some(current_num_threads())) {
+        if let Some(threads) = self.global.jobs(true) {
             dict.insert("threads".to_string(), threads.into());
         }
 

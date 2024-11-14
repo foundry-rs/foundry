@@ -169,7 +169,7 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let n_threads = global.jobs().unwrap_or(1);
+        let n_threads = global.jobs(true).unwrap_or(1);
 
         let mut salt = B256::ZERO;
         let remaining = if let Some(caller_address) = caller {

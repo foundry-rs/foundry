@@ -70,14 +70,14 @@ impl GlobalOpts {
 
     /// Spawn a new global thread pool.
     pub fn try_spawn(self, jobs: Option<usize>) -> Result<(), rayon::ThreadPoolBuildError> {
-        if let Some(jobs) = jobs.or_else(|| self.jobs()) {
+        if let Some(jobs) = jobs.or_else(|| self.jobs(false)) {
+            trace!(target: "forge::cli", "starting global thread pool with up to {} threads", jobs);
+
             // Attempt to spawn the global thread pool with the specified number of threads.
             // If it is already initialized simply return.
             if ThreadPoolBuilder::new().num_threads(jobs).build_global().is_err() {
-                return Ok(());
+                warn!(target: "forge::cli", "global thread pool already initialized");
             }
-
-            trace!(target: "forge::cli", "starting global thread pool with up to {} threads", jobs);
 
             Ok(())
         } else {
@@ -90,14 +90,18 @@ impl GlobalOpts {
     ///
     /// Try to use the number of threads specified by `--jobs` if provided, otherwise use the number
     /// of logical CPUs.
-    pub fn jobs(&self) -> Option<usize> {
-        self.jobs.map(|jobs| {
+    pub fn jobs(&self, default: bool) -> Option<usize> {
+        if let Some(jobs) = self.jobs {
             if jobs == 0 {
-                current_num_threads()
-            } else {
-                jobs.min(current_num_threads())
+                return Some(current_num_threads());
             }
-        })
+
+            Some(jobs.min(current_num_threads()))
+        } else if default {
+            return Some(current_num_threads());
+        } else {
+            return None;
+        }
     }
 
     /// Create a new shell instance.
