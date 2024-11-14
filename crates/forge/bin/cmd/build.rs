@@ -102,12 +102,11 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .quiet(format_json)
             .bail(!format_json);
 
         let output = compiler.compile(&project)?;
 
-        if format_json {
+        if format_json && !self.names && !self.sizes {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
