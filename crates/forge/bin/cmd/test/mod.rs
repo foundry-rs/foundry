@@ -38,6 +38,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
+use rayon::current_num_threads;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -270,6 +271,13 @@ impl TestArgs {
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // Set number of max threads to execute tests.
+        // If not specified then the number of threads determined by rayon will be used.
+        if let Some(test_threads) = config.threads {
+            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
+            self.global.try_spawn(Some(test_threads))?;
+        }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -887,7 +895,7 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
-        if let Some(threads) = self.global.jobs() {
+        if let Some(threads) = self.global.jobs().or(Some(current_num_threads())) {
             dict.insert("threads".to_string(), threads.into());
         }
 

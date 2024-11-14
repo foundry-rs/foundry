@@ -120,8 +120,7 @@ fn run() -> eyre::Result<()> {
     utils::load_dotenv();
 
     let args = Chisel::parse();
-    args.global.try_spawn()?;
-    args.global.shell().set();
+    args.global.init()?;
     main_args(args)
 }
 

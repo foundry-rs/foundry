@@ -57,9 +57,20 @@ pub struct GlobalOpts {
 }
 
 impl GlobalOpts {
+    /// Initialize the global options.
+    pub fn init(self) -> eyre::Result<()> {
+        // Initialize the global thread pool.
+        self.try_spawn(None)?;
+
+        // Set the global shell.
+        self.shell().set();
+
+        Ok(())
+    }
+
     /// Spawn a new global thread pool.
-    pub fn try_spawn(self) -> Result<(), rayon::ThreadPoolBuildError> {
-        if let Some(jobs) = self.jobs() {
+    pub fn try_spawn(self, jobs: Option<usize>) -> Result<(), rayon::ThreadPoolBuildError> {
+        if let Some(jobs) = jobs.or_else(|| self.jobs()) {
             // Attempt to spawn the global thread pool with the specified number of threads.
             // If it is already initialized simply return.
             if ThreadPoolBuilder::new().num_threads(jobs).build_global().is_err() {
@@ -78,24 +89,15 @@ impl GlobalOpts {
     /// Get the number of threads to use.
     ///
     /// Try to use the number of threads specified by `--jobs` if provided, otherwise use the number
-    /// of logical CPUs. If running tests, use at least 2 threads.
+    /// of logical CPUs.
     pub fn jobs(&self) -> Option<usize> {
-        let num_threads = self.jobs.map(|jobs| {
+        self.jobs.map(|jobs| {
             if jobs == 0 {
                 current_num_threads()
             } else {
                 jobs.min(current_num_threads())
             }
-        });
-
-        // If we are running tests, we want to use at least 2 threads.
-        if cfg!(test) {
-            if let Some(num_threads) = num_threads {
-                return Some(num_threads.min(2));
-            }
-        }
-
-        num_threads
+        })
     }
 
     /// Create a new shell instance.

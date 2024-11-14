@@ -52,8 +52,7 @@ fn run() -> Result<()> {
     utils::enable_paint();
 
     let args = CastArgs::parse();
-    args.global.try_spawn()?;
-    args.global.shell().set();
+    args.global.init()?;
     main_args(args)
 }
 
