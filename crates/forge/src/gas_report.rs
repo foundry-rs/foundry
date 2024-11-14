@@ -21,7 +21,8 @@ use std::{collections::BTreeMap, fmt::Display};
 pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
-
+    /// What kind of report to generate.
+    report_kind: ReportKind,
     /// Contracts to generate the report for.
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
@@ -42,7 +43,14 @@ impl GasReport {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
-        Self { report_any, report_for, ignore, include_tests, ..Default::default() }
+        Self {
+            report_any,
+            report_kind: report_kind(),
+            report_for,
+            ignore,
+            include_tests,
+            ..Default::default()
+        }
     }
 
     /// Whether the given contract should be reported.
@@ -147,7 +155,7 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match report_kind() {
+        match self.report_kind {
             ReportKind::Markdown => {
                 for (name, contract) in &self.contracts {
                     if contract.functions.is_empty() {

@@ -236,7 +236,8 @@ impl ProjectCompiler {
                 let _ = sh_println!();
             }
 
-            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            let mut size_report =
+                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
 
             let artifacts: BTreeMap<_, _> = output
                 .artifact_ids()
@@ -290,6 +291,8 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
+    /// What kind of report to generate.
+    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -328,11 +331,10 @@ impl SizeReport {
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match report_kind() {
+        match self.report_kind {
             ReportKind::Markdown => {
                 let table = self.format_table_output();
                 writeln!(f, "{table}")?;
-                writeln!(f, "\n")?;
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", self.format_json_output())?;
