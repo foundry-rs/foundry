@@ -2885,68 +2885,7 @@ impl TransactionValidator for Backend {
 }
 
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
-// #[allow(clippy::too_many_arguments)]
-// pub fn transaction_build(
-//     tx_hash: Option<B256>,
-//     eth_transaction: MaybeImpersonatedTransaction,
-//     block: Option<&Block>,
-//     info: Option<TransactionInfo>,
-//     base_fee: Option<u64>,
-// ) -> AnyRpcTransaction {
-//     // todo!()
-//     let mut transaction: Transaction = eth_transaction.clone().into();
-//     if info.is_some() && transaction.transaction_type == Some(0x7E) {
-//         transaction.nonce = info.as_ref().unwrap().nonce;
-//     }
-
-//     if eth_transaction.is_dynamic_fee() {
-//         if block.is_none() && info.is_none() {
-//             // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-//             transaction.gas_price = transaction.max_fee_per_gas;
-//         } else {
-//             // if transaction is already mined, gas price is considered base fee + priority fee:
-//             // the         // effective gas price.
-//             let base_fee = base_fee.map_or(0u128, |g| g as u128);
-//             let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
-//             transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
-//         }
-//     } else {
-//         transaction.max_fee_per_gas = None;
-//         transaction.max_priority_fee_per_gas = None;
-//     }
-
-//     transaction.block_hash =
-//         block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
-
-//     transaction.block_number = block.as_ref().map(|block| block.header.number);
-
-//     transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
-
-//     // need to check if the signature of the transaction is impersonated, if so then we
-//     // can't recover the sender, instead we use the sender from the executed transaction and set
-//     // the // impersonated hash.
-//     if eth_transaction.is_impersonated() {
-//         transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
-//         transaction.hash = eth_transaction.impersonated_hash(transaction.from);
-//     } else {
-//         transaction.from = eth_transaction.recover().expect("can recover signed tx");
-//     }
-
-//     // if a specific hash was provided we update the transaction's hash
-//     // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
-//     // which would result in different hashes
-//     // Note: for impersonated transactions this only concerns pending transactions because
-//     // there's // no `info` yet.
-//     if let Some(tx_hash) = tx_hash {
-//         transaction.hash = tx_hash;
-//     }
-
-//     transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
-//     WithOtherFields::new(transaction)
-// }
-
-/// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
-// #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
     eth_transaction: MaybeImpersonatedTransaction,
