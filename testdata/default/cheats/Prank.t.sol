@@ -193,6 +193,14 @@ contract PrankTest is DSTest {
         vm.stopPrank();
     }
 
+    function testFailPrankDelegateCallToEOA() public {
+        address alice = makeAddr("alice");
+        ImplementationTest impl = new ImplementationTest();
+        vm.prank(alice, true);
+        // Should fail when EOA pranked with delegatecall.
+        address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
+    }
+
     function testPrankSender(address sender) public {
         // Perform the prank
         Victim victim = new Victim();
