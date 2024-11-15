@@ -1,9 +1,9 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
+use alloy_primitives::map::{DefaultHashBuilder, HashMap, HashSet};
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::interpreter::opcode;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
@@ -11,9 +11,9 @@ pub fn find_anchors(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
     items: &[CoverageItem],
-    items_by_source_id: &FxHashMap<usize, Vec<usize>>,
+    items_by_source_id: &HashMap<usize, Vec<usize>>,
 ) -> Vec<ItemAnchor> {
-    let mut seen = FxHashSet::default();
+    let mut seen = HashSet::with_hasher(DefaultHashBuilder::default());
     source_map
         .iter()
         .filter_map(|element| items_by_source_id.get(&(element.index()? as usize)))
@@ -71,7 +71,7 @@ pub fn find_anchor_simple(
 
     Ok(ItemAnchor {
         instruction: ic_pc_map.get(instruction).ok_or_else(|| {
-            eyre::eyre!("We found an anchor, but we cant translate it to a program counter")
+            eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
         })?,
         item_id,
     })

@@ -4,11 +4,11 @@
 
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::map::HashMap;
 use eyre::Context;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     fmt,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -16,7 +16,6 @@ use std::{
     },
     time::Duration,
 };
-
 const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
 const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
@@ -493,24 +492,20 @@ pub struct SelectorImportResponse {
 impl SelectorImportResponse {
     /// Print info about the functions which were uploaded or already known
     pub fn describe(&self) {
-        self.result
-            .function
-            .imported
-            .iter()
-            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
-        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
-        self.result
-            .function
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
-        self.result
-            .event
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
+        self.result.function.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Function {k}: {v}");
+        });
+        self.result.event.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Event {k}: {v}");
+        });
+        self.result.function.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Function {k}: {v}");
+        });
+        self.result.event.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Event {k}: {v}");
+        });
 
-        println!("Selectors successfully uploaded to OpenChain");
+        let _ = sh_println!("Selectors successfully uploaded to OpenChain");
     }
 }
 
@@ -580,6 +575,8 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_macros)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
 

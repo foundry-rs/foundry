@@ -3,7 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
@@ -13,7 +13,7 @@ use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
-use std::{collections::HashSet, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -197,7 +197,7 @@ async fn can_reject_too_high_gas_limits() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = api.gas_limit().to::<u128>();
+    let gas_limit = api.gas_limit().to::<u64>();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =
@@ -230,18 +230,18 @@ async fn can_reject_too_high_gas_limits() {
 // <https://github.com/foundry-rs/foundry/issues/8094>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_large_gas_limit() {
-    let (api, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+    let (_, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
     let provider = handle.http_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = api.gas_limit().to::<u128>();
+    let gas_limit = anvil::DEFAULT_GAS_LIMIT as u64;
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =
-        TransactionRequest::default().to(to).value(amount).from(from).with_gas_limit(gas_limit * 3);
+        TransactionRequest::default().to(to).value(amount).from(from).with_gas_limit(gas_limit);
 
     // send transaction with higher gas limit
     let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
@@ -580,7 +580,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
         .value(U256::from(100))
         .from(from)
         .nonce(nonce)
-        .with_gas_limit(21000u128);
+        .with_gas_limit(21000);
 
     let tx = WithOtherFields::new(tx);
 
@@ -621,7 +621,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
         .from(from)
         .with_input(greeter_calldata.to_owned())
         .nonce(nonce)
-        .with_gas_limit(300_000u128);
+        .with_gas_limit(300_000);
 
     let tx = WithOtherFields::new(tx);
 
@@ -662,7 +662,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
         .from(from)
         .with_input(deploy_calldata.to_owned())
         .nonce(nonce)
-        .with_gas_limit(300_000u128);
+        .with_gas_limit(300_000);
     let deploy_tx = WithOtherFields::new(deploy_tx);
 
     let set_greeting = greeter_contract.setGreeting("Hello".to_string());
@@ -672,7 +672,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
         .from(from)
         .with_input(set_greeting_calldata.to_owned())
         .nonce(nonce)
-        .with_gas_limit(300_000u128);
+        .with_gas_limit(300_000);
     let set_greeting_tx = WithOtherFields::new(set_greeting_tx);
 
     for idx in 0..10 {
@@ -950,7 +950,7 @@ async fn can_stream_pending_transactions() {
         if watch_received.len() == num_txs && sub_received.len() == num_txs {
             if let Some(sent) = &sent {
                 assert_eq!(sent.len(), watch_received.len());
-                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
+                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
                 assert_eq!(sent_txs, watch_received.iter().copied().collect());
                 assert_eq!(sent_txs, sub_received.iter().copied().collect());
                 break
@@ -1127,7 +1127,7 @@ async fn test_estimate_gas() {
     let addr = recipient;
     let account_override =
         AccountOverride { balance: Some(alloy_primitives::U256::from(1e18)), ..Default::default() };
-    let mut state_override = StateOverride::new();
+    let mut state_override = StateOverride::default();
     state_override.insert(addr, account_override);
 
     // Estimate gas with state override implying sufficient funds.
@@ -1152,7 +1152,7 @@ async fn test_reject_gas_too_low() {
         .to(Address::random())
         .value(U256::from(1337u64))
         .from(account)
-        .with_gas_limit(gas as u128);
+        .with_gas_limit(gas);
     let tx = WithOtherFields::new(tx);
 
     let resp = provider.send_transaction(tx).await;
@@ -1169,7 +1169,7 @@ async fn can_call_with_high_gas_limit() {
 
     let greeter_contract = Greeter::deploy(provider, "Hello World!".to_string()).await.unwrap();
 
-    let greeting = greeter_contract.greet().gas(60_000_000u128).call().await.unwrap();
+    let greeting = greeter_contract.greet().gas(60_000_000).call().await.unwrap();
     assert_eq!("Hello World!", greeting._0);
 }
 
@@ -1179,7 +1179,7 @@ async fn test_reject_eip1559_pre_london() {
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
     let provider = handle.http_provider();
 
-    let gas_limit = api.gas_limit().to::<u128>();
+    let gas_limit = api.gas_limit().to::<u64>();
     let gas_price = api.gas_price();
 
     let unsupported_call_builder =

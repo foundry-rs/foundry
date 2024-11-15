@@ -60,7 +60,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
                         gas: Gas::new(inputs.gas_limit),
                     },
                     memory_offset: inputs.return_memory_offset.clone(),
-                })
+                });
             }
         }
 
@@ -68,7 +68,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
     }
 }
 
-impl<DB: Database> InspectorExt<DB> for LogCollector {
+impl InspectorExt for LogCollector {
     fn console_log(&mut self, input: String) {
         self.logs.push(Log::new_unchecked(
             HARDHAT_CONSOLE_ADDRESS,

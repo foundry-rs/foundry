@@ -370,7 +370,16 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         byte_offset: usize,
         next_byte_offset: Option<usize>,
-        fun: impl FnMut(&mut Self) -> Result<()>,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Chunk> {
+        self.chunked_mono(byte_offset, next_byte_offset, &mut fun)
+    }
+
+    fn chunked_mono(
+        &mut self,
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        fun: &mut dyn FnMut(&mut Self) -> Result<()>,
     ) -> Result<Chunk> {
         let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
         let prefixes = self.comments.remove_prefixes_before(byte_offset);
@@ -1619,7 +1628,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                             fmt.config.multiline_func_header,
                             MultilineFuncHeaderStyle::ParamsFirst |
                                 MultilineFuncHeaderStyle::ParamsFirstMulti |
-                                MultilineFuncHeaderStyle::All
+                                MultilineFuncHeaderStyle::All |
+                                MultilineFuncHeaderStyle::AllParams
                         );
                     params_multiline = should_multiline ||
                         multiline ||
@@ -1628,13 +1638,17 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
-                    // Write new line if we have only one parameter and params first set.
-                    if params.len() == 1 &&
+                    // Write new line if we have only one parameter and params first set,
+                    // or if the function definition is multiline and all params set.
+                    let single_param_multiline = matches!(
+                        fmt.config.multiline_func_header,
+                        MultilineFuncHeaderStyle::ParamsFirst
+                    ) || params_multiline &&
                         matches!(
                             fmt.config.multiline_func_header,
-                            MultilineFuncHeaderStyle::ParamsFirst
-                        )
-                    {
+                            MultilineFuncHeaderStyle::AllParams
+                        );
+                    if params.len() == 1 && single_param_multiline {
                         writeln!(fmt.buf())?;
                     }
                     fmt.write_chunks_separated(&params, ",", params_multiline)?;
@@ -1727,7 +1741,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let should_multiline = header_multiline &&
             if params_multiline {
-                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::All | MultilineFuncHeaderStyle::AllParams
+                )
             } else {
                 matches!(
                     self.config.multiline_func_header,
@@ -1863,7 +1880,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
-impl<'a, W: Write> Visitor for Formatter<'a, W> {
+impl<W: Write> Visitor for Formatter<'_, W> {
     type Error = FormatterError;
 
     #[instrument(name = "source", skip(self))]
@@ -2331,8 +2348,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             ""
         };
         let closing_bracket = format!("{prefix}{}", "}");
-        let closing_bracket_loc = args.last().unwrap().loc.end();
-        write_chunk!(self, closing_bracket_loc, "{closing_bracket}")?;
+        if let Some(arg) = args.last() {
+            write_chunk!(self, arg.loc.end(), "{closing_bracket}")?;
+        } else {
+            write_chunk!(self, "{closing_bracket}")?;
+        }
 
         Ok(())
     }
@@ -3235,7 +3255,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let is_constructor = self.context.is_constructor_function();
                 // we can't make any decisions here regarding trailing `()` because we'd need to
                 // find out if the `base` is a solidity modifier or an
-                // interface/contract therefor we we its raw content.
+                // interface/contract therefore we we its raw content.
 
                 // we can however check if the contract `is` the `base`, this however also does
                 // not cover all cases
@@ -3834,14 +3854,14 @@ struct Transaction<'f, 'a, W> {
     comments: Comments,
 }
 
-impl<'f, 'a, W> std::ops::Deref for Transaction<'f, 'a, W> {
+impl<'a, W> std::ops::Deref for Transaction<'_, 'a, W> {
     type Target = Formatter<'a, W>;
     fn deref(&self) -> &Self::Target {
         self.fmt
     }
 }
 
-impl<'f, 'a, W> std::ops::DerefMut for Transaction<'f, 'a, W> {
+impl<W> std::ops::DerefMut for Transaction<'_, '_, W> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.fmt
     }

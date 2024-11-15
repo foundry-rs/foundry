@@ -1,14 +1,14 @@
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
+use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::RpcOpts,
+    opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -45,12 +45,8 @@ pub struct RunArgs {
     /// Executes the transaction only with the state from the previous block.
     ///
     /// May result in different results than the live execution!
-    #[arg(long, short)]
+    #[arg(long)]
     quick: bool,
-
-    /// Prints the full address of the contract.
-    #[arg(long, short)]
-    verbose: bool,
 
     /// Label addresses in the trace.
     ///
@@ -59,12 +55,15 @@ pub struct RunArgs {
     label: Vec<String>,
 
     #[command(flatten)]
+    etherscan: EtherscanOpts,
+
+    #[command(flatten)]
     rpc: RpcOpts,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[arg(long, short)]
+    #[arg(long)]
     evm_version: Option<EvmVersion>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -84,7 +83,7 @@ pub struct RunArgs {
     pub no_rate_limit: bool,
 
     /// Enables Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
 }
 
@@ -170,7 +169,7 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            println!("Executing previous transactions from the block.");
+            sh_println!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
@@ -235,14 +234,23 @@ impl RunArgs {
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
-                TraceResult::from_raw(executor.transact_with_env(env)?, TraceKind::Execution)
+                TraceResult::try_from(executor.transact_with_env(env))?
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
+        handle_traces(
+            result,
+            &config,
+            chain,
+            self.label,
+            self.debug,
+            self.decode_internal,
+            shell::verbosity() > 0,
+        )
+        .await?;
 
         Ok(())
     }
@@ -258,6 +266,10 @@ impl figment::Provider for RunArgs {
 
         if self.alphanet {
             map.insert("alphanet".into(), self.alphanet.into());
+        }
+
+        if let Some(api_key) = &self.etherscan.key {
+            map.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
         if let Some(evm_version) = self.evm_version {

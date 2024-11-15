@@ -1,7 +1,8 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{document::DocumentContent, Document, ParseSource, PreprocessorOutput};
+use alloy_primitives::map::HashMap;
 use forge_fmt::solang_ext::SafeUnwrap;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 /// [ContractInheritance] preprocessor id.
 pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inheritance");

@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{fs, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -17,7 +17,8 @@ use foundry_evm::{
         debug::DebugTraceIdentifier,
         decode_trace_arena,
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        Traces,
     },
 };
 use std::{
@@ -127,9 +128,8 @@ pub fn needs_setup(abi: &JsonAbi) -> bool {
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
-            println!(
-                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                "Warning:".yellow().bold(),
+            let _ = sh_warn!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 setup_fn.signature()
             );
         }
@@ -170,6 +170,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
                 NamedChain::ArbitrumTestnet |
+                NamedChain::Etherlink |
+                NamedChain::EtherlinkTestnet |
                 NamedChain::Karura |
                 NamedChain::KaruraTestnet |
                 NamedChain::Mantle |
@@ -274,32 +276,38 @@ where
 
     fn load_config_emit_warnings(self) -> Config {
         let config = self.load_config();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| sh_warn!("{w}").unwrap());
         config
     }
 
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
     }
 
     fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok((config, evm_opts))
     }
 
     fn load_config_unsanitized_emit_warnings(self) -> Config {
         let config = self.load_config_unsanitized();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         config
     }
 
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config_unsanitized()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
+    }
+}
+
+fn emit_warnings(config: &Config) {
+    for warning in &config.warnings {
+        let _ = sh_warn!("{warning}");
     }
 }
 
@@ -353,6 +361,23 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
+impl From<RawCallResult> for TraceResult {
+    fn from(result: RawCallResult) -> Self {
+        Self::from_raw(result, TraceKind::Execution)
+    }
+}
+
+impl TryFrom<Result<RawCallResult>> for TraceResult {
+    type Error = EvmError;
+
+    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
+        match value {
+            Ok(result) => Ok(Self::from(result)),
+            Err(err) => Err(EvmError::from(err)),
+        }
+    }
+}
+
 /// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
@@ -361,6 +386,7 @@ pub async fn handle_traces(
     labels: Vec<String>,
     debug: bool,
     decode_internal: bool,
+    verbose: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -408,30 +434,34 @@ pub async fn handle_traces(
             .decoder(&decoder)
             .sources(sources)
             .build();
-        debugger.try_run()?;
+        debugger.try_run_tui()?;
     } else {
-        print_traces(&mut result, &decoder).await?;
+        print_traces(&mut result, &decoder, verbose).await?;
     }
 
     Ok(())
 }
 
-pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: &CallTraceDecoder,
+    verbose: bool,
+) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    println!("Traces:");
+    sh_println!("Traces:")?;
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena(arena));
+        sh_println!("{}", render_trace_arena_with_bytecodes(arena, verbose))?;
     }
-    println!();
+    sh_println!()?;
 
     if result.success {
-        println!("{}", "Transaction successfully executed.".green());
+        sh_println!("{}", "Transaction successfully executed.".green())?;
     } else {
-        println!("{}", "Transaction failed.".red());
+        sh_err!("Transaction failed.")?;
     }
 
-    println!("Gas used: {}", result.gas_used);
+    sh_println!("Gas used: {}", result.gas_used)?;
     Ok(())
 }

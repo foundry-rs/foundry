@@ -1,16 +1,12 @@
 use alloy_json_abi::{Event, Function};
-use alloy_primitives::hex;
+use alloy_primitives::{hex, map::HashSet};
 use foundry_common::{
     abi::{get_event, get_func},
     fs,
     selectors::{OpenChainClient, SelectorType},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
@@ -56,12 +52,12 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
         } else {
             Self {
                 cached: Default::default(),
                 cached_path: None,
-                unavailable: HashSet::new(),
+                unavailable: HashSet::default(),
                 client,
             }
         };
@@ -161,6 +157,7 @@ impl Drop for SignaturesIdentifier {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
 

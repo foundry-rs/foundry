@@ -384,11 +384,20 @@
           ]
         },
         {
-          "description": "The cheatcode has been deprecated, meaning it will be removed in a future release.\n\nUse of deprecated cheatcodes is discouraged and will result in a warning.",
-          "type": "string",
-          "enum": [
+          "description": "The cheatcode has been deprecated, meaning it will be removed in a future release.\n\nContains the optional reason for deprecation.\n\nUse of deprecated cheatcodes is discouraged and will result in a warning.",
+          "type": "object",
+          "required": [
             "deprecated"
-          ]
+          ],
+          "properties": {
+            "deprecated": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
         },
         {
           "description": "The cheatcode has been removed and is no longer available for use.\n\nUse of removed cheatcodes will result in a hard error.",

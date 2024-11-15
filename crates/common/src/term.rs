@@ -67,12 +67,12 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return
+            return;
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        print!("\r\x33[2K\r{indicator} {}", self.message);
+        let _ = sh_print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
@@ -112,13 +112,13 @@ impl SpinnerReporter {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
                             // new line so past messages are not overwritten
-                            println!();
+                            let _ = sh_println!();
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
                             // end with a newline
-                            println!();
+                            let _ = sh_println!();
                             let _ = ack.send(());
-                            break
+                            break;
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
@@ -159,6 +159,16 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
+
+        if foundry_common::shell::verbosity() > 0 {
+            self.send_msg(
+                dirty_files
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<String>>()
+                    .join("\n"),
+            );
+        }
     }
 
     fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
@@ -197,21 +207,6 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     };
     report::with_scoped(&reporter, f)
 }
-
-#[macro_export]
-/// Displays warnings on the cli
-macro_rules! cli_warn {
-    ($($arg:tt)*) => {
-        eprintln!(
-            "{}{} {}",
-            yansi::Painted::new("warning").yellow().bold(),
-            yansi::Painted::new(":").bold(),
-            format_args!($($arg)*)
-        )
-    }
-}
-
-pub use cli_warn;
 
 #[cfg(test)]
 mod tests {

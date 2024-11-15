@@ -1,5 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
-use foundry_evm_core::{backend::DatabaseExt, constants::MAGIC_ASSUME};
+use foundry_evm_core::constants::MAGIC_ASSUME;
 use spec::Vm::{assumeCall, assumeNoRevertCall};
 use std::fmt::Debug;
 
@@ -21,7 +21,7 @@ impl Cheatcode for assumeCall {
 }
 
 impl Cheatcode for assumeNoRevertCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         ccx.state.assume_no_revert =
             Some(AssumeNoRevert { depth: ccx.ecx.journaled_state.depth() });
         Ok(Default::default())

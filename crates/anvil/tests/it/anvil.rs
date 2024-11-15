@@ -1,8 +1,10 @@
 //! tests for anvil specific logic
 
+use alloy_consensus::EMPTY_ROOT_HASH;
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, EthereumHardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -10,12 +12,14 @@ async fn test_can_change_mining_mode() {
     let provider = handle.http_provider();
 
     assert!(api.anvil_get_auto_mine().unwrap());
+    assert!(api.anvil_get_interval_mining().unwrap().is_none());
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
 
     api.anvil_set_interval_mining(1).unwrap();
     assert!(!api.anvil_get_auto_mine().unwrap());
+    assert!(matches!(api.anvil_get_interval_mining().unwrap(), Some(1)));
     // changing the mining mode will instantly mine a new block
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let num = provider.get_block_number().await.unwrap();
@@ -28,6 +32,7 @@ async fn test_can_change_mining_mode() {
     // assert that no block is mined when the interval is set to 0
     api.anvil_set_interval_mining(0).unwrap();
     assert!(!api.anvil_get_auto_mine().unwrap());
+    assert!(api.anvil_get_interval_mining().unwrap().is_none());
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 1);
@@ -75,4 +80,41 @@ async fn test_can_use_default_genesis_timestamp() {
         0u64,
         provider.get_block(0.into(), false.into()).await.unwrap().unwrap().header.timestamp
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_handle_large_timestamp() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let num = 317071597274;
+    api.evm_set_next_block_timestamp(num).unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, num);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_shanghai_fields() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.withdrawals_root, Some(EMPTY_ROOT_HASH));
+    assert_eq!(block.withdrawals, Some(Default::default()));
+    assert!(block.header.blob_gas_used.is_none());
+    assert!(block.header.excess_blob_gas.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cancun_fields() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.withdrawals_root, Some(EMPTY_ROOT_HASH));
+    assert_eq!(block.withdrawals, Some(Default::default()));
+    assert!(block.header.blob_gas_used.is_some());
+    assert!(block.header.excess_blob_gas.is_some());
 }

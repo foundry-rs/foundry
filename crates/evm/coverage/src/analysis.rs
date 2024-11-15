@@ -1,8 +1,8 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
@@ -50,15 +50,15 @@ impl<'a> ContractVisitor<'a> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
 
-        // TODO(onbjerg): Figure out why we cannot find anchors for the receive function
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
-        if kind == "receive" {
-            return Ok(())
-        }
 
         match &node.body {
             Some(body) => {
+                // Do not add coverage item for constructors without statements.
+                if kind == "constructor" && !has_statements(body) {
+                    return Ok(())
+                }
                 self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
                 self.visit_block(body)
             }
@@ -470,12 +470,14 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn source_location_for(&self, loc: &ast::LowFidelitySourceLocation) -> SourceLocation {
+        let loc_start =
+            self.source.char_indices().map(|(i, _)| i).nth(loc.start).unwrap_or_default();
         SourceLocation {
             source_id: self.source_id,
             contract_name: self.contract_name.clone(),
             start: loc.start as u32,
             length: loc.length.map(|x| x as u32),
-            line: self.source[..loc.start].lines().count(),
+            line: self.source[..loc_start].lines().count(),
         }
     }
 }
@@ -581,7 +583,7 @@ impl<'a> SourceAnalyzer<'a> {
 #[derive(Debug, Default)]
 pub struct SourceFiles<'a> {
     /// The versioned sources.
-    pub sources: FxHashMap<usize, SourceFile<'a>>,
+    pub sources: HashMap<usize, SourceFile<'a>>,
 }
 
 /// The source code and AST of a file.

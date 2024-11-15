@@ -283,9 +283,12 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::fixed_bytes;
-    use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
-    use std::collections::HashMap;
+    use alloy_primitives::{fixed_bytes, map::HashMap};
+    use foundry_compilers::{
+        multi::MultiCompiler,
+        solc::{Solc, SolcCompiler},
+        Project, ProjectCompileOutput, ProjectPathsConfig,
+    };
 
     struct LinkerTest {
         project: Project,
@@ -304,11 +307,12 @@ mod tests {
                 .build()
                 .unwrap();
 
+            let solc = Solc::find_or_install(&Version::new(0, 8, 18)).unwrap();
             let project = Project::builder()
                 .paths(paths)
                 .ephemeral()
                 .no_artifacts()
-                .build(Default::default())
+                .build(MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None })
                 .unwrap();
 
             let mut output = project.compile().unwrap();
@@ -317,7 +321,7 @@ mod tests {
                 output = output.with_stripped_file_prefixes(project.root());
             }
 
-            Self { project, output, dependency_assertions: HashMap::new() }
+            Self { project, output, dependency_assertions: HashMap::default() }
         }
 
         fn assert_dependencies(
@@ -394,7 +398,7 @@ mod tests {
             for (dep_identifier, address) in assertions {
                 let (file, name) = dep_identifier.split_once(':').unwrap();
                 if let Some(lib_address) =
-                    libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
+                    libraries.libs.get(Path::new(file)).and_then(|libs| libs.get(name))
                 {
                     assert_eq!(
                         *lib_address,
@@ -638,7 +642,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834").unwrap(),
+                        Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74").unwrap(),
                     )],
                 )
                 .assert_dependencies(
@@ -648,12 +652,12 @@ mod tests {
                         // have the same address and nonce.
                         (
                             "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
+                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
-                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
+                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
                                 .unwrap(),
                         ),
                     ],
@@ -663,12 +667,12 @@ mod tests {
                     vec![
                         (
                             "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
+                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
-                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
+                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
                                 .unwrap(),
                         ),
                     ],

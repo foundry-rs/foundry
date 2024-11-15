@@ -5,12 +5,16 @@ use crate::{
 };
 use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{hex, Address, Bytes, U256};
+use alloy_primitives::{
+    hex::{self, FromHex},
+    Address, Bytes, U256,
+};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
     Provider,
 };
 use alloy_rpc_types::{
+    state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
         geth::{
@@ -252,6 +256,50 @@ async fn test_call_tracer_debug_trace_call() {
             assert!(call_frame.calls.is_empty());
             assert!(call_frame.to.unwrap() == *simple_storage_contract.address());
             assert!(call_frame.logs.len() == 1);
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_state_override() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+
+    let tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to("0x1234567890123456789012345678901234567890".parse().unwrap());
+
+    let override_json = r#"{
+            "0x1234567890123456789012345678901234567890": {
+                "balance": "0x01",
+                "code": "0x30315f5260205ff3"
+            }
+        }"#;
+
+    let state_override: StateOverride = serde_json::from_str(override_json).unwrap();
+
+    let tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            tx.clone(),
+            BlockId::latest(),
+            GethDebugTracingCallOptions::default()
+                .with_tracing_options(GethDebugTracingOptions::default())
+                .with_state_overrides(state_override),
+        )
+        .await
+        .unwrap();
+
+    match tx_traces {
+        GethTrace::Default(trace_res) => {
+            assert_eq!(
+                trace_res.return_value,
+                Bytes::from_hex("0000000000000000000000000000000000000000000000000000000000000001")
+                    .unwrap()
+            );
         }
         _ => {
             unreachable!()
@@ -766,15 +814,15 @@ async fn test_trace_filter() {
     for i in 0..=5 {
         let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
         let tx = WithOtherFields::new(tx);
-        api.send_transaction(tx).await.unwrap();
+        provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
         let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
         let tx = WithOtherFields::new(tx);
-        api.send_transaction(tx).await.unwrap();
+        provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     }
 
     let traces = api.trace_filter(tracer).await.unwrap();
-    assert_eq!(traces.len(), 5);
+    assert_eq!(traces.len(), 6);
 
     // Test for the following actions:
     // Create (deploy the contract)
@@ -804,11 +852,11 @@ async fn test_trace_filter() {
     for i in 0..=5 {
         let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
         let tx = WithOtherFields::new(tx);
-        api.send_transaction(tx).await.unwrap();
+        provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     }
 
     let traces = api.trace_filter(tracer).await.unwrap();
-    assert_eq!(traces.len(), 8);
+    assert_eq!(traces.len(), 3);
 
     // Test Range Error
     let latest = provider.get_block_number().await.unwrap();
@@ -854,7 +902,7 @@ async fn test_trace_filter() {
     for i in 0..=10 {
         let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
         let tx = WithOtherFields::new(tx);
-        api.send_transaction(tx).await.unwrap();
+        provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     }
 
     let traces = api.trace_filter(tracer).await.unwrap();

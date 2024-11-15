@@ -11,7 +11,6 @@ use foundry_compilers::{
 use foundry_evm_core::utils::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use solang_parser::pt::SourceUnitPart;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -83,12 +82,14 @@ pub struct ArtifactData {
 
 impl ArtifactData {
     fn new(bytecode: ContractBytecodeSome, build_id: String, file_id: u32) -> Result<Self> {
-        let parse = |b: &Bytecode| {
+        let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
             let source_map = if b.source_map.as_ref().map_or(true, |s| s.is_empty()) {
                 Ok(None)
             } else {
-                b.source_map().transpose()
+                b.source_map().transpose().wrap_err_with(|| {
+                    format!("failed to parse {name} source map of file {file_id} in {build_id}")
+                })
             };
 
             // Only parse bytecode if it's not empty.
@@ -100,11 +101,11 @@ impl ArtifactData {
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };
-        let (source_map, pc_ic_map) = parse(&bytecode.bytecode)?;
+        let (source_map, pc_ic_map) = parse(&bytecode.bytecode, "creation")?;
         let (source_map_runtime, pc_ic_map_runtime) = bytecode
             .deployed_bytecode
             .bytecode
-            .map(|b| parse(&b))
+            .map(|b| parse(&b, "runtime"))
             .unwrap_or_else(|| Ok((None, None)))?;
 
         Ok(Self { source_map, source_map_runtime, pc_ic_map, pc_ic_map_runtime, build_id, file_id })
@@ -115,7 +116,7 @@ impl ArtifactData {
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
     /// Map over build_id -> file_id -> (source code, language)
-    pub sources_by_id: HashMap<String, FxHashMap<u32, Arc<SourceData>>>,
+    pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
     /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
 }
@@ -124,7 +125,7 @@ impl ContractSources {
     /// Collects the contract sources and artifacts from the project compile output.
     pub fn from_project_output(
         output: &ProjectCompileOutput,
-        root: impl AsRef<Path>,
+        root: &Path,
         libraries: Option<&Libraries>,
     ) -> Result<Self> {
         let mut sources = Self::default();
@@ -135,13 +136,12 @@ impl ContractSources {
     pub fn insert<C: Compiler>(
         &mut self,
         output: &ProjectCompileOutput<C>,
-        root: impl AsRef<Path>,
+        root: &Path,
         libraries: Option<&Libraries>,
     ) -> Result<()>
     where
         C::Language: Into<MultiCompilerLanguage>,
     {
-        let root = root.as_ref();
         let link_data = libraries.map(|libraries| {
             let linker = Linker::new(root, output.artifact_ids().collect());
             (linker, libraries)
@@ -152,16 +152,16 @@ impl ContractSources {
             .collect::<Vec<_>>()
             .par_iter()
             .map(|(id, artifact)| {
-                let mut artifacts = Vec::new();
+                let mut new_artifact = None;
                 if let Some(file_id) = artifact.id {
                     let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
-                        linker.link(id, libraries)?.into_contract_bytecode()
+                        linker.link(id, libraries)?
                     } else {
-                        (*artifact).clone().into_contract_bytecode()
+                        artifact.get_contract_bytecode()
                     };
                     let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
 
-                    artifacts.push((
+                    new_artifact = Some((
                         id.name.clone(),
                         ArtifactData::new(bytecode, id.build_id.clone(), file_id)?,
                     ));
@@ -169,14 +169,11 @@ impl ContractSources {
                     warn!(id = id.identifier(), "source not found");
                 };
 
-                Ok(artifacts)
+                Ok(new_artifact)
             })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
-        for (name, artifact) in artifacts {
+        for (name, artifact) in artifacts.into_iter().flatten() {
             self.artifacts_by_name.entry(name).or_default().push(artifact);
         }
 

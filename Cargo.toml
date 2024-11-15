@@ -20,6 +20,7 @@ members = [
     "crates/evm/traces/",
     "crates/fmt/",
     "crates/forge/",
+    "crates/script-sequence/",
     "crates/macros/",
     "crates/test-utils/",
 ]
@@ -65,7 +66,7 @@ split-debuginfo = "unpacked"
 opt-level = 3
 lto = "thin"
 debug = "line-tables-only"
-strip = "symbols"
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
 
@@ -121,11 +122,20 @@ axum.opt-level = 3
 # keystores
 scrypt.opt-level = 3
 
-# Override packages which aren't perf-sensitive for faster compilation speed.
+# Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
-mdbook.opt-level = 1
-protobuf.opt-level = 1
-trezor-client.opt-level = 1
+alloy-sol-macro-expander.opt-level = "z"
+figment.opt-level = "z"
+foundry-compilers-artifacts-solc.opt-level = "z"
+foundry-config.opt-level = "z"
+html5ever.opt-level = "z"
+mdbook.opt-level = "z"
+prettyplease.opt-level = "z"
+protobuf.opt-level = "z"
+pulldown-cmark.opt-level = "z"
+syn-solidity.opt-level = "z"
+syn.opt-level = "z"
+trezor-client.opt-level = "z"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
@@ -138,6 +148,7 @@ forge-fmt = { path = "crates/fmt" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }
 forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
+forge-script-sequence = { path = "crates/script-sequence" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -157,138 +168,163 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.7.1", default-features = false }
-foundry-compilers = { version = "0.11.0", default-features = false }
-foundry-fork-db = "0.3"
+foundry-block-explorers = { version = "0.7.3", default-features = false }
+foundry-compilers = { version = "0.11.6", default-features = false }
+foundry-fork-db = "0.6.0"
 solang-parser = "=0.3.3"
 
 ## revm
-# no default features to avoid c-kzg
-revm = { version = "14.0.1", default-features = false }
-revm-primitives = { version = "9.0.1", default-features = false }
-revm-inspectors = { version = "0.6", features = ["serde"] }
+revm = { version = "17.1.0", default-features = false }
+revm-primitives = { version = "13.0.0", default-features = false }
+revm-inspectors = { version = "0.10.0", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.3.1", default-features = false }
-alloy-contract = { version = "0.3.1", default-features = false }
-alloy-eips = { version = "0.3.1", default-features = false }
-alloy-genesis = { version = "0.3.1", default-features = false }
-alloy-json-rpc = { version = "0.3.1", default-features = false }
-alloy-network = { version = "0.3.1", default-features = false }
-alloy-provider = { version = "0.3.1", default-features = false }
-alloy-pubsub = { version = "0.3.1", default-features = false }
-alloy-rpc-client = { version = "0.3.1", default-features = false }
-alloy-rpc-types = { version = "0.3.1", default-features = true }
-alloy-serde = { version = "0.3.1", default-features = false }
-alloy-signer = { version = "0.3.1", default-features = false }
-alloy-signer-aws = { version = "0.3.1", default-features = false }
-alloy-signer-gcp = { version = "0.3.1", default-features = false }
-alloy-signer-ledger = { version = "0.3.1", default-features = false }
-alloy-signer-local = { version = "0.3.1", default-features = false }
-alloy-signer-trezor = { version = "0.3.1", default-features = false }
-alloy-transport = { version = "0.3.1", default-features = false }
-alloy-transport-http = { version = "0.3.1", default-features = false }
-alloy-transport-ipc = { version = "0.3.1", default-features = false }
-alloy-transport-ws = { version = "0.3.1", default-features = false }
+alloy-consensus = { version = "0.5.4", default-features = false }
+alloy-contract = { version = "0.5.4", default-features = false }
+alloy-eips = { version = "0.5.4", default-features = false }
+alloy-genesis = { version = "0.5.4", default-features = false }
+alloy-json-rpc = { version = "0.5.4", default-features = false }
+alloy-network = { version = "0.5.4", default-features = false }
+alloy-provider = { version = "0.5.4", default-features = false }
+alloy-pubsub = { version = "0.5.4", default-features = false }
+alloy-rpc-client = { version = "0.5.4", default-features = false }
+alloy-rpc-types = { version = "0.5.4", default-features = true }
+alloy-serde = { version = "0.5.4", default-features = false }
+alloy-signer = { version = "0.5.4", default-features = false }
+alloy-signer-aws = { version = "0.5.4", default-features = false }
+alloy-signer-gcp = { version = "0.5.4", default-features = false }
+alloy-signer-ledger = { version = "0.5.4", default-features = false }
+alloy-signer-local = { version = "0.5.4", default-features = false }
+alloy-signer-trezor = { version = "0.5.4", default-features = false }
+alloy-transport = { version = "0.5.4", default-features = false }
+alloy-transport-http = { version = "0.5.4", default-features = false }
+alloy-transport-ipc = { version = "0.5.4", default-features = false }
+alloy-transport-ws = { version = "0.5.4", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "0.8.1"
-alloy-json-abi = "0.8.1"
-alloy-primitives = { version = "0.8.1", features = ["getrandom", "rand"] }
-alloy-sol-macro-expander = "0.8.1"
-alloy-sol-macro-input = "0.8.1"
-alloy-sol-types = "0.8.1"
-syn-solidity = "0.8.1"
+alloy-dyn-abi = "0.8.11"
+alloy-json-abi = "0.8.11"
+alloy-primitives = { version = "0.8.11", features = [
+    "getrandom",
+    "rand",
+    "map-foldhash",
+] }
+alloy-sol-macro-expander = "0.8.11"
+alloy-sol-macro-input = "0.8.11"
+alloy-sol-types = "0.8.11"
+syn-solidity = "0.8.11"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
-alloy-trie = "0.5.0"
+alloy-trie = "0.6.0"
 
-## op-alloy for tests in anvil
-op-alloy-rpc-types = "0.2.8"
+## op-alloy 
+op-alloy-rpc-types = "0.5.0"
+op-alloy-consensus = "0.5.0"
 
-## misc
-async-trait = "0.1"
-auto_impl = "1"
-walkdir = "2"
-proc-macro2 = "1.0.82"
+## cli
+anstream = "0.6"
+anstyle = "1.0"
+terminal_size = "0.4"
+
+# macros
+proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
-prettyplease = "0.2.20"
+async-trait = "0.1"
+derive_more = { version = "1.0", features = ["full"] }
+thiserror = "1"
+
+# bench
+divan = "0.1"
+
+# misc
+auto_impl = "1"
+bytes = "1.8"
+walkdir = "2"
+prettyplease = "0.2"
 ahash = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
+axum = "0.7"
 color-eyre = "0.6"
-derive_more = { version = "1.0", features = ["full"] }
+comfy-table = "7"
 dunce = "1"
 evm-disassembler = "0.5"
+evmole = "0.5"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
+hyper = "1.5"
+indexmap = "2.6"
 itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"
+mesc = "0.3"
+num-format = "0.4"
 parking_lot = "0.12"
-mesc = "0.2.1"
+proptest = "1"
 rand = "0.8"
-rustc-hash = "2.0"
+rayon = "1"
+regex = { version = "1", default-features = false }
+reqwest = { version = "0.12", default-features = false }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-similar-asserts = "1.5"
+similar-asserts = "1.6"
+soldeer-commands = "=0.5.1"
 strum = "0.26"
-thiserror = "1"
-toml = "0.8"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-vergen = { version = "8", default-features = false }
-indexmap = "2.2"
+tempfile = "3.13"
 tikv-jemallocator = "0.6"
-url = "2"
-num-format = "0.4.4"
-yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
-tempfile = "3.10"
 tokio = "1"
-rayon = "1"
-evmole = "0.5"
-axum = "0.7"
-hyper = "1.0"
-reqwest = { version = "0.12", default-features = false }
+toml = "0.8"
 tower = "0.4"
 tower-http = "0.5"
-# soldeer
-soldeer = "=0.3.4"
-proptest = "1"
-comfy-table = "7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+url = "2"
+vergen = { version = "8", default-features = false }
+yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 [patch.crates-io]
-# https://github.com/alloy-rs/alloy/pull/1229 + https://github.com/alloy-rs/alloy/pull/1243 
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-network-primitives = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-rpc-types-eth = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-signer-local = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+## alloy-core
+# alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
+# alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
+# alloy-primitives = { path = "../../alloy-rs/core/crates/primitives" }
+# alloy-sol-macro = { path = "../../alloy-rs/core/crates/sol-macro" }
+# alloy-sol-macro-expander = { path = "../../alloy-rs/core/crates/sol-macro-expander" }
+# alloy-sol-macro-input = { path = "../../alloy-rs/core/crates/sol-macro-input" }
+# alloy-sol-type-parser = { path = "../../alloy-rs/core/crates/sol-type-parser" }
+# alloy-sol-types = { path = "../../alloy-rs/core/crates/sol-types" }
+# syn-solidity = { path = "../../alloy-rs/core/crates/syn-solidity" }
+
+## alloy
+# alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-network-primitives = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-rpc-types-eth = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-signer-local = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+# alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }

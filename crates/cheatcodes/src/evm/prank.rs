@@ -1,4 +1,4 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
 
 /// Prank information.
@@ -57,28 +57,28 @@ impl Prank {
 }
 
 impl Cheatcode for prank_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, true, false)
     }
 }
 
 impl Cheatcode for startPrank_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, false, false)
     }
 }
 
 impl Cheatcode for prank_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
 impl Cheatcode for startPrank_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), false, false)
     }
@@ -120,8 +120,8 @@ impl Cheatcode for stopPrankCall {
     }
 }
 
-fn prank<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
+fn prank(
+    ccx: &mut CheatsCtxt,
     new_caller: &Address,
     new_origin: Option<&Address>,
     single_call: bool,

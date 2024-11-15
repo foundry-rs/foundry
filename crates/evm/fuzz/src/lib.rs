@@ -9,13 +9,16 @@
 extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_primitives::{Address, Bytes, Log};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log,
+};
 use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -151,6 +154,8 @@ pub struct FuzzTestResult {
     /// properly, or that there was a revert and that the test was expected to fail
     /// (prefixed with `testFail`)
     pub success: bool,
+    /// Whether the test case was skipped. `reason` will contain the skip reason, if any.
+    pub skipped: bool,
 
     /// If there was a revert, this field will be populated. Note that the test can
     /// still be successful (i.e self.success == true) when it's expected to fail.
@@ -164,7 +169,7 @@ pub struct FuzzTestResult {
     pub logs: Vec<Log>,
 
     /// Labeled addresses
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
 
     /// Exemplary traces for a fuzz run of the test function
     ///
@@ -181,6 +186,9 @@ pub struct FuzzTestResult {
 
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,
+
+    // Deprecated cheatcodes mapped to their replacements.
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl FuzzTestResult {

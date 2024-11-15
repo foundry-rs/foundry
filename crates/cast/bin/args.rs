@@ -1,5 +1,6 @@
 use crate::cmd::{
-    access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
+    access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
+    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
     wallet::WalletSubcommands,
@@ -8,7 +9,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_cli::opts::{EtherscanOpts, RpcOpts, ShellOpts};
 use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
@@ -32,6 +33,9 @@ const VERSION_MESSAGE: &str = concat!(
 pub struct Cast {
     #[command(subcommand)]
     pub cmd: CastSubcommand,
+
+    #[clap(flatten)]
+    pub shell: ShellOpts,
 }
 
 #[derive(Subcommand)]
@@ -230,6 +234,38 @@ pub enum CastSubcommand {
         unit: String,
     },
 
+    /// Convert a number from decimal to smallest unit with arbitrary decimals.
+    ///
+    /// Examples:
+    /// - 1.0 6    (for USDC, result: 1000000)
+    /// - 2.5 12   (for 12 decimals token, result: 2500000000000)
+    /// - 1.23 3   (for 3 decimals token, result: 1230)
+    #[command(visible_aliases = &["--parse-units", "pun"])]
+    ParseUnits {
+        /// The value to convert.
+        value: Option<String>,
+
+        /// The unit to convert to.
+        #[arg(default_value = "18")]
+        unit: u8,
+    },
+
+    /// Format a number from smallest unit to decimal with arbitrary decimals.
+    ///
+    /// Examples:
+    /// - 1000000 6       (for USDC, result: 1.0)
+    /// - 2500000000000 12 (for 12 decimals, result: 2.5)
+    /// - 1230 3          (for 3 decimals, result: 1.23)
+    #[command(visible_aliases = &["--format-units", "fun"])]
+    FormatUnits {
+        /// The value to format.
+        value: Option<String>,
+
+        /// The unit to format to.
+        #[arg(default_value = "18")]
+        unit: u8,
+    },
+
     /// Convert an ETH amount to wei.
     ///
     /// Consider using --to-unit.
@@ -282,6 +318,10 @@ pub enum CastSubcommand {
     FromRlp {
         /// The RLP hex-encoded data.
         value: Option<String>,
+
+        /// Decode the RLP data as int
+        #[arg(long, alias = "int")]
+        as_int: bool,
     },
 
     /// Converts a number of one base to another
@@ -328,10 +368,6 @@ pub enum CastSubcommand {
 
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,
-
-        /// Print the block as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -424,10 +460,6 @@ pub enum CastSubcommand {
         #[arg(long, conflicts_with = "field")]
         raw: bool,
 
-        /// Print as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
-
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -448,10 +480,6 @@ pub enum CastSubcommand {
         /// Exit immediately if the transaction was not found.
         #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
         cast_async: bool,
-
-        /// Print as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -483,17 +511,22 @@ pub enum CastSubcommand {
     ///
     /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
     /// string
-    #[command(visible_aliases = &["--calldata-decode","cdd"])]
+    #[command(visible_aliases = &["--calldata-decode", "cdd"])]
     CalldataDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
 
         /// The ABI-encoded calldata.
         calldata: String,
+    },
 
-        /// Print the decoded calldata as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
+    /// Decode ABI-encoded string.
+    ///
+    /// Similar to `calldata-decode --input`, but the function argument is a `string`
+    #[command(visible_aliases = &["--string-decode", "sd"])]
+    StringDecode {
+        /// The ABI-encoded string.
+        data: String,
     },
 
     /// Decode ABI-encoded input or output data.
@@ -512,10 +545,6 @@ pub enum CastSubcommand {
         /// Whether to decode the input or output data.
         #[arg(long, short, help_heading = "Decode input data instead of output data")]
         input: bool,
-
-        /// Print the decoded calldata as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
     },
 
     /// ABI encode the given function argument, excluding the selector.
@@ -602,10 +631,6 @@ pub enum CastSubcommand {
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
-
-        /// Print the decoded calldata as JSON.
-        #[arg(long, short, help_heading = "Display options")]
-        json: bool,
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.
@@ -768,7 +793,7 @@ pub enum CastSubcommand {
         who: Option<String>,
 
         /// Perform a reverse lookup to verify that the name is correct.
-        #[arg(long, short)]
+        #[arg(long)]
         verify: bool,
 
         #[command(flatten)]
@@ -782,7 +807,7 @@ pub enum CastSubcommand {
         who: Option<Address>,
 
         /// Perform a normal lookup to verify that the address is correct.
-        #[arg(long, short)]
+        #[arg(long)]
         verify: bool,
 
         #[command(flatten)]
@@ -897,6 +922,18 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: WalletSubcommands,
     },
+
+    /// Download a contract creation code from Etherscan and RPC.
+    #[command(visible_alias = "cc")]
+    CreationCode(CreationCodeArgs),
+
+    /// Generate an artifact file, that can be used to deploy a contract locally.
+    #[command(visible_alias = "ar")]
+    Artifact(ArtifactArgs),
+
+    /// Display constructor arguments used for the contract initialization.
+    #[command(visible_alias = "cra")]
+    ConstructorArgs(ConstructorArgsArgs),
 
     /// Generate a Solidity interface from a given ABI.
     ///

@@ -162,6 +162,8 @@ pub enum MultilineFuncHeaderStyle {
     /// If function params or attrs are multiline.
     /// split the rest
     All,
+    /// Same as `All` but writes function params multiline even when there is a single param.
+    AllParams,
 }
 
 impl Default for FormatterConfig {

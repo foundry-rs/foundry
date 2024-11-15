@@ -70,7 +70,8 @@ impl ForgeTestProfile {
             settings.evm_version = Some(EvmVersion::Cancun);
         }
 
-        SolcConfig::builder().settings(settings).build()
+        let settings = SolcConfig::builder().settings(settings).build();
+        SolcConfig { settings }
     }
 
     pub fn project(&self) -> Project {
@@ -111,6 +112,7 @@ impl ForgeTestProfile {
                 max_assume_rejects: 65536,
                 gas_report_samples: 256,
                 failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+                show_metrics: false,
             })
             .build(output, Path::new(self.project().root()))
             .expect("Config loaded")

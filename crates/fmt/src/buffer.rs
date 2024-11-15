@@ -165,11 +165,15 @@ impl<W: Write> FormatBuffer<W> {
     /// Write a raw string to the buffer. This will ignore indents and remove the indents of the
     /// written string to match the current base indent of this buffer if it is a temp buffer
     pub fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
-        let mut lines = s.as_ref().lines().peekable();
+        self._write_raw(s.as_ref())
+    }
+
+    fn _write_raw(&mut self, s: &str) -> std::fmt::Result {
+        let mut lines = s.lines().peekable();
         let mut comment_state = self.state.comment_state();
         while let Some(line) = lines.next() {
             // remove the whitespace that covered by the base indent length (this is normally the
-            // case with temporary buffers as this will be readded by the underlying IndentWriter
+            // case with temporary buffers as this will be re-added by the underlying IndentWriter
             // later on
             let (new_comment_state, line_start) = line
                 .comment_state_char_indices()
@@ -187,7 +191,7 @@ impl<W: Write> FormatBuffer<W> {
                 self.last_char = trimmed_line.chars().next_back();
                 self.state = WriteState::WriteTokens(comment_state);
             }
-            if lines.peek().is_some() || s.as_ref().ends_with('\n') {
+            if lines.peek().is_some() || s.ends_with('\n') {
                 if self.restrict_to_single_line {
                     return Err(std::fmt::Error)
                 }

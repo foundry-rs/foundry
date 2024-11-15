@@ -3,7 +3,12 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_test_utils::{rpc, ScriptOutcome, ScriptTester};
+use forge_script_sequence::ScriptSequence;
+use foundry_test_utils::{
+    rpc,
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
+    ScriptOutcome, ScriptTester,
+};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -146,8 +151,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: revert: failed
+Error: script failed: revert: failed
 
 "#]]);
 });
@@ -163,8 +167,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: revert: failed
+Error: script failed: revert: failed
 
 "#]]);
 });
@@ -197,7 +200,7 @@ contract DeployScript is Script {
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
     let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
     let (_api, handle) = spawn(node_config).await;
     let dev = handle.dev_accounts().next().unwrap();
     cmd.set_current_dir(prj.root());
@@ -215,25 +218,20 @@ contract DeployScript is Script {
         "--slow",
         "--broadcast",
         "--unlocked",
+        "--ignored-error-codes=2018", // `wasteGas` can be restricted to view
     ])
     .assert_success()
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
- [FILE]:7:5:
-  |
-7 |     function wasteGas(uint256 minGas) public {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
+Compiler run successful!
 Traces:
-  [81040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@[..]
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
-    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -244,7 +242,6 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-Gas limit was set in script to 500000
   [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
@@ -305,7 +302,7 @@ contract DeployScript is Script {
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
     let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -336,12 +333,12 @@ Warning (2018): Function state mutability can be restricted to view
   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Traces:
-  [81040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@[..]
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
-    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -352,7 +349,6 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-Gas limit was set in script to 500000
   [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
@@ -496,7 +492,7 @@ contract DeployScript is Script {
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
     let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent();
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -522,10 +518,10 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [116040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [75723] → new HashChecker@[..]
+    ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 378 bytes of code
     └─ ← [Stop] 
 
@@ -602,58 +598,58 @@ contract RunScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [51327] RunScript::run()
+  [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [22394] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -937,7 +933,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
 
     // Check broadcast logs
     // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
-    // transactionIndex and logIndex values since they can change inbetween runs
+    // transactionIndex and logIndex values since they can change in between runs
     let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
     let fixtures_log = std::fs::read_to_string(
@@ -961,7 +957,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     // );
 
     // Check sensitive logs
-    // Ignore port number since it can change inbetween runs
+    // Ignore port number since it can change in between runs
     let re = Regex::new(r":[0-9]+").unwrap();
 
     let fixtures_log = std::fs::read_to_string(
@@ -1015,12 +1011,19 @@ struct Transaction {
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1137,12 +1140,19 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1304,12 +1314,19 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
 });
 
 forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1385,12 +1402,19 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1527,36 +1551,45 @@ forgetest_async!(can_detect_contract_when_multiple_versions, |prj, cmd| {
 
     prj.add_script(
         "A.sol",
-        r#"pragma solidity 0.8.20;
+        &format!(
+            r#"
+pragma solidity {SOLC_VERSION};
 import "./B.sol";
 
-contract ScriptA {}
-"#,
+contract ScriptA {{}}
+"#
+        ),
     )
     .unwrap();
 
     prj.add_script(
         "B.sol",
-        r#"pragma solidity >=0.8.5 <=0.8.20;
+        &format!(
+            r#"
+pragma solidity >={OTHER_SOLC_VERSION} <={SOLC_VERSION};
 import 'forge-std/Script.sol';
 
-contract ScriptB is Script {
-    function run() external {
+contract ScriptB is Script {{
+    function run() external {{
         vm.broadcast();
         address(0).call("");
-    }
-}
-"#,
+    }}
+}}
+"#
+        ),
     )
     .unwrap();
 
     prj.add_script(
         "C.sol",
-        r#"pragma solidity 0.8.5;
+        &format!(
+            r#"
+pragma solidity {OTHER_SOLC_VERSION};
 import "./B.sol";
 
-contract ScriptC {}
-"#,
+contract ScriptC {{}}
+"#
+        ),
     )
     .unwrap();
 
@@ -1603,19 +1636,25 @@ contract Script {
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Multiple functions with the same name `run` found in the ABI
+Error: Multiple functions with the same name `run` found in the ABI
 
 "#]]);
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Target directory is not empty, but `--force` was specified
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
 
 "#]]);
 
@@ -1646,8 +1685,7 @@ contract CustomErrorScript is Script {
 
     cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: CustomError()
+Error: script failed: CustomError()
 
 "#]]);
 });
@@ -1689,6 +1727,7 @@ contract SimpleScript is Script {
         "2000000",
         "--priority-gas-price",
         "100000",
+        "--non-interactive",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1725,6 +1764,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_SENSITIVE_VALUES]
 
 
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
+
 "#]]);
 
     // Ensure that we can correctly estimate gas when base fee is zero but priority fee is not.
@@ -1738,6 +1780,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
             format!("{dev:?}").as_str(),
             "--broadcast",
             "--unlocked",
+            "--non-interactive",
         ])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -1772,6 +1815,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_SENSITIVE_VALUES]
 
 
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
+
 "#]]);
 });
 
@@ -1802,6 +1848,7 @@ contract SimpleScript is Script {
         &handle.http_endpoint(),
         "--broadcast",
         "--unlocked",
+        "--non-interactive",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1837,6 +1884,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 });
@@ -1874,8 +1924,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: missing CREATE2 deployer
+Error: script failed: missing CREATE2 deployer
 
 "#]]);
 });
@@ -1986,4 +2035,289 @@ forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(2, 2)])
         .await;
+});
+
+// <https://github.com/foundry-rs/foundry/issues/8993>
+forgetest_async!(test_broadcast_raw_create2_deployer, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        // send funds to create2 factory deployer
+        vm.broadcast();
+        payable(0x3fAB184622Dc19b6109349B94811493BF2a45362).transfer(10000000 gwei);
+        // deploy create2 factory
+        vm.broadcastRawTransaction(
+            hex"f8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222"
+        );
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "SimpleScript",
+    ]);
+
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+});
+
+forgetest_init!(can_get_script_wallets, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+    function getWallets() external returns (address[] memory wallets);
+}
+
+contract WalletScript is Script {
+    function run() public {
+        address[] memory wallets = Vm(address(vm)).getWallets();
+        console.log(wallets[0]);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("script")
+        .arg(script)
+        .args([
+            "--private-key",
+            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
+            "-v",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+
+"#]]);
+});
+
+forgetest_init!(can_remeber_keys, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
+
+contract WalletScript is Script {
+    function run() public {
+        string memory mnemonic = "test test test test test test test test test test test junk";
+        string memory derivationPath = "m/44'/60'/0'/0/";
+        address[] memory wallets = Vm(address(vm)).rememberKeys(mnemonic, derivationPath, 3);
+        for (uint256 i = 0; i < wallets.length; i++) {
+            console.log(wallets[i]);
+        }
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
+"#]]);
+});
+
+forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Script.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract A {
+    function getValue() external pure returns (uint256) {
+        return 100;
+    }
+}
+contract B {
+    constructor(A a) {
+        require(a.getValue() == 100);
+    }
+}
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(a);
+    }
+}
+            "#,
+    )
+    .unwrap();
+
+    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [104553] SimpleScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    │   └─ ← [Return] 119 bytes of code
+    ├─ [13367] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [146] A::getValue() [staticcall]
+    │   │   └─ ← [Return] 100
+    │   └─ ← [Return] 63 bytes of code
+    └─ ← [Stop] 
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 119 bytes of code
+
+  [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [146] A::getValue() [staticcall]
+    │   └─ ← [Return] 100
+    └─ ← [Return] 63 bytes of code
+...
+"#]]);
+});
+
+// Tests that chained errors are properly displayed.
+// <https://github.com/foundry-rs/foundry/issues/9161>
+forgetest_init!(
+    #[ignore]
+    should_display_evm_chained_error,
+    |prj, cmd| {
+        let script = prj
+            .add_source(
+                "Foo",
+                r#"
+import "forge-std/Script.sol";
+
+contract ContractScript is Script {
+    function run() public {
+    }
+}
+   "#,
+            )
+            .unwrap();
+        cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
+Error: Failed to deploy script:
+backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
+
+"#]]);
+    }
+);
+
+forgetest_async!(should_detect_additional_contracts, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Simple {}
+
+contract Deployer {
+    function deploy() public {
+        new Simple();
+    }
+}
+
+contract ContractScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        Deployer deployer = new Deployer();
+        deployer.deploy();
+    }
+}
+   "#,
+    )
+    .unwrap();
+    cmd.arg("script")
+        .args([
+            "ContractScript",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|file| file.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+
+    let sequence: ScriptSequence = foundry_common::fs::read_json_file(&run_latest).unwrap();
+
+    assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
 });

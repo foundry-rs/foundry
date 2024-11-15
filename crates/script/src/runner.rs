@@ -13,7 +13,6 @@ use foundry_evm::{
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;
-use yansi::Paint;
 
 /// Drives script execution
 #[derive(Debug)]
@@ -133,6 +132,17 @@ impl ScriptRunner {
         // construction
         self.executor.set_balance(address, self.evm_opts.initial_balance)?;
 
+        // HACK: if the current sender is the default script sender (which is a default value), we
+        // set its nonce to a very large value before deploying the script contract. This
+        // ensures that the nonce increase during this CREATE does not affect deployment
+        // addresses of contracts that are deployed in the script, Otherwise, we'd have a
+        // nonce mismatch during script execution and onchain simulation, potentially
+        // resulting in weird errors like <https://github.com/foundry-rs/foundry/issues/8960>.
+        let prev_sender_nonce = self.executor.get_nonce(self.evm_opts.sender)?;
+        if self.evm_opts.sender == CALLER {
+            self.executor.set_nonce(self.evm_opts.sender, u64::MAX / 2)?;
+        }
+
         // Deploy an instance of the contract
         let DeployResult {
             address,
@@ -141,6 +151,10 @@ impl ScriptRunner {
             .executor
             .deploy(CALLER, code, U256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
+
+        if self.evm_opts.sender == CALLER {
+            self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
+        }
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
@@ -233,7 +247,7 @@ impl ScriptRunner {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
-                    println!("{}", format!("\nFailed with `{reason}`:\n").red());
+                    sh_err!("Failed with `{reason}`:\n")?;
                     (Address::ZERO, raw)
                 }
                 Err(e) => eyre::bail!("Failed deploying contract: {e:?}"),

@@ -120,13 +120,13 @@ impl SelectorsSubcommands {
                         continue
                     }
 
-                    println!("Uploading selectors for {contract}...");
+                    sh_println!("Uploading selectors for {contract}...")?;
 
                     // upload abi to selector database
                     import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
 
                     if artifacts.peek().is_some() {
-                        println!()
+                        sh_println!()?
                     }
                 }
             }
@@ -171,7 +171,7 @@ impl SelectorsSubcommands {
                     .collect();
 
                 if colliding_methods.is_empty() {
-                    println!("No colliding method selectors between the two contracts.");
+                    sh_println!("No colliding method selectors between the two contracts.")?;
                 } else {
                     let mut table = Table::new();
                     table.set_header([
@@ -182,12 +182,12 @@ impl SelectorsSubcommands {
                     for method in colliding_methods.iter() {
                         table.add_row([method.0, method.1, method.2]);
                     }
-                    println!("{} collisions found:", colliding_methods.len());
-                    println!("{table}");
+                    sh_println!("{} collisions found:", colliding_methods.len())?;
+                    sh_println!("{table}")?;
                 }
             }
             Self::List { contract, project_paths } => {
-                println!("Listing selectors for contracts in the project...");
+                sh_println!("Listing selectors for contracts in the project...")?;
                 let build_args = CoreBuildArgs {
                     project_paths,
                     compiler: CompilerArgs {
@@ -240,7 +240,7 @@ impl SelectorsSubcommands {
                         continue
                     }
 
-                    println!("{contract}");
+                    sh_println!("{contract}")?;
 
                     let mut table = Table::new();
 
@@ -264,16 +264,16 @@ impl SelectorsSubcommands {
                         table.add_row(["Error", &sig, &hex::encode_prefixed(selector)]);
                     }
 
-                    println!("{table}");
+                    sh_println!("{table}")?;
 
                     if artifacts.peek().is_some() {
-                        println!()
+                        sh_println!()?
                     }
                 }
             }
 
             Self::Find { selector, project_paths } => {
-                println!("Searching for selector {selector:?} in the project...");
+                sh_println!("Searching for selector {selector:?} in the project...")?;
 
                 let build_args = CoreBuildArgs {
                     project_paths,
@@ -340,12 +340,10 @@ impl SelectorsSubcommands {
                 }
 
                 if table.row_count() > 0 {
-                    println!();
-                    println!("Found {} instance(s)...", table.row_count());
-                    println!("{table}");
+                    sh_println!("\nFound {} instance(s)...", table.row_count())?;
+                    sh_println!("{table}")?;
                 } else {
-                    println!();
-                    return Err(eyre::eyre!("Selector not found in the project."));
+                    return Err(eyre::eyre!("\nSelector not found in the project."));
                 }
             }
         }

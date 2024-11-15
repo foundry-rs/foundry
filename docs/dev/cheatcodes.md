@@ -6,22 +6,14 @@ manipulate the environment in which the execution is run.
 Most of the time, simply testing your smart contracts outputs isn't enough. To manipulate the state of the EVM, as well
 as test for specific reverts and events, Foundry is shipped with a set of cheatcodes.
 
-## [`revm::Inspector`](https://docs.rs/revm/3.3.0/revm/trait.Inspector.html)
+## [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html)
 
-To understand how cheatcodes are implemented, we first need to look at [`revm::Inspector`](https://docs.rs/revm/3.3.0/revm/trait.Inspector.html),
+To understand how cheatcodes are implemented, we first need to look at [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html),
 a trait that provides a set of callbacks to be notified at certain stages of EVM execution.
 
-For example, [`Inspector::call`](https://docs.rs/revm/3.3.0/revm/trait.Inspector.html#method.call)
-is called when the EVM is about to execute a call:
-
-```rust
-fn call(
-    &mut self,
-    data: &mut EVMData<'_, DB>,
-    inputs: &mut CallInputs,
-    is_static: bool,
-) -> (InstructionResult, Gas, Bytes) { ... }
-```
+For example, [`Inspector::call`](https://docs.rs/revm/latest/revm/trait.Inspector.html#method.call)
+is called when the EVM is about to execute a call and is provided with the call's inputs and the
+current state of the EVM.
 
 ## [Foundry inspectors](../../crates/evm/evm/src/inspectors/)
 
@@ -45,12 +37,7 @@ Since cheatcodes are bound to a constant address, the cheatcode inspector listen
 
 ```rust
 impl Inspector for Cheatcodes {
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-        is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    fn call(&mut self, ...) -> ... {
         if call.contract == CHEATCODE_ADDRESS {
             // intercepted cheatcode call
             // --snip--
@@ -141,7 +128,8 @@ Multiple attributes can be specified by separating them with commas, e.g. `#[che
 This trait defines the interface that all cheatcode implementations must implement.
 There are two methods that can be implemented:
 - `apply`: implemented when the cheatcode is pure and does not need to access EVM data
-- `apply_full`: implemented when the cheatcode needs to access EVM data
+- `apply_stateful`: implemented when the cheatcode needs to access EVM data
+- `apply_full`: implemented when the cheatcode needs to access EVM data and the EVM executor itself, for example to recursively call back into the EVM to execute an arbitrary transaction
 
 Only one of these methods can be implemented.
 
