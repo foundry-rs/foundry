@@ -67,7 +67,7 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return;
+            return
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
@@ -118,7 +118,7 @@ impl SpinnerReporter {
                             // end with a newline
                             let _ = sh_println!();
                             let _ = ack.send(());
-                            break;
+                            break
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
@@ -159,16 +159,6 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
-
-        if foundry_common::shell::verbosity() > 0 {
-            self.send_msg(
-                dirty_files
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<String>>()
-                    .join("\n"),
-            );
-        }
     }
 
     fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
