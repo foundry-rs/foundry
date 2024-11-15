@@ -2977,6 +2977,20 @@ Compiler run successful!
 
 
 "#]]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "Counter": {
+    "runtime_size": 247,
+    "init_size": 277,
+    "runtime_margin": 24329,
+    "init_margin": 48875
+  }
+}
+"#]]
+        .is_json(),
+    );
 });
 
 // checks that build --names includes all contracts even if unchanged
@@ -2992,6 +3006,11 @@ Compiler run successful!
 ...
 
 "#]]);
+
+    cmd.forge_fuse()
+        .args(["build", "--names", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#""{...}""#]].is_json());
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6816>

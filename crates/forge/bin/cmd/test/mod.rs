@@ -5,7 +5,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
-    gas_report::{GasReport, GasReportKind},
+    gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
@@ -583,7 +583,6 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                if shell::is_json() { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
 
