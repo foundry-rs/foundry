@@ -63,6 +63,10 @@ pub struct StorageArgs {
 
     #[command(flatten)]
     build: CoreBuildArgs,
+
+    /// Pretty print the layout, if a slot is not provided. Defaults to true.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub pretty: bool,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -85,7 +89,7 @@ impl StorageArgs {
     pub async fn run(self) -> Result<()> {
         let config = Config::from(&self);
 
-        let Self { address, slot, block, build, .. } = self;
+        let Self { address, slot, block, build, pretty, .. } = self;
         let provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
@@ -114,7 +118,7 @@ impl StorageArgs {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, block, artifact, true).await;
+                return fetch_and_print_storage(provider, address, block, artifact, pretty).await;
             }
         }
 
@@ -180,7 +184,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, block, artifact, true).await
+        fetch_and_print_storage(provider, address, block, artifact, pretty).await
     }
 }
 
@@ -256,7 +260,7 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
         sh_println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?)?;
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
