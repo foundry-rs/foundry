@@ -2,16 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::shell;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ReportKind {
+    #[default]
     Markdown,
     JSON,
-}
-
-impl Default for ReportKind {
-    fn default() -> Self {
-        Self::Markdown
-    }
 }
 
 /// Determine the kind of report to generate based on the current shell.
