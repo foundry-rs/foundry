@@ -94,6 +94,9 @@ impl BuildArgs {
                 let path = if joined.exists() { &joined } else { path };
                 files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
+            if files.is_empty() {
+                eyre::bail!("No source files found in specified build paths.")
+            }
         }
 
         let format_json = shell::is_json();
