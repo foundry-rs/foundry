@@ -39,7 +39,10 @@ use alloy_consensus::{
     TxEip4844Variant, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, EthereumWallet};
+use alloy_network::{
+    AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, EthereumWallet,
+    UnknownTxEnvelope, UnknownTypedTransaction,
+};
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
@@ -60,14 +63,14 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
-use alloy_serde::WithOtherFields;
+use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction,
+        optimism::DepositTransaction, DepositReceipt, MaybeImpersonatedTransaction,
+        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction,
     },
     utils::meets_eip155,
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
@@ -91,6 +94,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
+use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
@@ -2893,6 +2897,62 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
+    if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
+        let DepositTransaction {
+            nonce: _,
+            source_hash,
+            from,
+            kind,
+            mint,
+            gas_limit,
+            is_system_tx,
+            input,
+            value,
+        } = deposit_tx.clone();
+
+        let dep_tx = TxDeposit {
+            source_hash,
+            input,
+            from,
+            mint: Some(mint.to()),
+            to: kind,
+            is_system_transaction: is_system_tx,
+            value,
+            gas_limit,
+        };
+
+        let ser = serde_json::to_value(&dep_tx).unwrap();
+        let mut fields = OtherFields::default();
+
+        if let serde_json::Value::Object(map) = ser {
+            for (k, v) in map {
+                fields.insert(k, v);
+            }
+
+            let inner = UnknownTypedTransaction {
+                ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
+                fields,
+                memo: Default::default(),
+            };
+
+            let envelope =
+                AnyTxEnvelope::Unknown(UnknownTxEnvelope { hash: eth_transaction.hash(), inner });
+
+            let tx = Transaction {
+                inner: envelope,
+                block_hash: block
+                    .as_ref()
+                    .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+                block_number: block.as_ref().map(|block| block.header.number),
+                transaction_index: info.as_ref().map(|info| info.transaction_index),
+                effective_gas_price: None,
+                from,
+            };
+
+            return WithOtherFields::new(tx);
+        }
+    }
+
     let transaction: Transaction = eth_transaction.clone().into();
 
     let envelope = transaction.inner;
