@@ -1063,7 +1063,7 @@ where {
                 initialized = false;
                 old_balance = U256::ZERO;
             }
-            let kind: Vm::AccountAccessKind = match call.scheme {
+            let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,

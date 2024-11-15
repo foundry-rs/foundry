@@ -194,7 +194,8 @@ contract PrankTest is DSTest {
     }
 
     function testFailPrankDelegateCallToEOA() public {
-        address alice = makeAddr("alice");
+        uint256 privateKey = uint256(keccak256(abi.encodePacked("alice")));
+        address alice = vm.addr(privateKey);
         ImplementationTest impl = new ImplementationTest();
         vm.prank(alice, true);
         // Should fail when EOA pranked with delegatecall.
