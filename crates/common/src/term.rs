@@ -156,15 +156,6 @@ impl Drop for SpinnerReporter {
 
 impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
-        self.send_msg(format!(
-            "Compiling {} files with {} {}.{}.{}",
-            dirty_files.len(),
-            compiler_name,
-            version.major,
-            version.minor,
-            version.patch
-        ));
-
         if foundry_common::shell::verbosity() > 0 {
             self.send_verbose_msg(format!(
                 "Compiling files\n{}",
@@ -175,6 +166,15 @@ impl Reporter for SpinnerReporter {
                     .join("\n")
             ));
         }
+
+        self.send_msg(format!(
+            "Compiling {} files with {} {}.{}.{}",
+            dirty_files.len(),
+            compiler_name,
+            version.major,
+            version.minor,
+            version.patch
+        ));
     }
 
     fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
