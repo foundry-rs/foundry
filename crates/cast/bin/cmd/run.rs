@@ -5,10 +5,10 @@ use cast::revm::primitives::EnvWithHandlerCfg;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::RpcOpts,
+    opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -48,10 +48,6 @@ pub struct RunArgs {
     #[arg(long)]
     quick: bool,
 
-    /// Prints the full address of the contract.
-    #[arg(long, short)]
-    verbose: bool,
-
     /// Prints the trace in JSON format.
     #[arg(long, short)]
     json: bool,
@@ -67,12 +63,15 @@ pub struct RunArgs {
     label: Vec<String>,
 
     #[command(flatten)]
+    etherscan: EtherscanOpts,
+
+    #[command(flatten)]
     rpc: RpcOpts,
 
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
-    #[arg(long, short)]
+    #[arg(long)]
     evm_version: Option<EvmVersion>,
 
     /// Sets the number of assumed available compute units per second for this provider
@@ -260,7 +259,7 @@ impl RunArgs {
             self.label,
             self.debug,
             self.decode_internal,
-            self.verbose,
+            shell::verbosity() > 0,
             self.json,
             self.with_state_changes,
         )
@@ -280,6 +279,10 @@ impl figment::Provider for RunArgs {
 
         if self.alphanet {
             map.insert("alphanet".into(), self.alphanet.into());
+        }
+
+        if let Some(api_key) = &self.etherscan.key {
+            map.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
         if let Some(evm_version) = self.evm_version {

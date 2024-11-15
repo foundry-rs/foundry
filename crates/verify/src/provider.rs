@@ -124,6 +124,7 @@ impl FromStr for VerificationProviderType {
             "s" | "sourcify" => Ok(Self::Sourcify),
             "b" | "blockscout" => Ok(Self::Blockscout),
             "o" | "oklink" => Ok(Self::Oklink),
+            "c" | "custom" => Ok(Self::Custom),
             _ => Err(format!("Unknown provider: {s}")),
         }
     }
@@ -144,6 +145,9 @@ impl fmt::Display for VerificationProviderType {
             Self::Oklink => {
                 write!(f, "oklink")?;
             }
+            Self::Custom => {
+                write!(f, "custom")?;
+            }
         };
         Ok(())
     }
@@ -156,6 +160,8 @@ pub enum VerificationProviderType {
     Sourcify,
     Blockscout,
     Oklink,
+    /// Custom verification provider, requires compatibility with the Etherscan API.
+    Custom,
 }
 
 impl VerificationProviderType {
@@ -171,6 +177,7 @@ impl VerificationProviderType {
             Self::Sourcify => Ok(Box::<SourcifyVerificationProvider>::default()),
             Self::Blockscout => Ok(Box::<EtherscanVerificationProvider>::default()),
             Self::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
+            Self::Custom => Ok(Box::<EtherscanVerificationProvider>::default()),
         }
     }
 }

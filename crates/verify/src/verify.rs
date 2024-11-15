@@ -31,14 +31,22 @@ pub struct VerifierArgs {
     #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
     pub verifier: VerificationProviderType,
 
-    /// The verifier URL, if using a custom provider
+    /// The verifier API KEY, if using a custom provider.
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_KEY")]
+    pub verifier_api_key: Option<String>,
+
+    /// The verifier URL, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
 }
 
 impl Default for VerifierArgs {
     fn default() -> Self {
-        Self { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+        Self {
+            verifier: VerificationProviderType::Etherscan,
+            verifier_api_key: None,
+            verifier_url: None,
+        }
     }
 }
 
@@ -162,6 +170,11 @@ impl figment::Provider for VerifyArgs {
         if self.via_ir {
             dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
         }
+
+        if let Some(api_key) = &self.verifier.verifier_api_key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }

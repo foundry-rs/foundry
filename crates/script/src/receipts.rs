@@ -72,7 +72,7 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
     let gas_used = receipt.gas_used;
     let gas_price = receipt.effective_gas_price;
     format!(
-        "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n\n",
+        "\n##### {chain}\n{status} Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n\n",
         status = if !receipt.inner.inner.inner.receipt.status.coerce_status() {
             "❌  [Failed]"
         } else {
