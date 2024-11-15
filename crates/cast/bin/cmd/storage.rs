@@ -64,7 +64,7 @@ pub struct StorageArgs {
     #[command(flatten)]
     build: CoreBuildArgs,
 
-    /// Pretty print the layout, if a slot is not provided. Defaults to true.
+    /// Pretty print the layout, if a slot is not provided.
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub pretty: bool,
 }
