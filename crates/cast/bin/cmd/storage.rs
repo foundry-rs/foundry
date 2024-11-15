@@ -31,6 +31,7 @@ use foundry_config::{
     impl_figment_convert_cast, Config,
 };
 use semver::Version;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -45,7 +46,7 @@ pub struct StorageArgs {
     #[arg(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
-    /// The storage slot number.
+    /// The storage slot number. If not provided, it gets the full storage layout.
     #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
@@ -64,9 +65,11 @@ pub struct StorageArgs {
     #[command(flatten)]
     build: CoreBuildArgs,
 
-    /// Pretty print the layout, if a slot is not provided.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub pretty: bool,
+    /// The path of the file in which the storage layout is saved. Only works if a slot
+    /// is not provided. The formatted (pretty) storage layout is shown even if this value
+    /// is provided.
+    #[arg(long, default_value = "", value_name = "output_json")]
+    pub output_json: String,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -89,7 +92,7 @@ impl StorageArgs {
     pub async fn run(self) -> Result<()> {
         let config = Config::from(&self);
 
-        let Self { address, slot, block, build, pretty, .. } = self;
+        let Self { address, slot, block, build, output_json, .. } = self;
         let provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
@@ -118,7 +121,15 @@ impl StorageArgs {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, block, artifact, pretty).await;
+                return fetch_and_print_storage(
+                    provider,
+                    address,
+                    block,
+                    artifact,
+                    true,
+                    output_json,
+                )
+                .await;
             }
         }
 
@@ -184,7 +195,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, block, artifact, pretty).await
+        fetch_and_print_storage(provider, address, block, artifact, true, output_json).await
     }
 }
 
@@ -225,6 +236,7 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
+    output_json: String,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
         sh_warn!("Storage layout is empty.")?;
@@ -232,6 +244,10 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
         let values = fetch_storage_slots(provider, address, block, &layout).await?;
+        let output_path = PathBuf::from(output_json);
+        if !output_path.as_os_str().is_empty() {
+            foundry_common::fs::write_json_file(&output_path, &layout)?;
+        }
         print_storage(layout, values, pretty)
     }
 }
