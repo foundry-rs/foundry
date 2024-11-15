@@ -109,7 +109,7 @@ impl SpinnerReporter {
                 loop {
                     spinner.tick();
                     match rx.try_recv() {
-                        Ok(SpinnerMsg::Msg(msg)) => {
+                        Ok(SpinnerMsg::Msg(msg) | SpinnerMsg::VerboseMsg(msg)) => {
                             spinner.message(msg);
                             // new line so past messages are not overwritten
                             let _ = sh_println!();
@@ -133,10 +133,15 @@ impl SpinnerReporter {
     fn send_msg(&self, msg: impl Into<String>) {
         let _ = self.sender.send(SpinnerMsg::Msg(msg.into()));
     }
+
+    fn send_verbose_msg(&self, msg: impl Into<String>) {
+        let _ = self.sender.send(SpinnerMsg::VerboseMsg(msg.into()));
+    }
 }
 
 enum SpinnerMsg {
     Msg(String),
+    VerboseMsg(String),
     Shutdown(mpsc::Sender<()>),
 }
 
@@ -151,23 +156,24 @@ impl Drop for SpinnerReporter {
 
 impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
-        self.send_msg(format!(
-            "Compiling {} files with {} {}.{}.{}",
-            dirty_files.len(),
-            compiler_name,
-            version.major,
-            version.minor,
-            version.patch
-        ));
-
         if foundry_common::shell::verbosity() > 0 {
-            self.send_msg(
+            self.send_verbose_msg(format!(
+                "Compiling files\n{}",
                 dirty_files
                     .iter()
                     .map(|path| path.display().to_string())
                     .collect::<Vec<String>>()
-                    .join("\n"),
-            );
+                    .join("\n")
+            ));
+        } else {
+            self.send_msg(format!(
+                "Compiling {} files with {} {}.{}.{}",
+                dirty_files.len(),
+                compiler_name,
+                version.major,
+                version.minor,
+                version.patch
+            ));
         }
     }
 
