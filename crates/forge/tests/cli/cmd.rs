@@ -2829,7 +2829,7 @@ Compiler run successful!
 "#]]);
 
     // Expect compilation to be skipped as no files have changed
-    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
 "#]]);
@@ -2951,6 +2951,14 @@ Compiler run successful!
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]]);
+
+    // Fail if no source file found.
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "test/Dummy.sol", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: No source files found in specified build paths.
 
 "#]]);
 });
