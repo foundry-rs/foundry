@@ -941,8 +941,8 @@ where {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            // Apply delegate call. call.caller will not equal prank.prank_caller
-            if let CallScheme::DelegateCall = call.scheme {
+            // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
+            if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
                 if prank.delegate_call {
                     call.target_address = prank.new_caller;
                     call.caller = prank.new_caller;
