@@ -17,6 +17,7 @@ use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
     ens::NameOrAddress,
+    shell,
 };
 use foundry_compilers::{
     artifacts::{ConfigurableContractArtifact, StorageLayout},
@@ -31,7 +32,6 @@ use foundry_config::{
     impl_figment_convert_cast, Config,
 };
 use semver::Version;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -64,12 +64,6 @@ pub struct StorageArgs {
 
     #[command(flatten)]
     build: CoreBuildArgs,
-
-    /// The path of the file in which the storage layout is saved. Only works if a slot
-    /// is not provided. The formatted (pretty) storage layout is shown even if this value
-    /// is provided.
-    #[arg(long, default_value = "", value_name = "output_json")]
-    pub output_json: String,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -92,7 +86,7 @@ impl StorageArgs {
     pub async fn run(self) -> Result<()> {
         let config = Config::from(&self);
 
-        let Self { address, slot, block, build, output_json, .. } = self;
+        let Self { address, slot, block, build, .. } = self;
         let provider = utils::get_provider(&config)?;
         let address = address.resolve(&provider).await?;
 
@@ -126,8 +120,7 @@ impl StorageArgs {
                     address,
                     block,
                     artifact,
-                    true,
-                    output_json,
+                    !shell::is_json(),
                 )
                 .await;
             }
@@ -195,7 +188,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, block, artifact, true, output_json).await
+        fetch_and_print_storage(provider, address, block, artifact, !shell::is_json()).await
     }
 }
 
@@ -236,7 +229,6 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
     pretty: bool,
-    output_json: String,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
         sh_warn!("Storage layout is empty.")?;
@@ -244,10 +236,6 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
         let values = fetch_storage_slots(provider, address, block, &layout).await?;
-        let output_path = PathBuf::from(output_json);
-        if !output_path.as_os_str().is_empty() {
-            foundry_common::fs::write_json_file(&output_path, &layout)?;
-        }
         print_storage(layout, values, pretty)
     }
 }
@@ -276,7 +264,7 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
         sh_println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?)?;
-        return Ok(());
+        return Ok(())
     }
 
     let mut table = Table::new();
