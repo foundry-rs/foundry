@@ -1134,6 +1134,57 @@ casttest!(storage_layout_simple, |_prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/pull/9332>
+casttest!(storage_layout_simple_json, |_prj, cmd| {
+    cmd.args([
+        "--json",
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 7,
+      "contract": "contracts/Create2Deployer.sol:Create2Deployer",
+      "label": "_owner",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_address"
+    },
+    {
+      "astId": 122,
+      "contract": "contracts/Create2Deployer.sol:Create2Deployer",
+      "label": "_paused",
+      "offset": 20,
+      "slot": "0",
+      "type": "t_bool"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    }
+  }
+}
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout_complex, |_prj, cmd| {
     cmd.args([
