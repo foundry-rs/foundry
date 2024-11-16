@@ -82,6 +82,20 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 ...
 "#
     ]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
+        str![[r#"
+{
+   "HugeContract":{
+      "runtime_size":202,
+      "init_size":49359,
+      "runtime_margin":24374,
+      "init_margin":-207
+   }
+}
+"#]]
+        .is_json(),
+    );
 });
 
 forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
@@ -95,6 +109,23 @@ forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
 ...
 "#
     ]);
+
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--ignore-eip-3860", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "HugeContract": {
+    "runtime_size": 202,
+    "init_size": 49359,
+    "runtime_margin": 24374,
+    "init_margin": -207
+  }
+} 
+"#]]
+            .is_json(),
+        );
 });
 
 // tests build output is as expected
@@ -118,6 +149,20 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ...
 "#
     ]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "Counter": {
+    "runtime_size": 247,
+    "init_size": 277,
+    "runtime_margin": 24329,
+    "init_margin": 48875
+  }
+} 
+"#]]
+        .is_json(),
+    );
 });
 
 // tests that skip key in config can be used to skip non-compilable contract
