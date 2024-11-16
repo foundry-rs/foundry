@@ -11,7 +11,7 @@ use foundry_compilers::{
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{cmd::OutputAssert, str};
+use snapbox::{assert_data_eq, cmd::OutputAssert, str, IntoData};
 use std::{
     env,
     ffi::OsStr,
@@ -891,6 +891,15 @@ impl TestCommand {
     #[track_caller]
     pub fn assert_success(&mut self) -> OutputAssert {
         self.assert().success()
+    }
+
+    /// Runs the command and asserts that it resulted in success, with expected JSON data.
+    #[track_caller]
+    pub fn assert_json_stdout(&mut self, expected: impl IntoData) {
+        let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
+        let stdout = self.assert_success().get_output().stdout.clone();
+        let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
+        assert_data_eq!(actual, expected);
     }
 
     /// Runs the command and asserts that it **failed** nothing was printed to stdout.
