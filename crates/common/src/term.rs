@@ -67,7 +67,7 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return;
+            return
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
@@ -118,7 +118,7 @@ impl SpinnerReporter {
                             // end with a newline
                             let _ = sh_println!();
                             let _ = ack.send(());
-                            break;
+                            break
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
@@ -156,6 +156,8 @@ impl Drop for SpinnerReporter {
 
 impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
+        // Verbose message with dirty files displays first to avoid being overlapped
+        // by the spinner in .tick() which prints repeatedly over the same line.
         if foundry_common::shell::verbosity() > 0 {
             self.send_verbose_msg(format!(
                 "Compiling files\n{}",
