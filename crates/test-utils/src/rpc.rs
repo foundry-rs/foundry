@@ -187,7 +187,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 
     match (is_ws, is_infura) {
         (false, true) => format!("https://{full}.infura.io/v3/{key}"),
-        (true, true) => format!("wss://{full}.infura.io/v3/{key}"),
+        (true, true) => format!("wss://{full}.infura.io/ws/v3/{key}"),
         (false, false) => format!("https://{full}.g.alchemy.com/v2/{key}"),
         (true, false) => format!("wss://{full}.g.alchemy.com/v2/{key}"),
     }
