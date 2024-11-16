@@ -32,6 +32,7 @@ use foundry_config::{
     impl_figment_convert_cast, Config,
 };
 use semver::Version;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -223,6 +224,14 @@ impl StorageValue {
     }
 }
 
+// Represents the storage layout + values to print in JSON format.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StorageOutputJSON {
+    #[serde(flatten)]
+    layout: StorageLayout,
+    values: Vec<B256>,
+}
+
 async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: P,
     address: Address,
@@ -263,7 +272,26 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
-        sh_println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?)?;
+        let values: Vec<_> = layout
+            .storage
+            .iter()
+            .zip(&values)
+            .map(|(slot, storage_value)| {
+                let storage_type = layout.types.get(&slot.storage_type);
+                let value = storage_value.value(
+                    slot.offset,
+                    storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()),
+                );
+                value
+            })
+            .collect();
+        sh_println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::to_value(StorageOutputJSON {
+                layout,
+                values
+            })?)?
+        )?;
         return Ok(())
     }
 
