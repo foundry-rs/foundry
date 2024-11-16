@@ -137,7 +137,7 @@ impl ProviderBuilder {
             .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
 
         // Use the final URL string to guess if it's a local URL.
-        let is_local = url.as_ref().map_or(false, |url| guess_local_url(url.as_str()));
+        let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
 
         Self {
             url,
