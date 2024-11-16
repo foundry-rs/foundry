@@ -296,7 +296,7 @@ impl ContractRunner<'_> {
                 warnings,
             )
         }
-        let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
+        let call_after_invariant = after_invariant_fns.first().is_some_and(|after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
             if !match_sig {
                 warnings.push(format!(
