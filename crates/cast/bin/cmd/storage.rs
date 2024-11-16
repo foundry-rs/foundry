@@ -278,11 +278,10 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             .zip(&values)
             .map(|(slot, storage_value)| {
                 let storage_type = layout.types.get(&slot.storage_type);
-                let value = storage_value.value(
+                storage_value.value(
                     slot.offset,
                     storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()),
-                );
-                value
+                )
             })
             .collect();
         sh_println!(
