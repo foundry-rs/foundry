@@ -10,6 +10,9 @@ use std::sync::{
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
+        "6cb19d07ca2d44f59befd61563b1037b",
+        "6d46c0cca653407b861f3f93f7b0236a",
+        "69a36846dec146e3a2898429be60be85",
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
         // "5c812e02193c4ba793f8c214317582bd",
