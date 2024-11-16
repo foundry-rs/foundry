@@ -682,7 +682,7 @@ mod tests {
         match value {
             DynSolValue::Tuple(_) | DynSolValue::CustomStruct { .. } => true,
             DynSolValue::Array(v) | DynSolValue::FixedArray(v) => {
-                v.first().map_or(false, contains_tuple)
+                v.first().is_some_and(contains_tuple)
             }
             _ => false,
         }
