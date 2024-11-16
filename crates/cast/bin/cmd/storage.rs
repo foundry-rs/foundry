@@ -111,7 +111,7 @@ impl StorageArgs {
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
-            let out = ProjectCompiler::new().compile(&project)?;
+            let out = ProjectCompiler::new().quiet(true).compile(&project)?;
             let artifact = out.artifacts().find(|(_, artifact)| {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
