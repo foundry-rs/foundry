@@ -205,9 +205,8 @@ impl PreSimulationState {
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
-                let contract_name = get_contract_name(contract_id);
                 if let Ok(Some((_, data))) =
-                    self.build_data.known_contracts.find_by_name_or_identifier(contract_name)
+                    self.build_data.known_contracts.find_by_name_or_identifier(contract_id)
                 {
                     return Some((*addr, data));
                 }
