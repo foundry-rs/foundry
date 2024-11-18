@@ -19,8 +19,6 @@ pub struct HttpEthRpcHandler {
     api: EthApi,
 }
 
-// === impl WsEthRpcHandler ===
-
 impl HttpEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
     pub fn new(api: EthApi) -> Self {

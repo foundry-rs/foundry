@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use foundry_compilers::artifacts::{output_selection::ContractOutputSelection, EvmVersion};
 use serde::Serialize;
 
 mod core;
@@ -26,11 +26,15 @@ pub struct CompilerArgs {
     pub evm_version: Option<EvmVersion>,
 
     /// Activate the Solidity optimizer.
-    #[arg(long)]
+    #[arg(long, default_missing_value="true", num_args = 0..=1)]
     #[serde(skip)]
-    pub optimize: bool,
+    pub optimize: Option<bool>,
 
-    /// The number of optimizer runs.
+    /// The number of runs specifies roughly how often each opcode of the deployed code will be
+    /// executed across the life-time of the contract. This means it is a trade-off parameter
+    /// between code size (deploy cost) and code execution cost (cost after deployment).
+    /// An `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a
+    /// larger `optimizer_runs` parameter will produce longer but more gas efficient code.
     #[arg(long, value_name = "RUNS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimizer_runs: Option<usize>,
@@ -39,7 +43,7 @@ pub struct CompilerArgs {
     ///
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
-    /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
+    /// For a full description, see <https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description>
     #[arg(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output: Vec<ContractOutputSelection>,

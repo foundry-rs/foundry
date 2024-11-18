@@ -19,10 +19,10 @@ pub enum ChiselCommand {
     /// Print the generated source contract
     Source,
     /// Save the current session to the cache
-    /// Takes: [session-id]
+    /// Takes: `<session-id>`
     Save,
     /// Load a previous session from cache
-    /// Takes: <session-id>
+    /// Takes: `<session-id>`
     ///
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached)
@@ -45,7 +45,7 @@ pub enum ChiselCommand {
     /// Export the current REPL session source to a Script file
     Export,
     /// Fetch an interface of a verified contract on Etherscan
-    /// Takes: <addr> <interface-name>
+    /// Takes: `<addr> <interface-name>`
     Fetch,
     /// Executes a shell command
     Exec,
@@ -61,24 +61,24 @@ impl FromStr for ChiselCommand {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
-            "help" | "h" => Ok(ChiselCommand::Help),
-            "quit" | "q" => Ok(ChiselCommand::Quit),
-            "clear" | "c" => Ok(ChiselCommand::Clear),
-            "source" | "so" => Ok(ChiselCommand::Source),
-            "save" | "s" => Ok(ChiselCommand::Save),
-            "list" | "ls" => Ok(ChiselCommand::ListSessions),
-            "load" | "l" => Ok(ChiselCommand::Load),
-            "clearcache" | "cc" => Ok(ChiselCommand::ClearCache),
-            "fork" | "f" => Ok(ChiselCommand::Fork),
-            "traces" | "t" => Ok(ChiselCommand::Traces),
-            "calldata" | "cd" => Ok(ChiselCommand::Calldata),
-            "memdump" | "md" => Ok(ChiselCommand::MemDump),
-            "stackdump" | "sd" => Ok(ChiselCommand::StackDump),
-            "export" | "ex" => Ok(ChiselCommand::Export),
-            "fetch" | "fe" => Ok(ChiselCommand::Fetch),
-            "exec" | "e" => Ok(ChiselCommand::Exec),
-            "rawstack" | "rs" => Ok(ChiselCommand::RawStack),
-            "edit" => Ok(ChiselCommand::Edit),
+            "help" | "h" => Ok(Self::Help),
+            "quit" | "q" => Ok(Self::Quit),
+            "clear" | "c" => Ok(Self::Clear),
+            "source" | "so" => Ok(Self::Source),
+            "save" | "s" => Ok(Self::Save),
+            "list" | "ls" => Ok(Self::ListSessions),
+            "load" | "l" => Ok(Self::Load),
+            "clearcache" | "cc" => Ok(Self::ClearCache),
+            "fork" | "f" => Ok(Self::Fork),
+            "traces" | "t" => Ok(Self::Traces),
+            "calldata" | "cd" => Ok(Self::Calldata),
+            "memdump" | "md" => Ok(Self::MemDump),
+            "stackdump" | "sd" => Ok(Self::StackDump),
+            "export" | "ex" => Ok(Self::Export),
+            "fetch" | "fe" => Ok(Self::Fetch),
+            "exec" | "e" => Ok(Self::Exec),
+            "rawstack" | "rs" => Ok(Self::RawStack),
+            "edit" => Ok(Self::Edit),
             _ => Err(ChiselDispatcher::make_error(format!(
                 "Unknown command \"{s}\"! See available commands with `!help`.",
             ))
@@ -103,10 +103,10 @@ pub enum CmdCategory {
 impl core::fmt::Display for CmdCategory {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let string = match self {
-            CmdCategory::General => "General",
-            CmdCategory::Session => "Session",
-            CmdCategory::Env => "Environment",
-            CmdCategory::Debug => "Debug",
+            Self::General => "General",
+            Self::Session => "Session",
+            Self::Env => "Environment",
+            Self::Debug => "Debug",
         };
         f.write_str(string)
     }

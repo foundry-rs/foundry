@@ -1,10 +1,12 @@
-//! Implementations of [`Environment`](crate::Group::Environment) cheatcodes.
+//! Implementations of [`Environment`](spec::Group::Environment) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
-use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
-use std::env;
+use std::{env, sync::OnceLock};
+
+/// Stores the forge execution context for the duration of the program.
+static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
 impl Cheatcode for setEnvCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -21,6 +23,13 @@ impl Cheatcode for setEnvCall {
             env::set_var(key, value);
             Ok(Default::default())
         }
+    }
+}
+
+impl Cheatcode for envExistsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { name } = self;
+        Ok(env::var(name).is_ok().abi_encode())
     }
 }
 
@@ -230,9 +239,22 @@ impl Cheatcode for envOr_12Call {
 impl Cheatcode for envOr_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        let default = defaultValue.iter().map(|vec| vec.clone().into()).collect::<Vec<Bytes>>();
+        let default = defaultValue.to_vec();
         env_array_default(name, delim, &default, &DynSolType::Bytes)
     }
+}
+
+impl Cheatcode for isContextCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { context } = self;
+        Ok((FORGE_CONTEXT.get() == Some(context)).abi_encode())
+    }
+}
+
+/// Set `forge` command current execution context for the duration of the program.
+/// Execution context is immutable, subsequent calls of this function won't change the context.
+pub fn set_execution_context(context: ForgeContext) {
+    let _ = FORGE_CONTEXT.set(context);
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {

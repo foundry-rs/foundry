@@ -1,7 +1,16 @@
 //! Retry utilities.
 
-use eyre::{Error, Result};
+use eyre::{Error, Report, Result};
 use std::{future::Future, time::Duration};
+
+/// Error type for Retry.
+#[derive(Debug, thiserror::Error)]
+pub enum RetryError<E = Report> {
+    /// Keeps retrying operation.
+    Retry(E),
+    /// Stops retrying operation immediately.
+    Break(E),
+}
 
 /// A type that keeps track of attempts.
 #[derive(Clone, Debug)]
@@ -51,8 +60,29 @@ impl Retry {
         }
     }
 
+    /// Runs the given async closure in a loop, retrying if it fails up to the specified number of
+    /// times or immediately returning an error if the closure returned [`RetryError::Break`].
+    pub async fn run_async_until_break<F, Fut, T>(mut self, mut callback: F) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T, RetryError>>,
+    {
+        loop {
+            match callback().await {
+                Err(RetryError::Retry(e)) if self.retries > 0 => {
+                    self.handle_err(e);
+                    if let Some(delay) = self.delay {
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+                Err(RetryError::Retry(e) | RetryError::Break(e)) => return Err(e),
+                Ok(t) => return Ok(t),
+            };
+        }
+    }
+
     fn handle_err(&mut self, err: Error) {
         self.retries -= 1;
-        warn!("erroneous attempt ({} tries remaining): {}", self.retries, err.root_cause());
+        let _ = sh_warn!("{} ({} tries remaining)", err.root_cause(), self.retries);
     }
 }

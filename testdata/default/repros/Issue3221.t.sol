@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -11,8 +11,8 @@ contract Issue3221Test is DSTest {
     uint256 fork2;
 
     function setUp() public {
-        fork1 = vm.createFork("https://goerli.infura.io/v3/b1d3925804e74152b316ca7da97060d3", 7475589);
-        fork2 = vm.createFork("https://api.avax-test.network/ext/bc/C/rpc", 12880747);
+        fork1 = vm.createFork("sepolia", 5565573);
+        fork2 = vm.createFork("avaxTestnet", 12880747);
     }
 
     function testForkNonce() public {
@@ -27,7 +27,7 @@ contract Issue3221Test is DSTest {
         new Counter();
 
         vm.selectFork(fork1);
-        assertEq(vm.getNonce(user), 3);
+        assertEq(vm.getNonce(user), 1);
         vm.prank(user);
         new Counter();
     }

@@ -5,7 +5,7 @@ use crate::utils::{self, EnvExternalities};
 use foundry_common::retry::Retry;
 use foundry_test_utils::{
     forgetest,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
 };
 use std::time::Duration;
 
@@ -73,13 +73,14 @@ contract Verify is Unique {
     .unwrap();
 }
 
+#[allow(clippy::disallowed_macros)]
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // give etherscan some time to verify the contract
     let retry = Retry::new(retries, Some(Duration::from_secs(30)));
     retry.run(|| -> eyre::Result<()> {
-        let output = cmd.unchecked_output();
+        let output = cmd.execute();
         let out = String::from_utf8_lossy(&output.stdout);
-        println!("{}", out);
+        println!("{out}");
         if out.contains("Contract successfully verified") {
             return Ok(())
         }
@@ -97,7 +98,7 @@ fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
         let retry = Retry::new(5, Some(Duration::from_secs(60)));
         retry
             .run(|| -> eyre::Result<String> {
-                let output = cmd.unchecked_output();
+                let output = cmd.execute();
                 let out = String::from_utf8_lossy(&output.stdout);
                 utils::parse_verification_guid(&out).ok_or_else(|| {
                     eyre::eyre!(
@@ -124,6 +125,7 @@ fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
     parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
 }
 
+#[allow(clippy::disallowed_macros)]
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -132,11 +134,15 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         add_verify_target(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        cmd.arg("create").args(info.create_args()).arg(contract_path);
-
-        let out = cmd.stdout_lossy();
-        let address = utils::parse_deployed_address(out.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
+        let output = cmd
+            .arg("create")
+            .args(info.create_args())
+            .arg(contract_path)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let address = utils::parse_deployed_address(output.as_str())
+            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
 
         cmd.forge_fuse().arg("verify-contract").root_arg().args([
             "--chain-id".to_string(),
@@ -153,6 +159,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
     }
 }
 
+#[allow(clippy::disallowed_macros)]
 fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -161,15 +168,21 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
         add_verify_target_with_constructor(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        cmd.arg("create").args(info.create_args()).arg(contract_path).args(vec![
-            "--constructor-args",
-            "(239,SomeString)",
-            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-        ]);
+        let output = cmd
+            .arg("create")
+            .args(info.create_args())
+            .arg(contract_path)
+            .args(vec![
+                "--constructor-args",
+                "(239,SomeString)",
+                "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
 
-        let out = cmd.stdout_lossy();
-        let address = utils::parse_deployed_address(out.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
+        let address = utils::parse_deployed_address(output.as_str())
+            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
 
         cmd.forge_fuse().arg("verify-contract").root_arg().args([
             "--rpc-url".to_string(),
@@ -187,6 +200,7 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
+#[allow(clippy::disallowed_macros)]
 /// Executes create --verify on the given chain
 fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
@@ -195,15 +209,15 @@ fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut 
         add_single_verify_target_file(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        cmd.arg("create").args(info.create_args()).args([
-            contract_path,
-            "--etherscan-api-key",
-            info.etherscan.as_str(),
-            "--verify",
-        ]);
+        let output = cmd
+            .arg("create")
+            .args(info.create_args())
+            .args([contract_path, "--etherscan-api-key", info.etherscan.as_str(), "--verify"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
 
-        let out = cmd.stdout_lossy();
-        assert!(out.contains("Contract successfully verified"), "{}", out);
+        assert!(output.contains("Contract successfully verified"), "{}", output);
     }
 }
 

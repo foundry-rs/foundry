@@ -14,7 +14,7 @@ pub struct BasicAccount {
 
 impl Default for BasicAccount {
     fn default() -> Self {
-        BasicAccount {
+        Self {
             balance: U256::ZERO,
             nonce: U256::ZERO,
             code_hash: KECCAK_EMPTY,

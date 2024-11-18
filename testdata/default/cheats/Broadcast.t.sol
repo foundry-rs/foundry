@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -526,5 +526,47 @@ contract ScriptAdditionalContracts is DSTest {
     function run() external {
         vm.startBroadcast();
         new Parent();
+    }
+}
+
+contract SignatureTester {
+    address public immutable owner;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function verifySignature(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view returns (bool) {
+        require(ecrecover(digest, v, r, s) == owner, "Invalid signature");
+    }
+}
+
+contract ScriptSign is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    bytes32 digest = keccak256("something");
+
+    function run() external {
+        vm.startBroadcast();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+
+        vm._expectCheatcodeRevert(
+            bytes(string.concat("signer with address ", vm.toString(address(this)), " is not available"))
+        );
+        vm.sign(address(this), digest);
+
+        SignatureTester tester = new SignatureTester();
+        (, address caller,) = vm.readCallers();
+        assertEq(tester.owner(), caller);
+        tester.verifySignature(digest, v, r, s);
+    }
+
+    function run(address sender) external {
+        vm._expectCheatcodeRevert(bytes("could not determine signer"));
+        vm.sign(digest);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(sender, digest);
+        address actual = ecrecover(digest, v, r, s);
+
+        assertEq(actual, sender);
     }
 }

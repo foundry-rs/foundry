@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -9,9 +9,9 @@ contract Issue3674Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testNonceCreateSelect() public {
-        vm.createSelectFork("https://goerli.infura.io/v3/b9794ad1ddf84dfb8c34d6bb5dca2001");
+        vm.createSelectFork("sepolia");
 
-        vm.createSelectFork("https://api.avax-test.network/ext/bc/C/rpc");
+        vm.createSelectFork("avaxTestnet");
         assert(vm.getNonce(msg.sender) > 0x17);
     }
 }

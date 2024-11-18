@@ -22,7 +22,7 @@ impl ChiselState {
 }
 
 impl<DB: Database> Inspector<DB> for ChiselState {
-    #[inline]
+    #[cold]
     fn step_end(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         // If we are at the final pc of the REPL contract execution, set the state.
         // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.

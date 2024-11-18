@@ -1,6 +1,6 @@
 name: Feature request
 description: Suggest a feature
-labels: ["T-feature"]
+labels: ["T-feature", "T-needs-triage"]
 body:
     - type: markdown
       attributes:

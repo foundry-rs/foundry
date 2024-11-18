@@ -1,25 +1,30 @@
 //! Support for compiling [foundry_compilers::Project]
 
-use crate::{compact_to_contract, glob::GlobMatcher, term::SpinnerReporter, TestFunctionExt};
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
-use eyre::{Context, Result};
+use crate::{
+    reports::{report_kind, ReportKind},
+    shell,
+    term::SpinnerReporter,
+    TestFunctionExt,
+};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
+use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{BytecodeObject, CompactContractBytecode, ContractBytecodeSome},
-    remappings::Remapping,
+    artifacts::{remappings::Remapping, BytecodeObject, Source},
+    compilers::{
+        solc::{Solc, SolcCompiler},
+        Compiler,
+    },
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, FileFilter, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
-    Solc, SolcConfig,
+    solc::SolcSettings,
+    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
-use rustc_hash::FxHashMap;
+use num_format::{Locale, ToFormattedString};
 use std::{
-    collections::{BTreeMap, HashMap},
-    convert::Infallible,
+    collections::BTreeMap,
     fmt::Display,
     io::IsTerminal,
     path::{Path, PathBuf},
-    result,
-    str::FromStr,
     time::Instant,
 };
 
@@ -44,8 +49,8 @@ pub struct ProjectCompiler {
     /// Whether to bail on compiler errors.
     bail: Option<bool>,
 
-    /// Files to exclude.
-    filter: Option<Box<dyn FileFilter>>,
+    /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
+    ignore_eip_3860: bool,
 
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
@@ -66,9 +71,9 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: Some(crate::shell::verbosity().is_silent()),
+            quiet: Some(crate::shell::is_quiet()),
             bail: None,
-            filter: None,
+            ignore_eip_3860: false,
             files: Vec::new(),
         }
     }
@@ -102,15 +107,6 @@ impl ProjectCompiler {
         self
     }
 
-    /// Do not print anything at all if true. Overrides other `print` options.
-    #[inline]
-    pub fn quiet_if(mut self, maybe: bool) -> Self {
-        if maybe {
-            self.quiet = Some(true);
-        }
-        self
-    }
-
     /// Sets whether to bail on compiler errors.
     #[inline]
     pub fn bail(mut self, yes: bool) -> Self {
@@ -118,10 +114,10 @@ impl ProjectCompiler {
         self
     }
 
-    /// Sets the filter to use.
+    /// Sets whether to ignore EIP-3860 initcode size limits.
     #[inline]
-    pub fn filter(mut self, filter: Box<dyn FileFilter>) -> Self {
-        self.filter = Some(filter);
+    pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
+        self.ignore_eip_3860 = yes;
         self
     }
 
@@ -133,26 +129,26 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile(mut self, project: &Project) -> Result<ProjectCompileOutput> {
+    pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
-            println!("Nothing to compile");
+            sh_println!("Nothing to compile")?;
             // nothing to do here
             std::process::exit(0);
         }
 
         // Taking is fine since we don't need these in `compile_with`.
-        let filter = std::mem::take(&mut self.filter);
         let files = std::mem::take(&mut self.files);
         self.compile_with(|| {
-            if !files.is_empty() {
-                project.compile_files(files)
-            } else if let Some(filter) = filter {
-                project.compile_sparse(filter)
+            let sources = if !files.is_empty() {
+                Source::read_all(files)?
             } else {
-                project.compile()
-            }
-            .map_err(Into::into)
+                project.paths.read_input_files()?
+            };
+
+            foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?
+                .compile()
+                .map_err(Into::into)
         })
     }
 
@@ -167,24 +163,14 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    fn compile_with<F>(self, f: F) -> Result<ProjectCompileOutput>
+    fn compile_with<C: Compiler, F>(self, f: F) -> Result<ProjectCompileOutput<C>>
     where
-        F: FnOnce() -> Result<ProjectCompileOutput>,
+        F: FnOnce() -> Result<ProjectCompileOutput<C>>,
     {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
-        #[allow(clippy::collapsible_else_if)]
-        let reporter = if quiet {
-            Report::new(NoReporter::default())
-        } else {
-            if std::io::stdout().is_terminal() {
-                Report::new(SpinnerReporter::spawn())
-            } else {
-                Report::new(BasicStdoutReporter::default())
-            }
-        };
 
-        let output = foundry_compilers::report::with_scoped(&reporter, || {
+        let output = with_compilation_reporter(self.quiet.unwrap_or(false), || {
             tracing::debug!("compiling project");
 
             let timer = Instant::now();
@@ -195,19 +181,18 @@ impl ProjectCompiler {
             r
         })?;
 
-        // need to drop the reporter here, so that the spinner terminates
-        drop(reporter);
-
         if bail && output.has_compiler_errors() {
             eyre::bail!("{output}")
         }
 
         if !quiet {
-            if output.is_unchanged() {
-                println!("No files changed, compilation skipped");
-            } else {
-                // print the compiler output / warnings
-                println!("{output}");
+            if !shell::is_json() {
+                if output.is_unchanged() {
+                    sh_println!("No files changed, compilation skipped")?;
+                } else {
+                    // print the compiler output / warnings
+                    sh_println!("{output}")?;
+                }
             }
 
             self.handle_output(&output);
@@ -217,7 +202,7 @@ impl ProjectCompiler {
     }
 
     /// If configured, this will print sizes or names
-    fn handle_output(&self, output: &ProjectCompileOutput) {
+    fn handle_output<C: Compiler>(&self, output: &ProjectCompileOutput<C>) {
         let print_names = self.print_names.unwrap_or(false);
         let print_sizes = self.print_sizes.unwrap_or(false);
 
@@ -227,24 +212,32 @@ impl ProjectCompiler {
             for (name, (_, version)) in output.versioned_artifacts() {
                 artifacts.entry(version).or_default().push(name);
             }
-            for (version, names) in artifacts {
-                println!(
-                    "  compiler version: {}.{}.{}",
-                    version.major, version.minor, version.patch
-                );
-                for name in names {
-                    println!("    - {name}");
+
+            if shell::is_json() {
+                let _ = sh_println!("{}", serde_json::to_string(&artifacts).unwrap());
+            } else {
+                for (version, names) in artifacts {
+                    let _ = sh_println!(
+                        "  compiler version: {}.{}.{}",
+                        version.major,
+                        version.minor,
+                        version.patch
+                    );
+                    for name in names {
+                        let _ = sh_println!("    - {name}");
+                    }
                 }
             }
         }
 
         if print_sizes {
             // add extra newline if names were already printed
-            if print_names {
-                println!();
+            if print_names && !shell::is_json() {
+                let _ = sh_println!();
             }
 
-            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            let mut size_report =
+                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
 
             let artifacts: BTreeMap<_, _> = output
                 .artifact_ids()
@@ -256,171 +249,193 @@ impl ProjectCompiler {
                 .collect();
 
             for (name, artifact) in artifacts {
-                let size = deployed_contract_size(artifact).unwrap_or_default();
+                let runtime_size = contract_size(artifact, false).unwrap_or_default();
+                let init_size = contract_size(artifact, true).unwrap_or_default();
 
-                let dev_functions =
-                    artifact.abi.as_ref().map(|abi| abi.functions()).into_iter().flatten().filter(
-                        |func| {
-                            func.name.is_test() ||
-                                func.name.eq("IS_TEST") ||
-                                func.name.eq("IS_SCRIPT")
-                        },
-                    );
-
-                let is_dev_contract = dev_functions.count() > 0;
-                size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
+                let is_dev_contract = artifact
+                    .abi
+                    .as_ref()
+                    .map(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known() ||
+                                matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
+                        })
+                    })
+                    .unwrap_or(false);
+                size_report
+                    .contracts
+                    .insert(name, ContractInfo { runtime_size, init_size, is_dev_contract });
             }
 
-            println!("{size_report}");
+            let _ = sh_println!("{size_report}");
 
             // TODO: avoid process::exit
             // exit with error if any contract exceeds the size limit, excluding test contracts.
-            if size_report.exceeds_size_limit() {
+            if size_report.exceeds_runtime_size_limit() {
+                std::process::exit(1);
+            }
+
+            // Check size limits only if not ignoring EIP-3860
+            if !self.ignore_eip_3860 && size_report.exceeds_initcode_size_limit() {
                 std::process::exit(1);
             }
         }
     }
 }
 
-/// Contract source code and bytecode.
-#[derive(Clone, Debug, Default)]
-pub struct ContractSources {
-    /// Map over artifacts' contract names -> vector of file IDs
-    pub ids_by_name: HashMap<String, Vec<u32>>,
-    /// Map over file_id -> (source code, contract)
-    pub sources_by_id: FxHashMap<u32, (String, ContractBytecodeSome)>,
-}
-
-impl ContractSources {
-    /// Collects the contract sources and artifacts from the project compile output.
-    pub fn from_project_output(
-        output: &ProjectCompileOutput,
-        root: &Path,
-    ) -> Result<ContractSources> {
-        let mut sources = ContractSources::default();
-        for (id, artifact) in output.artifact_ids() {
-            if let Some(file_id) = artifact.id {
-                let abs_path = root.join(&id.source);
-                let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
-                    format!("failed to read artifact source file for `{}`", id.identifier())
-                })?;
-                let compact = CompactContractBytecode {
-                    abi: artifact.abi.clone(),
-                    bytecode: artifact.bytecode.clone(),
-                    deployed_bytecode: artifact.deployed_bytecode.clone(),
-                };
-                let contract = compact_to_contract(compact)?;
-                sources.insert(&id, file_id, source_code, contract);
-            } else {
-                warn!(id = id.identifier(), "source not found");
-            }
-        }
-        Ok(sources)
-    }
-
-    /// Inserts a contract into the sources.
-    pub fn insert(
-        &mut self,
-        artifact_id: &ArtifactId,
-        file_id: u32,
-        source: String,
-        bytecode: ContractBytecodeSome,
-    ) {
-        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
-        self.sources_by_id.insert(file_id, (source, bytecode));
-    }
-
-    /// Returns the source for a contract by file ID.
-    pub fn get(&self, id: u32) -> Option<&(String, ContractBytecodeSome)> {
-        self.sources_by_id.get(&id)
-    }
-
-    /// Returns all sources for a contract by name.
-    pub fn get_sources(
-        &self,
-        name: &str,
-    ) -> Option<impl Iterator<Item = (u32, &(String, ContractBytecodeSome))>> {
-        self.ids_by_name
-            .get(name)
-            .map(|ids| ids.iter().filter_map(|id| Some((*id, self.sources_by_id.get(id)?))))
-    }
-
-    /// Returns all (name, source) pairs.
-    pub fn entries(&self) -> impl Iterator<Item = (String, &(String, ContractBytecodeSome))> {
-        self.ids_by_name.iter().flat_map(|(name, ids)| {
-            ids.iter().filter_map(|id| self.sources_by_id.get(id).map(|s| (name.clone(), s)))
-        })
-    }
-}
-
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_SIZE_LIMIT: usize = 24576;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
+
+// https://eips.ethereum.org/EIPS/eip-3860
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
+    /// What kind of report to generate.
+    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
 
 impl SizeReport {
-    /// Returns the size of the largest contract, excluding test contracts.
-    pub fn max_size(&self) -> usize {
-        let mut max_size = 0;
-        for contract in self.contracts.values() {
-            if !contract.is_dev_contract && contract.size > max_size {
-                max_size = contract.size;
-            }
-        }
-        max_size
+    /// Returns the maximum runtime code size, excluding dev contracts.
+    pub fn max_runtime_size(&self) -> usize {
+        self.contracts
+            .values()
+            .filter(|c| !c.is_dev_contract)
+            .map(|c| c.runtime_size)
+            .max()
+            .unwrap_or(0)
     }
 
-    /// Returns true if any contract exceeds the size limit, excluding test contracts.
-    pub fn exceeds_size_limit(&self) -> bool {
-        self.max_size() > CONTRACT_SIZE_LIMIT
+    /// Returns the maximum initcode size, excluding dev contracts.
+    pub fn max_init_size(&self) -> usize {
+        self.contracts
+            .values()
+            .filter(|c| !c.is_dev_contract)
+            .map(|c| c.init_size)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Returns true if any contract exceeds the runtime size limit, excluding dev contracts.
+    pub fn exceeds_runtime_size_limit(&self) -> bool {
+        self.max_runtime_size() > CONTRACT_RUNTIME_SIZE_LIMIT
+    }
+
+    /// Returns true if any contract exceeds the initcode size limit, excluding dev contracts.
+    pub fn exceeds_initcode_size_limit(&self) -> bool {
+        self.max_init_size() > CONTRACT_INITCODE_SIZE_LIMIT
     }
 }
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
-        table.set_header([
-            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
-        ]);
-
-        // filters out non dev contracts (Test or Script)
-        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
-        for (name, contract) in contracts {
-            let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
-            let color = match contract.size {
-                0..=17999 => Color::Reset,
-                18000..=CONTRACT_SIZE_LIMIT => Color::Yellow,
-                _ => Color::Red,
-            };
-
-            table.add_row([
-                Cell::new(name).fg(color),
-                Cell::new(contract.size as f64 / 1000.0).fg(color),
-                Cell::new(margin as f64 / 1000.0).fg(color),
-            ]);
+        match self.report_kind {
+            ReportKind::Markdown => {
+                let table = self.format_table_output();
+                writeln!(f, "{table}")?;
+            }
+            ReportKind::JSON => {
+                writeln!(f, "{}", self.format_json_output())?;
+            }
         }
 
-        writeln!(f, "{table}")?;
         Ok(())
     }
 }
 
-/// Returns the size of the deployed contract
-pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
-    let bytecode = artifact.get_deployed_bytecode_object()?;
+impl SizeReport {
+    fn format_json_output(&self) -> String {
+        let contracts = self
+            .contracts
+            .iter()
+            .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0))
+            .map(|(name, contract)| {
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "runtime_size": contract.runtime_size,
+                        "init_size": contract.init_size,
+                        "runtime_margin": CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize,
+                        "init_margin": CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+
+        serde_json::to_string(&contracts).unwrap()
+    }
+
+    fn format_table_output(&self) -> Table {
+        let mut table = Table::new();
+        table.load_preset(ASCII_MARKDOWN);
+        table.set_header([
+            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Runtime Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Initcode Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Runtime Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Initcode Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+        ]);
+
+        // Filters out dev contracts (Test or Script)
+        let contracts = self
+            .contracts
+            .iter()
+            .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0));
+        for (name, contract) in contracts {
+            let runtime_margin =
+                CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize;
+            let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
+
+            let runtime_color = match contract.runtime_size {
+                ..18_000 => Color::Reset,
+                18_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
+                _ => Color::Red,
+            };
+
+            let init_color = match contract.init_size {
+                ..36_000 => Color::Reset,
+                36_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
+                _ => Color::Red,
+            };
+
+            let locale = &Locale::en;
+            table.add_row([
+                Cell::new(name).fg(Color::Blue),
+                Cell::new(contract.runtime_size.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(runtime_color),
+                Cell::new(contract.init_size.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(init_color),
+                Cell::new(runtime_margin.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(runtime_color),
+                Cell::new(init_margin.to_formatted_string(locale))
+                    .set_alignment(CellAlignment::Right)
+                    .fg(init_color),
+            ]);
+        }
+
+        table
+    }
+}
+
+/// Returns the deployed or init size of the contract.
+fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
+    let bytecode = if initcode {
+        artifact.get_bytecode_object()?
+    } else {
+        artifact.get_deployed_bytecode_object()?
+    };
+
     let size = match bytecode.as_ref() {
         BytecodeObject::Bytecode(bytes) => bytes.len(),
         BytecodeObject::Unlinked(unlinked) => {
             // we don't need to account for placeholders here, because library placeholders take up
             // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
-            let mut size = unlinked.as_bytes().len();
+            let mut size = unlinked.len();
             if unlinked.starts_with("0x") {
                 size -= 2;
             }
@@ -428,14 +443,17 @@ pub fn deployed_contract_size<T: Artifact>(artifact: &T) -> Option<usize> {
             size / 2
         }
     };
+
     Some(size)
 }
 
 /// How big the contract is and whether it is a dev contract where size limits can be neglected
 #[derive(Clone, Copy, Debug)]
 pub struct ContractInfo {
-    /// size of the contract in bytes
-    pub size: usize,
+    /// Size of the runtime code in bytes
+    pub runtime_size: usize,
+    /// Size of the initcode in bytes
+    pub init_size: usize,
     /// A development contract is either a Script or a Test contract.
     pub is_dev_contract: bool,
 }
@@ -447,70 +465,24 @@ pub struct ContractInfo {
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target_with_filter(
+pub fn compile_target<C: Compiler>(
     target_path: &Path,
-    project: &Project,
+    project: &Project<C>,
     quiet: bool,
-    verify: bool,
-    skip: Vec<SkipBuildFilter>,
-) -> Result<ProjectCompileOutput> {
-    let graph = Graph::resolve(&project.paths)?;
-
-    // Checking if it's a standalone script, or part of a project.
-    let mut compiler = ProjectCompiler::new().quiet(quiet);
-    if !skip.is_empty() {
-        compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip)?));
-    }
-    if !graph.files().contains_key(target_path) {
-        if verify {
-            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
-        }
-        compiler = compiler.files([target_path.into()]);
-    }
-    compiler.compile(project)
-}
-
-/// Compiles an Etherscan source from metadata by creating a project.
-/// Returns the artifact_id, the file_id, and the bytecode
-pub async fn compile_from_source(
-    metadata: &Metadata,
-) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
-    let root = tempfile::tempdir()?;
-    let root_path = root.path();
-    let project = etherscan_project(metadata, root_path)?;
-
-    let project_output = project.compile()?;
-
-    if project_output.has_compiler_errors() {
-        eyre::bail!("{project_output}")
-    }
-
-    let (artifact_id, file_id, contract) = project_output
-        .into_artifacts()
-        .find(|(artifact_id, _)| artifact_id.name == metadata.contract_name)
-        .map(|(aid, art)| {
-            (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
-        })
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "Unable to find bytecode in compiled output for contract: {}",
-                metadata.contract_name
-            )
-        })?;
-    let bytecode = compact_to_contract(contract)?;
-
-    root.close()?;
-
-    Ok((artifact_id, file_id, bytecode))
+) -> Result<ProjectCompileOutput<C>> {
+    ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> Result<Project> {
+pub fn etherscan_project(
+    metadata: &Metadata,
+    target_path: impl AsRef<Path>,
+) -> Result<Project<SolcCompiler>> {
     let target_path = dunce::canonicalize(target_path.as_ref())?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
-    let mut settings = metadata.source_code.settings()?.unwrap_or_default();
+    let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
     for remapping in settings.remappings.iter_mut() {
@@ -537,115 +509,33 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
-    let v = format!("{}.{}.{}", v.major, v.minor, v.patch);
-    let solc = Solc::find_or_install_svm_version(v)?;
+    let solc = Solc::find_or_install(&v)?;
 
-    Ok(Project::builder()
-        .solc_config(SolcConfig::builder().settings(settings).build())
-        .no_auto_detect()
+    let compiler = SolcCompiler::Specific(solc);
+
+    Ok(ProjectBuilder::<SolcCompiler>::default()
+        .settings(SolcSettings {
+            settings: SolcConfig::builder().settings(settings).build(),
+            ..Default::default()
+        })
         .paths(paths)
-        .solc(solc)
         .ephemeral()
         .no_artifacts()
-        .build()?)
+        .build(compiler)?)
 }
 
-/// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
-#[derive(Clone, Debug)]
-pub struct SkipBuildFilters(Vec<GlobMatcher>);
-
-impl FileFilter for SkipBuildFilters {
-    /// Only returns a match if _no_  exclusion filter matches
-    fn is_match(&self, file: &Path) -> bool {
-        self.0.iter().all(|matcher| is_match_exclude(matcher, file))
-    }
-}
-
-impl SkipBuildFilters {
-    /// Creates a new `SkipBuildFilters` from multiple `SkipBuildFilter`.
-    pub fn new(matchers: impl IntoIterator<Item = SkipBuildFilter>) -> Result<Self> {
-        matchers.into_iter().map(|m| m.compile()).collect::<Result<_>>().map(Self)
-    }
-}
-
-/// A filter that excludes matching contracts from the build
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SkipBuildFilter {
-    /// Exclude all `.t.sol` contracts
-    Tests,
-    /// Exclude all `.s.sol` contracts
-    Scripts,
-    /// Exclude if the file matches
-    Custom(String),
-}
-
-impl SkipBuildFilter {
-    fn new(s: &str) -> Self {
-        match s {
-            "test" | "tests" => SkipBuildFilter::Tests,
-            "script" | "scripts" => SkipBuildFilter::Scripts,
-            s => SkipBuildFilter::Custom(s.to_string()),
+/// Configures the reporter and runs the given closure.
+pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
+    #[allow(clippy::collapsible_else_if)]
+    let reporter = if quiet || shell::is_json() {
+        Report::new(NoReporter::default())
+    } else {
+        if std::io::stdout().is_terminal() {
+            Report::new(SpinnerReporter::spawn())
+        } else {
+            Report::new(BasicStdoutReporter::default())
         }
-    }
+    };
 
-    /// Returns the pattern to match against a file
-    fn file_pattern(&self) -> &str {
-        match self {
-            SkipBuildFilter::Tests => ".t.sol",
-            SkipBuildFilter::Scripts => ".s.sol",
-            SkipBuildFilter::Custom(s) => s.as_str(),
-        }
-    }
-
-    fn compile(&self) -> Result<GlobMatcher> {
-        self.file_pattern().parse().map_err(Into::into)
-    }
-}
-
-impl FromStr for SkipBuildFilter {
-    type Err = Infallible;
-
-    fn from_str(s: &str) -> result::Result<Self, Self::Err> {
-        Ok(Self::new(s))
-    }
-}
-
-/// Matches file only if the filter does not apply.
-///
-/// This returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`.
-fn is_match_exclude(matcher: &GlobMatcher, path: &Path) -> bool {
-    fn is_match(matcher: &GlobMatcher, path: &Path) -> Option<bool> {
-        let file_name = path.file_name()?.to_str()?;
-        Some(file_name.contains(matcher.as_str()) || matcher.is_match(path))
-    }
-
-    !is_match(matcher, path).unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_build_filter() {
-        let tests = SkipBuildFilter::Tests.compile().unwrap();
-        let scripts = SkipBuildFilter::Scripts.compile().unwrap();
-        let custom = |s: &str| SkipBuildFilter::Custom(s.to_string()).compile().unwrap();
-
-        let file = Path::new("A.t.sol");
-        assert!(!is_match_exclude(&tests, file));
-        assert!(is_match_exclude(&scripts, file));
-        assert!(!is_match_exclude(&custom("A.t"), file));
-
-        let file = Path::new("A.s.sol");
-        assert!(is_match_exclude(&tests, file));
-        assert!(!is_match_exclude(&scripts, file));
-        assert!(!is_match_exclude(&custom("A.s"), file));
-
-        let file = Path::new("/home/test/Foo.sol");
-        assert!(!is_match_exclude(&custom("*/test/**"), file));
-
-        let file = Path::new("/home/script/Contract.sol");
-        assert!(!is_match_exclude(&custom("*/script/**"), file));
-    }
+    foundry_compilers::report::with_scoped(&reporter, f)
 }

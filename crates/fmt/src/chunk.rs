@@ -12,13 +12,13 @@ pub struct Chunk {
 
 impl From<String> for Chunk {
     fn from(string: String) -> Self {
-        Chunk { content: string, ..Default::default() }
+        Self { content: string, ..Default::default() }
     }
 }
 
 impl From<&str> for Chunk {
     fn from(string: &str) -> Self {
-        Chunk { content: string.to_owned(), ..Default::default() }
+        Self { content: string.to_owned(), ..Default::default() }
     }
 }
 
@@ -37,7 +37,7 @@ impl SurroundingChunk {
         before: Option<usize>,
         next: Option<usize>,
     ) -> Self {
-        SurroundingChunk { before, next, content: format!("{content}"), spaced: None }
+        Self { before, next, content: format!("{content}"), spaced: None }
     }
 
     pub fn spaced(mut self) -> Self {

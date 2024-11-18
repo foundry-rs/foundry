@@ -7,7 +7,7 @@ use forge::{
 use foundry_evm::{
     decode::decode_console_logs,
     revm::primitives::SpecId,
-    traces::{render_trace_arena, CallTraceDecoderBuilder},
+    traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
 };
 use foundry_test_utils::{init_tracing, Filter};
 use futures::future::join_all;
@@ -65,24 +65,27 @@ impl TestConfig {
             eyre::bail!("empty test result");
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
-            for (test_name, result) in test_results {
+            for (test_name, mut result) in test_results {
                 if self.should_fail && (result.status == TestStatus::Success) ||
                     !self.should_fail && (result.status == TestStatus::Failure)
                 {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
-                    let call_trace_decoder = CallTraceDecoderBuilder::default().build();
-                    let decoded_traces = join_all(
-                        result
-                            .traces
-                            .iter()
-                            .map(|(_, a)| render_trace_arena(a, &call_trace_decoder))
-                            .collect::<Vec<_>>(),
-                    )
+                    let call_trace_decoder = CallTraceDecoderBuilder::default()
+                        .with_known_contracts(&self.runner.known_contracts)
+                        .build();
+                    let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
+                        let decoder = &call_trace_decoder;
+                        async move {
+                            decode_trace_arena(arena, decoder)
+                                .await
+                                .expect("Failed to decode traces");
+                            render_trace_arena(arena)
+                        }
+                    }))
                     .await
                     .into_iter()
-                    .map(|x| x.unwrap())
-                    .collect::<Vec<_>>();
+                    .collect::<Vec<String>>();
                     eyre::bail!(
                         "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,
@@ -122,7 +125,7 @@ pub fn assert_multiple(
             "We did not run as many test functions as we expected for {contract_name}"
         );
         for (test_name, should_pass, reason, expected_logs, expected_warning_count) in tests {
-            let logs = &actuals[*contract_name].test_results[*test_name].decoded_logs;
+            let logs = &decode_console_logs(&actuals[*contract_name].test_results[*test_name].logs);
 
             let warnings_count = &actuals[*contract_name].warnings.len();
 

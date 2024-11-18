@@ -75,6 +75,37 @@ async fn test_core() {
                     None,
                 )],
             ),
+            (
+                "default/core/MultipleAfterInvariant.t.sol:MultipleAfterInvariant",
+                vec![(
+                    "afterInvariant()",
+                    false,
+                    Some("multiple afterInvariant functions".to_string()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/core/BadSigAfterInvariant.t.sol:BadSigAfterInvariant",
+                vec![("testShouldPassWithWarning()", true, None, None, None)],
+            ),
+            (
+                "default/core/LegacyAssertions.t.sol:NoAssertionsRevertTest",
+                vec![(
+                    "testMultipleAssertFailures()",
+                    false,
+                    Some("assertion failed: 1 != 2".to_string()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/core/LegacyAssertions.t.sol:LegacyAssertionsTest",
+                vec![
+                    ("testFlagNotSetSuccess()", true, None, None, None),
+                    ("testFlagSetFailure()", true, None, None, None),
+                ],
+            ),
         ]),
     );
 }
@@ -710,12 +741,12 @@ async fn test_trace() {
                 result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
             let setup_traces = result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Setup);
             let execution_traces =
-                result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
+                result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Execution);
 
             assert_eq!(
                 deployment_traces.count(),
-                1,
-                "Test {test_name} did not have exactly 1 deployment trace."
+                12,
+                "Test {test_name} did not have exactly 12 deployment trace."
             );
             assert!(setup_traces.count() <= 1, "Test {test_name} had more than 1 setup trace.");
             assert_eq!(
@@ -725,4 +756,50 @@ async fn test_trace() {
             );
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_assertions_revert_false() {
+    let filter = Filter::new(".*", ".*NoAssertionsRevertTest", ".*");
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.assertions_revert = false;
+    let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/core/LegacyAssertions.t.sol:NoAssertionsRevertTest",
+            vec![(
+                "testMultipleAssertFailures()",
+                false,
+                None,
+                Some(vec![
+                    "assertion failed: 1 != 2".to_string(),
+                    "assertion failed: 5 >= 4".to_string(),
+                ]),
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_legacy_assertions() {
+    let filter = Filter::new(".*", ".*LegacyAssertions", ".*");
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.legacy_assertions = true;
+    let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/core/LegacyAssertions.t.sol:LegacyAssertionsTest",
+            vec![
+                ("testFlagNotSetSuccess()", true, None, None, None),
+                ("testFlagSetFailure()", false, None, None, None),
+            ],
+        )]),
+    );
 }

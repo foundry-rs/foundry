@@ -72,7 +72,8 @@ contract ForkTest is DSTest {
 
     function testDepositWeth() public {
         IWETH WETH = IWETH(WETH_TOKEN_ADDR);
+        uint256 current = WETH.balanceOf(address(this));
         WETH.deposit{value: 1000}();
-        assertEq(WETH.balanceOf(address(this)), 1000, "WETH balance is not equal to deposited amount.");
+        assertEq(WETH.balanceOf(address(this)) - current, 1000, "WETH balance is not equal to deposited amount.");
     }
 }

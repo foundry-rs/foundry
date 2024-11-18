@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -47,6 +47,16 @@ contract NestedContract {
 
     function sumInPlace(uint256 a, uint256 b) public view returns (uint256) {
         return a + b + 42;
+    }
+}
+
+contract SimpleCall {
+    function call() public {}
+}
+
+contract ProxyWithDelegateCall {
+    function delegateCall(SimpleCall simpleCall) public {
+        address(simpleCall).delegatecall(abi.encodeWithSignature("call()"));
     }
 }
 
@@ -248,6 +258,14 @@ contract ExpectCallTest is DSTest {
         vm.expectRevert();
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         this.exposed_callTargetNTimes(target, 5, 5, 1);
+    }
+
+    /// Ensure expectCall works for Proxy DelegateCalls. Ref: <https://github.com/foundry-rs/foundry/issues/8015>
+    function testExpectCallForProxyDelegateCall() public {
+        ProxyWithDelegateCall proxyWithDelegateCall = new ProxyWithDelegateCall();
+        SimpleCall simpleCall = new SimpleCall();
+        vm.expectCall(address(simpleCall), abi.encodeWithSignature("call()"));
+        proxyWithDelegateCall.delegateCall(simpleCall);
     }
 }
 

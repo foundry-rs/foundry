@@ -1,14 +1,19 @@
 //! Regression tests for previous issues.
 
+use std::sync::Arc;
+
 use crate::{
     config::*,
     test_helpers::{ForgeTestData, TEST_DATA_DEFAULT},
 };
-use alloy_primitives::{address, Address};
-use ethers_core::abi::{Event, EventParam, Log, LogParam, ParamType, RawLog, Token};
-use forge::result::TestStatus;
-use foundry_common::types::ToEthers;
-use foundry_config::{fs_permissions::PathPermission, FsPermissions};
+use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
+use alloy_json_abi::Event;
+use alloy_primitives::{address, b256, Address, U256};
+use forge::{
+    decode::decode_console_logs,
+    result::{TestKind, TestStatus},
+};
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
     traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},
@@ -17,32 +22,35 @@ use foundry_test_utils::Filter;
 
 /// Creates a test that runs `testdata/repros/Issue{issue}.t.sol`.
 macro_rules! test_repro {
-    ($issue_number:literal $(,)?) => {
-        test_repro!($issue_number, false, None);
+    ($(#[$attr:meta])* $issue_number:literal $(,)?) => {
+        test_repro!($(#[$attr])* $issue_number, false, None);
     };
-    ($issue_number:literal, $should_fail:expr $(,)?) => {
-        test_repro!($issue_number, $should_fail, None);
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr $(,)?) => {
+        test_repro!($(#[$attr])* $issue_number, $should_fail, None);
     };
-    ($issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.run().await;
             }
         }
     };
-    ($issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 let mut $res = repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.test();
                 $e
             }
         }
     };
-    ($issue_number:literal; |$config:ident| $e:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal; |$config:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 let mut $config = repro_config($issue_number, false, None, &*TEST_DATA_DEFAULT).await;
                 $e
@@ -125,25 +133,18 @@ test_repro!(3347, false, None, |res| {
     let mut res = res.remove("default/repros/Issue3347.t.sol:Issue3347Test").unwrap();
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
-    let event = Event {
-        name: "log2".to_string(),
-        inputs: vec![
-            EventParam { name: "x".to_string(), kind: ParamType::Uint(256), indexed: false },
-            EventParam { name: "y".to_string(), kind: ParamType::Uint(256), indexed: false },
-        ],
-        anonymous: false,
-    };
-    let raw_log = RawLog {
-        topics: test.logs[0].data.topics().iter().map(|t| t.to_ethers()).collect(),
-        data: test.logs[0].data.data.clone().to_vec(),
-    };
-    let log = event.parse_log(raw_log).unwrap();
+    let event = Event::parse("event log2(uint256, uint256)").unwrap();
+    let decoded = event.decode_log(&test.logs[0].data, false).unwrap();
     assert_eq!(
-        log,
-        Log {
-            params: vec![
-                LogParam { name: "x".to_string(), value: Token::Uint(1u64.into()) },
-                LogParam { name: "y".to_string(), value: Token::Uint(2u64.into()) }
+        decoded,
+        DecodedEvent {
+            selector: Some(b256!(
+                "78b9a1f3b55d6797ab2c4537e83ee04ff0c65a1ca1bb39d79a62e0a78d5a8a57"
+            )),
+            indexed: vec![],
+            body: vec![
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::from(2), 256)
             ]
         }
     );
@@ -169,7 +170,10 @@ test_repro!(3674, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 test_repro!(3685);
 
 // https://github.com/foundry-rs/foundry/issues/3703
-test_repro!(3703);
+test_repro!(
+    #[ignore = "flaky polygon RPCs"]
+    3703
+);
 
 // https://github.com/foundry-rs/foundry/issues/3708
 test_repro!(3708);
@@ -247,7 +251,7 @@ test_repro!(6355, false, None, |res| {
     let test = res.test_results.remove("test_shouldFail()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 
-    let test = res.test_results.remove("test_shouldFailWithRevertTo()").unwrap();
+    let test = res.test_results.remove("test_shouldFailWithRevertToState()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 });
 
@@ -260,10 +264,13 @@ test_repro!(6501, false, None, |res| {
     let mut res = res.remove("default/repros/Issue6501.t.sol:Issue6501Test").unwrap();
     let test = res.test_results.remove("test_hhLogs()").unwrap();
     assert_eq!(test.status, TestStatus::Success);
-    assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
+    assert_eq!(
+        decode_console_logs(&test.logs),
+        ["a".to_string(), "1".to_string(), "b 2".to_string()]
+    );
 
-    let (kind, traces) = test.traces[1].clone();
-    let nodes = traces.into_nodes();
+    let (kind, traces) = test.traces.last().unwrap().clone();
+    let nodes = traces.arena.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
     let test_call = nodes.first().unwrap();
@@ -286,7 +293,7 @@ test_repro!(6501, false, None, |res| {
         assert_eq!(trace.depth, 1);
         assert!(trace.success);
         assert_eq!(
-            decoded.func,
+            decoded.call_data,
             Some(DecodedCallData {
                 signature: expected.0.into(),
                 args: expected.1.into_iter().map(ToOwned::to_owned).collect(),
@@ -300,10 +307,12 @@ test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
-    let mut cheats_config = config.runner.cheats_config.as_ref().clone();
-    let path = cheats_config.root.join("out/default/Issue6554.t.sol");
-    cheats_config.fs_permissions.add(PathPermission::read_write(path));
-    config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+    let path = config.runner.config.root.0.join("out/default/Issue6554.t.sol");
+
+    let mut prj_config = Config::clone(&config.runner.config);
+    prj_config.fs_permissions.add(PathPermission::read_write(path));
+    config.runner.config = Arc::new(prj_config);
+
 });
 
 // https://github.com/foundry-rs/foundry/issues/6759
@@ -317,14 +326,71 @@ test_repro!(6616);
 
 // https://github.com/foundry-rs/foundry/issues/5529
 test_repro!(5529; |config| {
-  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
-  cheats_config.always_use_create_2_factory = true;
-  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.always_use_create_2_factory = true;
+  config.runner.evm_opts.always_use_create_2_factory = true;
+  config.runner.config = Arc::new(prj_config);
 });
 
 // https://github.com/foundry-rs/foundry/issues/6634
 test_repro!(6634; |config| {
-  let mut cheats_config = config.runner.cheats_config.as_ref().clone();
-  cheats_config.always_use_create_2_factory = true;
-  config.runner.cheats_config = std::sync::Arc::new(cheats_config);
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.always_use_create_2_factory = true;
+  config.runner.evm_opts.always_use_create_2_factory = true;
+  config.runner.config = Arc::new(prj_config);
+});
+
+// https://github.com/foundry-rs/foundry/issues/7457
+test_repro!(7457);
+
+// https://github.com/foundry-rs/foundry/issues/7481
+test_repro!(7481);
+
+// https://github.com/foundry-rs/foundry/issues/5739
+test_repro!(5739);
+
+// https://github.com/foundry-rs/foundry/issues/8004
+test_repro!(8004);
+
+// https://github.com/foundry-rs/foundry/issues/2851
+test_repro!(2851, false, None, |res| {
+    let mut res = res.remove("default/repros/Issue2851.t.sol:Issue2851Test").unwrap();
+    let test = res.test_results.remove("invariantNotZero()").unwrap();
+    assert_eq!(test.status, TestStatus::Failure);
+});
+
+// https://github.com/foundry-rs/foundry/issues/8006
+test_repro!(8006);
+
+// https://github.com/foundry-rs/foundry/issues/8277
+test_repro!(8277);
+
+// https://github.com/foundry-rs/foundry/issues/8287
+test_repro!(8287);
+
+// https://github.com/foundry-rs/foundry/issues/8168
+test_repro!(8168);
+
+// https://github.com/foundry-rs/foundry/issues/8383
+test_repro!(8383, false, None, |res| {
+    let mut res = res.remove("default/repros/Issue8383.t.sol:Issue8383Test").unwrap();
+    let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
+    assert_eq!(test.status, TestStatus::Success);
+    match test.kind {
+        TestKind::Unit { gas } => assert_eq!(gas, 3103),
+        _ => panic!("not a unit test kind"),
+    }
+});
+
+// https://github.com/foundry-rs/foundry/issues/1543
+test_repro!(1543);
+
+// https://github.com/foundry-rs/foundry/issues/6643
+test_repro!(6643);
+
+// https://github.com/foundry-rs/foundry/issues/8971
+test_repro!(8971; |config| {
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.isolate = true;
+  config.runner.config = Arc::new(prj_config);
 });

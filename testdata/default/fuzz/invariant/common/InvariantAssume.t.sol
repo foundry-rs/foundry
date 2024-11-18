@@ -8,7 +8,7 @@ contract Handler is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function doSomething(uint256 param) public {
-        vm.assume(param != 0);
+        vm.assume(param == 0);
     }
 }
 

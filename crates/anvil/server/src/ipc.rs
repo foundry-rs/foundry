@@ -4,7 +4,7 @@ use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
 use anvil_rpc::request::Request;
 use bytes::BytesMut;
 use futures::{ready, Sink, Stream, StreamExt};
-use parity_tokio_ipc::Endpoint;
+use interprocess::local_socket::{self as ls, tokio::prelude::*};
 use std::{
     future::Future,
     io,
@@ -18,55 +18,58 @@ use std::{
 pub struct IpcEndpoint<Handler> {
     /// the handler for the websocket connection
     handler: Handler,
-    /// The endpoint we listen for incoming transactions
-    endpoint: Endpoint,
+    /// The path to the socket
+    path: String,
 }
 
 impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// Creates a new endpoint with the given handler
-    pub fn new(handler: Handler, endpoint: impl Into<String>) -> Self {
-        Self { handler, endpoint: Endpoint::new(endpoint.into()) }
+    pub fn new(handler: Handler, path: String) -> Self {
+        Self { handler, path }
     }
 
-    /// Returns a stream of incoming connection handlers
+    /// Returns a stream of incoming connection handlers.
     ///
-    /// This establishes the ipc endpoint, converts the incoming connections into handled eth
-    /// connections, See [`PubSubConnection`] that should be spawned
+    /// This establishes the IPC endpoint, converts the incoming connections into handled
+    /// connections.
     #[instrument(target = "ipc", skip_all)]
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
-        let IpcEndpoint { handler, endpoint } = self;
-        trace!(endpoint=?endpoint.path(), "starting IPC server" );
+        let Self { handler, path } = self;
+
+        trace!(%path, "starting IPC server");
 
         if cfg!(unix) {
             // ensure the file does not exist
-            if std::fs::remove_file(endpoint.path()).is_ok() {
-                warn!(endpoint=?endpoint.path(), "removed existing file");
+            if std::fs::remove_file(&path).is_ok() {
+                warn!(%path, "removed existing file");
             }
         }
 
-        let connections = match endpoint.incoming() {
-            Ok(connections) => connections,
-            Err(err) => {
-                error!(%err, "Failed to create IPC listener");
-                return Err(err)
-            }
-        };
+        let name = to_name(path.as_ref())?;
+        let listener = ls::ListenerOptions::new().name(name).create_tokio()?;
+        let connections = futures::stream::unfold(listener, |listener| async move {
+            let conn = listener.accept().await;
+            Some((conn, listener))
+        });
 
         trace!("established connection listener");
 
-        let connections = connections.filter_map(move |stream| {
+        Ok(connections.filter_map(move |stream| {
             let handler = handler.clone();
-            Box::pin(async move {
-                if let Ok(stream) = stream {
-                    trace!("successful incoming IPC connection");
-                    let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
-                    Some(PubSubConnection::new(IpcConn(framed), handler))
-                } else {
-                    None
+            async move {
+                match stream {
+                    Ok(stream) => {
+                        trace!("successful incoming IPC connection");
+                        let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
+                        Some(PubSubConnection::new(IpcConn(framed), handler))
+                    }
+                    Err(err) => {
+                        trace!(%err, "unsuccessful incoming IPC connection");
+                        None
+                    }
                 }
-            })
-        });
-        Ok(connections)
+            }
+        }))
     }
 }
 
@@ -118,7 +121,7 @@ where
 
 struct JsonRpcCodec;
 
-// Adapted from <https://github.dev/paritytech/jsonrpc/blob/38af3c9439aa75481805edf6c05c6622a5ab1e70/server-utils/src/stream_codec.rs#L47-L105>
+// Adapted from <https://github.com/paritytech/jsonrpc/blob/38af3c9439aa75481805edf6c05c6622a5ab1e70/server-utils/src/stream_codec.rs#L47-L105>
 impl tokio_util::codec::Decoder for JsonRpcCodec {
     type Item = String;
     type Error = io::Error;
@@ -169,5 +172,13 @@ impl tokio_util::codec::Encoder<String> for JsonRpcCodec {
     fn encode(&mut self, msg: String, buf: &mut BytesMut) -> io::Result<()> {
         buf.extend_from_slice(msg.as_bytes());
         Ok(())
+    }
+}
+
+fn to_name(path: &std::ffi::OsStr) -> io::Result<ls::Name<'_>> {
+    if cfg!(windows) && !path.as_encoded_bytes().starts_with(br"\\.\pipe\") {
+        ls::ToNsName::to_ns_name::<ls::GenericNamespaced>(path)
+    } else {
+        ls::ToFsName::to_fs_name::<ls::GenericFilePath>(path)
     }
 }

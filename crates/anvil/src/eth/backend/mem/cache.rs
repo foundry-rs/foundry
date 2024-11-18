@@ -102,7 +102,7 @@ impl DiskStateCache {
 
 impl Default for DiskStateCache {
     fn default() -> Self {
-        DiskStateCache { temp_path: anvil_tmp_dir(), temp_dir: None }
+        Self { temp_path: anvil_tmp_dir(), temp_dir: None }
     }
 }
 

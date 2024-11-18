@@ -1,15 +1,12 @@
 use alloy_json_abi::{Event, Function};
+use alloy_primitives::{hex, map::HashSet};
 use foundry_common::{
     abi::{get_event, get_func},
     fs,
-    selectors::{SelectorType, SignEthClient},
+    selectors::{OpenChainClient, SelectorType},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
@@ -21,19 +18,17 @@ struct CachedSignatures {
 }
 
 /// An identifier that tries to identify functions and events using signatures found at
-/// `https://openchain.xyz`.
+/// `https://openchain.xyz` or a local cache.
 #[derive(Debug)]
 pub struct SignaturesIdentifier {
-    /// Cached selectors for functions and events
+    /// Cached selectors for functions and events.
     cached: CachedSignatures,
-    /// Location where to save `CachedSignatures`
+    /// Location where to save `CachedSignatures`.
     cached_path: Option<PathBuf>,
     /// Selectors that were unavailable during the session.
     unavailable: HashSet<String>,
-    /// The API client to fetch signatures from
-    sign_eth_api: SignEthClient,
-    /// whether traces should be decoded via `sign_eth_api`
-    offline: bool,
+    /// The OpenChain client to fetch signatures from.
+    client: Option<OpenChainClient>,
 }
 
 impl SignaturesIdentifier {
@@ -42,7 +37,7 @@ impl SignaturesIdentifier {
         cache_path: Option<PathBuf>,
         offline: bool,
     ) -> eyre::Result<SingleSignaturesIdentifier> {
-        let sign_eth_api = SignEthClient::new()?;
+        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
 
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
@@ -57,20 +52,13 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            Self {
-                cached,
-                cached_path: Some(path),
-                unavailable: HashSet::new(),
-                sign_eth_api,
-                offline,
-            }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
         } else {
             Self {
                 cached: Default::default(),
                 cached_path: None,
-                unavailable: HashSet::new(),
-                sign_eth_api,
-                offline,
+                unavailable: HashSet::default(),
+                client,
             }
         };
 
@@ -109,15 +97,14 @@ impl SignaturesIdentifier {
         let hex_identifiers: Vec<String> =
             identifiers.into_iter().map(hex::encode_prefixed).collect();
 
-        if !self.offline {
+        if let Some(client) = &self.client {
             let query: Vec<_> = hex_identifiers
                 .iter()
                 .filter(|v| !cache.contains_key(v.as_str()))
                 .filter(|v| !self.unavailable.contains(v.as_str()))
                 .collect();
 
-            if let Ok(res) = self.sign_eth_api.decode_selectors(selector_type, query.clone()).await
-            {
+            if let Ok(res) = client.decode_selectors(selector_type, query.clone()).await {
                 for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
                     let mut found = false;
                     if let Some(decoded_results) = selector_result {
@@ -170,6 +157,7 @@ impl Drop for SignaturesIdentifier {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
 

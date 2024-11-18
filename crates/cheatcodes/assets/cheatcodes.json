@@ -83,6 +83,66 @@
           "description": "The account's code was copied."
         }
       ]
+    },
+    {
+      "name": "ForgeContext",
+      "description": "Forge execution contexts.",
+      "variants": [
+        {
+          "name": "TestGroup",
+          "description": "Test group execution context (test, coverage or snapshot)."
+        },
+        {
+          "name": "Test",
+          "description": "`forge test` execution context."
+        },
+        {
+          "name": "Coverage",
+          "description": "`forge coverage` execution context."
+        },
+        {
+          "name": "Snapshot",
+          "description": "`forge snapshot` execution context."
+        },
+        {
+          "name": "ScriptGroup",
+          "description": "Script group execution context (dry run, broadcast or resume)."
+        },
+        {
+          "name": "ScriptDryRun",
+          "description": "`forge script` execution context."
+        },
+        {
+          "name": "ScriptBroadcast",
+          "description": "`forge script --broadcast` execution context."
+        },
+        {
+          "name": "ScriptResume",
+          "description": "`forge script --resume` execution context."
+        },
+        {
+          "name": "Unknown",
+          "description": "Unknown `forge` execution context."
+        }
+      ]
+    },
+    {
+      "name": "BroadcastTxType",
+      "description": "The transaction type (`txType`) of the broadcast.",
+      "variants": [
+        {
+          "name": "Call",
+          "description": "Represents a CALL broadcast tx."
+        },
+        {
+          "name": "Create",
+          "description": "Represents a CREATE broadcast tx."
+        },
+        {
+          "name": "Create2",
+          "description": "Represents a CREATE2 broadcast tx."
+        }
+      ]
     }
   ],
   "structs": [
@@ -413,6 +473,104 @@
           "name": "reverted",
           "ty": "bool",
           "description": "If the access was reverted."
+        }
+      ]
+    },
+    {
+      "name": "Gas",
+      "description": "Gas used. Returned by `lastCallGas`.",
+      "fields": [
+        {
+          "name": "gasLimit",
+          "ty": "uint64",
+          "description": "The gas limit of the call."
+        },
+        {
+          "name": "gasTotalUsed",
+          "ty": "uint64",
+          "description": "The total gas used."
+        },
+        {
+          "name": "gasMemoryUsed",
+          "ty": "uint64",
+          "description": "DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>"
+        },
+        {
+          "name": "gasRefunded",
+          "ty": "int64",
+          "description": "The amount of gas refunded."
+        },
+        {
+          "name": "gasRemaining",
+          "ty": "uint64",
+          "description": "The amount of gas remaining."
+        }
+      ]
+    },
+    {
+      "name": "DebugStep",
+      "description": "The result of the `stopDebugTraceRecording` call",
+      "fields": [
+        {
+          "name": "stack",
+          "ty": "uint256[]",
+          "description": "The stack before executing the step of the run.\n stack\\[0\\] represents the top of the stack.\n and only stack data relevant to the opcode execution is contained."
+        },
+        {
+          "name": "memoryInput",
+          "ty": "bytes",
+          "description": "The memory input data before executing the step of the run.\n only input data relevant to the opcode execution is contained.\n e.g. for MLOAD, it will have memory\\[offset:offset+32\\] copied here.\n the offset value can be get by the stack data."
+        },
+        {
+          "name": "opcode",
+          "ty": "uint8",
+          "description": "The opcode that was accessed."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "The call depth of the step."
+        },
+        {
+          "name": "isOutOfGas",
+          "ty": "bool",
+          "description": "Whether the call end up with out of gas error."
+        },
+        {
+          "name": "contractAddr",
+          "ty": "address",
+          "description": "The contract address where the opcode is running"
+        }
+      ]
+    },
+    {
+      "name": "BroadcastTxSummary",
+      "description": "Represents a transaction's broadcast details.",
+      "fields": [
+        {
+          "name": "txHash",
+          "ty": "bytes32",
+          "description": "The hash of the transaction that was broadcasted"
+        },
+        {
+          "name": "txType",
+          "ty": "BroadcastTxType",
+          "description": "Represent the type of transaction among CALL, CREATE, CREATE2"
+        },
+        {
+          "name": "contractAddress",
+          "ty": "address",
+          "description": "The address of the contract that was called or created.\n This is address of the contract that is created if the txType is CREATE or CREATE2."
+        },
+        {
+          "name": "blockNumber",
+          "ty": "uint64",
+          "description": "The block number the transaction landed in."
+        },
+        {
+          "name": "success",
+          "ty": "bool",
+          "description": "Status of the transaction, retrieved from the transaction receipt."
         }
       ]
     }
@@ -2900,11 +3058,71 @@
     },
     {
       "func": {
-        "id": "breakpoint_0",
-        "description": "Writes a breakpoint to jump to in the debugger.",
-        "declaration": "function breakpoint(string calldata char) external;",
+        "id": "assumeNoRevert",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
+        "declaration": "function assumeNoRevert() external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert()",
+        "selector": "0x285b366a",
+        "selectorBytes": [
+          40,
+          91,
+          54,
+          106
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "blobBaseFee",
+        "description": "Sets `block.blobbasefee`",
+        "declaration": "function blobBaseFee(uint256 newBlobBaseFee) external;",
         "visibility": "external",
         "mutability": "",
+        "signature": "blobBaseFee(uint256)",
+        "selector": "0x6d315d7e",
+        "selectorBytes": [
+          109,
+          49,
+          93,
+          126
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "blobhashes",
+        "description": "Sets the blobhashes in the transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function blobhashes(bytes32[] calldata hashes) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "blobhashes(bytes32[])",
+        "selector": "0x129de7eb",
+        "selectorBytes": [
+          18,
+          157,
+          231,
+          235
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "breakpoint_0",
+        "description": "Writes a breakpoint to jump to in the debugger.",
+        "declaration": "function breakpoint(string calldata char) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
         "signature": "breakpoint(string)",
         "selector": "0xf0259e92",
         "selectorBytes": [
@@ -2922,9 +3140,9 @@
       "func": {
         "id": "breakpoint_1",
         "description": "Writes a conditional breakpoint to jump to in the debugger.",
-        "declaration": "function breakpoint(string calldata char, bool value) external;",
+        "declaration": "function breakpoint(string calldata char, bool value) external pure;",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "breakpoint(string,bool)",
         "selector": "0xf7d39a8d",
         "selectorBytes": [
@@ -2940,8 +3158,28 @@
     },
     {
       "func": {
+        "id": "broadcastRawTransaction",
+        "description": "Takes a signed transaction and broadcasts it to the network.",
+        "declaration": "function broadcastRawTransaction(bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "broadcastRawTransaction(bytes)",
+        "selector": "0x8c0c72e0",
+        "selectorBytes": [
+          140,
+          12,
+          114,
+          224
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "broadcast_0",
-        "description": "Using the address that calls the test contract, has the next call (at this call depth only)\ncreate a transaction that can later be signed and sent onchain.",
+        "description": "Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function broadcast() external;",
         "visibility": "external",
         "mutability": "",
@@ -3032,6 +3270,26 @@
           223,
           78,
           21
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "cloneAccount",
+        "description": "Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.",
+        "declaration": "function cloneAccount(address source, address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "cloneAccount(address,address)",
+        "selector": "0x533d61c9",
+        "selectorBytes": [
+          83,
+          61,
+          97,
+          201
         ]
       },
       "group": "evm",
@@ -3140,6 +3398,26 @@
     },
     {
       "func": {
+        "id": "contains",
+        "description": "Returns true if `search` is found in `subject`, false otherwise.",
+        "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "contains(string,string)",
+        "selector": "0x3fb18aec",
+        "selectorBytes": [
+          63,
+          177,
+          138,
+          236
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "cool",
         "description": "Marks the slots of an account and the account address as cold.",
         "declaration": "function cool(address target) external;",
@@ -3175,6 +3453,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "copyStorage",
+        "description": "Utility cheatcode to copy storage of `from` contract to another `to` contract.",
+        "declaration": "function copyStorage(address from, address to) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "copyStorage(address,address)",
+        "selector": "0x203dac0d",
+        "selectorBytes": [
+          32,
+          61,
+          172,
+          13
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },
@@ -3334,7 +3632,7 @@
           210
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3354,7 +3652,7 @@
           182
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3374,7 +3672,7 @@
           98
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3401,7 +3699,7 @@
     {
       "func": {
         "id": "deleteSnapshot",
-        "description": "Removes the snapshot with the given ID created by `snapshot`.\nTakes the snapshot ID to delete.\nReturns `true` if the snapshot was successfully deleted.\nReturns `false` if the snapshot does not exist.",
+        "description": "`deleteSnapshot` is being deprecated in favor of `deleteStateSnapshot`. It will be removed in future versions.",
         "declaration": "function deleteSnapshot(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
@@ -3415,13 +3713,15 @@
         ]
       },
       "group": "evm",
-      "status": "stable",
+      "status": {
+        "deprecated": "replaced by `deleteStateSnapshot`"
+      },
       "safety": "unsafe"
     },
     {
       "func": {
         "id": "deleteSnapshots",
-        "description": "Removes _all_ snapshots previously created by `snapshot`.",
+        "description": "`deleteSnapshots` is being deprecated in favor of `deleteStateSnapshots`. It will be removed in future versions.",
         "declaration": "function deleteSnapshots() external;",
         "visibility": "external",
         "mutability": "",
@@ -3435,8 +3735,90 @@
         ]
       },
       "group": "evm",
+      "status": {
+        "deprecated": "replaced by `deleteStateSnapshots`"
+      },
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "deleteStateSnapshot",
+        "description": "Removes the snapshot with the given ID created by `snapshot`.\nTakes the snapshot ID to delete.\nReturns `true` if the snapshot was successfully deleted.\nReturns `false` if the snapshot does not exist.",
+        "declaration": "function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deleteStateSnapshot(uint256)",
+        "selector": "0x08d6b37a",
+        "selectorBytes": [
+          8,
+          214,
+          179,
+          122
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "deleteStateSnapshots",
+        "description": "Removes _all_ snapshots previously created by `snapshot`.",
+        "declaration": "function deleteStateSnapshots() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deleteStateSnapshots()",
+        "selector": "0xe0933c74",
+        "selectorBytes": [
+          224,
+          147,
+          60,
+          116
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "deployCode_0",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function deployCode(string calldata artifactPath) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string)",
+        "selector": "0x9a8325a0",
+        "selectorBytes": [
+          154,
+          131,
+          37,
+          160
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_1",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes)",
+        "selector": "0x29ce9dde",
+        "selectorBytes": [
+          41,
+          206,
+          157,
+          222
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -3454,7 +3836,7 @@
           139
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3474,7 +3856,7 @@
           27
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3494,7 +3876,7 @@
           109
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3514,7 +3896,7 @@
           31
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -3557,6 +3939,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "ensNamehash",
+        "description": "Returns ENS namehash for provided string.",
+        "declaration": "function ensNamehash(string calldata name) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ensNamehash(string)",
+        "selector": "0x8c374c65",
+        "selectorBytes": [
+          140,
+          55,
+          76,
+          101
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -3712,6 +4114,26 @@
           194,
           101,
           27
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "envExists",
+        "description": "Gets the environment variable `name` and returns true if it exists, else returns false.",
+        "declaration": "function envExists(string calldata name) external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "envExists(string)",
+        "selector": "0xce8365f9",
+        "selectorBytes": [
+          206,
+          131,
+          101,
+          249
         ]
       },
       "group": "environment",
@@ -4162,9 +4584,9 @@
       "func": {
         "id": "exists",
         "description": "Returns true if the given path points to an existing entity, else returns false.",
-        "declaration": "function exists(string calldata path) external returns (bool result);",
+        "declaration": "function exists(string calldata path) external view returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "exists(string)",
         "selector": "0x261a323e",
         "selectorBytes": [
@@ -4340,6 +4762,86 @@
     },
     {
       "func": {
+        "id": "expectEmitAnonymous_0",
+        "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
+        "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool)",
+        "selector": "0xc948db5e",
+        "selectorBytes": [
+          201,
+          72,
+          219,
+          94
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_1",
+        "description": "Same as the previous method, but also checks supplied address against emitting contract.",
+        "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool,address)",
+        "selector": "0x71c95899",
+        "selectorBytes": [
+          113,
+          201,
+          88,
+          153
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_2",
+        "description": "Prepare an expected anonymous log with all topic and data checks enabled.\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.",
+        "declaration": "function expectEmitAnonymous() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous()",
+        "selector": "0x2e5f270c",
+        "selectorBytes": [
+          46,
+          95,
+          39,
+          12
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_3",
+        "description": "Same as the previous method, but also checks supplied address against emitting contract.",
+        "declaration": "function expectEmitAnonymous(address emitter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(address)",
+        "selector": "0x6fc68705",
+        "selectorBytes": [
+          111,
+          198,
+          135,
+          5
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectEmit_0",
         "description": "Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
         "declaration": "function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
@@ -4420,6 +4922,46 @@
     },
     {
       "func": {
+        "id": "expectPartialRevert_0",
+        "description": "Expects an error on next call that starts with the revert data.",
+        "declaration": "function expectPartialRevert(bytes4 revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectPartialRevert(bytes4)",
+        "selector": "0x11fb5b9c",
+        "selectorBytes": [
+          17,
+          251,
+          91,
+          156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectPartialRevert_1",
+        "description": "Expects an error on next call to reverter address, that starts with the revert data.",
+        "declaration": "function expectPartialRevert(bytes4 revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectPartialRevert(bytes4,address)",
+        "selector": "0x51aa008a",
+        "selectorBytes": [
+          81,
+          170,
+          0,
+          138
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectRevert_0",
         "description": "Expects an error on next call with any revert data.",
         "declaration": "function expectRevert() external;",
@@ -4441,7 +4983,7 @@
     {
       "func": {
         "id": "expectRevert_1",
-        "description": "Expects an error on next call that starts with the revert data.",
+        "description": "Expects an error on next call that exactly matches the revert data.",
         "declaration": "function expectRevert(bytes4 revertData) external;",
         "visibility": "external",
         "mutability": "",
@@ -4472,6 +5014,66 @@
           141,
           206,
           179
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_3",
+        "description": "Expects an error with any revert data on next call to reverter address.",
+        "declaration": "function expectRevert(address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(address)",
+        "selector": "0xd814f38a",
+        "selectorBytes": [
+          216,
+          20,
+          243,
+          138
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_4",
+        "description": "Expects an error from reverter address on next call, with any revert data.",
+        "declaration": "function expectRevert(bytes4 revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes4,address)",
+        "selector": "0x260bc5de",
+        "selectorBytes": [
+          38,
+          11,
+          197,
+          222
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_5",
+        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.",
+        "declaration": "function expectRevert(bytes calldata revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes,address)",
+        "selector": "0x61ebcf12",
+        "selectorBytes": [
+          97,
+          235,
+          207,
+          18
         ]
       },
       "group": "testing",
@@ -4580,6 +5182,86 @@
     },
     {
       "func": {
+        "id": "getArtifactPathByCode",
+        "description": "Gets the artifact path from code (aka. creation code).",
+        "declaration": "function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPathByCode(bytes)",
+        "selector": "0xeb74848c",
+        "selectorBytes": [
+          235,
+          116,
+          132,
+          140
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getArtifactPathByDeployedCode",
+        "description": "Gets the artifact path from deployed code (aka. runtime code).",
+        "declaration": "function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPathByDeployedCode(bytes)",
+        "selector": "0x6d853ba5",
+        "selectorBytes": [
+          109,
+          133,
+          59,
+          165
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBlobBaseFee",
+        "description": "Gets the current `block.blobbasefee`.\nYou should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
+        "declaration": "function getBlobBaseFee() external view returns (uint256 blobBaseFee);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlobBaseFee()",
+        "selector": "0x1f6d6ef7",
+        "selectorBytes": [
+          31,
+          109,
+          110,
+          247
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBlobhashes",
+        "description": "Gets the blockhashes from the current transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function getBlobhashes() external view returns (bytes32[] memory hashes);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlobhashes()",
+        "selector": "0xf56ff18b",
+        "selectorBytes": [
+          245,
+          111,
+          241,
+          139
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "getBlockNumber",
         "description": "Gets the current `block.number`.\nYou should use this instead of `block.number` if you use `vm.roll`, as `block.number` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlockNumber() external view returns (uint256 height);",
@@ -4620,8 +5302,68 @@
     },
     {
       "func": {
+        "id": "getBroadcast",
+        "description": "Returns the most recent broadcast for the given contract on `chainId` matching `txType`.\nFor example:\nThe most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.\nThe most recent call can be fetched by passing `txType` as `CALL`.",
+        "declaration": "function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBroadcast(string,uint64,uint8)",
+        "selector": "0x3dc90cb3",
+        "selectorBytes": [
+          61,
+          201,
+          12,
+          179
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBroadcasts_0",
+        "description": "Returns all broadcasts for the given contract on `chainId` with the specified `txType`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBroadcasts(string,uint64,uint8)",
+        "selector": "0xf7afe919",
+        "selectorBytes": [
+          247,
+          175,
+          233,
+          25
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBroadcasts_1",
+        "description": "Returns all broadcasts for the given contract on `chainId`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
+        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBroadcasts(string,uint64)",
+        "selector": "0xf2fa4a26",
+        "selectorBytes": [
+          242,
+          250,
+          74,
+          38
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getCode",
-        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file.",
+        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4641,7 +5383,7 @@
     {
       "func": {
         "id": "getDeployedCode",
-        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file.",
+        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -4655,6 +5397,86 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getDeployment_0",
+        "description": "Returns the most recent deployment for the current `chainId`.",
+        "declaration": "function getDeployment(string memory contractName) external view returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getDeployment(string)",
+        "selector": "0xa8091d97",
+        "selectorBytes": [
+          168,
+          9,
+          29,
+          151
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getDeployment_1",
+        "description": "Returns the most recent deployment for the given contract on `chainId`",
+        "declaration": "function getDeployment(string memory contractName, uint64 chainId) external view returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getDeployment(string,uint64)",
+        "selector": "0x0debd5d6",
+        "selectorBytes": [
+          13,
+          235,
+          213,
+          214
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getDeployments",
+        "description": "Returns all deployments for the given contract on `chainId`\nSorted in descending order of deployment time i.e descending order of BroadcastTxSummary.blockNumber.\nThe most recent deployment is the first element, and the oldest is the last.",
+        "declaration": "function getDeployments(string memory contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getDeployments(string,uint64)",
+        "selector": "0x74e133dd",
+        "selectorBytes": [
+          116,
+          225,
+          51,
+          221
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getFoundryVersion",
+        "description": "Returns the Foundry version.\nFormat: <cargo_version>+<git_sha>+<build_timestamp>\nSample output: 0.2.0+faa94c384+202407110019\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)\nto compare timestamps while ignoring minor time differences.",
+        "declaration": "function getFoundryVersion() external view returns (string memory version);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getFoundryVersion()",
+        "selector": "0xea991bb5",
+        "selectorBytes": [
+          234,
+          153,
+          27,
+          181
+        ]
+      },
+      "group": "testing",
       "status": "stable",
       "safety": "safe"
     },
@@ -4761,7 +5583,7 @@
     {
       "func": {
         "id": "getNonce_1",
-        "description": "Get a `Wallet`'s nonce.",
+        "description": "Get the nonce of a `Wallet`.",
         "declaration": "function getNonce(Wallet calldata wallet) external returns (uint64 nonce);",
         "visibility": "external",
         "mutability": "",
@@ -4774,7 +5596,7 @@
           173
         ]
       },
-      "group": "utilities",
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -4800,11 +5622,71 @@
     },
     {
       "func": {
-        "id": "isDir",
-        "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
-        "declaration": "function isDir(string calldata path) external returns (bool result);",
+        "id": "getWallets",
+        "description": "Returns addresses of available unlocked wallets in the script environment.",
+        "declaration": "function getWallets() external returns (address[] memory wallets);",
         "visibility": "external",
         "mutability": "",
+        "signature": "getWallets()",
+        "selector": "0xdb7a4605",
+        "selectorBytes": [
+          219,
+          122,
+          70,
+          5
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "indexOf",
+        "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
+        "declaration": "function indexOf(string calldata input, string calldata key) external pure returns (uint256);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "indexOf(string,string)",
+        "selector": "0x8a0807b7",
+        "selectorBytes": [
+          138,
+          8,
+          7,
+          183
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isContext",
+        "description": "Returns true if `forge` command was executed in given context.",
+        "declaration": "function isContext(ForgeContext context) external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isContext(uint8)",
+        "selector": "0x64af255d",
+        "selectorBytes": [
+          100,
+          175,
+          37,
+          93
+        ]
+      },
+      "group": "environment",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isDir",
+        "description": "Returns true if the path exists on disk and is pointing at a directory, else returns false.",
+        "declaration": "function isDir(string calldata path) external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
         "signature": "isDir(string)",
         "selector": "0x7d15d019",
         "selectorBytes": [
@@ -4822,9 +5704,9 @@
       "func": {
         "id": "isFile",
         "description": "Returns true if the path exists on disk and is pointing at a regular file, else returns false.",
-        "declaration": "function isFile(string calldata path) external returns (bool result);",
+        "declaration": "function isFile(string calldata path) external view returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "isFile(string)",
         "selector": "0xe0eb04d4",
         "selectorBytes": [
@@ -4875,7 +5757,9 @@
         ]
       },
       "group": "json",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `keyExistsJson`"
+      },
       "safety": "safe"
     },
     {
@@ -4940,6 +5824,26 @@
     },
     {
       "func": {
+        "id": "lastCallGas",
+        "description": "Gets the gas used in the last call from the callee perspective.",
+        "declaration": "function lastCallGas() external view returns (Gas memory gas);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "lastCallGas()",
+        "selector": "0x2b589b28",
+        "selectorBytes": [
+          43,
+          88,
+          155,
+          40
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "load",
         "description": "Loads a storage slot from an address.",
         "declaration": "function load(address target, bytes32 slot) external view returns (bytes32 data);",
@@ -4961,7 +5865,7 @@
     {
       "func": {
         "id": "loadAllocs",
-        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory EVM state.",
         "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
         "visibility": "external",
         "mutability": "",
@@ -5100,6 +6004,46 @@
     },
     {
       "func": {
+        "id": "mockCallRevert_2",
+        "description": "Reverts a call to an address with specified revert data.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCallRevert(address,bytes4,bytes)",
+        "selector": "0x2dfba5df",
+        "selectorBytes": [
+          45,
+          251,
+          165,
+          223
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCallRevert_3",
+        "description": "Reverts a call to an address with a specific `msg.value`, with specified revert data.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCallRevert(address,uint256,bytes4,bytes)",
+        "selector": "0x596c8f04",
+        "selectorBytes": [
+          89,
+          108,
+          143,
+          4
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "mockCall_0",
         "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.",
         "declaration": "function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;",
@@ -5132,6 +6076,106 @@
           64,
           155,
           145
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCall_2",
+        "description": "Mocks a call to an address, returning specified data.\nCalldata can either be strict or a partial match, e.g. if you only\npass a Solidity selector to the expected calldata, then the entire Solidity\nfunction will be mocked.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCall(address callee, bytes4 data, bytes calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCall(address,bytes4,bytes)",
+        "selector": "0x08e0c537",
+        "selectorBytes": [
+          8,
+          224,
+          197,
+          55
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCall_3",
+        "description": "Mocks a call to an address with a specific `msg.value`, returning specified data.\nCalldata match takes precedence over `msg.value` in case of ambiguity.\nOverload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.",
+        "declaration": "function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCall(address,uint256,bytes4,bytes)",
+        "selector": "0xe7b36a3d",
+        "selectorBytes": [
+          231,
+          179,
+          106,
+          61
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCalls_0",
+        "description": "Mocks multiple calls to an address, returning specified data for each call.",
+        "declaration": "function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCalls(address,bytes,bytes[])",
+        "selector": "0x5c5c3de9",
+        "selectorBytes": [
+          92,
+          92,
+          61,
+          233
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCalls_1",
+        "description": "Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.",
+        "declaration": "function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCalls(address,uint256,bytes,bytes[])",
+        "selector": "0x08bcbae1",
+        "selectorBytes": [
+          8,
+          188,
+          186,
+          225
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockFunction",
+        "description": "Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls\n`target` with the same calldata. This functionality is similar to a delegate call made to\n`target` contract from `callee`.\nCan be used to substitute a call to a function with another implementation that captures\nthe primary logic of the original function but is easier to reason about.\nIf calldata is not a strict match then partial match by selector is attempted.",
+        "declaration": "function mockFunction(address callee, address target, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockFunction(address,address,bytes)",
+        "selector": "0xadf84d21",
+        "selectorBytes": [
+          173,
+          248,
+          77,
+          33
         ]
       },
       "group": "evm",
@@ -5500,6 +6544,66 @@
     },
     {
       "func": {
+        "id": "parseJsonTypeArray",
+        "description": "Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "declaration": "function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonTypeArray(string,string,string)",
+        "selector": "0x0175d535",
+        "selectorBytes": [
+          1,
+          117,
+          213,
+          53
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonType_0",
+        "description": "Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonType(string,string)",
+        "selector": "0xa9da313b",
+        "selectorBytes": [
+          169,
+          218,
+          49,
+          59
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonType_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonType(string,string,string)",
+        "selector": "0xe3f5ae33",
+        "selectorBytes": [
+          227,
+          245,
+          174,
+          51
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseJsonUint",
         "description": "Parses a string of JSON data at `key` and coerces it to `uint256`.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);",
@@ -5840,6 +6944,66 @@
     },
     {
       "func": {
+        "id": "parseTomlTypeArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "declaration": "function parseTomlTypeArray(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlTypeArray(string,string,string)",
+        "selector": "0x49be3743",
+        "selectorBytes": [
+          73,
+          190,
+          55,
+          67
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlType_0",
+        "description": "Parses a string of TOML data and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseTomlType(string calldata toml, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlType(string,string)",
+        "selector": "0x47fa5e11",
+        "selectorBytes": [
+          71,
+          250,
+          94,
+          17
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlType_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseTomlType(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlType(string,string,string)",
+        "selector": "0xf9fa5cdb",
+        "selectorBytes": [
+          249,
+          250,
+          92,
+          219
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseTomlUint",
         "description": "Parses a string of TOML data at `key` and coerces it to `uint256`.",
         "declaration": "function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);",
@@ -5960,6 +7124,26 @@
     },
     {
       "func": {
+        "id": "pauseTracing",
+        "description": "Pauses collection of call traces. Useful in cases when you want to skip tracing of\ncomplex calls which are not useful for debugging.",
+        "declaration": "function pauseTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "pauseTracing()",
+        "selector": "0xc94d1f90",
+        "selectorBytes": [
+          201,
+          77,
+          31,
+          144
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "prank_0",
         "description": "Sets the *next* call's `msg.sender` to be the input address.",
         "declaration": "function prank(address msgSender) external;",
@@ -6000,7 +7184,47 @@
     },
     {
       "func": {
-        "id": "prevrandao",
+        "id": "prank_2",
+        "description": "Sets the *next* delegate call's `msg.sender` to be the input address.",
+        "declaration": "function prank(address msgSender, bool delegateCall) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prank(address,bool)",
+        "selector": "0xa7f8bf5c",
+        "selectorBytes": [
+          167,
+          248,
+          191,
+          92
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "prank_3",
+        "description": "Sets the *next* delegate call's `msg.sender` to be the input address, and the `tx.origin` to be the second input.",
+        "declaration": "function prank(address msgSender, address txOrigin, bool delegateCall) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prank(address,address,bool)",
+        "selector": "0x7d73d042",
+        "selectorBytes": [
+          125,
+          115,
+          208,
+          66
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "prevrandao_0",
         "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
         "declaration": "function prevrandao(bytes32 newPrevrandao) external;",
         "visibility": "external",
@@ -6012,6 +7236,26 @@
           146,
           85,
           73
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "prevrandao_1",
+        "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function prevrandao(uint256 newPrevrandao) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prevrandao(uint256)",
+        "selector": "0x9cb1c0d4",
+        "selectorBytes": [
+          156,
+          177,
+          192,
+          212
         ]
       },
       "group": "evm",
@@ -6060,6 +7304,26 @@
     },
     {
       "func": {
+        "id": "promptAddress",
+        "description": "Prompts the user for an address in the terminal.",
+        "declaration": "function promptAddress(string calldata promptText) external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptAddress(string)",
+        "selector": "0x62ee05f4",
+        "selectorBytes": [
+          98,
+          238,
+          5,
+          244
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "promptSecret",
         "description": "Prompts the user for a hidden string value in the terminal.",
         "declaration": "function promptSecret(string calldata promptText) external returns (string memory input);",
@@ -6075,6 +7339,266 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptSecretUint",
+        "description": "Prompts the user for hidden uint256 in the terminal (usually pk).",
+        "declaration": "function promptSecretUint(string calldata promptText) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptSecretUint(string)",
+        "selector": "0x69ca02b7",
+        "selectorBytes": [
+          105,
+          202,
+          2,
+          183
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "promptUint",
+        "description": "Prompts the user for uint256 in the terminal.",
+        "declaration": "function promptUint(string calldata promptText) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptUint(string)",
+        "selector": "0x652fd489",
+        "selectorBytes": [
+          101,
+          47,
+          212,
+          137
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "publicKeyP256",
+        "description": "Derives secp256r1 public key from the provided `privateKey`.",
+        "declaration": "function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "publicKeyP256(uint256)",
+        "selector": "0xc453949e",
+        "selectorBytes": [
+          196,
+          83,
+          148,
+          158
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomAddress",
+        "description": "Returns a random `address`.",
+        "declaration": "function randomAddress() external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomAddress()",
+        "selector": "0xd5bee9f5",
+        "selectorBytes": [
+          213,
+          190,
+          233,
+          245
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomBool",
+        "description": "Returns a random `bool`.",
+        "declaration": "function randomBool() external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomBool()",
+        "selector": "0xcdc126bd",
+        "selectorBytes": [
+          205,
+          193,
+          38,
+          189
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomBytes",
+        "description": "Returns a random byte array value of the given length.",
+        "declaration": "function randomBytes(uint256 len) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomBytes(uint256)",
+        "selector": "0x6c5d32a9",
+        "selectorBytes": [
+          108,
+          93,
+          50,
+          169
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomBytes4",
+        "description": "Returns a random fixed-size byte array of length 4.",
+        "declaration": "function randomBytes4() external view returns (bytes4);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomBytes4()",
+        "selector": "0x9b7cd579",
+        "selectorBytes": [
+          155,
+          124,
+          213,
+          121
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomBytes8",
+        "description": "Returns a random fixed-size byte array of length 8.",
+        "declaration": "function randomBytes8() external view returns (bytes8);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomBytes8()",
+        "selector": "0x0497b0a5",
+        "selectorBytes": [
+          4,
+          151,
+          176,
+          165
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomInt_0",
+        "description": "Returns a random `int256` value.",
+        "declaration": "function randomInt() external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomInt()",
+        "selector": "0x111f1202",
+        "selectorBytes": [
+          17,
+          31,
+          18,
+          2
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomInt_1",
+        "description": "Returns a random `int256` value of given bits.",
+        "declaration": "function randomInt(uint256 bits) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomInt(uint256)",
+        "selector": "0x12845966",
+        "selectorBytes": [
+          18,
+          132,
+          89,
+          102
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_0",
+        "description": "Returns a random uint256 value.",
+        "declaration": "function randomUint() external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint()",
+        "selector": "0x25124730",
+        "selectorBytes": [
+          37,
+          18,
+          71,
+          48
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_1",
+        "description": "Returns random uint256 value between the provided range (=min..=max).",
+        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint(uint256,uint256)",
+        "selector": "0xd61b051b",
+        "selectorBytes": [
+          214,
+          27,
+          5,
+          27
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_2",
+        "description": "Returns a random `uint256` value of given bits.",
+        "declaration": "function randomUint(uint256 bits) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomUint(uint256)",
+        "selector": "0xcf81e69c",
+        "selectorBytes": [
+          207,
+          129,
+          230,
+          156
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },
@@ -6294,7 +7818,47 @@
           100
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rememberKeys_0",
+        "description": "Derive a set number of wallets from a mnemonic at the derivation path `m/44'/60'/0'/0/{0..count}`.\nThe respective private keys are saved to the local forge wallet for later use and their addresses are returned.",
+        "declaration": "function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rememberKeys(string,string,uint32)",
+        "selector": "0x97cb9189",
+        "selectorBytes": [
+          151,
+          203,
+          145,
+          137
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rememberKeys_1",
+        "description": "Derive a set number of wallets from a mnemonic in the specified language at the derivation path `m/44'/60'/0'/0/{0..count}`.\nThe respective private keys are saved to the local forge wallet for later use and their addresses are returned.",
+        "declaration": "function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rememberKeys(string,string,string,uint32)",
+        "selector": "0xf8d58eaf",
+        "selectorBytes": [
+          248,
+          213,
+          142,
+          175
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -6360,6 +7924,26 @@
     },
     {
       "func": {
+        "id": "resetGasMetering",
+        "description": "Reset gas metering (i.e. gas usage is set to gas limit).",
+        "declaration": "function resetGasMetering() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "resetGasMetering()",
+        "selector": "0xbe367dd3",
+        "selectorBytes": [
+          190,
+          54,
+          125,
+          211
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "resetNonce",
         "description": "Resets the nonce of an account to 0 for EOAs and 1 for contract accounts.",
         "declaration": "function resetNonce(address account) external;",
@@ -6400,8 +7984,28 @@
     },
     {
       "func": {
+        "id": "resumeTracing",
+        "description": "Unpauses collection of call traces.",
+        "declaration": "function resumeTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "resumeTracing()",
+        "selector": "0x72a09ccb",
+        "selectorBytes": [
+          114,
+          160,
+          156,
+          203
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "revertTo",
-        "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted.\nReturns `false` if the snapshot does not exist.\n**Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.",
+        "description": "`revertTo` is being deprecated in favor of `revertToState`. It will be removed in future versions.",
         "declaration": "function revertTo(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
@@ -6415,13 +8019,15 @@
         ]
       },
       "group": "evm",
-      "status": "stable",
+      "status": {
+        "deprecated": "replaced by `revertToState`"
+      },
       "safety": "unsafe"
     },
     {
       "func": {
         "id": "revertToAndDelete",
-        "description": "Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted and deleted.\nReturns `false` if the snapshot does not exist.",
+        "description": "`revertToAndDelete` is being deprecated in favor of `revertToStateAndDelete`. It will be removed in future versions.",
         "declaration": "function revertToAndDelete(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
@@ -6432,6 +8038,48 @@
           224,
           172,
           169
+        ]
+      },
+      "group": "evm",
+      "status": {
+        "deprecated": "replaced by `revertToStateAndDelete`"
+      },
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "revertToState",
+        "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted.\nReturns `false` if the snapshot does not exist.\n**Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteStateSnapshot`.",
+        "declaration": "function revertToState(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "revertToState(uint256)",
+        "selector": "0xc2527405",
+        "selectorBytes": [
+          194,
+          82,
+          116,
+          5
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "revertToStateAndDelete",
+        "description": "Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted and deleted.\nReturns `false` if the snapshot does not exist.",
+        "declaration": "function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "revertToStateAndDelete(uint256)",
+        "selector": "0x3a1985dc",
+        "selectorBytes": [
+          58,
+          25,
+          133,
+          220
         ]
       },
       "group": "evm",
@@ -6580,26 +8228,6 @@
     },
     {
       "func": {
-        "id": "rpc",
-        "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
-        "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "rpc(string,string)",
-        "selector": "0x1206c8a8",
-        "selectorBytes": [
-          18,
-          6,
-          200,
-          168
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "rpcUrl",
         "description": "Returns the RPC url for the given alias.",
         "declaration": "function rpcUrl(string calldata rpcAlias) external view returns (string memory json);",
@@ -6655,6 +8283,46 @@
         ]
       },
       "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpc_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
+        "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpc(string,string)",
+        "selector": "0x1206c8a8",
+        "selectorBytes": [
+          18,
+          6,
+          200,
+          168
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpc_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint.",
+        "declaration": "function rpc(string calldata urlOrAlias, string calldata method, string calldata params) external returns (bytes memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpc(string,string,string)",
+        "selector": "0x0199a220",
+        "selectorBytes": [
+          1,
+          153,
+          162,
+          32
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -6900,6 +8568,46 @@
     },
     {
       "func": {
+        "id": "serializeJsonType_0",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "serializeJsonType(string,bytes)",
+        "selector": "0x6d4f96a6",
+        "selectorBytes": [
+          109,
+          79,
+          150,
+          166
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "serializeJsonType_1",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeJsonType(string,string,string,bytes)",
+        "selector": "0x6f93bccb",
+        "selectorBytes": [
+          111,
+          147,
+          188,
+          203
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "serializeString_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);",
@@ -6932,6 +8640,26 @@
           28,
           214,
           243
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "serializeUintToHex",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeUintToHex(string,string,uint256)",
+        "selector": "0xae5a2ae8",
+        "selectorBytes": [
+          174,
+          90,
+          42,
+          232
         ]
       },
       "group": "json",
@@ -6977,6 +8705,46 @@
       "group": "json",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setArbitraryStorage",
+        "description": "Utility cheatcode to set arbitrary storage for given target address.",
+        "declaration": "function setArbitraryStorage(address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setArbitraryStorage(address)",
+        "selector": "0xe1631837",
+        "selectorBytes": [
+          225,
+          99,
+          24,
+          55
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setBlockhash",
+        "description": "Set blockhash for the current block.\nIt only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.",
+        "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setBlockhash(uint256,bytes32)",
+        "selector": "0x5314b54a",
+        "selectorBytes": [
+          83,
+          20,
+          181,
+          74
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -7040,6 +8808,86 @@
     },
     {
       "func": {
+        "id": "signCompact_0",
+        "description": "Signs data with a `Wallet`.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
+        "declaration": "function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signCompact((address,uint256,uint256,uint256),bytes32)",
+        "selector": "0x3d0e292f",
+        "selectorBytes": [
+          61,
+          14,
+          41,
+          47
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signCompact_1",
+        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
+        "declaration": "function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signCompact(uint256,bytes32)",
+        "selector": "0xcc2a781f",
+        "selectorBytes": [
+          204,
+          42,
+          120,
+          31
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signCompact_2",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signCompact(bytes32)",
+        "selector": "0xa282dc4b",
+        "selectorBytes": [
+          162,
+          130,
+          220,
+          75
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signCompact_3",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signCompact(address,bytes32)",
+        "selector": "0x8e2f97bf",
+        "selectorBytes": [
+          142,
+          47,
+          151,
+          191
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signP256",
         "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
         "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
@@ -7054,33 +8902,13 @@
           64
         ]
       },
-      "group": "evm",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
     {
       "func": {
         "id": "sign_0",
-        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.",
-        "declaration": "function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "sign(uint256,bytes32)",
-        "selector": "0xe341eaa4",
-        "selectorBytes": [
-          227,
-          65,
-          234,
-          164
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "sign_1",
         "description": "Signs data with a `Wallet`.",
         "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
@@ -7094,14 +8922,74 @@
           37
         ]
       },
-      "group": "utilities",
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
     {
       "func": {
-        "id": "skip",
-        "description": "Marks a test as skipped. Must be called at the top of the test.",
+        "id": "sign_1",
+        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.",
+        "declaration": "function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(uint256,bytes32)",
+        "selector": "0xe341eaa4",
+        "selectorBytes": [
+          227,
+          65,
+          234,
+          164
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "sign_2",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(bytes32)",
+        "selector": "0x799cd333",
+        "selectorBytes": [
+          121,
+          156,
+          211,
+          51
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "sign_3",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "sign(address,bytes32)",
+        "selector": "0x8c1aa205",
+        "selectorBytes": [
+          140,
+          26,
+          162,
+          5
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "skip_0",
+        "description": "Marks a test as skipped. Must be called at the top level of a test.",
         "declaration": "function skip(bool skipTest) external;",
         "visibility": "external",
         "mutability": "",
@@ -7112,6 +9000,26 @@
           130,
           209,
           62
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "skip_1",
+        "description": "Marks a test as skipped with a reason. Must be called at the top level of a test.",
+        "declaration": "function skip(bool skipTest, string calldata reason) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "skip(bool,string)",
+        "selector": "0xc42a80a7",
+        "selectorBytes": [
+          196,
+          42,
+          128,
+          167
         ]
       },
       "group": "testing",
@@ -7141,7 +9049,7 @@
     {
       "func": {
         "id": "snapshot",
-        "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertTo`.",
+        "description": "`snapshot` is being deprecated in favor of `snapshotState`. It will be removed in future versions.",
         "declaration": "function snapshot() external returns (uint256 snapshotId);",
         "visibility": "external",
         "mutability": "",
@@ -7152,6 +9060,108 @@
           17,
           113,
           90
+        ]
+      },
+      "group": "evm",
+      "status": {
+        "deprecated": "replaced by `snapshotState`"
+      },
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGasLastCall_0",
+        "description": "Snapshot capture the gas usage of the last call by name from the callee perspective.",
+        "declaration": "function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastCall(string)",
+        "selector": "0xdd9fca12",
+        "selectorBytes": [
+          221,
+          159,
+          202,
+          18
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGasLastCall_1",
+        "description": "Snapshot capture the gas usage of the last call by name in a group from the callee perspective.",
+        "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastCall(string,string)",
+        "selector": "0x200c6772",
+        "selectorBytes": [
+          32,
+          12,
+          103,
+          114
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotState",
+        "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertToState`.",
+        "declaration": "function snapshotState() external returns (uint256 snapshotId);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotState()",
+        "selector": "0x9cd23835",
+        "selectorBytes": [
+          156,
+          210,
+          56,
+          53
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotValue_0",
+        "description": "Snapshot capture an arbitrary numerical value by name.\nThe group name is derived from the contract name.",
+        "declaration": "function snapshotValue(string calldata name, uint256 value) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotValue(string,uint256)",
+        "selector": "0x51db805a",
+        "selectorBytes": [
+          81,
+          219,
+          128,
+          90
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotValue_1",
+        "description": "Snapshot capture an arbitrary numerical value by name in a group.",
+        "declaration": "function snapshotValue(string calldata group, string calldata name, uint256 value) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotValue(string,string,uint256)",
+        "selector": "0x6d2b27d8",
+        "selectorBytes": [
+          109,
+          43,
+          39,
+          216
         ]
       },
       "group": "evm",
@@ -7181,7 +9191,7 @@
     {
       "func": {
         "id": "startBroadcast_0",
-        "description": "Using the address that calls the test contract, has all subsequent calls\n(at this call depth only) create transactions that can later be signed and sent onchain.",
+        "description": "Has all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function startBroadcast() external;",
         "visibility": "external",
         "mutability": "",
@@ -7235,6 +9245,26 @@
         ]
       },
       "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "startDebugTraceRecording",
+        "description": "Records the debug trace during the run.",
+        "declaration": "function startDebugTraceRecording() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startDebugTraceRecording()",
+        "selector": "0x419c8832",
+        "selectorBytes": [
+          65,
+          156,
+          136,
+          50
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -7300,6 +9330,86 @@
     },
     {
       "func": {
+        "id": "startPrank_2",
+        "description": "Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called.",
+        "declaration": "function startPrank(address msgSender, bool delegateCall) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startPrank(address,bool)",
+        "selector": "0x1cc0b435",
+        "selectorBytes": [
+          28,
+          192,
+          180,
+          53
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startPrank_3",
+        "description": "Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called, and the `tx.origin` to be the second input.",
+        "declaration": "function startPrank(address msgSender, address txOrigin, bool delegateCall) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startPrank(address,address,bool)",
+        "selector": "0x4eb859b5",
+        "selectorBytes": [
+          78,
+          184,
+          89,
+          181
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startSnapshotGas_0",
+        "description": "Start a snapshot capture of the current gas usage by name.\nThe group name is derived from the contract name.",
+        "declaration": "function startSnapshotGas(string calldata name) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startSnapshotGas(string)",
+        "selector": "0x3cad9d7b",
+        "selectorBytes": [
+          60,
+          173,
+          157,
+          123
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startSnapshotGas_1",
+        "description": "Start a snapshot capture of the current gas usage by name in a group.",
+        "declaration": "function startSnapshotGas(string calldata group, string calldata name) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startSnapshotGas(string,string)",
+        "selector": "0x6cd0cc53",
+        "selectorBytes": [
+          108,
+          208,
+          204,
+          83
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "startStateDiffRecording",
         "description": "Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,\nalong with the context of the calls",
         "declaration": "function startStateDiffRecording() external;",
@@ -7312,6 +9422,26 @@
           34,
           227,
           201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopAndReturnDebugTraceRecording",
+        "description": "Stop debug trace recording and returns the recorded debug trace.",
+        "declaration": "function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopAndReturnDebugTraceRecording()",
+        "selector": "0xced398a2",
+        "selectorBytes": [
+          206,
+          211,
+          152,
+          162
         ]
       },
       "group": "evm",
@@ -7412,6 +9542,66 @@
           197,
           1,
           59
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopSnapshotGas_0",
+        "description": "Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.",
+        "declaration": "function stopSnapshotGas() external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopSnapshotGas()",
+        "selector": "0xf6402eda",
+        "selectorBytes": [
+          246,
+          64,
+          46,
+          218
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopSnapshotGas_1",
+        "description": "Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.\nThe group name is derived from the contract name.",
+        "declaration": "function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopSnapshotGas(string)",
+        "selector": "0x773b2805",
+        "selectorBytes": [
+          119,
+          59,
+          40,
+          5
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopSnapshotGas_2",
+        "description": "Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.",
+        "declaration": "function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopSnapshotGas(string,string)",
+        "selector": "0x0c9db707",
+        "selectorBytes": [
+          12,
+          157,
+          183,
+          7
         ]
       },
       "group": "evm",
@@ -7782,9 +9972,9 @@
       "func": {
         "id": "unixTime",
         "description": "Returns the time since unix epoch in milliseconds.",
-        "declaration": "function unixTime() external returns (uint256 milliseconds);",
+        "declaration": "function unixTime() external view returns (uint256 milliseconds);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "unixTime()",
         "selector": "0x625387dc",
         "selectorBytes": [

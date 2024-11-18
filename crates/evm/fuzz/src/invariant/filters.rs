@@ -14,12 +14,18 @@ pub struct ArtifactFilters {
     /// List of `contract_path:contract_name` which are to be excluded.
     pub excluded: Vec<String>,
 }
+
 impl ArtifactFilters {
+    /// Returns `true` if the given identifier matches this filter.
+    pub fn matches(&self, identifier: &str) -> bool {
+        (self.targeted.is_empty() || self.targeted.contains_key(identifier)) &&
+            (self.excluded.is_empty() || !self.excluded.iter().any(|id| id == identifier))
+    }
+
     /// Gets all the targeted functions from `artifact`. Returns error, if selectors do not match
     /// the `artifact`.
     ///
-    /// An empty vector means that it targets any mutable function. See `select_random_function` for
-    /// more.
+    /// An empty vector means that it targets any mutable function.
     pub fn get_targeted_functions(
         &self,
         artifact: &ArtifactId,
@@ -28,7 +34,7 @@ impl ArtifactFilters {
         if let Some(selectors) = self.targeted.get(&artifact.identifier()) {
             let functions = selectors
                 .iter()
-                .map(|selector| get_function(&artifact.name, selector, abi))
+                .map(|selector| get_function(&artifact.name, *selector, abi).cloned())
                 .collect::<eyre::Result<Vec<_>>>()?;
             // targetArtifactSelectors > excludeArtifacts > targetArtifacts
             if functions.is_empty() && self.excluded.contains(&artifact.identifier()) {
@@ -44,6 +50,7 @@ impl ArtifactFilters {
         Ok(None)
     }
 }
+
 /// Filter for acceptable senders to use for invariant testing. Exclusion takes priority if
 /// clashing.
 ///
@@ -61,6 +68,6 @@ impl SenderFilters {
             excluded.push(addr_0);
         }
         targeted.retain(|addr| !excluded.contains(addr));
-        SenderFilters { targeted, excluded }
+        Self { targeted, excluded }
     }
 }

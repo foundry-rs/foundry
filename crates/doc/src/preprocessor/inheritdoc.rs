@@ -2,10 +2,10 @@ use super::{Preprocessor, PreprocessorId};
 use crate::{
     document::DocumentContent, Comments, Document, ParseItem, ParseSource, PreprocessorOutput,
 };
+use alloy_primitives::map::HashMap;
 use forge_fmt::solang_ext::SafeUnwrap;
-use std::collections::HashMap;
 
-/// [ContractInheritance] preprocessor id.
+/// [`Inheritdoc`] preprocessor ID.
 pub const INHERITDOC_ID: PreprocessorId = PreprocessorId("inheritdoc");
 
 /// The inheritdoc preprocessor.

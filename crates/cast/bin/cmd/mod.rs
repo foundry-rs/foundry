@@ -6,9 +6,12 @@
 //! [`foundry_config::Config`].
 
 pub mod access_list;
+pub mod artifact;
 pub mod bind;
 pub mod call;
+pub mod constructor_args;
 pub mod create2;
+pub mod creation_code;
 pub mod estimate;
 pub mod find_block;
 pub mod interface;

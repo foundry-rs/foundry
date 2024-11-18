@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -42,6 +42,20 @@ contract NestedMock {
     }
 }
 
+contract NestedMockDelegateCall {
+    Mock private inner;
+
+    constructor(Mock _inner) {
+        inner = _inner;
+    }
+
+    function sum() public returns (uint256) {
+        (, bytes memory dataA) = address(inner).delegatecall(abi.encodeWithSelector(Mock.numberA.selector));
+        (, bytes memory dataB) = address(inner).delegatecall(abi.encodeWithSelector(Mock.numberB.selector));
+        return abi.decode(dataA, (uint256)) + abi.decode(dataB, (uint256));
+    }
+}
+
 contract MockCallTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -69,6 +83,18 @@ contract MockCallTest is DSTest {
         vm.mockCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), abi.encode(9));
 
         // post-mock
+        assertEq(target.sum(), 10);
+    }
+
+    // Ref: https://github.com/foundry-rs/foundry/issues/8066
+    function testMockNestedDelegate() public {
+        Mock inner = new Mock();
+        NestedMockDelegateCall target = new NestedMockDelegateCall(inner);
+
+        assertEq(target.sum(), 3);
+
+        vm.mockCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), abi.encode(9));
+
         assertEq(target.sum(), 10);
     }
 
@@ -150,7 +176,7 @@ contract MockCallTest is DSTest {
         Mock mock = Mock(address(100));
 
         vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10));
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode());
+        vm.mockCall(address(mock), mock.noReturnValue.selector, abi.encode());
 
         assertEq(mock.add(1, 2), 10);
         mock.noReturnValue();
@@ -171,7 +197,7 @@ contract MockCallRevertTest is DSTest {
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
 
-        vm.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(address(target), target.numberB.selector, ERROR_MESSAGE);
 
         // post-mock
         assertEq(target.numberA(), 1);

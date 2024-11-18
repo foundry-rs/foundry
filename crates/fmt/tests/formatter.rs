@@ -94,7 +94,7 @@ fn test_formatter(
     struct PrettyString(String);
 
     impl PartialEq for PrettyString {
-        fn eq(&self, other: &PrettyString) -> bool {
+        fn eq(&self, other: &Self) -> bool {
             self.0.lines().eq(other.0.lines())
         }
     }
@@ -111,7 +111,7 @@ fn test_formatter(
     let expected_parsed = parse(expected_source).unwrap();
 
     if !test_config.skip_compare_ast_eq && !source_parsed.pt.ast_eq(&expected_parsed.pt) {
-        pretty_assertions::assert_eq!(
+        similar_asserts::assert_eq!(
             source_parsed.pt,
             expected_parsed.pt,
             "(formatted Parse Tree == expected Parse Tree) in {}",
@@ -127,7 +127,7 @@ fn test_formatter(
 
     let source_formatted = PrettyString(source_formatted);
 
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         source_formatted,
         expected,
         "(formatted == expected) in {}",
@@ -140,7 +140,7 @@ fn test_formatter(
 
     let expected_formatted = PrettyString(expected_formatted);
 
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         expected_formatted,
         expected,
         "(formatted == expected) in {}",

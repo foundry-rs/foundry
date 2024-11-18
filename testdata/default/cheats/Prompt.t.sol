@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
+import "../logs/console.sol";
 
 contract PromptTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
@@ -14,5 +15,18 @@ contract PromptTest is DSTest {
 
         vm._expectCheatcodeRevert();
         vm.promptSecret("test");
+
+        vm._expectCheatcodeRevert();
+        uint256 test = vm.promptSecretUint("test");
+    }
+
+    function testPrompt_Address() public {
+        vm._expectCheatcodeRevert();
+        address test = vm.promptAddress("test");
+    }
+
+    function testPrompt_Uint() public {
+        vm._expectCheatcodeRevert();
+        uint256 test = vm.promptUint("test");
     }
 }

@@ -9,19 +9,22 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 
-ariadne = "0.3"
+ariadne = "0.4"
 itertools.workspace = true
 solang-parser.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 itertools.workspace = true
-pretty_assertions.workspace = true
+similar-asserts.workspace = true
 toml.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

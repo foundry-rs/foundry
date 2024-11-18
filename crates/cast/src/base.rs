@@ -90,7 +90,7 @@ impl TryFrom<U256> for Base {
 
 impl From<Base> for u32 {
     fn from(b: Base) -> Self {
-        b as u32
+        b as Self
     }
 }
 
@@ -293,7 +293,7 @@ impl From<U256> for NumberWithBase {
 
 impl From<NumberWithBase> for I256 {
     fn from(n: NumberWithBase) -> Self {
-        I256::from_raw(n.number)
+        Self::from_raw(n.number)
     }
 }
 

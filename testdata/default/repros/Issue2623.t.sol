@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -9,7 +9,7 @@ contract Issue2623Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testRollFork() public {
-        uint256 fork = vm.createFork("rpcAlias", 10);
+        uint256 fork = vm.createFork("mainnet", 10);
         vm.selectFork(fork);
 
         assertEq(block.number, 10);

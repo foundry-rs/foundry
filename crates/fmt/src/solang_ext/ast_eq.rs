@@ -225,13 +225,13 @@ macro_rules! wrap_in_box {
 impl AstEq for Statement {
     fn ast_eq(&self, other: &Self) -> bool {
         match self {
-            Statement::If(loc, expr, stmt1, stmt2) => {
+            Self::If(loc, expr, stmt1, stmt2) => {
                 #[allow(clippy::borrowed_box)]
-                let wrap_if = |stmt1: &Box<Statement>, stmt2: &Option<Box<Statement>>| {
+                let wrap_if = |stmt1: &Box<Self>, stmt2: &Option<Box<Self>>| {
                     (
                         wrap_in_box!(stmt1, *loc),
                         stmt2.as_ref().map(|stmt2| {
-                            if matches!(**stmt2, Statement::If(..)) {
+                            if matches!(**stmt2, Self::If(..)) {
                                 stmt2.clone()
                             } else {
                                 wrap_in_box!(stmt2, *loc)
@@ -241,7 +241,7 @@ impl AstEq for Statement {
                 };
                 let (stmt1, stmt2) = wrap_if(stmt1, stmt2);
                 let left = (loc, expr, &stmt1, &stmt2);
-                if let Statement::If(loc, expr, stmt1, stmt2) = other {
+                if let Self::If(loc, expr, stmt1, stmt2) = other {
                     let (stmt1, stmt2) = wrap_if(stmt1, stmt2);
                     let right = (loc, expr, &stmt1, &stmt2);
                     left.ast_eq(&right)
@@ -249,10 +249,10 @@ impl AstEq for Statement {
                     false
                 }
             }
-            Statement::While(loc, expr, stmt1) => {
+            Self::While(loc, expr, stmt1) => {
                 let stmt1 = wrap_in_box!(stmt1, *loc);
                 let left = (loc, expr, &stmt1);
-                if let Statement::While(loc, expr, stmt1) = other {
+                if let Self::While(loc, expr, stmt1) = other {
                     let stmt1 = wrap_in_box!(stmt1, *loc);
                     let right = (loc, expr, &stmt1);
                     left.ast_eq(&right)
@@ -260,10 +260,10 @@ impl AstEq for Statement {
                     false
                 }
             }
-            Statement::DoWhile(loc, stmt1, expr) => {
+            Self::DoWhile(loc, stmt1, expr) => {
                 let stmt1 = wrap_in_box!(stmt1, *loc);
                 let left = (loc, &stmt1, expr);
-                if let Statement::DoWhile(loc, stmt1, expr) = other {
+                if let Self::DoWhile(loc, stmt1, expr) = other {
                     let stmt1 = wrap_in_box!(stmt1, *loc);
                     let right = (loc, &stmt1, expr);
                     left.ast_eq(&right)
@@ -271,10 +271,10 @@ impl AstEq for Statement {
                     false
                 }
             }
-            Statement::For(loc, stmt1, expr, stmt2, stmt3) => {
+            Self::For(loc, stmt1, expr, stmt2, stmt3) => {
                 let stmt3 = stmt3.as_ref().map(|stmt3| wrap_in_box!(stmt3, *loc));
                 let left = (loc, stmt1, expr, stmt2, &stmt3);
-                if let Statement::For(loc, stmt1, expr, stmt2, stmt3) = other {
+                if let Self::For(loc, stmt1, expr, stmt2, stmt3) = other {
                     let stmt3 = stmt3.as_ref().map(|stmt3| wrap_in_box!(stmt3, *loc));
                     let right = (loc, stmt1, expr, stmt2, &stmt3);
                     left.ast_eq(&right)
@@ -282,11 +282,11 @@ impl AstEq for Statement {
                     false
                 }
             }
-            Statement::Try(loc, expr, returns, catch) => {
+            Self::Try(loc, expr, returns, catch) => {
                 let left_returns =
                     returns.as_ref().map(|(params, stmt)| (filter_params(params), stmt));
                 let left = (loc, expr, left_returns, catch);
-                if let Statement::Try(loc, expr, returns, catch) = other {
+                if let Self::Try(loc, expr, returns, catch) = other {
                     let right_returns =
                         returns.as_ref().map(|(params, stmt)| (filter_params(params), stmt));
                     let right = (loc, expr, right_returns, catch);

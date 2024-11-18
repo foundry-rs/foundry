@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -11,6 +11,14 @@ contract EnvTest is DSTest {
         string memory key = "_foundryCheatcodeSetEnvTestKey";
         string memory val = "_foundryCheatcodeSetEnvTestVal";
         vm.setEnv(key, val);
+    }
+
+    function testEnvExists() public {
+        string memory key = "_foundryCheatcodeEnvExistsTestKey";
+        string memory val = "_foundryCheatcodeEnvExistsTestVal";
+        vm.setEnv(key, val);
+        require(vm.envExists(key), "envExists failed");
+        require(!vm.envExists("nonexistent"), "envExists failed");
     }
 
     uint256 constant numEnvBoolTests = 2;

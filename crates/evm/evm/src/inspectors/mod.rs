@@ -10,9 +10,6 @@ pub use revm_inspectors::access_list::AccessListInspector;
 mod chisel_state;
 pub use chisel_state::ChiselState;
 
-mod debugger;
-pub use debugger::Debugger;
-
 mod logs;
 pub use logs::LogCollector;
 

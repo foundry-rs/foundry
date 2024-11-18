@@ -23,9 +23,10 @@ pub use item::{ParseItem, ParseSource};
 mod comment;
 pub use comment::{Comment, CommentTag, Comments, CommentsRef};
 
-/// The documentation parser. This type implements a [Visitor] trait. While walking the parse tree,
-/// [Parser] will collect relevant source items and corresponding doc comments. The resulting
-/// [ParseItem]s can be accessed by calling [Parser::items].
+/// The documentation parser. This type implements a [Visitor] trait.
+///
+/// While walking the parse tree, [Parser] will collect relevant source items and corresponding
+/// doc comments. The resulting [ParseItem]s can be accessed by calling [Parser::items].
 #[derive(Debug, Default)]
 pub struct Parser {
     /// Initial comments from solang parser.
@@ -52,7 +53,7 @@ struct ParserContext {
 impl Parser {
     /// Create a new instance of [Parser].
     pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
-        Parser { comments, source, ..Default::default() }
+        Self { comments, source, ..Default::default() }
     }
 
     /// Set formatter config on the [Parser]

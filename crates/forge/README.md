@@ -206,7 +206,7 @@ contract MyTest {
 
     function testBarExpectedRevert() public {
         vm.expectRevert("My expected revert string");
-        // This would fail *if* we didnt expect revert. Since we expect the revert,
+        // This would fail *if* we didn't expect revert. Since we expect the revert,
         // it doesn't, unless the revert string is wrong.
         foo.bar(101);
     }
@@ -386,7 +386,7 @@ Logs:
 
 If you are working in a repo with NPM-style imports, like
 
-```
+```solidity
 import "@openzeppelin/contracts/access/Ownable.sol";
 ```
 
@@ -398,7 +398,7 @@ For example, if you have `@openzeppelin` imports, you would
 2. Create a remappings file: `touch remappings.txt`
 3. Add this line to `remappings.txt`
 
-```
+```text
 @openzeppelin/=lib/openzeppelin-contracts/
 ```
 

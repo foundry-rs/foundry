@@ -11,6 +11,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Parser)]
 pub struct RemoveArgs {
     /// The dependencies you want to remove.
+    #[arg(required = true)]
     dependencies: Vec<Dependency>,
 
     /// The project's root path.
@@ -37,7 +38,7 @@ impl RemoveArgs {
 
         // remove all the dependencies from .git/modules
         for (Dependency { name, url, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
-            println!("Removing '{name}' in {}, (url: {url:?}, tag: {tag:?})", path.display());
+            sh_println!("Removing '{name}' in {}, (url: {url:?}, tag: {tag:?})", path.display())?;
             std::fs::remove_dir_all(git_modules.join(path))?;
         }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -21,7 +21,7 @@ contract VmSetupTest is DSTest {
         vm.chainId(99);
         vm.roll(100);
         vm.fee(1000);
-        vm.prevrandao(bytes32(uint256(10000)));
+        vm.prevrandao(uint256(10000));
         vm.startPrank(address(1337));
     }
 

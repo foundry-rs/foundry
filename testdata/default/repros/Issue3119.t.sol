@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -12,7 +12,7 @@ contract Issue3119Test is DSTest {
     address public alice = vm.addr(2);
 
     function testRollFork() public {
-        uint256 fork = vm.createFork("rpcAlias");
+        uint256 fork = vm.createFork("mainnet");
         vm.selectFork(fork);
 
         FortressSwap fortressSwap = new FortressSwap(address(owner));

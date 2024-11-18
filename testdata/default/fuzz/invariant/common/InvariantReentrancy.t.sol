@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 
@@ -7,7 +7,7 @@ contract Malicious {
     function world() public {
         // add code so contract is accounted as valid sender
         // see https://github.com/foundry-rs/foundry/issues/4245
-        payable(msg.sender).transfer(1);
+        payable(msg.sender).call("");
     }
 }
 

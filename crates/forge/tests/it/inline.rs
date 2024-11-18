@@ -1,6 +1,6 @@
 //! Inline configuration tests.
 
-use crate::test_helpers::TEST_DATA_DEFAULT;
+use crate::test_helpers::{ForgeTestData, ForgeTestProfile, TEST_DATA_DEFAULT};
 use forge::{result::TestKind, TestOptionsBuilder};
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_test_utils::Filter;
@@ -8,14 +8,42 @@ use foundry_test_utils::Filter;
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
+    // Fresh runner to make sure there's no persisted failure from previous tests.
+    let mut runner = ForgeTestData::new(ForgeTestProfile::Default).runner();
     let result = runner.test_collect(&filter);
-    let suite_result = result.get("default/inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
-    let test_result = suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
-    match test_result.kind {
-        TestKind::Fuzz { runs, .. } => assert_eq!(runs, 1024),
-        _ => unreachable!(),
-    }
+    let results = result
+        .into_iter()
+        .flat_map(|(path, r)| {
+            r.test_results.into_iter().map(move |(name, t)| {
+                let runs = match t.kind {
+                    TestKind::Fuzz { runs, .. } => runs,
+                    _ => unreachable!(),
+                };
+                (path.clone(), name, runs)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        results,
+        vec![
+            (
+                "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string(),
+                "testInlineConfFuzz(uint8)".to_string(),
+                1024
+            ),
+            (
+                "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf2".to_string(),
+                "testInlineConfFuzz1(uint8)".to_string(),
+                1
+            ),
+            (
+                "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf2".to_string(),
+                "testInlineConfFuzz2(uint8)".to_string(),
+                10
+            ),
+        ]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,24 +1,27 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
+use super::BackendError;
 use crate::{
     backend::{
-        diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
-        RevertSnapshotAction,
+        diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertStateSnapshotAction,
     },
     fork::{CreateFork, ForkId},
+    InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
+use foundry_fork_db::DatabaseError;
 use revm::{
     db::DatabaseRef,
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
         SpecId,
     },
-    Database, DatabaseCommit, Inspector, JournaledState,
+    Database, DatabaseCommit, JournaledState,
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::BTreeMap};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -50,7 +53,7 @@ pub struct CowBackend<'a> {
 
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new(backend: &'a Backend) -> Self {
+    pub fn new_borrowed(backend: &'a Backend) -> Self {
         Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
     }
 
@@ -58,10 +61,11 @@ impl<'a> CowBackend<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
-    pub fn inspect<'b, I: Inspector<&'b mut Self>>(
-        &'b mut self,
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect<I: InspectorExt>(
+        &mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: I,
+        inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
@@ -76,11 +80,11 @@ impl<'a> CowBackend<'a> {
         Ok(res)
     }
 
-    /// Returns whether there was a snapshot failure in the backend.
+    /// Returns whether there was a state snapshot failure in the backend.
     ///
     /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
-    pub fn has_snapshot_failure(&self) -> bool {
-        self.backend.has_snapshot_failure()
+    pub fn has_state_snapshot_failure(&self) -> bool {
+        self.backend.has_state_snapshot_failure()
     }
 
     /// Returns a mutable instance of the Backend.
@@ -106,32 +110,32 @@ impl<'a> CowBackend<'a> {
     }
 }
 
-impl<'a> DatabaseExt for CowBackend<'a> {
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
-        self.backend_mut(env).snapshot(journaled_state, env)
+impl DatabaseExt for CowBackend<'_> {
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
+        self.backend_mut(env).snapshot_state(journaled_state, env)
     }
 
-    fn revert(
+    fn revert_state(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
         current: &mut Env,
-        action: RevertSnapshotAction,
+        action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
-        self.backend_mut(current).revert(id, journaled_state, current, action)
+        self.backend_mut(current).revert_state(id, journaled_state, current, action)
     }
 
-    fn delete_snapshot(&mut self, id: U256) -> bool {
-        // delete snapshot requires a previous snapshot to be initialized
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        // delete state snapshot requires a previous snapshot to be initialized
         if let Some(backend) = self.initialized_backend_mut() {
-            return backend.delete_snapshot(id)
+            return backend.delete_state_snapshot(id)
         }
         false
     }
 
-    fn delete_snapshots(&mut self) {
+    fn delete_state_snapshots(&mut self) {
         if let Some(backend) = self.initialized_backend_mut() {
-            backend.delete_snapshots()
+            backend.delete_state_snapshots()
         }
     }
 
@@ -159,7 +163,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
@@ -176,15 +180,25 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact<I: Inspector<Backend>>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
+        self.backend_mut(&env).transact(id, transaction, env, journaled_state, inspector)
+    }
+
+    fn transact_from_tx(
+        &mut self,
+        transaction: &TransactionRequest,
+        env: Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn InspectorExt,
+    ) -> eyre::Result<()> {
+        self.backend_mut(&env).transact_from_tx(transaction, env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -213,10 +227,19 @@ impl<'a> DatabaseExt for CowBackend<'a> {
 
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
-    ) -> Result<(), DatabaseError> {
+    ) -> Result<(), BackendError> {
         self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
+    }
+
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend_mut(&Env::default()).clone_account(source, target, journaled_state)
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {
@@ -242,9 +265,13 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
     }
+
+    fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
+        self.backend.to_mut().set_blockhash(block_number, block_hash);
+    }
 }
 
-impl<'a> DatabaseRef for CowBackend<'a> {
+impl DatabaseRef for CowBackend<'_> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -259,12 +286,12 @@ impl<'a> DatabaseRef for CowBackend<'a> {
         DatabaseRef::storage_ref(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self.backend.as_ref(), number)
     }
 }
 
-impl<'a> Database for CowBackend<'a> {
+impl Database for CowBackend<'_> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -279,12 +306,12 @@ impl<'a> Database for CowBackend<'a> {
         DatabaseRef::storage_ref(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self, number)
     }
 }
 
-impl<'a> DatabaseCommit for CowBackend<'a> {
+impl DatabaseCommit for CowBackend<'_> {
     fn commit(&mut self, changes: Map<Address, Account>) {
         self.backend.to_mut().commit(changes)
     }
