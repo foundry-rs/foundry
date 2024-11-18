@@ -18,10 +18,10 @@ contract Mock {
 contract Issue8006Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     IERC20 dai;
-    bytes32 transaction = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
+    bytes32 transaction = 0xb23f389b26eb6f95c08e275ec2c360ab3990169492ff0d3e7b7233a3f81d299f;
 
     function setUp() public {
-        vm.createSelectFork("mainnet", 16261704);
+        vm.createSelectFork("mainnet", 21134541);
         dai = IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
     }
 
@@ -30,7 +30,7 @@ contract Issue8006Test is DSTest {
         vm.etch(address(dai), address(new Mock()).code);
         assertEq(dai.totalSupply(), 1);
         vm.rollFork(transaction);
-        assertEq(dai.totalSupply(), 5155217627191887307044676292);
+        assertEq(dai.totalSupply(), 3324657947511778619416491233);
     }
 
     function testRollForkEtchCalled() public {
