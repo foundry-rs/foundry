@@ -1,12 +1,11 @@
 use clap::{Parser, ValueHint};
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::Graph;
+use foundry_compilers::{resolver::parse::SolData, Graph};
 use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::path::PathBuf;
-use yansi::Paint;
 
 mod error;
 
@@ -62,7 +61,11 @@ impl GeigerArgs {
 
         let mut sources: Vec<PathBuf> = {
             if self.paths.is_empty() {
-                Graph::resolve(&config.project_paths())?.files().keys().cloned().collect()
+                Graph::<SolData>::resolve(&config.project_paths())?
+                    .files()
+                    .keys()
+                    .cloned()
+                    .collect()
             } else {
                 self.paths
                     .iter()
@@ -91,10 +94,10 @@ impl GeigerArgs {
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {
-            eprintln!("{}\n", Paint::red("ffi enabled"));
+            sh_warn!("FFI enabled\n")?;
         }
 
-        let root = config.__root.0;
+        let root = config.root.0;
 
         let sum = sources
             .par_iter()
@@ -103,12 +106,12 @@ impl GeigerArgs {
                     let len = metrics.cheatcodes.len();
                     let printer = SolFileMetricsPrinter { metrics: &metrics, root: &root };
                     if self.full || len == 0 {
-                        eprint!("{printer}");
+                        let _ = sh_eprint!("{printer}");
                     }
                     len
                 }
                 Err(err) => {
-                    eprintln!("{err}");
+                    let _ = sh_err!("{err}");
                     0
                 }
             })

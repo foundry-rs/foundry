@@ -77,7 +77,7 @@ pub enum RequestParams {
 impl From<RequestParams> for serde_json::Value {
     fn from(params: RequestParams) -> Self {
         match params {
-            RequestParams::None => serde_json::Value::Null,
+            RequestParams::None => Self::Null,
             RequestParams::Array(arr) => arr.into(),
             RequestParams::Object(obj) => obj.into(),
         }
@@ -106,9 +106,9 @@ pub enum Id {
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Id::String(s) => s.fmt(f),
-            Id::Number(n) => n.fmt(f),
-            Id::Null => f.write_str("null"),
+            Self::String(s) => s.fmt(f),
+            Self::Number(n) => n.fmt(f),
+            Self::Null => f.write_str("null"),
         }
     }
 }

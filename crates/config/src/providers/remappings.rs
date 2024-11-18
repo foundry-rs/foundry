@@ -1,9 +1,12 @@
-use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
+use crate::{
+    foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, utils::get_dir_remapping,
+    Config,
+};
 use figment::{
     value::{Dict, Map},
-    Error, Metadata, Profile, Provider,
+    Error, Figment, Metadata, Profile, Provider,
 };
-use foundry_compilers::remappings::{RelativeRemapping, Remapping};
+use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
     collections::{btree_map::Entry, BTreeMap, HashSet},
@@ -16,17 +19,35 @@ use std::{
 pub struct Remappings {
     /// Remappings.
     remappings: Vec<Remapping>,
+    /// Source, test and script configured project dirs.
+    /// Remappings of these dirs from libs are ignored.
+    project_paths: Vec<Remapping>,
 }
 
 impl Remappings {
     /// Create a new `Remappings` wrapper with an empty vector.
     pub fn new() -> Self {
-        Self { remappings: Vec::new() }
+        Self { remappings: Vec::new(), project_paths: Vec::new() }
     }
 
     /// Create a new `Remappings` wrapper with a vector of remappings.
     pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
-        Self { remappings }
+        Self { remappings, project_paths: Vec::new() }
+    }
+
+    /// Extract project paths that cannot be remapped by dependencies.
+    pub fn with_figment(mut self, figment: &Figment) -> Self {
+        let mut add_project_remapping = |path: &str| {
+            if let Ok(path) = figment.find_value(path) {
+                if let Some(remapping) = path.into_string().and_then(get_dir_remapping) {
+                    self.project_paths.push(remapping);
+                }
+            }
+        };
+        add_project_remapping("src");
+        add_project_remapping("test");
+        add_project_remapping("script");
+        self
     }
 
     /// Filters the remappings vector by name and context.
@@ -39,15 +60,15 @@ impl Remappings {
 
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
-        let mut tmp = HashSet::new();
+        let mut seen = HashSet::new();
         let remappings =
-            self.remappings.iter().filter(|r| tmp.insert(Self::filter_key(r))).cloned().collect();
+            self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect();
         remappings
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
-        if !self.remappings.iter().any(|existing| {
+        if self.remappings.iter().any(|existing| {
             // What we're doing here is filtering for ambiguous paths. For example, if we have
             // @prb/math/=node_modules/@prb/math/src/ as existing, and
             // @prb/=node_modules/@prb/  as the one being checked,
@@ -55,8 +76,20 @@ impl Remappings {
             // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
             existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
-            self.remappings.push(remapping)
-        }
+            return;
+        };
+
+        // Ignore remappings of root project src, test or script dir.
+        // See <https://github.com/foundry-rs/foundry/issues/3440>.
+        if self
+            .project_paths
+            .iter()
+            .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
+        {
+            return;
+        };
+
+        self.remappings.push(remapping);
     }
 
     /// Extend the remappings vector, leaving out the remappings that are already present.
@@ -87,7 +120,7 @@ pub struct RemappingsProvider<'a> {
     pub remappings: Result<Vec<Remapping>, Error>,
 }
 
-impl<'a> RemappingsProvider<'a> {
+impl RemappingsProvider<'_> {
     /// Find and parse remappings for the projects
     ///
     /// **Order**
@@ -102,6 +135,7 @@ impl<'a> RemappingsProvider<'a> {
         trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
+        ///
         /// grouped by remapping context
         fn insert_closest(
             mappings: &mut BTreeMap<Option<String>, BTreeMap<String, PathBuf>>,
@@ -150,7 +184,7 @@ impl<'a> RemappingsProvider<'a> {
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
-        // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
+        // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
             let mut lib_remappings = BTreeMap::new();
@@ -163,10 +197,8 @@ impl<'a> RemappingsProvider<'a> {
                 .lib_paths
                 .iter()
                 .map(|lib| self.root.join(lib))
-                .inspect(|lib| {
-                    trace!("find all remappings in lib path: {:?}", lib);
-                })
-                .flat_map(Remapping::find_many)
+                .inspect(|lib| trace!(?lib, "find all remappings"))
+                .flat_map(|lib| Remapping::find_many(&lib))
             {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
@@ -197,7 +229,7 @@ impl<'a> RemappingsProvider<'a> {
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
             .iter()
-            .map(|p| self.root.join(p))
+            .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
             .flat_map(foundry_toml_dirs)
             .inspect(|lib| {
                 trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
@@ -241,7 +273,7 @@ impl<'a> RemappingsProvider<'a> {
     }
 }
 
-impl<'a> Provider for RemappingsProvider<'a> {
+impl Provider for RemappingsProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Remapping Provider")
     }

@@ -23,17 +23,17 @@ use tokio::{task::JoinHandle, time::Interval};
 /// The type that drives the blockchain's state
 ///
 /// This service is basically an endless future that continuously polls the miner which returns
-/// transactions for the next block, then those transactions are handed off to the
-/// [backend](backend::mem::Backend) to construct a new block, if all transactions were successfully
-/// included in a new block they get purged from the `Pool`.
+/// transactions for the next block, then those transactions are handed off to the backend to
+/// construct a new block, if all transactions were successfully included in a new block they get
+/// purged from the `Pool`.
 pub struct NodeService {
-    /// the pool that holds all transactions
+    /// The pool that holds all transactions.
     pool: Arc<Pool>,
-    /// creates new blocks
+    /// Creates new blocks.
     block_producer: BlockProducer,
-    /// the miner responsible to select transactions from the `pool´
+    /// The miner responsible to select transactions from the `pool`.
     miner: Miner,
-    /// maintenance task for fee history related tasks
+    /// Maintenance task for fee history related tasks.
     fee_history: FeeHistoryService,
     /// Tracks all active filters
     filters: Filters,
@@ -112,8 +112,6 @@ struct BlockProducer {
     queued: VecDeque<Vec<Arc<PoolTransaction>>>,
 }
 
-// === impl BlockProducer ===
-
 impl BlockProducer {
     fn new(backend: Arc<Backend>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
@@ -153,7 +151,7 @@ impl Stream for BlockProducer {
                         Poll::Ready(Some(outcome))
                     }
                     Err(err) => {
-                        panic!("miner task failed: {}", err);
+                        panic!("miner task failed: {err}");
                     }
                 }
             } else {

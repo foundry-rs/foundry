@@ -1,57 +1,57 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{p_println, utils::Git};
+use foundry_cli::utils::Git;
 use foundry_common::fs;
-use foundry_compilers::remappings::Remapping;
+use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
 use yansi::Paint;
 
 /// CLI arguments for `forge init`.
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Default, Parser)]
 pub struct InitArgs {
     /// The root directory of the new project.
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
-    root: PathBuf,
+    pub root: PathBuf,
 
     /// The template to start from.
     #[arg(long, short)]
-    template: Option<String>,
+    pub template: Option<String>,
 
     /// Branch argument that can only be used with template option.
     /// If not specified, the default branch is used.
     #[arg(long, short, requires = "template")]
-    branch: Option<String>,
+    pub branch: Option<String>,
 
     /// Do not install dependencies from the network.
     #[arg(long, conflicts_with = "template", visible_alias = "no-deps")]
-    offline: bool,
+    pub offline: bool,
 
     /// Create the project even if the specified root directory is not empty.
     #[arg(long, conflicts_with = "template")]
-    force: bool,
+    pub force: bool,
 
     /// Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt
     /// file.
     #[arg(long, conflicts_with = "template")]
-    vscode: bool,
+    pub vscode: bool,
 
     #[command(flatten)]
-    opts: DependencyInstallOpts,
+    pub opts: DependencyInstallOpts,
 }
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let InitArgs { root, template, branch, opts, offline, force, vscode } = self;
-        let DependencyInstallOpts { shallow, no_git, no_commit, quiet } = opts;
+        let Self { root, template, branch, opts, offline, force, vscode } = self;
+        let DependencyInstallOpts { shallow, no_git, no_commit } = opts;
 
         // create the root dir if it does not exist
         if !root.exists() {
             fs::create_dir_all(&root)?;
         }
         let root = dunce::canonicalize(root)?;
-        let git = Git::new(&root).quiet(quiet).shallow(shallow);
+        let git = Git::new(&root).shallow(shallow);
 
         // if a template is provided, then this command initializes a git repo,
         // fetches the template repo, and resets the git history to the head of the fetched
@@ -62,7 +62,7 @@ impl InitArgs {
             } else {
                 "https://github.com/".to_string() + &template
             };
-            p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
+            sh_println!("Initializing {} from {}...", root.display(), template)?;
             // initialize the git repository
             git.init()?;
 
@@ -88,15 +88,14 @@ impl InitArgs {
             }
         } else {
             // if target is not empty
-            if root.read_dir().map_or(false, |mut i| i.next().is_some()) {
+            if root.read_dir().is_ok_and(|mut i| i.next().is_some()) {
                 if !force {
                     eyre::bail!(
                         "Cannot run `init` on a non-empty directory.\n\
                         Run with the `--force` flag to initialize regardless."
                     );
                 }
-
-                p_println!(!quiet => "Target directory is not empty, but `--force` was specified");
+                sh_warn!("Target directory is not empty, but `--force` was specified")?;
             }
 
             // ensure git status is clean before generating anything
@@ -104,7 +103,7 @@ impl InitArgs {
                 git.ensure_clean()?;
             }
 
-            p_println!(!quiet => "Initializing {}...", root.display());
+            sh_println!("Initializing {}...", root.display())?;
 
             // make the dirs
             let src = root.join("src");
@@ -145,7 +144,7 @@ impl InitArgs {
             // install forge-std
             if !offline {
                 if root.join("lib/forge-std").exists() {
-                    p_println!(!quiet => "\"lib/forge-std\" already exists, skipping install....");
+                    sh_warn!("\"lib/forge-std\" already exists, skipping install...")?;
                     self.opts.install(&mut config, vec![])?;
                 } else {
                     let dep = "https://github.com/foundry-rs/forge-std".parse()?;
@@ -159,7 +158,7 @@ impl InitArgs {
             }
         }
 
-        p_println!(!quiet => "    {} forge project",  Paint::green("Initialized"));
+        sh_println!("{}", "    Initialized forge project".green())?;
         Ok(())
     }
 }
@@ -201,7 +200,7 @@ fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
 fn init_vscode(root: &Path) -> Result<()> {
     let remappings_file = root.join("remappings.txt");
     if !remappings_file.exists() {
-        let mut remappings = Remapping::find_many(root.join("lib"))
+        let mut remappings = Remapping::find_many(&root.join("lib"))
             .into_iter()
             .map(|r| r.into_relative(root).to_relative_remapping().to_string())
             .collect::<Vec<_>>();

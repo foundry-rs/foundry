@@ -65,19 +65,19 @@ impl NumberUnderscore {
     /// Returns true if the option is `Preserve`
     #[inline]
     pub fn is_preserve(self) -> bool {
-        matches!(self, NumberUnderscore::Preserve)
+        matches!(self, Self::Preserve)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_remove(self) -> bool {
-        matches!(self, NumberUnderscore::Remove)
+        matches!(self, Self::Remove)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_thousands(self) -> bool {
-        matches!(self, NumberUnderscore::Thousands)
+        matches!(self, Self::Thousands)
     }
 }
 
@@ -98,19 +98,19 @@ impl HexUnderscore {
     /// Returns true if the option is `Preserve`
     #[inline]
     pub fn is_preserve(self) -> bool {
-        matches!(self, HexUnderscore::Preserve)
+        matches!(self, Self::Preserve)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_remove(self) -> bool {
-        matches!(self, HexUnderscore::Remove)
+        matches!(self, Self::Remove)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_bytes(self) -> bool {
-        matches!(self, HexUnderscore::Bytes)
+        matches!(self, Self::Bytes)
     }
 }
 
@@ -130,9 +130,9 @@ impl QuoteStyle {
     /// Get associated quotation mark with option
     pub fn quote(self) -> Option<char> {
         match self {
-            QuoteStyle::Double => Some('"'),
-            QuoteStyle::Single => Some('\''),
-            QuoteStyle::Preserve => None,
+            Self::Double => Some('"'),
+            Self::Single => Some('\''),
+            Self::Preserve => None,
         }
     }
 }
@@ -153,18 +153,22 @@ pub enum SingleLineBlockStyle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
-    /// Write function parameters multiline first
+    /// Write function parameters multiline first.
     ParamsFirst,
-    /// Write function attributes multiline first
+    /// Write function parameters multiline first when there is more than one param.
+    ParamsFirstMulti,
+    /// Write function attributes multiline first.
     AttributesFirst,
-    /// If function params or attrs are multiline
+    /// If function params or attrs are multiline.
     /// split the rest
     All,
+    /// Same as `All` but writes function params multiline even when there is a single param.
+    AllParams,
 }
 
 impl Default for FormatterConfig {
     fn default() -> Self {
-        FormatterConfig {
+        Self {
             line_length: 120,
             tab_width: 4,
             bracket_spacing: false,

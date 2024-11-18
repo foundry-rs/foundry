@@ -1,0 +1,217 @@
+{
+  "src/Simple.t.sol:SimpleContractTest": {
+    "duration": "{...}",
+    "test_results": {
+      "test()": {
+        "status": "Success",
+        "reason": null,
+        "counterexample": null,
+        "logs": [
+          {
+            "address": "0x000000000000000000636f6e736f6c652e6c6f67",
+            "topics": [
+              "0x41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50"
+            ],
+            "data": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000f56616c7565207365743a20203130300000000000000000000000000000000000"
+          }
+        ],
+        "decoded_logs": [
+          "Value set:  100"
+        ],
+        "kind": {
+          "Unit": {
+            "gas": "{...}"
+          }
+        },
+        "traces": [
+          [
+            "Deployment",
+            {
+              "arena": [
+                {
+                  "parent": null,
+                  "children": [],
+                  "idx": 0,
+                  "trace": {
+                    "depth": 0,
+                    "success": true,
+                    "caller": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+                    "address": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+                    "maybe_precompile": false,
+                    "selfdestruct_address": null,
+                    "selfdestruct_refund_target": null,
+                    "selfdestruct_transferred_value": null,
+                    "kind": "CREATE",
+                    "value": "0x0",
+                    "data": "{...}",
+                    "output": "{...}",
+                    "gas_used": "{...}",
+                    "gas_limit": "{...}",
+                    "status": "Return",
+                    "steps": [],
+                    "decoded": {
+                      "label": null,
+                      "return_data": null,
+                      "call_data": null
+                    }
+                  },
+                  "logs": [],
+                  "ordering": []
+                }
+              ]
+            }
+          ],
+          [
+            "Execution",
+            {
+              "arena": [
+                {
+                  "parent": null,
+                  "children": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "idx": 0,
+                  "trace": {
+                    "depth": 0,
+                    "success": true,
+                    "caller": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+                    "address": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+                    "maybe_precompile": null,
+                    "selfdestruct_address": null,
+                    "selfdestruct_refund_target": null,
+                    "selfdestruct_transferred_value": null,
+                    "kind": "CALL",
+                    "value": "0x0",
+                    "data": "0xf8a8fd6d",
+                    "output": "0x",
+                    "gas_used": "{...}",
+                    "gas_limit": "{...}",
+                    "status": "Stop",
+                    "steps": [],
+                    "decoded": {
+                      "label": null,
+                      "return_data": null,
+                      "call_data": null
+                    }
+                  },
+                  "logs": [],
+                  "ordering": [
+                    {
+                      "Call": 0
+                    },
+                    {
+                      "Call": 1
+                    },
+                    {
+                      "Call": 2
+                    }
+                  ]
+                },
+                {
+                  "parent": 0,
+                  "children": [],
+                  "idx": 1,
+                  "trace": {
+                    "depth": 1,
+                    "success": true,
+                    "caller": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+                    "address": "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+                    "maybe_precompile": false,
+                    "selfdestruct_address": null,
+                    "selfdestruct_refund_target": null,
+                    "selfdestruct_transferred_value": null,
+                    "kind": "CREATE",
+                    "value": "0x0",
+                    "data": "{...}",
+                    "output": "{...}",
+                    "gas_used": "{...}",
+                    "gas_limit": "{...}",
+                    "status": "Return",
+                    "steps": [],
+                    "decoded": {
+                      "label": null,
+                      "return_data": null,
+                      "call_data": null
+                    }
+                  },
+                  "logs": [],
+                  "ordering": []
+                },
+                {
+                  "parent": 0,
+                  "children": [],
+                  "idx": 2,
+                  "trace": {
+                    "depth": 1,
+                    "success": true,
+                    "caller": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+                    "address": "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f",
+                    "maybe_precompile": null,
+                    "selfdestruct_address": null,
+                    "selfdestruct_refund_target": null,
+                    "selfdestruct_transferred_value": null,
+                    "kind": "CALL",
+                    "value": "0x0",
+                    "data": "0xe26d14740000000000000000000000000000000000000000000000000000000000000064",
+                    "output": "0x",
+                    "gas_used": "{...}",
+                    "gas_limit": "{...}",
+                    "status": "Stop",
+                    "steps": [],
+                    "decoded": {
+                      "label": null,
+                      "return_data": null,
+                      "call_data": null
+                    }
+                  },
+                  "logs": [],
+                  "ordering": []
+                },
+                {
+                  "parent": 0,
+                  "children": [],
+                  "idx": 3,
+                  "trace": {
+                    "depth": 1,
+                    "success": true,
+                    "caller": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
+                    "address": "0x000000000000000000636f6e736f6c652e6c6f67",
+                    "maybe_precompile": null,
+                    "selfdestruct_address": null,
+                    "selfdestruct_refund_target": null,
+                    "selfdestruct_transferred_value": null,
+                    "kind": "STATICCALL",
+                    "value": "0x0",
+                    "data": "{...}",
+                    "output": "0x",
+                    "gas_used": "{...}",
+                    "gas_limit": "{...}",
+                    "status": "Stop",
+                    "steps": [],
+                    "decoded": {
+                      "label": null,
+                      "return_data": null,
+                      "call_data": null
+                    }
+                  },
+                  "logs": [],
+                  "ordering": []
+                }
+              ]
+            }
+          ]
+        ],
+        "labeled_addresses": {},
+        "duration": {
+          "secs": "{...}",
+          "nanos": "{...}"
+        },
+        "breakpoints": {},
+        "gas_snapshots": {}
+      }
+    },
+    "warnings": []
+  }
+}

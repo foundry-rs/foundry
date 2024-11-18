@@ -9,7 +9,7 @@ use std::borrow::Cow;
 pub struct LocalTraceIdentifier<'a> {
     /// Known contracts to search through.
     known_contracts: &'a ContractsByArtifact,
-    /// Vector of pairs of artifact ID and the code length of the given artifact.
+    /// Vector of pairs of artifact ID and the runtime code length of the given artifact.
     ordered_ids: Vec<(&'a ArtifactId, usize)>,
 }
 
@@ -17,8 +17,11 @@ impl<'a> LocalTraceIdentifier<'a> {
     /// Creates a new local trace identifier.
     #[inline]
     pub fn new(known_contracts: &'a ContractsByArtifact) -> Self {
-        let mut ordered_ids =
-            known_contracts.iter().map(|(id, contract)| (id, contract.1.len())).collect::<Vec<_>>();
+        let mut ordered_ids = known_contracts
+            .iter()
+            .filter_map(|(id, contract)| Some((id, contract.deployed_bytecode()?)))
+            .map(|(id, bytecode)| (id, bytecode.len()))
+            .collect::<Vec<_>>();
         ordered_ids.sort_by_key(|(_, len)| *len);
         Self { known_contracts, ordered_ids }
     }
@@ -29,23 +32,36 @@ impl<'a> LocalTraceIdentifier<'a> {
         self.known_contracts
     }
 
-    /// Tries to the bytecode most similar to the given one.
-    pub fn identify_code(&self, code: &[u8]) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
-        let len = code.len();
+    /// Identifies the artifact based on score computed for both creation and deployed bytecodes.
+    pub fn identify_code(
+        &self,
+        runtime_code: &[u8],
+        creation_code: &[u8],
+    ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
+        let len = runtime_code.len();
 
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
-        let mut check = |id| {
-            let (abi, known_code) = self.known_contracts.get(id)?;
-            let score = bytecode_diff_score(known_code, code);
-            if score == 0.0 {
-                trace!(target: "evm::traces", "found exact match");
-                return Some((id, abi));
-            }
-            if score < min_score {
-                min_score = score;
-                min_score_id = Some((id, abi));
+        let mut check = |id, is_creation, min_score: &mut f64| {
+            let contract = self.known_contracts.get(id)?;
+            // Select bytecodes to compare based on `is_creation` flag.
+            let (contract_bytecode, current_bytecode) = if is_creation {
+                (contract.bytecode(), creation_code)
+            } else {
+                (contract.deployed_bytecode(), runtime_code)
+            };
+
+            if let Some(bytecode) = contract_bytecode {
+                let score = bytecode_diff_score(bytecode, current_bytecode);
+                if score == 0.0 {
+                    trace!(target: "evm::traces", "found exact match");
+                    return Some((id, &contract.abi));
+                }
+                if score < *min_score {
+                    *min_score = score;
+                    min_score_id = Some((id, &contract.abi));
+                }
             }
             None
         };
@@ -60,7 +76,7 @@ impl<'a> LocalTraceIdentifier<'a> {
             if len > max_len {
                 break;
             }
-            if let found @ Some(_) = check(id) {
+            if let found @ Some(_) = check(id, true, &mut min_score) {
                 return found;
             }
         }
@@ -70,8 +86,17 @@ impl<'a> LocalTraceIdentifier<'a> {
         let idx = self.find_index(min_len);
         for i in idx..same_length_idx {
             let (id, _) = self.ordered_ids[i];
-            if let found @ Some(_) = check(id) {
+            if let found @ Some(_) = check(id, true, &mut min_score) {
                 return found;
+            }
+        }
+
+        // Fallback to comparing deployed code if min score greater than threshold.
+        if min_score >= 0.85 {
+            for (artifact, _) in &self.ordered_ids {
+                if let found @ Some(_) = check(artifact, false, &mut min_score) {
+                    return found;
+                }
             }
         }
 
@@ -90,7 +115,7 @@ impl<'a> LocalTraceIdentifier<'a> {
     /// artifact with a greater code length if the exact code length is not found.
     fn find_index(&self, len: usize) -> usize {
         let (Ok(mut idx) | Err(mut idx)) =
-            self.ordered_ids.binary_search_by(|(_, probe)| probe.cmp(&len));
+            self.ordered_ids.binary_search_by_key(&len, |(_, probe)| *probe);
 
         // In case of multiple artifacts with the same code length, we need to find the first one.
         while idx > 0 && self.ordered_ids[idx - 1].1 == len {
@@ -104,16 +129,16 @@ impl<'a> LocalTraceIdentifier<'a> {
 impl TraceIdentifier for LocalTraceIdentifier<'_> {
     fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
     where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)>,
     {
         trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         addresses
-            .filter_map(|(address, code)| {
+            .filter_map(|(address, runtime_code, creation_code)| {
                 let _span = trace_span!(target: "evm::traces", "identify", %address).entered();
 
                 trace!(target: "evm::traces", "identifying");
-                let (id, abi) = self.identify_code(code?)?;
+                let (id, abi) = self.identify_code(runtime_code?, creation_code?)?;
                 trace!(target: "evm::traces", id=%id.identifier(), "identified");
 
                 Some(AddressIdentity {

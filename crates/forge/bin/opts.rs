@@ -1,12 +1,14 @@
 use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, cache::CacheArgs, config, coverage, create::CreateArgs,
-    debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs,
-    inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
-    selectors::SelectorsSubcommands, snapshot, test, tree, update,
+    bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, debug::DebugArgs, doc::DocArgs,
+    eip712, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
+    soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
-use forge_verify::{VerifyArgs, VerifyCheckArgs};
+use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
+use foundry_cli::opts::ShellOpts;
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -29,6 +31,9 @@ const VERSION_MESSAGE: &str = concat!(
 pub struct Forge {
     #[command(subcommand)]
     pub cmd: ForgeSubcommand,
+
+    #[clap(flatten)]
+    pub shell: ShellOpts,
 }
 
 #[derive(Subcommand)]
@@ -51,6 +56,9 @@ pub enum ForgeSubcommand {
     /// Build the project's smart contracts.
     #[command(visible_aliases = ["b", "compile"])]
     Build(BuildArgs),
+
+    /// Clone a contract from Etherscan.
+    Clone(CloneArgs),
 
     /// Debugs a single smart contract as a script.
     #[command(visible_alias = "d")]
@@ -84,6 +92,10 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 
+    /// Verify the deployed bytecode against its source on Etherscan.
+    #[clap(visible_alias = "vb")]
+    VerifyBytecode(VerifyBytecodeArgs),
+
     /// Deploy a smart contract.
     #[command(visible_alias = "c")]
     Create(CreateArgs),
@@ -116,9 +128,9 @@ pub enum ForgeSubcommand {
     /// Manage the Foundry cache.
     Cache(CacheArgs),
 
-    /// Create a snapshot of each test's gas usage.
+    /// Create a gas snapshot of each test's gas usage.
     #[command(visible_alias = "s")]
-    Snapshot(snapshot::SnapshotArgs),
+    Snapshot(snapshot::GasSnapshotArgs),
 
     /// Display the current config.
     #[command(visible_alias = "co")]
@@ -145,7 +157,7 @@ pub enum ForgeSubcommand {
     /// Generate documentation for the project.
     Doc(DocArgs),
 
-    /// Function selector utilities
+    /// Function selector utilities.
     #[command(visible_alias = "se")]
     Selectors {
         #[command(subcommand)]
@@ -154,6 +166,18 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Compiler utilities.
+    Compiler(CompilerArgs),
+
+    /// Soldeer dependency manager.
+    Soldeer(soldeer::SoldeerArgs),
+
+    /// Generate EIP-712 struct encodings for structs from a given file.
+    Eip712(eip712::Eip712Args),
+
+    /// Generate bindings for serialization/deserialization of project structs via JSON cheatcodes.
+    BindJson(bind_json::BindJsonArgs),
 }
 
 #[cfg(test)]

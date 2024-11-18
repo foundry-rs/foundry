@@ -12,7 +12,7 @@ Foundry cheatcodes definitions and implementations.
 
 All cheatcodes are defined in a single [`sol!`] macro call in [`spec/src/vm.rs`].
 
-This, combined with the use of an internal [`Cheatcode`](../macros/impl/src/cheatcodes.rs) derive macro,
+This, combined with the use of an internal [`Cheatcode`](../../crates/cheatcodes/spec/src/cheatcode.rs) derive macro,
 allows us to generate both the Rust definitions and the JSON specification of the cheatcodes.
 
 Cheatcodes are manually implemented through the `Cheatcode` trait, which is called in the
@@ -27,7 +27,7 @@ the Foundry cheatcodes externally.
 
 For example, here are some tools that make use of the JSON interface:
 - Internally, this is used to generate [a simple Solidity interface](../../testdata/cheats/Vm.sol) for testing
-- (WIP) Used by [`forge-std`](https://github.com/foundry-rs/forge-std) to generate [user-friendly Solidity interfaces](https://github.com/foundry-rs/forge-std/blob/master/src/Vm.sol)
+- Used by [`forge-std`](https://github.com/foundry-rs/forge-std) to generate [user-friendly Solidity interfaces](https://github.com/foundry-rs/forge-std/blob/master/src/Vm.sol)
 - (WIP) Used by [the Foundry book](https://github.com/foundry-rs/book) to generate [the cheatcodes reference](https://book.getfoundry.sh/cheatcodes)
 - ...
 

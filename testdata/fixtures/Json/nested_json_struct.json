@@ -1,0 +1,35 @@
+{
+    "members": [
+        {
+            "a": 100,
+            "arr": [
+                [
+                    1,
+                    -2,
+                    -5
+                ],
+                [
+                    1000,
+                    2000,
+                    0
+                ]
+            ],
+            "str": "some string",
+            "b": "0x",
+            "addr": "0x0000000000000000000000000000000000000000",
+            "fixedBytes": "0x8ae3fc6bd1b150a73ec4afe3ef136fa2f88e9c96131c883c5e4a4714811c1598"
+        },
+        {
+            "a": 200,
+            "arr": [],
+            "str": "some other string",
+            "b": "0x0000000000000000000000000000000000000000",
+            "addr": "0x167D91deaEEE3021161502873d3bcc6291081648",
+            "fixedBytes": "0xed1c7beb1f00feaaaec5636950d6edb25a8d4fedc8deb2711287b64c4d27719d"
+        }
+    ],
+    "inner": {
+        "fixedBytes": "0x12345678"
+    },
+    "name": "test"
+}

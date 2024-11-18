@@ -1,23 +1,29 @@
 //! Test outcomes.
 
-use alloy_primitives::{Address, Log};
+use crate::{
+    fuzz::{BaseCounterExample, FuzzedCases},
+    gas_report::GasReport,
+};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Log,
+};
+use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
-    debug::DebugArena,
-    executors::EvmError,
-    fuzz::{CounterExample, FuzzCase},
+    decode::SkipReason,
+    executors::{invariant::InvariantMetrics, EvmError, RawCallResult},
+    fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
 use yansi::Paint;
-
-use crate::gas_report::GasReport;
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -33,7 +39,7 @@ pub struct TestOutcome {
     /// This is `None` if traces and logs were not decoded.
     ///
     /// Note that `Address` fields only contain the last executed test case's data.
-    pub decoder: Option<CallTraceDecoder>,
+    pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
 }
@@ -41,7 +47,7 @@ pub struct TestOutcome {
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
     pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, decoder: None, gas_report: None }
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
     }
 
     /// Creates a new empty test outcome.
@@ -51,17 +57,17 @@ impl TestOutcome {
 
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+        self.tests().filter(|(_, t)| t.status.is_success())
     }
 
     /// Returns an iterator over all individual skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+        self.tests().filter(|(_, t)| t.status.is_failure())
     }
 
     /// Returns an iterator over all individual tests and their names.
@@ -137,28 +143,27 @@ impl TestOutcome {
             suites,
             wall_clock_time,
             self.total_time(),
-            Paint::green(total_passed),
-            Paint::red(total_failed),
-            Paint::yellow(total_skipped),
+            total_passed.green(),
+            total_failed.red(),
+            total_skipped.yellow(),
             total_tests
         )
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
         if outcome.allow_failure || failures == 0 {
             return Ok(());
         }
 
-        if !shell::verbosity().is_normal() {
+        if shell::is_quiet() || silent {
             // TODO: Avoid process::exit
             std::process::exit(1);
         }
 
-        shell::println("")?;
-        shell::println("Failing tests:")?;
+        sh_println!("\nFailing tests:")?;
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {
@@ -166,21 +171,33 @@ impl TestOutcome {
             }
 
             let term = if failed > 1 { "tests" } else { "test" };
-            shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
+            sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                sh_println!("{}", result.short_result(name))?;
             }
-            shell::println("")?;
+            sh_println!()?;
         }
         let successes = outcome.passed();
-        shell::println(format!(
+        sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
-            Paint::red(failures.to_string()),
-            Paint::green(successes.to_string())
-        ))?;
+            failures.to_string().red(),
+            successes.to_string().green()
+        )?;
 
         // TODO: Avoid process::exit
         std::process::exit(1);
+    }
+
+    /// Removes first test result, if any.
+    pub fn remove_first(&mut self) -> Option<(String, String, TestResult)> {
+        self.results.iter_mut().find_map(|(suite_name, suite)| {
+            if let Some(test_name) = suite.test_results.keys().next().cloned() {
+                let result = suite.test_results.remove(&test_name).unwrap();
+                Some((suite_name.clone(), test_name, result))
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -188,6 +205,7 @@ impl TestOutcome {
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
     /// Wall clock time it took to execute all tests in this suite.
+    #[serde(with = "humantime_serde")]
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -199,24 +217,42 @@ impl SuiteResult {
     pub fn new(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        warnings: Vec<String>,
+        mut warnings: Vec<String>,
     ) -> Self {
+        // Add deprecated cheatcodes warning, if any of them used in current test suite.
+        let mut deprecated_cheatcodes = HashMap::new();
+        for test_result in test_results.values() {
+            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+        }
+        if !deprecated_cheatcodes.is_empty() {
+            let mut warning =
+                "the following cheatcode(s) are deprecated and will be removed in future versions:"
+                    .to_string();
+            for (cheatcode, reason) in deprecated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+                if let Some(reason) = reason {
+                    write!(warning, ": {reason}").unwrap();
+                }
+            }
+            warnings.push(warning);
+        }
+
         Self { duration, test_results, warnings }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+        self.tests().filter(|(_, t)| t.status.is_success())
     }
 
     /// Returns an iterator over all individual skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+        self.tests().filter(|(_, t)| t.status.is_failure())
     }
 
     /// Returns the number of tests that passed.
@@ -259,13 +295,13 @@ impl SuiteResult {
     /// Returns the summary of a single test suite.
     pub fn summary(&self) -> String {
         let failed = self.failed();
-        let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
+        let result = if failed == 0 { "ok".green() } else { "FAILED".red() };
         format!(
             "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
             result,
-            Paint::green(self.passed()),
-            Paint::red(failed),
-            Paint::yellow(self.skipped()),
+            self.passed().green(),
+            failed.red(),
+            self.skipped().yellow(),
             self.duration,
             self.total_time(),
         )
@@ -353,13 +389,13 @@ pub struct TestResult {
     pub logs: Vec<Log>,
 
     /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    /// Used for json output.
     pub decoded_logs: Vec<String>,
 
     /// What kind of test this was
     pub kind: TestKind,
 
     /// Traces
-    #[serde(skip)]
     pub traces: Traces,
 
     /// Additional traces to use for gas report.
@@ -371,53 +407,238 @@ pub struct TestResult {
     pub coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: HashMap<Address, String>,
-
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
+    pub labeled_addresses: AddressHashMap<String>,
 
     pub duration: Duration,
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Any captured gas snapshots along the test's execution which should be accumulated.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
+    /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
+    #[serde(skip)]
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
-            TestStatus::Success => Paint::green("[PASS]").fmt(f),
-            TestStatus::Skipped => Paint::yellow("[SKIP]").fmt(f),
+            TestStatus::Success => "[PASS]".green().fmt(f),
+            TestStatus::Skipped => {
+                let mut s = String::from("[SKIP");
+                if let Some(reason) = &self.reason {
+                    write!(s, ": {reason}").unwrap();
+                }
+                s.push(']');
+                s.yellow().fmt(f)
+            }
             TestStatus::Failure => {
-                let mut s = String::from("[FAIL. Reason: ");
+                let mut s = String::from("[FAIL");
+                if self.reason.is_some() || self.counterexample.is_some() {
+                    if let Some(reason) = &self.reason {
+                        write!(s, ": {reason}").unwrap();
+                    }
 
-                let reason = self.reason.as_deref().unwrap_or("assertion failed");
-                s.push_str(reason);
-
-                if let Some(counterexample) = &self.counterexample {
-                    match counterexample {
-                        CounterExample::Single(ex) => {
-                            write!(s, "; counterexample: {ex}]").unwrap();
-                        }
-                        CounterExample::Sequence(sequence) => {
-                            s.push_str("]\n\t[Sequence]\n");
-                            for ex in sequence {
-                                writeln!(s, "\t\t{ex}").unwrap();
+                    if let Some(counterexample) = &self.counterexample {
+                        match counterexample {
+                            CounterExample::Single(ex) => {
+                                write!(s, "; counterexample: {ex}]").unwrap();
+                            }
+                            CounterExample::Sequence(sequence) => {
+                                s.push_str("]\n\t[Sequence]\n");
+                                for ex in sequence {
+                                    writeln!(s, "\t\t{ex}").unwrap();
+                                }
                             }
                         }
+                    } else {
+                        s.push(']');
                     }
                 } else {
                     s.push(']');
                 }
-
-                Paint::red(s).fmt(f)
+                s.red().fmt(f)
             }
         }
     }
 }
 
 impl TestResult {
+    /// Creates a new test result starting from test setup results.
+    pub fn new(setup: TestSetup) -> Self {
+        Self {
+            labeled_addresses: setup.labeled_addresses,
+            logs: setup.logs,
+            traces: setup.traces,
+            coverage: setup.coverage,
+            ..Default::default()
+        }
+    }
+
+    /// Creates a failed test result with given reason.
     pub fn fail(reason: String) -> Self {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
+    }
+
+    /// Creates a failed test setup result.
+    pub fn setup_fail(setup: TestSetup) -> Self {
+        Self {
+            status: TestStatus::Failure,
+            reason: setup.reason,
+            logs: setup.logs,
+            traces: setup.traces,
+            coverage: setup.coverage,
+            labeled_addresses: setup.labeled_addresses,
+            ..Default::default()
+        }
+    }
+
+    /// Returns the skipped result for single test (used in skipped fuzz test too).
+    pub fn single_skip(mut self, reason: SkipReason) -> Self {
+        self.status = TestStatus::Skipped;
+        self.reason = reason.0;
+        self
+    }
+
+    /// Returns the failed result with reason for single test.
+    pub fn single_fail(mut self, reason: Option<String>) -> Self {
+        self.status = TestStatus::Failure;
+        self.reason = reason;
+        self
+    }
+
+    /// Returns the result for single test. Merges execution results (logs, labeled addresses,
+    /// traces and coverages) in initial setup results.
+    pub fn single_result(
+        mut self,
+        success: bool,
+        reason: Option<String>,
+        raw_call_result: RawCallResult,
+    ) -> Self {
+        self.kind =
+            TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
+
+        // Record logs, labels, traces and merge coverages.
+        self.logs.extend(raw_call_result.logs);
+        self.labeled_addresses.extend(raw_call_result.labels);
+        self.traces.extend(raw_call_result.traces.map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(raw_call_result.coverage);
+
+        self.status = match success {
+            true => TestStatus::Success,
+            false => TestStatus::Failure,
+        };
+        self.reason = reason;
+        self.duration = Duration::default();
+        self.gas_report_traces = Vec::new();
+
+        if let Some(cheatcodes) = raw_call_result.cheatcodes {
+            self.breakpoints = cheatcodes.breakpoints;
+            self.gas_snapshots = cheatcodes.gas_snapshots;
+            self.deprecated_cheatcodes = cheatcodes.deprecated;
+        }
+
+        self
+    }
+
+    /// Returns the result for a fuzzed test. Merges fuzz execution results (logs, labeled
+    /// addresses, traces and coverages) in initial setup results.
+    pub fn fuzz_result(mut self, result: FuzzTestResult) -> Self {
+        self.kind = TestKind::Fuzz {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            first_case: result.first_case,
+            runs: result.gas_by_case.len(),
+        };
+
+        // Record logs, labels, traces and merge coverages.
+        self.logs.extend(result.logs);
+        self.labeled_addresses.extend(result.labeled_addresses);
+        self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(result.coverage);
+
+        self.status = if result.skipped {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
+        };
+        self.reason = result.reason;
+        self.counterexample = result.counterexample;
+        self.duration = Duration::default();
+        self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
+        self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+
+        self
+    }
+
+    /// Returns the skipped result for invariant test.
+    pub fn invariant_skip(mut self, reason: SkipReason) -> Self {
+        self.kind =
+            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
+        self.status = TestStatus::Skipped;
+        self.reason = reason.0;
+        self
+    }
+
+    /// Returns the fail result for replayed invariant test.
+    pub fn invariant_replay_fail(
+        mut self,
+        replayed_entirely: bool,
+        invariant_name: &String,
+        call_sequence: Vec<BaseCounterExample>,
+    ) -> Self {
+        self.kind =
+            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
+        self.status = TestStatus::Failure;
+        self.reason = if replayed_entirely {
+            Some(format!("{invariant_name} replay failure"))
+        } else {
+            Some(format!("{invariant_name} persisted failure revert"))
+        };
+        self.counterexample = Some(CounterExample::Sequence(call_sequence));
+        self
+    }
+
+    /// Returns the fail result for invariant test setup.
+    pub fn invariant_setup_fail(mut self, e: Report) -> Self {
+        self.kind =
+            TestKind::Invariant { runs: 0, calls: 0, reverts: 0, metrics: HashMap::default() };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
+        self
+    }
+
+    /// Returns the invariant test result.
+    #[allow(clippy::too_many_arguments)]
+    pub fn invariant_result(
+        mut self,
+        gas_report_traces: Vec<Vec<CallTraceArena>>,
+        success: bool,
+        reason: Option<String>,
+        counterexample: Option<CounterExample>,
+        cases: Vec<FuzzedCases>,
+        reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
+    ) -> Self {
+        self.kind = TestKind::Invariant {
+            runs: cases.len(),
+            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+            reverts,
+            metrics,
+        };
+        self.status = match success {
+            true => TestStatus::Success,
+            false => TestStatus::Failure,
+        };
+        self.reason = reason;
+        self.counterexample = counterexample;
+        self.gas_report_traces = gas_report_traces;
+        self
     }
 
     /// Returns `true` if this is the result of a fuzz test
@@ -429,26 +650,43 @@ impl TestResult {
     pub fn short_result(&self, name: &str) -> String {
         format!("{self} {name} {}", self.kind.report())
     }
+
+    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
+    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
+        self.logs.extend(call_result.logs.clone());
+        self.labeled_addresses.extend(call_result.labels.clone());
+        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage.clone());
+    }
+
+    /// Function to merge given coverage in current test result coverage.
+    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+        let old_coverage = std::mem::take(&mut self.coverage);
+        self.coverage = match (old_coverage, other_coverage) {
+            (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
+            (a, b) => a.or(b),
+        };
+    }
 }
 
 /// Data report by a test.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TestKindReport {
-    Standard { gas: u64 },
+    Unit { gas: u64 },
     Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
-    Invariant { runs: usize, calls: usize, reverts: usize },
+    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
 }
 
 impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestKindReport::Standard { gas } => {
+            Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
-            TestKindReport::Fuzz { runs, mean_gas, median_gas } => {
+            Self::Fuzz { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            TestKindReport::Invariant { runs, calls, reverts } => {
+            Self::Invariant { runs, calls, reverts, metrics: _ } => {
                 write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
             }
         }
@@ -458,12 +696,12 @@ impl fmt::Display for TestKindReport {
 impl TestKindReport {
     /// Returns the main gas value to compare against
     pub fn gas(&self) -> u64 {
-        match self {
-            TestKindReport::Standard { gas } => *gas,
+        match *self {
+            Self::Unit { gas } => gas,
             // We use the median for comparisons
-            TestKindReport::Fuzz { median_gas, .. } => *median_gas,
+            Self::Fuzz { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
-            TestKindReport::Invariant { .. } => 0,
+            Self::Invariant { .. } => 0,
         }
     }
 }
@@ -471,11 +709,9 @@ impl TestKindReport {
 /// Various types of tests
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestKind {
-    /// A standard test that consists of calling the defined solidity function
-    ///
-    /// Holds the consumed gas
-    Standard(u64),
-    /// A solidity fuzz test, that stores all test cases
+    /// A unit test.
+    Unit { gas: u64 },
+    /// A fuzz test.
     Fuzz {
         /// we keep this for the debugger
         first_case: FuzzCase,
@@ -483,13 +719,13 @@ pub enum TestKind {
         mean_gas: u64,
         median_gas: u64,
     },
-    /// A solidity invariant test, that stores all test cases
-    Invariant { runs: usize, calls: usize, reverts: usize },
+    /// An invariant test.
+    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
 }
 
 impl Default for TestKind {
     fn default() -> Self {
-        Self::Standard(0)
+        Self::Unit { gas: 0 }
     }
 }
 
@@ -497,13 +733,16 @@ impl TestKind {
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
         match self {
-            TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
-            TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
+            Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
+            Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
                 TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
-            TestKind::Invariant { runs, calls, reverts } => {
-                TestKindReport::Invariant { runs: *runs, calls: *calls, reverts: *reverts }
-            }
+            Self::Invariant { runs, calls, reverts, metrics: _ } => TestKindReport::Invariant {
+                runs: *runs,
+                calls: *calls,
+                reverts: *reverts,
+                metrics: HashMap::default(),
+            },
         }
     }
 }
@@ -517,11 +756,13 @@ pub struct TestSetup {
     /// Call traces of the setup
     pub traces: Traces,
     /// Addresses labeled during setup
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
     /// The reason the setup failed, if it did
     pub reason: Option<String>,
     /// Coverage info during setup
     pub coverage: Option<HitMaps>,
+    /// Defined fuzz test fixtures
+    pub fuzz_fixtures: FuzzFixtures,
 }
 
 impl TestSetup {
@@ -529,7 +770,7 @@ impl TestSetup {
         error: EvmError,
         mut logs: Vec<Log>,
         mut traces: Traces,
-        mut labeled_addresses: HashMap<Address, String>,
+        mut labeled_addresses: AddressHashMap<String>,
     ) -> Self {
         match error {
             EvmError::Execution(err) => {
@@ -552,16 +793,17 @@ impl TestSetup {
         address: Address,
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: HashMap<Address, String>,
+        labeled_addresses: AddressHashMap<String>,
         coverage: Option<HitMaps>,
+        fuzz_fixtures: FuzzFixtures,
     ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage }
+        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
     }
 
     pub fn failed_with(
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: HashMap<Address, String>,
+        labeled_addresses: AddressHashMap<String>,
         reason: String,
     ) -> Self {
         Self {
@@ -571,6 +813,7 @@ impl TestSetup {
             labeled_addresses,
             reason: Some(reason),
             coverage: None,
+            fuzz_fixtures: FuzzFixtures::default(),
         }
     }
 

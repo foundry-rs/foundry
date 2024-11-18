@@ -15,7 +15,7 @@
 ///     // adds `init` to forge's command arguments
 ///     cmd.arg("init");
 ///     // executes forge <args> and panics if the command failed or output is empty
-///     cmd.assert_non_empty_stdout();
+///     cmd.assert_success().stdout_eq(str![[r#""#]]);
 /// });
 /// ```
 ///
@@ -37,6 +37,7 @@ macro_rules! forgetest {
         $crate::forgetest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
+        #[allow(clippy::disallowed_macros)]
         #[test]
         $(#[$attr])*
         fn $test() {
@@ -52,6 +53,7 @@ macro_rules! forgetest_async {
         $crate::forgetest_async!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
+        #[allow(clippy::disallowed_macros)]
         #[tokio::test(flavor = "multi_thread")]
         $(#[$attr])*
         async fn $test() {
@@ -63,13 +65,23 @@ macro_rules! forgetest_async {
 
 #[macro_export]
 macro_rules! casttest {
-    ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
-        $crate::casttest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
+    ($(#[$attr:meta])* $test:ident, $($async:ident)? |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::casttest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $($async)? |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
+        #[allow(clippy::disallowed_macros)]
         #[test]
         $(#[$attr])*
         fn $test() {
+            let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
+            $e
+        }
+    };
+    ($(#[$attr:meta])* $test:ident, $style:expr, async |$prj:ident, $cmd:ident| $e:expr) => {
+        #[allow(clippy::disallowed_macros)]
+        #[tokio::test(flavor = "multi_thread")]
+        $(#[$attr])*
+        async fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
             $e
         }
@@ -78,11 +90,32 @@ macro_rules! casttest {
 
 /// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
 #[macro_export]
+#[allow(clippy::disallowed_macros)]
 macro_rules! forgetest_init {
     ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
         $crate::forgetest_init!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
+        #[allow(clippy::disallowed_macros)]
+        #[test]
+        $(#[$attr])*
+        fn $test() {
+            let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $crate::util::initialize($prj.root());
+            $e
+        }
+    };
+}
+
+/// Setup forge soldeer
+#[macro_export]
+#[allow(clippy::disallowed_macros)]
+macro_rules! forgesoldeer {
+    ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::forgesoldeer!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
+    };
+    ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
+        #[allow(clippy::disallowed_macros)]
         #[test]
         $(#[$attr])*
         fn $test() {

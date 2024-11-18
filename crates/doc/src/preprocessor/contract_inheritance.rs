@@ -1,12 +1,14 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{document::DocumentContent, Document, ParseSource, PreprocessorOutput};
+use alloy_primitives::map::HashMap;
 use forge_fmt::solang_ext::SafeUnwrap;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 /// [ContractInheritance] preprocessor id.
 pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inheritance");
 
 /// The contract inheritance preprocessor.
+///
 /// It matches the documents with inner [`ParseSource::Contract`](crate::ParseSource) elements,
 /// iterates over their [Base](solang_parser::pt::Base)s and attempts
 /// to link them with the paths of the other contract documents.

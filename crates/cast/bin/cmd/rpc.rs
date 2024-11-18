@@ -35,7 +35,7 @@ pub struct RpcArgs {
 
 impl RpcArgs {
     pub async fn run(self) -> Result<()> {
-        let RpcArgs { raw, method, params, rpc } = self;
+        let Self { raw, method, params, rpc } = self;
 
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
@@ -53,7 +53,7 @@ impl RpcArgs {
         } else {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
-        println!("{}", Cast::new(provider).rpc(&method, params).await?);
+        sh_println!("{}", Cast::new(provider).rpc(&method, params).await?)?;
         Ok(())
     }
 }

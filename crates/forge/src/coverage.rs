@@ -1,14 +1,16 @@
 //! Coverage reports.
 
+use alloy_primitives::map::HashMap;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
-pub use foundry_evm::coverage::*;
 use std::{
-    collections::{hash_map, HashMap},
+    collections::hash_map,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
+
+pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
@@ -49,11 +51,11 @@ impl CoverageReporter for SummaryReporter {
     fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total += &summary;
-            self.add_row(path, summary);
+            self.add_row(path.display(), summary);
         }
 
         self.add_row("Total", self.total.clone());
-        println!("{}", self.table);
+        sh_println!("{}", self.table)?;
         Ok(())
     }
 }
@@ -81,12 +83,12 @@ pub struct LcovReporter<'a> {
 }
 
 impl<'a> LcovReporter<'a> {
-    pub fn new(destination: &'a mut (dyn Write + 'a)) -> LcovReporter<'a> {
+    pub fn new(destination: &'a mut (dyn Write + 'a)) -> Self {
         Self { destination }
     }
 }
 
-impl<'a> CoverageReporter for LcovReporter<'a> {
+impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (file, items) in report.items_by_source() {
             let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
@@ -95,7 +97,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
             });
 
             writeln!(self.destination, "TN:")?;
-            writeln!(self.destination, "SF:{file}")?;
+            writeln!(self.destination, "SF:{}", file.display())?;
 
             for item in items {
                 let line = item.loc.line;
@@ -109,17 +111,16 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
                     CoverageItemKind::Line => {
                         writeln!(self.destination, "DA:{line},{hits}")?;
                     }
-                    CoverageItemKind::Branch { branch_id, path_id } => {
+                    CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         writeln!(
                             self.destination,
                             "BRDA:{line},{branch_id},{path_id},{}",
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
-                    // Statements are not in the LCOV format
-                    CoverageItemKind::Statement => {
-                        writeln!(self.destination, "DA:{line},{hits}")?;
-                    }
+                    // Statements are not in the LCOV format.
+                    // We don't add them in order to avoid doubling line hits.
+                    _ => {}
                 }
             }
 
@@ -138,7 +139,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
             writeln!(self.destination, "end_of_record")?;
         }
 
-        println!("Wrote LCOV report.");
+        sh_println!("Wrote LCOV report.")?;
 
         Ok(())
     }
@@ -150,29 +151,39 @@ pub struct DebugReporter;
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_source() {
-            println!("Uncovered for {path}:");
+            sh_println!("Uncovered for {}:", path.display())?;
             items.iter().for_each(|item| {
                 if item.hits == 0 {
-                    println!("- {item}");
+                    let _ = sh_println!("- {item}");
                 }
             });
-            println!();
+            sh_println!()?;
         }
 
         for (contract_id, anchors) in &report.anchors {
-            println!("Anchors for {contract_id}:");
-            anchors.iter().for_each(|anchor| {
-                println!("- {anchor}");
-                println!(
-                    "  - Refers to item: {}",
-                    report
-                        .items
-                        .get(&contract_id.version)
-                        .and_then(|items| items.get(anchor.item_id))
-                        .map_or("None".to_owned(), |item| item.to_string())
-                );
-            });
-            println!();
+            sh_println!("Anchors for {contract_id}:")?;
+            anchors
+                .0
+                .iter()
+                .map(|anchor| (false, anchor))
+                .chain(anchors.1.iter().map(|anchor| (true, anchor)))
+                .for_each(|(is_deployed, anchor)| {
+                    let _ = sh_println!("- {anchor}");
+                    if is_deployed {
+                        let _ = sh_println!("- Creation code");
+                    } else {
+                        let _ = sh_println!("- Runtime code");
+                    }
+                    let _ = sh_println!(
+                        "  - Refers to item: {}",
+                        report
+                            .items
+                            .get(&contract_id.version)
+                            .and_then(|items| items.get(anchor.item_id))
+                            .map_or("None".to_owned(), |item| item.to_string())
+                    );
+                });
+            sh_println!()?;
         }
 
         Ok(())
@@ -185,7 +196,7 @@ pub struct BytecodeReporter {
 }
 
 impl BytecodeReporter {
-    pub fn new(root: PathBuf, destdir: PathBuf) -> BytecodeReporter {
+    pub fn new(root: PathBuf, destdir: PathBuf) -> Self {
         Self { root, destdir }
     }
 }
@@ -208,16 +219,16 @@ impl CoverageReporter for BytecodeReporter {
                 let hits = hits
                     .hits
                     .get(&(code.offset as usize))
-                    .map(|h| format!("[{:03}]", h))
+                    .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
-                let source_id = source_element.index;
+                let source_id = source_element.index();
                 let source_path = source_id.and_then(|i| {
                     report.source_paths.get(&(contract_id.version.clone(), i as usize))
                 });
 
-                let code = format!("{:?}", code);
-                let start = source_element.offset;
-                let end = source_element.offset + source_element.length;
+                let code = format!("{code:?}");
+                let start = source_element.offset() as usize;
+                let end = (source_element.offset() + source_element.length()) as usize;
 
                 if let Some(source_path) = source_path {
                     let (sline, spos) = line_number_cache.get_position(source_path, start)?;
@@ -225,20 +236,24 @@ impl CoverageReporter for BytecodeReporter {
                     writeln!(
                         formatted,
                         "{} {:40} // {}: {}:{}-{}:{} ({}-{})",
-                        hits, code, source_path, sline, spos, eline, epos, start, end
+                        hits,
+                        code,
+                        source_path.display(),
+                        sline,
+                        spos,
+                        eline,
+                        epos,
+                        start,
+                        end
                     )?;
                 } else if let Some(source_id) = source_id {
-                    writeln!(
-                        formatted,
-                        "{} {:40} // SRCID{}: ({}-{})",
-                        hits, code, source_id, start, end
-                    )?;
+                    writeln!(formatted, "{hits} {code:40} // SRCID{source_id}: ({start}-{end})")?;
                 } else {
-                    writeln!(formatted, "{} {:40}", hits, code)?;
+                    writeln!(formatted, "{hits} {code:40}")?;
                 }
             }
             fs::write(
-                &self.destdir.join(contract_id.contract_name.clone()).with_extension("asm"),
+                self.destdir.join(&*contract_id.contract_name).with_extension("asm"),
                 formatted,
             )?;
         }
@@ -250,16 +265,16 @@ impl CoverageReporter for BytecodeReporter {
 /// Cache line number offsets for source files
 struct LineNumberCache {
     root: PathBuf,
-    line_offsets: HashMap<String, Vec<usize>>,
+    line_offsets: HashMap<PathBuf, Vec<usize>>,
 }
 
 impl LineNumberCache {
     pub fn new(root: PathBuf) -> Self {
-        LineNumberCache { root, line_offsets: HashMap::new() }
+        Self { root, line_offsets: HashMap::default() }
     }
 
-    pub fn get_position(&mut self, path: &str, offset: usize) -> eyre::Result<(usize, usize)> {
-        let line_offsets = match self.line_offsets.entry(path.to_owned()) {
+    pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {
+        let line_offsets = match self.line_offsets.entry(path.to_path_buf()) {
             hash_map::Entry::Occupied(o) => o.into_mut(),
             hash_map::Entry::Vacant(v) => {
                 let text = fs::read_to_string(self.root.join(path))?;

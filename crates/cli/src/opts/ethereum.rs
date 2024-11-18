@@ -21,9 +21,11 @@ pub struct RpcOpts {
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
-    /// Use the Flashbots RPC URL with fast mode (https://rpc.flashbots.net/fast).
+    /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
+    ///
     /// This shares the transaction privately with all registered builders.
-    /// https://docs.flashbots.net/flashbots-protect/quick-start#faster-transactions
+    ///
+    /// See: <https://docs.flashbots.net/flashbots-protect/quick-start#faster-transactions>
     #[arg(long)]
     pub flashbots: bool,
 
@@ -38,6 +40,14 @@ pub struct RpcOpts {
     /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'
     #[arg(long, env = "ETH_RPC_JWT_SECRET")]
     pub jwt_secret: Option<String>,
+
+    /// Timeout for the RPC request in seconds.
+    ///
+    /// The specified timeout will be used to override the default timeout for RPC requests.
+    ///
+    /// Default value: 45
+    #[arg(long, env = "ETH_RPC_TIMEOUT")]
+    pub rpc_timeout: Option<u64>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -81,6 +91,9 @@ impl RpcOpts {
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
+        }
+        if let Some(rpc_timeout) = self.rpc_timeout {
+            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
         }
         dict
     }

@@ -1,6 +1,7 @@
-use super::sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_cli::utils::now;
+use forge_script_sequence::{
+    now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
+};
 use foundry_common::fs;
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
@@ -28,8 +29,8 @@ pub struct SensitiveMultiChainSequence {
 }
 
 impl SensitiveMultiChainSequence {
-    fn from_multi_sequence(sequence: MultiChainSequence) -> SensitiveMultiChainSequence {
-        SensitiveMultiChainSequence {
+    fn from_multi_sequence(sequence: MultiChainSequence) -> Self {
+        Self {
             deployments: sequence.deployments.into_iter().map(|sequence| sequence.into()).collect(),
         }
     }
@@ -43,9 +44,9 @@ impl MultiChainSequence {
         config: &Config,
         dry_run: bool,
     ) -> Result<Self> {
-        let (path, sensitive_path) = MultiChainSequence::get_paths(config, sig, target, dry_run)?;
+        let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
 
-        Ok(MultiChainSequence { deployments, path, sensitive_path, timestamp: now().as_secs() })
+        Ok(Self { deployments, path, sensitive_path, timestamp: now().as_secs() })
     }
 
     /// Gets paths in the formats
@@ -91,8 +92,8 @@ impl MultiChainSequence {
 
     /// Loads the sequences for the multi chain deployment.
     pub fn load(config: &Config, sig: &str, target: &ArtifactId, dry_run: bool) -> Result<Self> {
-        let (path, sensitive_path) = MultiChainSequence::get_paths(config, sig, target, dry_run)?;
-        let mut sequence: MultiChainSequence = foundry_compilers::utils::read_json_file(&path)
+        let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
+        let mut sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err("Multi-chain deployment not found.")?;
         let sensitive_sequence: SensitiveMultiChainSequence =
             foundry_compilers::utils::read_json_file(&sensitive_path)
@@ -145,8 +146,8 @@ impl MultiChainSequence {
         }
 
         if !silent {
-            println!("\nTransactions saved to: {}\n", self.path.display());
-            println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+            sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
+            sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
         }
 
         Ok(())

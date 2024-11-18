@@ -2,7 +2,12 @@
 
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
-use foundry_cli::utils;
+use eyre::Result;
+use foundry_cli::{opts::ShellOpts, utils};
+
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// A fast local Ethereum development node.
 #[derive(Parser)]
@@ -13,6 +18,9 @@ pub struct Anvil {
 
     #[command(subcommand)]
     pub cmd: Option<AnvilSubcommand>,
+
+    #[clap(flatten)]
+    pub shell: ShellOpts,
 }
 
 #[derive(Subcommand)]
@@ -29,14 +37,21 @@ pub enum AnvilSubcommand {
     GenerateFigSpec,
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::sh_err!("{err:?}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     utils::load_dotenv();
 
-    let mut app = Anvil::parse();
-    app.node.evm_opts.resolve_rpc_alias();
+    let mut args = Anvil::parse();
+    args.shell.shell().set();
+    args.node.evm_opts.resolve_rpc_alias();
 
-    if let Some(ref cmd) = app.cmd {
+    if let Some(cmd) = &args.cmd {
         match cmd {
             AnvilSubcommand::Completions { shell } => {
                 clap_complete::generate(
@@ -57,9 +72,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     let _ = fdlimit::raise_fd_limit();
-    app.node.run().await?;
-
-    Ok(())
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(args.node.run())
 }
 
 #[cfg(test)]

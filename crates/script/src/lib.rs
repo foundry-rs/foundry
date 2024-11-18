@@ -1,31 +1,41 @@
+//! # foundry-script
+//!
+//! Smart contract scripting.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
+#[macro_use]
+extern crate foundry_common;
 
 #[macro_use]
 extern crate tracing;
 
-use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{
+    hex,
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, TxKind, U256,
+};
+use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
-use ethers_signers::Signer;
-use eyre::{ContextCompat, Result, WrapErr};
+use eyre::{ContextCompat, Result};
+use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{
+    opts::{CoreBuildArgs, ShellOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    compile::SkipBuildFilter,
-    errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    provider::ethers::RpcUrl,
-    shell,
-    types::ToAlloy,
-    CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
-use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
+use foundry_compilers::ArtifactId;
 use foundry_config::{
     figment,
     figment::{
@@ -37,25 +47,23 @@ use foundry_config::{
 use foundry_evm::{
     backend::Backend,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    debug::DebugArena,
     executors::ExecutorBuilder,
     inspectors::{
-        cheatcodes::{BroadcastableTransactions, ScriptWallets},
+        cheatcodes::{BroadcastableTransactions, Wallets},
         CheatsConfig,
     },
     opts::EvmOpts,
-    traces::Traces,
+    traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use yansi::Paint;
+use serde::Serialize;
+use std::path::PathBuf;
 
-mod artifacts;
 mod broadcast;
 mod build;
 mod execute;
 mod multi_sequence;
+mod progress;
 mod providers;
 mod receipts;
 mod runner;
@@ -107,6 +115,12 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
+    /// Batch size of transactions.
+    ///
+    /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
+    #[arg(long, default_value = "100")]
+    pub batch_size: usize,
+
     /// Skips on-chain simulation.
     #[arg(long)]
     pub skip_simulation: bool,
@@ -118,7 +132,6 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[arg(
         long,
-        requires = "sender",
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
     )]
     pub unlocked: bool,
@@ -142,6 +155,15 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// Dumps all debugger steps to file.
+    #[arg(
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    pub dump: Option<PathBuf>,
+
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
     #[arg(long)]
@@ -161,11 +183,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Output results in JSON format.
-    #[arg(long)]
-    pub json: bool,
-
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
@@ -174,11 +195,9 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[arg(long, num_args(1..))]
-    pub skip: Option<Vec<SkipBuildFilter>>,
+    /// Timeout to use for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
 
     #[command(flatten)]
     pub opts: CoreBuildArgs,
@@ -194,14 +213,15 @@ pub struct ScriptArgs {
 
     #[command(flatten)]
     pub retry: RetryArgs,
+
+    #[clap(flatten)]
+    pub shell: ShellOpts,
 }
 
-// === impl ScriptArgs ===
-
 impl ScriptArgs {
-    async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
-            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -228,7 +248,8 @@ impl ScriptArgs {
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
             let pre_simulation = compiled
-                .link()?
+                .link()
+                .await?
                 .prepare_execution()
                 .await?
                 .execute()
@@ -237,10 +258,13 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                pre_simulation.run_debugger()?;
+                return match pre_simulation.args.dump.clone() {
+                    Some(ref path) => pre_simulation.run_debug_file_dumper(path),
+                    None => pre_simulation.run_debugger(),
+                };
             }
 
-            if pre_simulation.args.json {
+            if shell::is_json() {
                 pre_simulation.show_json()?;
             } else {
                 pre_simulation.show_traces().await?;
@@ -259,21 +283,21 @@ impl ScriptArgs {
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
                 return Ok(());
             }
 
             pre_simulation.args.check_contract_sizes(
                 &pre_simulation.execution_result,
-                &pre_simulation.build_data.highlevel_known_contracts,
+                &pre_simulation.build_data.known_contracts,
             )?;
 
             pre_simulation.fill_metadata().await?.bundle().await?
         };
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
-        if !bundled.args.broadcast && !bundled.args.resume && !bundled.args.verify {
-            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+        if !bundled.args.should_broadcast() {
+            sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             return Ok(());
         }
 
@@ -299,7 +323,7 @@ impl ScriptArgs {
             .wallets
             .private_keys()?
             .filter(|pks| pks.len() == 1)
-            .map(|pks| pks.first().unwrap().address().to_alloy());
+            .map(|pks| pks.first().unwrap().address());
         Ok(maybe_sender)
     }
 
@@ -311,30 +335,38 @@ impl ScriptArgs {
     ///
     /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     fn get_method_and_calldata(&self, abi: &JsonAbi) -> Result<(Function, Bytes)> {
-        let (func, data) = if let Ok(func) = get_func(&self.sig) {
-            (
-                abi.functions().find(|&abi_func| abi_func.selector() == func.selector()).wrap_err(
-                    format!("Function `{}` is not implemented in your script.", self.sig),
-                )?,
-                encode_function_args(&func, &self.args)?.into(),
-            )
-        } else {
-            let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
+        if let Ok(decoded) = hex::decode(&self.sig) {
             let selector = &decoded[..SELECTOR_LEN];
-            (
-                abi.functions().find(|&func| selector == &func.selector()[..]).ok_or_else(
-                    || {
-                        eyre::eyre!(
-                            "Function selector `{}` not found in the ABI",
-                            hex::encode(selector)
-                        )
-                    },
-                )?,
-                decoded.into(),
-            )
-        };
+            let func =
+                abi.functions().find(|func| selector == &func.selector()[..]).ok_or_else(|| {
+                    eyre::eyre!(
+                        "Function selector `{}` not found in the ABI",
+                        hex::encode(selector)
+                    )
+                })?;
+            return Ok((func.clone(), decoded.into()));
+        }
 
-        Ok((func.clone(), data))
+        let func = if self.sig.contains('(') {
+            let func = get_func(&self.sig)?;
+            abi.functions()
+                .find(|&abi_func| abi_func.selector() == func.selector())
+                .wrap_err(format!("Function `{}` is not implemented in your script.", self.sig))?
+        } else {
+            let matching_functions =
+                abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
+            match matching_functions.len() {
+                0 => eyre::bail!("Function `{}` not found in the ABI", self.sig),
+                1 => matching_functions[0],
+                2.. => eyre::bail!(
+                    "Multiple functions with the same name `{}` found in the ABI",
+                    self.sig
+                ),
+            }
+        };
+        let data = encode_function_args(func, &self.args)?;
+
+        Ok((func.clone(), data.into()))
     }
 
     /// Checks if the transaction is a deployment with either a size above the `CONTRACT_MAX_SIZE`
@@ -345,25 +377,16 @@ impl ScriptArgs {
     fn check_contract_sizes(
         &self,
         result: &ScriptResult,
-        known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+        known_contracts: &ContractsByArtifact,
     ) -> Result<()> {
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
         // From artifacts
-        for (artifact, bytecode) in known_contracts.iter() {
-            if bytecode.bytecode.object.is_unlinked() {
-                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into());
-            }
-            let init_code = bytecode.bytecode.object.as_bytes().unwrap();
-            // Ignore abstract contracts
-            if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
-                if deployed_code.object.is_unlinked() {
-                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into());
-                }
-                let deployed_code = deployed_code.object.as_bytes().unwrap();
-                bytecodes.push((artifact.name.clone(), init_code, deployed_code));
-            }
+        for (artifact, contract) in known_contracts.iter() {
+            let Some(bytecode) = contract.bytecode() else { continue };
+            let Some(deployed_bytecode) = contract.deployed_bytecode() else { continue };
+            bytecodes.push((artifact.name.clone(), bytecode, deployed_bytecode));
         }
 
         // From traces
@@ -390,23 +413,23 @@ impl ScriptArgs {
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
-                    .input
-                    .clone()
-                    .into_input()
+                    .input()
                     .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to))
+                    .map(|data| (data, tx.transaction.to()))
             })
         }) {
             let mut offset = 0;
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(to) = to {
+            if let Some(TxKind::Call(to)) = to {
                 if to == DEFAULT_CREATE2_DEPLOYER {
                     // Size of the salt prefix.
                     offset = 32;
+                } else {
+                    continue;
                 }
-            } else if to.is_some() {
-                continue;
+            } else if let Some(TxKind::Create) = to {
+                // Pass
             }
 
             // Find artifact with a deployment code same as the data.
@@ -416,13 +439,10 @@ impl ScriptArgs {
                 let deployment_size = deployed_code.len();
 
                 if deployment_size > max_size {
-                    prompt_user = self.broadcast;
-                    shell::println(format!(
-                        "{}",
-                        Paint::red(format!(
-                            "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ))
-                    ))?;
+                    prompt_user = self.should_broadcast();
+                    sh_err!(
+                        "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
+                    )?;
                 }
             }
         }
@@ -436,6 +456,11 @@ impl ScriptArgs {
         }
 
         Ok(())
+    }
+
+    /// We only broadcast transactions if --broadcast or --resume was passed.
+    fn should_broadcast(&self) -> bool {
+        self.broadcast || self.resume
     }
 }
 
@@ -454,21 +479,26 @@ impl Provider for ScriptArgs {
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
         }
+        if let Some(timeout) = self.timeout {
+            dict.insert("transaction_timeout".to_string(), timeout.into());
+        }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct ScriptResult {
     pub success: bool,
+    #[serde(rename = "raw_logs")]
     pub logs: Vec<Log>,
     pub traces: Traces,
-    pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
+    #[serde(skip)]
     pub breakpoints: Breakpoints,
 }
 
@@ -492,17 +522,12 @@ impl ScriptResult {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct JsonResult {
+#[derive(Serialize)]
+struct JsonResult<'a> {
     logs: Vec<String>,
-    gas_used: u64,
-    returns: HashMap<String, NestedValue>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
+    returns: &'a HashMap<String, NestedValue>,
+    #[serde(flatten)]
+    result: &'a ScriptResult,
 }
 
 #[derive(Clone, Debug)]
@@ -511,23 +536,23 @@ pub struct ScriptConfig {
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
-    pub backends: HashMap<RpcUrl, Backend>,
+    pub backends: HashMap<String, Backend>,
 }
 
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url, None).await?
+            next_nonce(evm_opts.sender, fork_url).await?
         } else {
             // dapptools compatibility
             1
         };
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::new() })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url, None).await?
+            next_nonce(sender, fork_url).await?
         } else {
             // dapptools compatibility
             1
@@ -542,15 +567,17 @@ impl ScriptConfig {
 
     async fn get_runner_with_cheatcodes(
         &mut self,
-        script_wallets: ScriptWallets,
+        known_contracts: ContractsByArtifact,
+        script_wallets: Wallets,
         debug: bool,
+        target: ArtifactId,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some(script_wallets), debug).await
+        self._get_runner(Some((known_contracts, script_wallets, target)), debug).await
     }
 
     async fn _get_runner(
         &mut self,
-        script_wallets: Option<ScriptWallets>,
+        cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -575,31 +602,34 @@ impl ScriptConfig {
 
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
-            .inspectors(|stack| stack.trace(true))
+            .inspectors(|stack| {
+                stack
+                    .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                    .alphanet(self.evm_opts.alphanet)
+            })
             .spec(self.config.evm_spec_id())
-            .gas_limit(self.evm_opts.gas_limit());
+            .gas_limit(self.evm_opts.gas_limit())
+            .legacy_assertions(self.config.legacy_assertions);
 
-        if let Some(script_wallets) = script_wallets {
+        if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
-                    .debug(debug)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
-                            Some(script_wallets),
+                            Some(known_contracts),
+                            Some(target.name),
+                            Some(target.version),
                         )
                         .into(),
                     )
+                    .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });
         }
 
-        Ok(ScriptRunner::new(
-            builder.build(env, db),
-            self.evm_opts.initial_balance,
-            self.evm_opts.sender,
-        ))
+        Ok(ScriptRunner::new(builder.build(env, db), self.evm_opts.clone()))
     }
 }
 

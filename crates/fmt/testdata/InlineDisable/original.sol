@@ -467,3 +467,20 @@ error TopLevelCustomErrorArgWithoutName  (string);
     event Event1(uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a);
 
 // forgefmt: disable-stop
+
+function setNumber(uint256 newNumber /* param1 */, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf /* param2 */) public view returns (bool,bool) { /* inline*/ number1 = newNumber1; // forgefmt: disable-line
+    number = newNumber;
+    return (true, true);
+}
+
+function setNumber1(uint256 newNumber /* param1 */, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf /* param2 */) public view returns (bool,bool) { /* inline*/ number1 = newNumber1; // forgefmt: disable-line
+}
+
+// forgefmt: disable-next-line
+function setNumber1(uint256 newNumber , uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf) public view returns (bool,bool) { number1 = newNumber1;
+}
+
+function setNumber(uint256 newNumber, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf) public { // forgefmt: disable-line
+    number = newNumber;
+    number1 =   newNumber1; // forgefmt: disable-line
+}

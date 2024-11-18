@@ -1,0 +1,29 @@
+[package]
+name = "forge-sol-macro-gen"
+description = "Contains types and methods for generating rust bindings using sol!"
+publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-json-abi.workspace = true
+alloy-sol-macro-input.workspace = true
+alloy-sol-macro-expander = { workspace = true, features = ["json"] }
+foundry-common.workspace = true
+
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+prettyplease.workspace = true
+
+serde_json.workspace = true
+eyre.workspace = true

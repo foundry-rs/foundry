@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{hex, keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -22,7 +22,7 @@ pub struct Create2Args {
     #[arg(
         long,
         short,
-        required_unless_present_any = &["ends_with", "matching"],
+        required_unless_present_any = &["ends_with", "matching", "salt"],
         value_name = "HEX"
     )]
     starts_with: Option<String>,
@@ -47,6 +47,23 @@ pub struct Create2Args {
         value_name = "ADDRESS"
     )]
     deployer: Address,
+
+    /// Salt to be used for the contract deployment. This option separate from the default salt
+    /// mining with filters.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "starts_with",
+            "ends_with",
+            "matching",
+            "case_sensitive",
+            "caller",
+            "seed",
+            "no_random"
+        ],
+        value_name = "HEX"
+    )]
+    salt: Option<String>,
 
     /// Init code of the contract to be deployed.
     #[arg(short, long, value_name = "HEX")]
@@ -81,12 +98,13 @@ pub struct Create2Output {
 
 impl Create2Args {
     pub fn run(self) -> Result<Create2Output> {
-        let Create2Args {
+        let Self {
             starts_with,
             ends_with,
             matching,
             case_sensitive,
             deployer,
+            salt,
             init_code,
             init_code_hash,
             jobs,
@@ -94,6 +112,21 @@ impl Create2Args {
             seed,
             no_random,
         } = self;
+
+        let init_code_hash = if let Some(init_code_hash) = init_code_hash {
+            hex::FromHex::from_hex(init_code_hash)
+        } else if let Some(init_code) = init_code {
+            hex::decode(init_code).map(keccak256)
+        } else {
+            unreachable!();
+        }?;
+
+        if let Some(salt) = salt {
+            let salt = hex::FromHex::from_hex(salt)?;
+            let address = deployer.create2(salt, init_code_hash);
+            sh_println!("{address}")?;
+            return Ok(Create2Output { address, salt });
+        }
 
         let mut regexs = vec![];
 
@@ -134,14 +167,6 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let init_code_hash = if let Some(init_code_hash) = init_code_hash {
-            hex::FromHex::from_hex(init_code_hash)
-        } else if let Some(init_code) = init_code {
-            hex::decode(init_code).map(keccak256)
-        } else {
-            unreachable!();
-        }?;
-
         let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         if let Some(jobs) = jobs {
             n_threads = n_threads.min(jobs.get());
@@ -166,11 +191,12 @@ impl Create2Args {
             rng.fill_bytes(remaining);
         }
 
-        println!("Configuration:");
-        println!("Init code hash: {init_code_hash}");
-        println!("Regex patterns: {:?}", regex.patterns());
-        println!();
-        println!("Starting to generate deterministic contract address with {n_threads} threads...");
+        sh_println!("Configuration:")?;
+        sh_println!("Init code hash: {init_code_hash}")?;
+        sh_println!("Regex patterns: {:?}\n", regex.patterns())?;
+        sh_println!(
+            "Starting to generate deterministic contract address with {n_threads} threads..."
+        )?;
         let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
@@ -224,9 +250,9 @@ impl Create2Args {
 
         let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
         let (address, salt) = results.into_iter().next().unwrap();
-        println!("Successfully found contract address in {:?}", timer.elapsed());
-        println!("Address: {address}");
-        println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0));
+        sh_println!("Successfully found contract address in {:?}", timer.elapsed())?;
+        sh_println!("Address: {address}")?;
+        sh_println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
 
         Ok(Create2Output { address, salt })
     }
@@ -300,6 +326,22 @@ mod tests {
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
         assert!(format!("{address:x}").starts_with("bb"));
+    }
+
+    #[test]
+    fn create2_salt() {
+        let args = Create2Args::parse_from([
+            "foundry-cli",
+            "--deployer=0x8ba1f109551bD432803012645Ac136ddd64DBA72",
+            "--salt=0x7c5ea36004851c764c44143b1dcb59679b11c9a68e5f41497f6cf3d480715331",
+            "--init-code=0x6394198df16000526103ff60206004601c335afa6040516060f3",
+        ]);
+        let create2_out = args.run().unwrap();
+        let address = create2_out.address;
+        assert_eq!(
+            address,
+            Address::from_str("0x533AE9D683B10C02EBDB05471642F85230071FC3").unwrap()
+        );
     }
 
     #[test]

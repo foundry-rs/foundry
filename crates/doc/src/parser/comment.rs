@@ -1,10 +1,10 @@
-use derive_more::{Deref, DerefMut};
+use alloy_primitives::map::HashMap;
+use derive_more::{derive::Display, Deref, DerefMut};
 use solang_parser::doccomment::DocCommentTag;
-use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
-/// See: https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags.
-#[derive(Clone, Debug, PartialEq)]
+/// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
+#[derive(Clone, Debug, Display, PartialEq, Eq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
     Title,
@@ -28,20 +28,20 @@ impl CommentTag {
     fn from_str(s: &str) -> Option<Self> {
         let trimmed = s.trim();
         let tag = match trimmed {
-            "title" => CommentTag::Title,
-            "author" => CommentTag::Author,
-            "notice" => CommentTag::Notice,
-            "dev" => CommentTag::Dev,
-            "param" => CommentTag::Param,
-            "return" => CommentTag::Return,
-            "inheritdoc" => CommentTag::Inheritdoc,
+            "title" => Self::Title,
+            "author" => Self::Author,
+            "notice" => Self::Notice,
+            "dev" => Self::Dev,
+            "param" => Self::Param,
+            "return" => Self::Return,
+            "inheritdoc" => Self::Inheritdoc,
             _ if trimmed.starts_with("custom:") => {
                 // `@custom:param` tag will be parsed as `CommentTag::Param` due to a limitation
                 // on specifying parameter docs for unnamed function arguments.
                 let custom_tag = trimmed.trim_start_matches("custom:").trim();
                 match custom_tag {
-                    "param" => CommentTag::Param,
-                    _ => CommentTag::Custom(custom_tag.to_owned()),
+                    "param" => Self::Param,
+                    _ => Self::Custom(custom_tag.to_owned()),
                 }
             }
             _ => {
@@ -54,8 +54,9 @@ impl CommentTag {
 }
 
 /// The natspec documentation comment.
-/// https://docs.soliditylang.org/en/v0.8.17/natspec-format.html
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Ref: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html>
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     /// The doc comment tag.
     pub tag: CommentTag,
@@ -95,6 +96,11 @@ impl Comment {
             },
         )
     }
+
+    /// Check if this comment is a custom tag.
+    pub fn is_custom(&self) -> bool {
+        matches!(self.tag, CommentTag::Custom(_))
+    }
 }
 
 /// The collection of natspec [Comment] items.
@@ -126,9 +132,9 @@ impl Comments {
     pub fn merge_inheritdoc(
         &self,
         ident: &str,
-        inheritdocs: Option<HashMap<String, Comments>>,
-    ) -> Comments {
-        let mut result = Comments(Vec::from_iter(self.iter().cloned()));
+        inheritdocs: Option<HashMap<String, Self>>,
+    ) -> Self {
+        let mut result = Self(Vec::from_iter(self.iter().cloned()));
 
         if let (Some(inheritdocs), Some(base)) = (inheritdocs, self.find_inheritdoc_base()) {
             let key = format!("{base}.{ident}");
@@ -156,19 +162,19 @@ impl From<Vec<DocCommentTag>> for Comments {
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
-    /// Filter a collection of comments and return only those that match a provided tag
-    pub fn include_tag(&self, tag: CommentTag) -> CommentsRef<'a> {
+    /// Filter a collection of comments and return only those that match a provided tag.
+    pub fn include_tag(&self, tag: CommentTag) -> Self {
         self.include_tags(&[tag])
     }
 
-    /// Filter a collection of comments and return only those that match provided tags
-    pub fn include_tags(&self, tags: &[CommentTag]) -> CommentsRef<'a> {
+    /// Filter a collection of comments and return only those that match provided tags.
+    pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
     }
 
-    /// Filter a collection of comments and return  only those that do not match provided tags
-    pub fn exclude_tags(&self, tags: &[CommentTag]) -> CommentsRef<'a> {
+    /// Filter a collection of comments and return only those that do not match provided tags.
+    pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
     }
@@ -190,6 +196,11 @@ impl<'a> CommentsRef<'a> {
         self.iter()
             .find(|c| matches!(c.tag, CommentTag::Inheritdoc))
             .and_then(|c| c.value.split_whitespace().next())
+    }
+
+    /// Filter a collection of comments and only return the custom tags.
+    pub fn get_custom_tags(&self) -> Self {
+        CommentsRef(self.iter().cloned().filter(|c| c.is_custom()).collect())
     }
 }
 
@@ -226,5 +237,33 @@ mod tests {
         assert_eq!(CommentTag::from_str(""), None);
         assert_eq!(CommentTag::from_str("custom"), None);
         assert_eq!(CommentTag::from_str("sometag"), None);
+    }
+
+    #[test]
+    fn test_is_custom() {
+        // Test custom tag.
+        let custom_comment = Comment::new(
+            CommentTag::from_str("custom:test").unwrap(),
+            "dummy custom tag".to_owned(),
+        );
+        assert!(custom_comment.is_custom(), "Custom tag should return true for is_custom");
+
+        // Test non-custom tags.
+        let non_custom_tags = [
+            CommentTag::Title,
+            CommentTag::Author,
+            CommentTag::Notice,
+            CommentTag::Dev,
+            CommentTag::Param,
+            CommentTag::Return,
+            CommentTag::Inheritdoc,
+        ];
+        for tag in non_custom_tags {
+            let comment = Comment::new(tag.clone(), "Non-custom comment".to_string());
+            assert!(
+                !comment.is_custom(),
+                "Non-custom tag {tag:?} should return false for is_custom"
+            );
+        }
     }
 }

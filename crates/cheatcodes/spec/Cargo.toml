@@ -11,13 +11,16 @@ homepage.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-macros.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
 serde.workspace = true
 
 # schema
-schemars = { version = "0.8.15", optional = true }
+schemars = { version = "0.8", optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

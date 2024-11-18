@@ -1,146 +1,235 @@
 //! Tests for OP chain support.
 
-use crate::utils::ethers_http_provider;
-use anvil::{spawn, Hardfork, NodeConfig};
-use ethers::{
-    abi::Address,
-    providers::Middleware,
-    types::{
-        transaction::{eip2718::TypedTransaction, optimism::DepositTransaction},
-        TransactionRequest, U256,
-    },
-};
-use ethers_core::types::{Bytes, H256};
-use foundry_common::types::ToAlloy;
-use std::str::FromStr;
+use crate::utils::{http_provider, http_provider_with_signer};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_primitives::{b256, Address, TxHash, TxKind, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
+use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil_core::eth::transaction::optimism::DepositTransaction;
+use op_alloy_rpc_types::OpTransactionFields;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
-    // optimism disabled by default
-    let (_, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
 
-    let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
-    let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
-    let deposit_tx: TypedTransaction = TypedTransaction::DepositTransaction(DepositTransaction {
-        tx: TransactionRequest {
-            chain_id: None,
-            from: Some(from_addr),
-            to: Some(ethers::types::NameOrAddress::Address(to_addr)),
-            value: Some("1234".parse().unwrap()),
-            gas: Some(U256::from(21000)),
-            gas_price: None,
-            data: Some(Bytes::default()),
-            nonce: None,
-        },
-        source_hash: H256::from_str(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        .unwrap(),
-        mint: Some(U256::zero()),
-        is_system_tx: true,
-    });
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
 
-    // sending the deposit transaction should fail with error saying not supported
-    let res = provider.send_transaction(deposit_tx.clone(), None).await;
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("op-stack deposit tx received but is not supported"));
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1234))
+        .with_gas_limit(21000);
+
+    let op_fields = OpTransactionFields {
+        source_hash: Some(b256!(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
+    };
+
+    // TODO: Test this
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
+
+    let tx = WithOtherFields { inner: tx, other };
+
+    let err = provider.send_transaction(tx).await.unwrap_err();
+    let s = err.to_string();
+    assert!(s.contains("op-stack deposit tx received but is not supported"), "{s:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_deposit_transaction() {
     // enable the Optimism flag
-    let (api, handle) =
-        spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let (api, handle) = spawn(
+        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
+    )
+    .await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let send_value = U256::from(1234);
-    let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
-    let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
+    let before_balance_to = provider.get_balance(to).await.unwrap();
 
-    // fund the sender
-    api.anvil_set_balance(from_addr.to_alloy(), send_value.to_alloy()).await.unwrap();
+    let op_fields = OpTransactionFields {
+        source_hash: Some(b256!(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
+    };
 
-    let deposit_tx: TypedTransaction = TypedTransaction::DepositTransaction(DepositTransaction {
-        tx: TransactionRequest {
-            chain_id: None,
-            from: Some(from_addr),
-            to: Some(ethers::types::NameOrAddress::Address(to_addr)),
-            value: Some(send_value),
-            gas: Some(U256::from(21000)),
-            gas_price: None,
-            data: Some(Bytes::default()),
-            nonce: None,
-        },
-        source_hash: H256::from_str(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        .unwrap(),
-        mint: Some(U256::zero()),
-        is_system_tx: true,
-    });
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(send_value)
+        .with_gas_limit(21000);
+    let tx: WithOtherFields<TransactionRequest> = WithOtherFields { inner: tx, other };
 
-    let pending = provider.send_transaction(deposit_tx.clone(), None).await.unwrap();
+    let pending = provider.send_transaction(tx).await.unwrap().register().await.unwrap();
 
     // mine block
     api.evm_mine(None).await.unwrap();
 
-    let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
-    assert_eq!(receipt.from, from_addr);
-    assert_eq!(receipt.to, Some(to_addr));
+    let receipt =
+        provider.get_transaction_receipt(pending.tx_hash().to_owned()).await.unwrap().unwrap();
+    assert_eq!(receipt.from, from);
+    assert_eq!(receipt.to, Some(to));
 
     // the recipient should have received the value
-    let balance = provider.get_balance(to_addr, None).await.unwrap();
-    assert_eq!(balance, send_value);
+    let after_balance_to = provider.get_balance(to).await.unwrap();
+    assert_eq!(after_balance_to, before_balance_to + send_value);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag
-    let (api, handle) =
-        spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let (api, handle) = spawn(
+        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
+    )
+    .await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
 
     let send_value = U256::from(1234);
-    let from_addr: Address = "cf7f9e66af820a19257a2108375b180b0ec49167".parse().unwrap();
-    let to_addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
+    let before_balance_to = provider.get_balance(to).await.unwrap();
 
-    // fund the sender
-    api.anvil_set_balance(from_addr.to_alloy(), send_value.to_alloy()).await.unwrap();
+    let tx = TransactionRequest::default()
+        .with_chain_id(31337)
+        .with_nonce(0)
+        .with_from(from)
+        .with_to(to)
+        .with_value(send_value)
+        .with_gas_limit(21_000)
+        .with_max_fee_per_gas(20_000_000_000)
+        .with_max_priority_fee_per_gas(1_000_000_000);
 
-    let deposit_tx: TypedTransaction = TypedTransaction::DepositTransaction(DepositTransaction {
-        tx: TransactionRequest {
-            chain_id: None,
-            from: Some(from_addr),
-            to: Some(ethers::types::NameOrAddress::Address(to_addr)),
-            value: Some(send_value),
-            gas: Some(U256::from(21000)),
-            gas_price: None,
-            data: Some(Bytes::default()),
-            nonce: None,
-        },
-        source_hash: H256::from_str(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        .unwrap(),
-        mint: Some(U256::zero()),
-        is_system_tx: true,
-    });
+    let op_fields = OpTransactionFields {
+        source_hash: Some(b256!(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
+    };
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
+    let tx = WithOtherFields { inner: tx, other };
+    let tx_envelope = tx.build(&signer).await.unwrap();
+    let mut tx_buffer = Vec::with_capacity(tx_envelope.encode_2718_len());
+    tx_envelope.encode_2718(&mut tx_buffer);
+    let tx_encoded = tx_buffer.as_slice();
 
-    let rlpbytes = deposit_tx.rlp();
-    let pending = provider.send_raw_transaction(rlpbytes).await.unwrap();
+    let pending =
+        provider.send_raw_transaction(tx_encoded).await.unwrap().register().await.unwrap();
 
     // mine block
     api.evm_mine(None).await.unwrap();
 
-    let receipt = provider.get_transaction_receipt(pending.tx_hash()).await.unwrap().unwrap();
-    assert_eq!(receipt.from, from_addr);
-    assert_eq!(receipt.to, Some(to_addr));
-    assert_eq!(receipt.other.get_deserialized::<u64>("depositNonce").unwrap().unwrap(), 0);
+    let receipt =
+        provider.get_transaction_receipt(pending.tx_hash().to_owned()).await.unwrap().unwrap();
+    assert_eq!(receipt.from, from);
+    assert_eq!(receipt.to, Some(to));
 
     // the recipient should have received the value
-    let balance = provider.get_balance(to_addr, None).await.unwrap();
-    assert_eq!(balance, send_value);
+    let after_balance_to = provider.get_balance(to).await.unwrap();
+    assert_eq!(after_balance_to, before_balance_to + send_value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_deposit_transaction_hash_matches_sepolia() {
+    // enable the Optimism flag
+    let (_api, handle) = spawn(
+        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
+    )
+    .await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    // https://sepolia-optimism.etherscan.io/tx/0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
+    let tx_hash: TxHash = "0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7"
+        .parse::<TxHash>()
+        .unwrap();
+
+    // https://sepolia-optimism.etherscan.io/getRawTx?tx=0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
+    let raw_deposit_tx = alloy_primitives::hex::decode(
+        "7ef861a0dfd7ae78bf3c414cfaa77f13c0205c82eb9365e217b2daa3448c3156b69b27ac94778f2146f48179643473b82931c4cd7b8f153efd94778f2146f48179643473b82931c4cd7b8f153efd872386f26fc10000872386f26fc10000830186a08080",
+    )
+    .unwrap();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
+
+    let receipt = provider
+        .send_raw_transaction(raw_deposit_tx.as_slice())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert_eq!(receipt.transaction_hash, tx_hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value() {
+    // enable the Optimism flag
+    let (_api, handle) = spawn(
+        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
+    )
+    .await;
+
+    let provider = http_provider(&handle.http_endpoint());
+
+    let sender = Address::random();
+    let recipient = Address::random();
+    let send_value = 1_000_000_000_u128;
+
+    let sender_prev_balance = provider.get_balance(sender).await.unwrap();
+    assert_eq!(sender_prev_balance, U256::from(0));
+
+    let recipient_prev_balance = provider.get_balance(recipient).await.unwrap();
+    assert_eq!(recipient_prev_balance, U256::from(0));
+
+    let deposit_tx = DepositTransaction {
+        source_hash: b256!("0000000000000000000000000000000000000000000000000000000000000000"),
+        from: sender,
+        nonce: 0,
+        kind: TxKind::Call(recipient),
+        mint: U256::from(send_value),
+        value: U256::from(send_value),
+        gas_limit: 21_000,
+        is_system_tx: false,
+        input: Vec::new().into(),
+    };
+
+    let mut tx_buffer = Vec::new();
+    deposit_tx.encode_2718(&mut tx_buffer);
+
+    provider.send_raw_transaction(&tx_buffer).await.unwrap().get_receipt().await.unwrap();
+
+    let sender_new_balance = provider.get_balance(sender).await.unwrap();
+    // sender should've sent the entire deposited value to recipient
+    assert_eq!(sender_new_balance, U256::from(0));
+
+    let recipient_new_balance = provider.get_balance(recipient).await.unwrap();
+    // recipient should've received the entire deposited value
+    assert_eq!(recipient_new_balance, U256::from(send_value));
 }

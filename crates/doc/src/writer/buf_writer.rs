@@ -1,21 +1,23 @@
 use crate::{writer::traits::ParamLike, AsDoc, CommentTag, Comments, Deployment, Markdown};
 use itertools::Itertools;
-use once_cell::sync::Lazy;
 use solang_parser::pt::{ErrorParameter, EventParameter, Parameter, VariableDeclaration};
-use std::fmt::{self, Display, Write};
+use std::{
+    fmt::{self, Display, Write},
+    sync::LazyLock,
+};
 
 /// Solidity language name.
 const SOLIDITY: &str = "solidity";
 
 /// Headers and separator for rendering parameter table.
 const PARAM_TABLE_HEADERS: &[&str] = &["Name", "Type", "Description"];
-static PARAM_TABLE_SEPARATOR: Lazy<String> =
-    Lazy::new(|| PARAM_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
+static PARAM_TABLE_SEPARATOR: LazyLock<String> =
+    LazyLock::new(|| PARAM_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// Headers and separator for rendering the deployments table.
 const DEPLOYMENTS_TABLE_HEADERS: &[&str] = &["Network", "Address"];
-static DEPLOYMENTS_TABLE_SEPARATOR: Lazy<String> =
-    Lazy::new(|| DEPLOYMENTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
+static DEPLOYMENTS_TABLE_SEPARATOR: LazyLock<String> =
+    LazyLock::new(|| DEPLOYMENTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// The buffered writer.
 /// Writes various display items into the internal buffer.
@@ -41,7 +43,7 @@ impl BufWriter {
     }
 
     /// Write [AsDoc] implementation to the buffer with newline.
-    pub fn writeln_doc<T: AsDoc>(&mut self, doc: T) -> fmt::Result {
+    pub fn writeln_doc<T: AsDoc>(&mut self, doc: &T) -> fmt::Result {
         writeln!(self.buf, "{}", doc.as_doc()?)
     }
 
