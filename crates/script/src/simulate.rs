@@ -16,7 +16,7 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, ContractData};
+use foundry_common::ContractData;
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
