@@ -230,7 +230,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 226 bytes of code
+    │   └─ ← [Return] 221 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
@@ -242,10 +242,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [45299] → new GasWaster@[..]
-    └─ ← [Return] 226 bytes of code
+  [44291] → new GasWaster@[..]
+    └─ ← [Return] 221 bytes of code
 
-  [226] GasWaster::wasteGas(200000 [2e5])
+  [224] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop] 
 
 
@@ -337,7 +337,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 226 bytes of code
+    │   └─ ← [Return] 221 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
@@ -349,10 +349,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [45299] → new GasWaster@[..]
-    └─ ← [Return] 226 bytes of code
+  [44291] → new GasWaster@[..]
+    └─ ← [Return] 221 bytes of code
 
-  [226] GasWaster::wasteGas(200000 [2e5])
+  [224] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop] 
 
 
@@ -522,7 +522,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new HashChecker@[..]
-    │   └─ ← [Return] 378 bytes of code
+    │   └─ ← [Return] 368 bytes of code
     └─ ← [Stop] 
 
 
@@ -2219,15 +2219,15 @@ contract SimpleScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [104553] SimpleScript::run()
+  [103771] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 119 bytes of code
-    ├─ [13367] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [146] A::getValue() [staticcall]
+    ├─ [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    │   └─ ← [Return] 116 bytes of code
+    ├─ [13162] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [145] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
-    │   └─ ← [Return] 63 bytes of code
+    │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop] 
 
 
@@ -2237,13 +2237,13 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    └─ ← [Return] 119 bytes of code
+  [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 116 bytes of code
 
-  [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [146] A::getValue() [staticcall]
+  [15662] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [145] A::getValue() [staticcall]
     │   └─ ← [Return] 100
-    └─ ← [Return] 63 bytes of code
+    └─ ← [Return] 62 bytes of code
 ...
 "#]]);
 });

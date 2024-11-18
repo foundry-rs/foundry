@@ -449,7 +449,7 @@ impl MultiContractRunnerBuilder {
             contracts: deployable_contracts,
             evm_opts,
             env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
+            evm_spec: self.evm_spec.unwrap_or(SpecId::CANCUN),
             sender: self.sender,
             revert_decoder,
             fork: self.fork,

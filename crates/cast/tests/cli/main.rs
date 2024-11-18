@@ -1131,6 +1131,23 @@ casttest!(storage_layout_simple, |_prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/pull/9332>
+casttest!(storage_layout_simple_json, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout_complex, |_prj, cmd| {
     cmd.args([
@@ -1162,6 +1179,22 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 | _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 
 "#]]);
+});
+
+casttest!(storage_layout_complex_json, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
 });
 
 casttest!(balance, |_prj, cmd| {

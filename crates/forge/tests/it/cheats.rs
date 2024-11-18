@@ -3,8 +3,8 @@
 use crate::{
     config::*,
     test_helpers::{
-        ForgeTestData, RE_PATH_SEPARATOR, TEST_DATA_CANCUN, TEST_DATA_DEFAULT,
-        TEST_DATA_MULTI_VERSION,
+        ForgeTestData, RE_PATH_SEPARATOR, TEST_DATA_DEFAULT, TEST_DATA_MULTI_VERSION,
+        TEST_DATA_PARIS,
     },
 };
 use alloy_primitives::U256;
@@ -77,6 +77,6 @@ async fn test_cheats_local_multi_version() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_cheats_local_cancun() {
-    test_cheats_local(&TEST_DATA_CANCUN).await
+async fn test_cheats_local_paris() {
+    test_cheats_local(&TEST_DATA_PARIS).await
 }
