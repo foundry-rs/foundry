@@ -2312,7 +2312,7 @@ impl Default for Config {
             alphanet: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
-            compilation_restrictions: vec![],
+            compilation_restrictions: Default::default(),
             eof: false,
             _non_exhaustive: (),
         }

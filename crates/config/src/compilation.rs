@@ -43,7 +43,11 @@ impl SettingsOverrides {
         }
 
         if let Some(bytecode_hash) = self.bytecode_hash {
-            settings.solc.bytecode_hash = Some(bytecode_hash);
+            if let Some(metadata) = settings.solc.metadata.as_mut() {
+                metadata.bytecode_hash = Some(bytecode_hash);
+            } else {
+                settings.solc.metadata = Some(bytecode_hash.into());
+            }
         }
     }
 }
