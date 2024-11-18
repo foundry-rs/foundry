@@ -15,7 +15,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt, TestFunctionKind,
 };
-use foundry_config::{FuzzConfig, InvariantConfig};
+use foundry_config::{evm_spec_id, FuzzConfig, InvariantConfig, TestConfig};
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
@@ -374,15 +374,23 @@ impl ContractRunner<'_> {
                 .entered();
 
                 let setup = setup.clone();
+                let test_config = test_options.test_config(self.name, &func.name);
                 let mut res = match kind {
                     TestFunctionKind::UnitTest { should_fail } => {
-                        self.run_unit_test(func, should_fail, setup)
+                        self.run_unit_test(func, should_fail, setup, test_config)
                     }
                     TestFunctionKind::FuzzTest { should_fail } => {
                         let runner = test_options.fuzz_runner(self.name, &func.name);
                         let fuzz_config = test_options.fuzz_config(self.name, &func.name);
 
-                        self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                        self.run_fuzz_test(
+                            func,
+                            should_fail,
+                            runner,
+                            setup,
+                            fuzz_config.clone(),
+                            test_config,
+                        )
                     }
                     TestFunctionKind::InvariantTest => {
                         let runner = test_options.invariant_runner(self.name, &func.name);
@@ -424,9 +432,10 @@ impl ContractRunner<'_> {
         func: &Function,
         should_fail: bool,
         setup: TestSetup,
+        test_config: &TestConfig,
     ) -> TestResult {
         // Prepare unit test execution.
-        let (executor, test_result, address) = match self.prepare_test(func, setup) {
+        let (executor, test_result, address) = match self.prepare_test(func, setup, test_config) {
             Ok(res) => res,
             Err(res) => return res,
         };
@@ -648,12 +657,13 @@ impl ContractRunner<'_> {
         runner: TestRunner,
         setup: TestSetup,
         fuzz_config: FuzzConfig,
+        test_config: &TestConfig,
     ) -> TestResult {
         let progress = start_fuzz_progress(self.progress, self.name, &func.name, fuzz_config.runs);
 
         // Prepare fuzz test execution.
         let fuzz_fixtures = setup.fuzz_fixtures.clone();
-        let (executor, test_result, address) = match self.prepare_test(func, setup) {
+        let (executor, test_result, address) = match self.prepare_test(func, setup, &test_config) {
             Ok(res) => res,
             Err(res) => return res,
         };
@@ -685,10 +695,18 @@ impl ContractRunner<'_> {
         &self,
         func: &Function,
         setup: TestSetup,
+        config: &TestConfig,
     ) -> Result<(Cow<'_, Executor>, TestResult, Address), TestResult> {
         let address = setup.address;
         let mut executor = Cow::Borrowed(&self.executor);
         let mut test_result = TestResult::new(setup);
+
+        let spec_id = evm_spec_id(&config.evm_version, false);
+
+        {
+            let executor = executor.to_mut();
+            executor.set_spec_id(spec_id);
+        }
 
         // Apply before test configured functions (if any).
         if self.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==

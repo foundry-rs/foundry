@@ -7,7 +7,7 @@ use crate::{inline::InlineConfigParserError, InlineConfigParser};
 /// Used as inline test configuration.
 #[derive(Clone, Debug, Default)]
 pub struct TestConfig {
-    evm_version: EvmVersion,
+    pub evm_version: EvmVersion,
 }
 
 impl InlineConfigParser for TestConfig {

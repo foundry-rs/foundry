@@ -180,6 +180,10 @@ impl TestOptions {
         self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
+    pub fn test_config(&self, contract_id: &str, test_fn: &str) -> &TestConfig {
+        self.inline_test.get(contract_id, test_fn).unwrap_or(&self.test)
+    }
+
     pub fn fuzzer_with_cases(
         &self,
         cases: u32,

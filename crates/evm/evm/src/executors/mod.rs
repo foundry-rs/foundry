@@ -162,6 +162,11 @@ impl Executor {
         self.env.spec_id()
     }
 
+    /// Set the EVM spec ID.
+    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+        self.env.handler_cfg.spec_id = spec_id;
+    }
+
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
