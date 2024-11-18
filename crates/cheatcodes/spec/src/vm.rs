@@ -308,6 +308,14 @@ interface Vm {
         bool success;
     }
 
+    struct SignedDelegation {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+        uint64 nonce;
+        address implementation;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -2004,11 +2012,11 @@ interface Vm {
 
     /// Sign an EIP-7702 authorization for delegation
     #[cheatcode(group = Scripting)]
-    function signDelegation(address implementation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);
+    function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
 
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
-    function attachDelegation(address implementation, address authority, uint8 v, bytes32 r, bytes32 s) external;
+    function attachDelegation(SignedDelegation memory signedDelegation) external;
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]

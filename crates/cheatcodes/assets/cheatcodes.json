@@ -3080,16 +3080,16 @@
       "func": {
         "id": "attachDelegation",
         "description": "Designate the next call as an EIP-7702 transaction",
-        "declaration": "function attachDelegation(address implementation, address authority, uint8 v, bytes32 r, bytes32 s) external;",
+        "declaration": "function attachDelegation(SignedDelegation memory signedDelegation) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "attachDelegation(address,address,uint8,bytes32,bytes32)",
-        "selector": "0x9c509458",
+        "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address))",
+        "selector": "0x14ae3519",
         "selectorBytes": [
-          156,
-          80,
-          148,
-          88
+          20,
+          174,
+          53,
+          25
         ]
       },
       "group": "scripting",
@@ -8870,7 +8870,7 @@
       "func": {
         "id": "signDelegation",
         "description": "Sign an EIP-7702 authorization for delegation",
-        "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (uint8 v, bytes32 r, bytes32 s);",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
         "mutability": "",
         "signature": "signDelegation(address,uint256)",

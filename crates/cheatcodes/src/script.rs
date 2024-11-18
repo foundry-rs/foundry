@@ -1,7 +1,7 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Uint, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -34,13 +34,18 @@ impl Cheatcode for broadcast_2Call {
 
 impl Cheatcode for attachDelegationCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, authority, v, r, s } = self;
-
-        let authority_acc = ccx.ecx.journaled_state.load_account(*authority, &mut ccx.ecx.db)?;
-
+        let Self { signedDelegation } = self;
+        let SignedDelegation {
+            v,
+            r,
+            s,
+            nonce,
+            implementation,
+        } = signedDelegation;
+        
         let auth = Authorization {
             address: *implementation,
-            nonce: authority_acc.data.info.nonce,
+            nonce: *nonce,
             chain_id: ccx.ecx.env.cfg.chain_id,
         };
         let signed_auth = SignedAuthorization::new_unchecked(
@@ -51,14 +56,15 @@ impl Cheatcode for attachDelegationCall {
         );
 
         // verify signature is from claimed authority
-        let recovered = signed_auth.recover_authority().map_err(|e| format!("{e}"))?;
-        if recovered != *authority {
-            return Err("invalid signature".into());
+        let recovered_authority: Address = signed_auth.recover_authority().map_err(|e| format!("{e}"))?;
+        let authority_acc = ccx.ecx.journaled_state.load_account(recovered_authority, &mut ccx.ecx.db)?;
+        if &authority_acc.data.info.nonce != nonce {
+            return Err("invalid nonce".into());
         }
 
         authority_acc.data.info.nonce += 1;
         let bytecode = Bytecode::new_eip7702(*implementation);
-        ccx.ecx.journaled_state.set_code(*authority, bytecode);
+        ccx.ecx.journaled_state.set_code(recovered_authority, bytecode);
 
         ccx.state.active_delegation = Some(signed_auth);
 
@@ -80,15 +86,23 @@ impl Cheatcode for signDelegationCall {
         let hash = auth.signature_hash();
         let signer = super::crypto::parse_wallet(privateKey)?;
         let sig = signer.sign_hash_sync(&hash)?;
-        Ok(encode_delegation_sig(sig))
+        let (v, r, s) = encode_delegation_sig(sig);
+        let signed_delegation =  SignedDelegation {
+            v: v.try_into().unwrap(),
+            r: r.into(),
+            s: s.into(),
+            nonce,
+            implementation: *implementation
+        };
+        Ok(signed_delegation.abi_encode())
     }
 }
 
-fn encode_delegation_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
+fn encode_delegation_sig(sig: alloy_primitives::Signature) -> (Uint<256, 4>, Uint<256, 4>, Uint<256, 4>) {
     let v = U256::from(sig.v().y_parity() as u8);
     let r = sig.r();
     let s = sig.s();
-    (v, r, s).abi_encode()
+    (v, r, s)
 }
 
 impl Cheatcode for startBroadcast_0Call {
