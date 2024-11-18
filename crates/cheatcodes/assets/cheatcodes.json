@@ -8788,6 +8788,26 @@
     },
     {
       "func": {
+        "id": "signAndAttachDelegation",
+        "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signAndAttachDelegation(address,uint256)",
+        "selector": "0xc7fa7288",
+        "selectorBytes": [
+          199,
+          250,
+          114,
+          136
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signCompact_0",
         "description": "Signs data with a `Wallet`.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
         "declaration": "function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);",

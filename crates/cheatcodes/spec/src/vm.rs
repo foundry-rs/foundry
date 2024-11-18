@@ -2018,6 +2018,10 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function attachDelegation(SignedDelegation memory signedDelegation) external;
 
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
+
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
     function getWallets() external returns (address[] memory wallets);

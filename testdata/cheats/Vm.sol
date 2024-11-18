@@ -23,13 +23,7 @@ interface Vm {
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
     struct BroadcastTxSummary { bytes32 txHash; BroadcastTxType txType; address contractAddress; uint64 blockNumber; bool success; }
-    struct SignedDelegation {
-        uint8 v;
-        bytes32 r;
-        bytes32 s;
-        uint64 nonce;
-        address implementation;
-    }
+    struct SignedDelegation { uint8 v; bytes32 r; bytes32 s; uint64 nonce; address implementation; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -440,6 +434,7 @@ interface Vm {
     function setEnv(string calldata name, string calldata value) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
+    function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
     function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
