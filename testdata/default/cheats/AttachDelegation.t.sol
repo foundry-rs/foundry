@@ -23,7 +23,7 @@ contract AttachDelegationTest is DSTest {
         token = new ERC20(alice);
     }
 
-    function testCallSingleDelegation() public {
+    function testCallSingleAttachDelegation() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
         bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
@@ -43,7 +43,7 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 100);
     }
 
-    function testMultiCallDelegation() public {
+    function testMultiCallAttachDelegation() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         vm.broadcast(bob_pk);
         vm.attachDelegation(signedDelegation);
@@ -66,7 +66,7 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(address(this)), 50);
     }
 
-    function testSwitchDelegation() public {
+    function testSwitchAttachDelegation() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
@@ -117,7 +117,7 @@ contract AttachDelegationTest is DSTest {
         SimpleDelegateContract(alice).execute(calls);
     }
 
-    function testDelegationRevertsAfterNonceChange() public {
+    function testAttachDelegationRevertsAfterNonceChange() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
 
         vm.broadcast(alice_pk);
@@ -126,6 +126,23 @@ contract AttachDelegationTest is DSTest {
         
         vm.expectRevert("vm.attachDelegation: invalid nonce");
         vm.attachDelegation(signedDelegation);
+    }
+
+    function testCallSingleSignAndAttachDelegation() public {
+        SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
+        bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
+        calls[0] = SimpleDelegateContract.Call({
+            to: address(token),
+            data: data,
+            value: 0
+        });
+        vm.signAndAttachDelegation(address(implementation), alice_pk);
+        bytes memory code = address(alice).code;
+        require(code.length > 0, "no code written to alice");
+        vm.broadcast(bob_pk);
+        SimpleDelegateContract(alice).execute(calls);
+
+        assertEq(token.balanceOf(bob), 100);
     }
 }
 
