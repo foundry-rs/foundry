@@ -157,7 +157,7 @@ impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
         // Verbose message with dirty files displays first to avoid being overlapped
         // by the spinner in .tick() which prints repeatedly over the same line.
-        if shell::verbosity() > 0 {
+        if shell::verbosity() >= 5 {
             let project_root = find_project_root(None);
 
             self.send_msg(format!(
