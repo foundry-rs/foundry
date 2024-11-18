@@ -16,7 +16,7 @@ use forge::{
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
+    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
@@ -94,6 +94,13 @@ impl CoverageArgs {
         // Set up the project
         let mut project = config.create_project(false, false)?;
         if self.ir_minimum {
+            // Enable viaIR with minimum optimization
+            // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+            // And also in new releases of solidity:
+            // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
+            project.settings.solc.settings =
+                project.settings.solc.settings.with_via_ir_minimum_optimization();
+
             // TODO: How to detect solc version if the user does not specify a solc version in
             // config  case1: specify local installed solc ?
             //  case2: multiple solc versions used and  auto_detect_solc == true
@@ -103,6 +110,14 @@ impl CoverageArgs {
                             "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
                         ));
                 }
+            } else {
+                // If solc version not detected then sanitize optimizer details `inliner` for solc
+                // lower than 0.8.5. See <https://github.com/foundry-rs/foundry/issues/9322>
+                project
+                    .settings
+                    .solc
+                    .settings
+                    .sanitize(&Version::new(0, 8, 4), SolcLanguage::Solidity);
             }
 
             // print warning message
@@ -113,13 +128,6 @@ impl CoverageArgs {
                 "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
                 "See more: https://github.com/foundry-rs/foundry/issues/3357",
             ))?;
-
-            // Enable viaIR with minimum optimization
-            // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
-            // And also in new releases of solidity:
-            // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.settings.solc.settings =
-                project.settings.solc.settings.with_via_ir_minimum_optimization()
         } else {
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;
