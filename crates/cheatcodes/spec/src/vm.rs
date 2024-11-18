@@ -308,11 +308,19 @@ interface Vm {
         bool success;
     }
 
+    /// Holds a signed EIP-7702 authorization for an authority account to delegate to an implementation.    
     struct SignedDelegation {
+        /// The y-parity of the recovered secp256k1 signature (0 or 1).
         uint8 v;
+        /// First 32 bytes of the signature.
         bytes32 r;
+        /// Second 32 bytes of the signature.
         bytes32 s;
+        /// The current nonce of the authority account at signing time.
+        /// Used to ensure signature can't be replayed after account nonce changes.
         uint64 nonce;
+        /// Address of the contract implementation that will be delegated to.
+        /// Gets encoded into delegation code: 0xef0100 || implementation.
         address implementation;
     }
 

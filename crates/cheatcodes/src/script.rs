@@ -36,7 +36,7 @@ impl Cheatcode for attachDelegationCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { signedDelegation } = self;
         let SignedDelegation { v, r, s, nonce, implementation } = signedDelegation;
-        
+
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
@@ -79,14 +79,17 @@ impl Cheatcode for signAndAttachDelegationCall {
     }
 }
 
-fn create_auth(ccx: &mut CheatsCtxt, implementation: Address, authority: Address) -> Result<(Authorization, u64)> {
+fn create_auth(
+    ccx: &mut CheatsCtxt,
+    implementation: Address,
+    authority: Address,
+) -> Result<(Authorization, u64)> {
     let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
     let nonce = authority_acc.data.info.nonce;
-    Ok((Authorization {
-        address: implementation, 
+    Ok((
+        Authorization { address: implementation, nonce, chain_id: ccx.ecx.env.cfg.chain_id },
         nonce,
-        chain_id: ccx.ecx.env.cfg.chain_id
-    }, nonce))
+    ))
 }
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
@@ -107,17 +110,12 @@ fn sig_to_delegation(sig: Signature, nonce: u64, implementation: Address) -> Sig
         r: sig.r().into(),
         s: sig.s().into(),
         nonce,
-        implementation
+        implementation,
     }
 }
 
 fn sig_to_auth(sig: Signature, auth: Authorization) -> SignedAuthorization {
-    SignedAuthorization::new_unchecked(
-        auth,
-        sig.v().y_parity() as u8,
-        sig.r(),
-        sig.s()
-    )
+    SignedAuthorization::new_unchecked(auth, sig.v().y_parity() as u8, sig.r(), sig.s())
 }
 
 impl Cheatcode for startBroadcast_0Call {
