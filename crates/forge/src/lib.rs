@@ -43,12 +43,14 @@ pub struct TestOptions {
     /// The base "invariant" test configuration. To be used as a fallback in case
     /// no more specific configs are found for a given run.
     pub invariant: InvariantConfig,
-    ///
+    /// The base "test" configuration. To be used as a fallback in case no more specific configs
+    /// are found for a given run.
     pub test: TestConfig,
     /// Contains per-test specific "fuzz" configurations.
     pub inline_fuzz: InlineConfig<FuzzConfig>,
     /// Contains per-test specific "invariant" configurations.
     pub inline_invariant: InlineConfig<InvariantConfig>,
+    /// Contains per-test specific configurations.
     pub inline_test: InlineConfig<TestConfig>,
 }
 
@@ -180,6 +182,13 @@ impl TestOptions {
         self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
+    /// Returns a "test" configuration setup. Parameters are used to select tight scoped test
+    /// configs that apply for a contract-function pair. A fallback configuration is applied if no
+    /// specific setup is found for a given input.
+    ///
+    /// - `contract_id` is the id of the test contract, expressed as a relative path from the
+    ///  project root.
+    /// - `test_fn` is the name of the test function declared inside the test contract.
     pub fn test_config(&self, contract_id: &str, test_fn: &str) -> &TestConfig {
         self.inline_test.get(contract_id, test_fn).unwrap_or(&self.test)
     }

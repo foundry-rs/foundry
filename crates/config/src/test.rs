@@ -4,7 +4,9 @@ use foundry_compilers::artifacts::EvmVersion;
 
 use crate::{inline::InlineConfigParserError, InlineConfigParser};
 
-/// Used as inline test configuration.
+/// Test configuration
+///
+/// Used to parse InlineConfig.
 #[derive(Clone, Debug, Default)]
 pub struct TestConfig {
     pub evm_version: EvmVersion,
@@ -34,7 +36,7 @@ impl InlineConfigParser for TestConfig {
                 "evm-version" => {
                     conf_clone.evm_version = EvmVersion::from_str(value.as_str()).map_err(|_| {
                         InlineConfigParserError::InvalidConfigProperty(format!(
-                            "invalid evm version {}",
+                            "evm-version {}",
                             value
                         ))
                     })?
