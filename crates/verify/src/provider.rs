@@ -9,7 +9,8 @@ use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler, CompilerSettings},
+    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
+    multi::MultiCompilerSettings,
     solc::Solc,
     Graph, Project,
 };
@@ -25,6 +26,7 @@ pub struct VerificationContext {
     pub target_path: PathBuf,
     pub target_name: String,
     pub compiler_version: Version,
+    pub compiler_settings: MultiCompilerSettings,
 }
 
 impl VerificationContext {
@@ -33,6 +35,7 @@ impl VerificationContext {
         target_name: String,
         compiler_version: Version,
         config: Config,
+        compiler_settings: MultiCompilerSettings,
     ) -> Result<Self> {
         let mut project = config.project()?;
         project.no_artifacts = true;
@@ -40,13 +43,13 @@ impl VerificationContext {
         let solc = Solc::find_or_install(&compiler_version)?;
         project.compiler.solc = Some(SolcCompiler::Specific(solc));
 
-        Ok(Self { config, project, target_name, target_path, compiler_version })
+        Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
     }
 
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()])
         });
 
@@ -65,7 +68,7 @@ impl VerificationContext {
     /// Compiles target file requesting only metadata and returns it.
     pub fn get_target_metadata(&self) -> Result<Metadata> {
         let mut project = self.project.clone();
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
         });
 
