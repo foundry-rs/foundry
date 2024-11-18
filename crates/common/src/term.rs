@@ -169,8 +169,7 @@ impl Reporter for SpinnerReporter {
                         format!("- {}", trimmed_path.display())
                     })
                     .sorted()
-                    .collect::<Vec<String>>()
-                    .join("\n")
+                    .format("\n")
             ));
         }
 
