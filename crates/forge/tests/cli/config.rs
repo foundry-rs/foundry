@@ -154,6 +154,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eof_version: None,
         alphanet: false,
         transaction_timeout: 120,
+        additional_compiler_profiles: Default::default(),
+        compilation_restrictions: Default::default(),
         eof: false,
         _non_exhaustive: (),
     };
