@@ -1,0 +1,397 @@
+{
+    "storage": [
+        {
+            "astId": 3805,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_status",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_uint256"
+        },
+        {
+            "astId": 9499,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_generalPoolsBalances",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_mapping(t_bytes32,t_struct(IERC20ToBytes32Map)3177_storage)"
+        },
+        {
+            "astId": 716,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_nextNonce",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_address,t_uint256)"
+        },
+        {
+            "astId": 967,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_paused",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_bool"
+        },
+        {
+            "astId": 8639,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_authorizer",
+            "offset": 1,
+            "slot": "3",
+            "type": "t_contract(IAuthorizer)11086"
+        },
+        {
+            "astId": 8645,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_approvedRelayers",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_mapping(t_address,t_mapping(t_address,t_bool))"
+        },
+        {
+            "astId": 5769,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_isPoolRegistered",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_mapping(t_bytes32,t_bool)"
+        },
+        {
+            "astId": 5771,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_nextPoolNonce",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_uint256"
+        },
+        {
+            "astId": 9915,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_minimalSwapInfoPoolsBalances",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_mapping(t_bytes32,t_mapping(t_contract(IERC20)3793,t_bytes32))"
+        },
+        {
+            "astId": 9919,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_minimalSwapInfoPoolsTokens",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_mapping(t_bytes32,t_struct(AddressSet)3520_storage)"
+        },
+        {
+            "astId": 10373,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_twoTokenPoolTokens",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_mapping(t_bytes32,t_struct(TwoTokenPoolTokens)10369_storage)"
+        },
+        {
+            "astId": 4007,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_poolAssetManagers",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_mapping(t_bytes32,t_mapping(t_contract(IERC20)3793,t_address))"
+        },
+        {
+            "astId": 8019,
+            "contract": "contracts/vault/Vault.sol:Vault",
+            "label": "_internalTokenBalance",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_mapping(t_address,t_mapping(t_contract(IERC20)3793,t_uint256))"
+        }
+    ],
+    "types": {
+        "t_address": {
+            "encoding": "inplace",
+            "label": "address",
+            "numberOfBytes": "20"
+        },
+        "t_array(t_address)dyn_storage": {
+            "encoding": "dynamic_array",
+            "label": "address[]",
+            "numberOfBytes": "32",
+            "base": "t_address"
+        },
+        "t_bool": {
+            "encoding": "inplace",
+            "label": "bool",
+            "numberOfBytes": "1"
+        },
+        "t_bytes32": {
+            "encoding": "inplace",
+            "label": "bytes32",
+            "numberOfBytes": "32"
+        },
+        "t_contract(IAuthorizer)11086": {
+            "encoding": "inplace",
+            "label": "contract IAuthorizer",
+            "numberOfBytes": "20"
+        },
+        "t_contract(IERC20)3793": {
+            "encoding": "inplace",
+            "label": "contract IERC20",
+            "numberOfBytes": "20"
+        },
+        "t_mapping(t_address,t_bool)": {
+            "encoding": "mapping",
+            "key": "t_address",
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32",
+            "value": "t_bool"
+        },
+        "t_mapping(t_address,t_mapping(t_address,t_bool))": {
+            "encoding": "mapping",
+            "key": "t_address",
+            "label": "mapping(address => mapping(address => bool))",
+            "numberOfBytes": "32",
+            "value": "t_mapping(t_address,t_bool)"
+        },
+        "t_mapping(t_address,t_mapping(t_contract(IERC20)3793,t_uint256))": {
+            "encoding": "mapping",
+            "key": "t_address",
+            "label": "mapping(address => mapping(contract IERC20 => uint256))",
+            "numberOfBytes": "32",
+            "value": "t_mapping(t_contract(IERC20)3793,t_uint256)"
+        },
+        "t_mapping(t_address,t_uint256)": {
+            "encoding": "mapping",
+            "key": "t_address",
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32",
+            "value": "t_uint256"
+        },
+        "t_mapping(t_bytes32,t_bool)": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => bool)",
+            "numberOfBytes": "32",
+            "value": "t_bool"
+        },
+        "t_mapping(t_bytes32,t_mapping(t_contract(IERC20)3793,t_address))": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => mapping(contract IERC20 => address))",
+            "numberOfBytes": "32",
+            "value": "t_mapping(t_contract(IERC20)3793,t_address)"
+        },
+        "t_mapping(t_bytes32,t_mapping(t_contract(IERC20)3793,t_bytes32))": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => mapping(contract IERC20 => bytes32))",
+            "numberOfBytes": "32",
+            "value": "t_mapping(t_contract(IERC20)3793,t_bytes32)"
+        },
+        "t_mapping(t_bytes32,t_struct(AddressSet)3520_storage)": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => struct EnumerableSet.AddressSet)",
+            "numberOfBytes": "32",
+            "value": "t_struct(AddressSet)3520_storage"
+        },
+        "t_mapping(t_bytes32,t_struct(IERC20ToBytes32Map)3177_storage)": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)",
+            "numberOfBytes": "32",
+            "value": "t_struct(IERC20ToBytes32Map)3177_storage"
+        },
+        "t_mapping(t_bytes32,t_struct(TwoTokenPoolBalances)10360_storage)": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolBalances)",
+            "numberOfBytes": "32",
+            "value": "t_struct(TwoTokenPoolBalances)10360_storage"
+        },
+        "t_mapping(t_bytes32,t_struct(TwoTokenPoolTokens)10369_storage)": {
+            "encoding": "mapping",
+            "key": "t_bytes32",
+            "label": "mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens)",
+            "numberOfBytes": "32",
+            "value": "t_struct(TwoTokenPoolTokens)10369_storage"
+        },
+        "t_mapping(t_contract(IERC20)3793,t_address)": {
+            "encoding": "mapping",
+            "key": "t_contract(IERC20)3793",
+            "label": "mapping(contract IERC20 => address)",
+            "numberOfBytes": "32",
+            "value": "t_address"
+        },
+        "t_mapping(t_contract(IERC20)3793,t_bytes32)": {
+            "encoding": "mapping",
+            "key": "t_contract(IERC20)3793",
+            "label": "mapping(contract IERC20 => bytes32)",
+            "numberOfBytes": "32",
+            "value": "t_bytes32"
+        },
+        "t_mapping(t_contract(IERC20)3793,t_uint256)": {
+            "encoding": "mapping",
+            "key": "t_contract(IERC20)3793",
+            "label": "mapping(contract IERC20 => uint256)",
+            "numberOfBytes": "32",
+            "value": "t_uint256"
+        },
+        "t_mapping(t_uint256,t_struct(IERC20ToBytes32MapEntry)3166_storage)": {
+            "encoding": "mapping",
+            "key": "t_uint256",
+            "label": "mapping(uint256 => struct EnumerableMap.IERC20ToBytes32MapEntry)",
+            "numberOfBytes": "32",
+            "value": "t_struct(IERC20ToBytes32MapEntry)3166_storage"
+        },
+        "t_struct(AddressSet)3520_storage": {
+            "encoding": "inplace",
+            "label": "struct EnumerableSet.AddressSet",
+            "numberOfBytes": "64",
+            "members": [
+                {
+                    "astId": 3515,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_values",
+                    "offset": 0,
+                    "slot": "0",
+                    "type": "t_array(t_address)dyn_storage"
+                },
+                {
+                    "astId": 3519,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_indexes",
+                    "offset": 0,
+                    "slot": "1",
+                    "type": "t_mapping(t_address,t_uint256)"
+                }
+            ]
+        },
+        "t_struct(IERC20ToBytes32Map)3177_storage": {
+            "encoding": "inplace",
+            "label": "struct EnumerableMap.IERC20ToBytes32Map",
+            "numberOfBytes": "96",
+            "members": [
+                {
+                    "astId": 3168,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_length",
+                    "offset": 0,
+                    "slot": "0",
+                    "type": "t_uint256"
+                },
+                {
+                    "astId": 3172,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_entries",
+                    "offset": 0,
+                    "slot": "1",
+                    "type": "t_mapping(t_uint256,t_struct(IERC20ToBytes32MapEntry)3166_storage)"
+                },
+                {
+                    "astId": 3176,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_indexes",
+                    "offset": 0,
+                    "slot": "2",
+                    "type": "t_mapping(t_contract(IERC20)3793,t_uint256)"
+                }
+            ]
+        },
+        "t_struct(IERC20ToBytes32MapEntry)3166_storage": {
+            "encoding": "inplace",
+            "label": "struct EnumerableMap.IERC20ToBytes32MapEntry",
+            "numberOfBytes": "64",
+            "members": [
+                {
+                    "astId": 3163,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_key",
+                    "offset": 0,
+                    "slot": "0",
+                    "type": "t_contract(IERC20)3793"
+                },
+                {
+                    "astId": 3165,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "_value",
+                    "offset": 0,
+                    "slot": "1",
+                    "type": "t_bytes32"
+                }
+            ]
+        },
+        "t_struct(TwoTokenPoolBalances)10360_storage": {
+            "encoding": "inplace",
+            "label": "struct TwoTokenPoolsBalance.TwoTokenPoolBalances",
+            "numberOfBytes": "64",
+            "members": [
+                {
+                    "astId": 10357,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "sharedCash",
+                    "offset": 0,
+                    "slot": "0",
+                    "type": "t_bytes32"
+                },
+                {
+                    "astId": 10359,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "sharedManaged",
+                    "offset": 0,
+                    "slot": "1",
+                    "type": "t_bytes32"
+                }
+            ]
+        },
+        "t_struct(TwoTokenPoolTokens)10369_storage": {
+            "encoding": "inplace",
+            "label": "struct TwoTokenPoolsBalance.TwoTokenPoolTokens",
+            "numberOfBytes": "96",
+            "members": [
+                {
+                    "astId": 10362,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "tokenA",
+                    "offset": 0,
+                    "slot": "0",
+                    "type": "t_contract(IERC20)3793"
+                },
+                {
+                    "astId": 10364,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "tokenB",
+                    "offset": 0,
+                    "slot": "1",
+                    "type": "t_contract(IERC20)3793"
+                },
+                {
+                    "astId": 10368,
+                    "contract": "contracts/vault/Vault.sol:Vault",
+                    "label": "balances",
+                    "offset": 0,
+                    "slot": "2",
+                    "type": "t_mapping(t_bytes32,t_struct(TwoTokenPoolBalances)10360_storage)"
+                }
+            ]
+        },
+        "t_uint256": {
+            "encoding": "inplace",
+            "label": "uint256",
+            "numberOfBytes": "32"
+        }
+    },
+    "values": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x00000000000000000000000000000000000000000000000000000000000006e0",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+}
