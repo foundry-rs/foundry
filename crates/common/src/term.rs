@@ -109,7 +109,7 @@ impl SpinnerReporter {
                 loop {
                     spinner.tick();
                     match rx.try_recv() {
-                        Ok(SpinnerMsg::Msg(msg) | SpinnerMsg::VerboseMsg(msg)) => {
+                        Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
                             // new line so past messages are not overwritten
                             let _ = sh_println!();
@@ -133,15 +133,10 @@ impl SpinnerReporter {
     fn send_msg(&self, msg: impl Into<String>) {
         let _ = self.sender.send(SpinnerMsg::Msg(msg.into()));
     }
-
-    fn send_verbose_msg(&self, msg: impl Into<String>) {
-        let _ = self.sender.send(SpinnerMsg::VerboseMsg(msg.into()));
-    }
 }
 
 enum SpinnerMsg {
     Msg(String),
-    VerboseMsg(String),
     Shutdown(mpsc::Sender<()>),
 }
 
@@ -159,7 +154,7 @@ impl Reporter for SpinnerReporter {
         // Verbose message with dirty files displays first to avoid being overlapped
         // by the spinner in .tick() which prints repeatedly over the same line.
         if foundry_common::shell::verbosity() > 0 {
-            self.send_verbose_msg(format!(
+            self.send_msg(format!(
                 "Compiling files\n{}",
                 dirty_files
                     .iter()
