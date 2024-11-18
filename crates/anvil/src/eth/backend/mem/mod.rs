@@ -99,12 +99,12 @@ use revm::{
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
-
 pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
@@ -223,6 +223,7 @@ impl Backend {
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
+        cache_path: Option<PathBuf>,
         node_config: Arc<AsyncRwLock<NodeConfig>>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
@@ -245,7 +246,7 @@ impl Backend {
             genesis.timestamp
         };
 
-        let states = if prune_state_history_config.is_config_enabled() {
+        let mut states = if prune_state_history_config.is_config_enabled() {
             // if prune state history is enabled, configure the state cache only for memory
             prune_state_history_config
                 .max_memory_history
@@ -259,6 +260,10 @@ impl Backend {
         } else {
             Default::default()
         };
+
+        if let Some(cache_path) = cache_path {
+            states = states.disk_path(cache_path);
+        }
 
         let (slots_in_an_epoch, precompile_factory) = {
             let cfg = node_config.read().await;

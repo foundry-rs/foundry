@@ -189,6 +189,8 @@ pub struct NodeConfig {
     pub alphanet: bool,
     /// Do not print log messages.
     pub silent: bool,
+    /// The path where old states are cached.
+    pub cache_path: Option<PathBuf>,
 }
 
 impl NodeConfig {
@@ -465,6 +467,7 @@ impl Default for NodeConfig {
             precompile_factory: None,
             alphanet: false,
             silent: false,
+            cache_path: None,
         }
     }
 }
@@ -969,6 +972,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the path where old states are cached
+    #[must_use]
+    pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
+        self.cache_path = cache_path;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -1051,6 +1061,7 @@ impl NodeConfig {
             self.max_persisted_states,
             self.transaction_block_keeper,
             self.block_time,
+            self.cache_path.clone(),
             Arc::new(tokio::sync::RwLock::new(self.clone())),
         )
         .await;
