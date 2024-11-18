@@ -111,7 +111,7 @@ impl StorageArgs {
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
-            let out = ProjectCompiler::new().quiet(true).compile(&project)?;
+            let out = ProjectCompiler::new().quiet(shell::is_json()).compile(&project)?;
             let artifact = out.artifacts().find(|(_, artifact)| {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
@@ -126,10 +126,6 @@ impl StorageArgs {
                 .await;
             }
         }
-
-        // Not a forge project or artifact not found
-        // Get code from Etherscan
-        sh_warn!("No matching artifacts found, fetching source code from Etherscan...")?;
 
         if !self.etherscan.has_key() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
@@ -224,9 +220,9 @@ impl StorageValue {
     }
 }
 
-// Represents the storage layout + values to print in JSON format.
+/// Represents the storage layout of a contract and its values.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct StorageOutputJSON {
+struct StorageReport {
     #[serde(flatten)]
     layout: StorageLayout,
     values: Vec<B256>,
@@ -286,10 +282,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             .collect();
         sh_println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::to_value(StorageOutputJSON {
-                layout,
-                values
-            })?)?
+            serde_json::to_string_pretty(&serde_json::to_value(StorageReport { layout, values })?)?
         )?;
         return Ok(())
     }
