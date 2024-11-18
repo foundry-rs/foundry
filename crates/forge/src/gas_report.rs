@@ -6,23 +6,15 @@ use crate::{
 };
 use alloy_primitives::map::HashSet;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
-use foundry_common::{calc, TestFunctionExt};
+use foundry_common::{
+    calc,
+    reports::{report_kind, ReportKind},
+    TestFunctionExt,
+};
 use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GasReportKind {
-    Markdown,
-    JSON,
-}
-
-impl Default for GasReportKind {
-    fn default() -> Self {
-        Self::Markdown
-    }
-}
 
 /// Represents the gas report for a set of contracts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -30,7 +22,7 @@ pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
     /// What kind of report to generate.
-    report_type: GasReportKind,
+    report_kind: ReportKind,
     /// Contracts to generate the report for.
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
@@ -47,13 +39,18 @@ impl GasReport {
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
         include_tests: bool,
-        report_kind: GasReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
-        let report_type = report_kind;
-        Self { report_any, report_type, report_for, ignore, include_tests, ..Default::default() }
+        Self {
+            report_any,
+            report_kind: report_kind(),
+            report_for,
+            ignore,
+            include_tests,
+            ..Default::default()
+        }
     }
 
     /// Whether the given contract should be reported.
@@ -94,31 +91,32 @@ impl GasReport {
             return;
         }
 
-        // Only include top-level calls which account for calldata and base (21.000) cost.
-        // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1 &&
-            (trace.kind == CallKind::Call ||
-                trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2 ||
-                trace.kind == CallKind::EOFCreate)
-        {
-            return;
-        }
-
         let Some(name) = decoder.contracts.get(&node.trace.address) else { return };
         let contract_name = name.rsplit(':').next().unwrap_or(name);
 
         if !self.should_report(contract_name) {
             return;
         }
+        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let is_create_call = trace.kind.is_any_create();
+
+        // Record contract deployment size.
+        if is_create_call {
+            trace!(contract_name, "adding create size info");
+            contract_info.size = trace.data.len();
+        }
+
+        // Only include top-level calls which account for calldata and base (21.000) cost.
+        // Only include Calls and Creates as only these calls are isolated in inspector.
+        if trace.depth > 1 && (trace.kind == CallKind::Call || is_create_call) {
+            return;
+        }
 
         let decoded = || decoder.decode_function(&node.trace);
 
-        let contract_info = self.contracts.entry(name.to_string()).or_default();
-        if trace.kind.is_any_create() {
+        if is_create_call {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
-            contract_info.size = trace.data.len();
         } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
@@ -157,8 +155,8 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_type {
-            GasReportKind::Markdown => {
+        match self.report_kind {
+            ReportKind::Markdown => {
                 for (name, contract) in &self.contracts {
                     if contract.functions.is_empty() {
                         trace!(name, "gas report contract without functions");
@@ -170,7 +168,7 @@ impl Display for GasReport {
                     writeln!(f, "\n")?;
                 }
             }
-            GasReportKind::JSON => {
+            ReportKind::JSON => {
                 writeln!(f, "{}", &self.format_json_output())?;
             }
         }

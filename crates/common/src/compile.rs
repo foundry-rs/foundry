@@ -1,6 +1,11 @@
 //! Support for compiling [foundry_compilers::Project]
 
-use crate::{term::SpinnerReporter, TestFunctionExt};
+use crate::{
+    reports::{report_kind, ReportKind},
+    shell,
+    term::SpinnerReporter,
+    TestFunctionExt,
+};
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
@@ -127,7 +132,7 @@ impl ProjectCompiler {
     pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
-            println!("Nothing to compile");
+            sh_println!("Nothing to compile")?;
             // nothing to do here
             std::process::exit(0);
         }
@@ -181,11 +186,13 @@ impl ProjectCompiler {
         }
 
         if !quiet {
-            if output.is_unchanged() {
-                println!("No files changed, compilation skipped");
-            } else {
-                // print the compiler output / warnings
-                println!("{output}");
+            if !shell::is_json() {
+                if output.is_unchanged() {
+                    sh_println!("No files changed, compilation skipped")?;
+                } else {
+                    // print the compiler output / warnings
+                    sh_println!("{output}")?;
+                }
             }
 
             self.handle_output(&output);
@@ -205,24 +212,32 @@ impl ProjectCompiler {
             for (name, (_, version)) in output.versioned_artifacts() {
                 artifacts.entry(version).or_default().push(name);
             }
-            for (version, names) in artifacts {
-                println!(
-                    "  compiler version: {}.{}.{}",
-                    version.major, version.minor, version.patch
-                );
-                for name in names {
-                    println!("    - {name}");
+
+            if shell::is_json() {
+                let _ = sh_println!("{}", serde_json::to_string(&artifacts).unwrap());
+            } else {
+                for (version, names) in artifacts {
+                    let _ = sh_println!(
+                        "  compiler version: {}.{}.{}",
+                        version.major,
+                        version.minor,
+                        version.patch
+                    );
+                    for name in names {
+                        let _ = sh_println!("    - {name}");
+                    }
                 }
             }
         }
 
         if print_sizes {
             // add extra newline if names were already printed
-            if print_names {
-                println!();
+            if print_names && !shell::is_json() {
+                let _ = sh_println!();
             }
 
-            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            let mut size_report =
+                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
 
             let artifacts: BTreeMap<_, _> = output
                 .artifact_ids()
@@ -252,7 +267,7 @@ impl ProjectCompiler {
                     .insert(name, ContractInfo { runtime_size, init_size, is_dev_contract });
             }
 
-            println!("{size_report}");
+            let _ = sh_println!("{size_report}");
 
             // TODO: avoid process::exit
             // exit with error if any contract exceeds the size limit, excluding test contracts.
@@ -276,6 +291,8 @@ const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
 /// Contracts with info about their size
 pub struct SizeReport {
+    /// What kind of report to generate.
+    report_kind: ReportKind,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -314,6 +331,43 @@ impl SizeReport {
 
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self.report_kind {
+            ReportKind::Markdown => {
+                let table = self.format_table_output();
+                writeln!(f, "{table}")?;
+            }
+            ReportKind::JSON => {
+                writeln!(f, "{}", self.format_json_output())?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl SizeReport {
+    fn format_json_output(&self) -> String {
+        let contracts = self
+            .contracts
+            .iter()
+            .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0))
+            .map(|(name, contract)| {
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "runtime_size": contract.runtime_size,
+                        "init_size": contract.init_size,
+                        "runtime_margin": CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize,
+                        "init_margin": CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+
+        serde_json::to_string(&contracts).unwrap()
+    }
+
+    fn format_table_output(&self) -> Table {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
         table.set_header([
@@ -364,8 +418,7 @@ impl Display for SizeReport {
             ]);
         }
 
-        writeln!(f, "{table}")?;
-        Ok(())
+        table
     }
 }
 
@@ -382,7 +435,7 @@ fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
         BytecodeObject::Unlinked(unlinked) => {
             // we don't need to account for placeholders here, because library placeholders take up
             // 40 characters: `__$<library hash>$__` which is the same as a 20byte address in hex.
-            let mut size = unlinked.as_bytes().len();
+            let mut size = unlinked.len();
             if unlinked.starts_with("0x") {
                 size -= 2;
             }
@@ -474,7 +527,7 @@ pub fn etherscan_project(
 /// Configures the reporter and runs the given closure.
 pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
     #[allow(clippy::collapsible_else_if)]
-    let reporter = if quiet {
+    let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
         if std::io::stdout().is_terminal() {

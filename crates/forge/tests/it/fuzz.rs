@@ -203,10 +203,10 @@ contract FuzzerDictTest is Test {
     .unwrap();
 
     // Test that immutable address is used as fuzzed input, causing test to fail.
-    cmd.args(["test", "--fuzz-seed", "100", "--mt", "testImmutableOwner"]).assert_failure();
+    cmd.args(["test", "--fuzz-seed", "119", "--mt", "testImmutableOwner"]).assert_failure();
     // Test that storage address is used as fuzzed input, causing test to fail.
     cmd.forge_fuse()
-        .args(["test", "--fuzz-seed", "100", "--mt", "testStorageOwner"])
+        .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner"])
         .assert_failure();
 });
 

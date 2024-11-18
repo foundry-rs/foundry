@@ -22,7 +22,6 @@ use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_env};
 use revm_primitives::AccountInfo;
 use std::path::PathBuf;
-use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
 
@@ -97,6 +96,11 @@ impl figment::Provider for VerifyBytecodeArgs {
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
         let mut dict = self.etherscan.dict();
+
+        if let Some(api_key) = &self.verifier.verifier_api_key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
@@ -142,11 +146,11 @@ impl VerifyBytecodeArgs {
         }
 
         if !shell::is_json() {
-            println!(
+            sh_println!(
                 "Verifying bytecode for contract {} at address {}",
-                self.contract.name.clone().green(),
-                self.address.green()
-            );
+                self.contract.name,
+                self.address
+            )?;
         }
 
         let mut json_results: Vec<JsonResult> = vec![];
@@ -212,12 +216,10 @@ impl VerifyBytecodeArgs {
 
         if maybe_predeploy {
             if !shell::is_json() {
-                println!(
-                    "{}",
-                    format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", self.address)
-                        .yellow()
-                        .bold()
-                )
+                sh_warn!(
+                    "Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.",
+                    self.address
+                )?;
             }
 
             // Append constructor args to the local_bytecode.

@@ -31,14 +31,22 @@ pub struct VerifierArgs {
     #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
     pub verifier: VerificationProviderType,
 
-    /// The verifier URL, if using a custom provider
+    /// The verifier API KEY, if using a custom provider.
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_KEY")]
+    pub verifier_api_key: Option<String>,
+
+    /// The verifier URL, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
 }
 
 impl Default for VerifierArgs {
     fn default() -> Self {
-        Self { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+        Self {
+            verifier: VerificationProviderType::Etherscan,
+            verifier_api_key: None,
+            verifier_url: None,
+        }
     }
 }
 
@@ -166,6 +174,11 @@ impl figment::Provider for VerifyArgs {
         if self.via_ir {
             dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
         }
+
+        if let Some(api_key) = &self.verifier.verifier_api_key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -201,12 +214,12 @@ impl VerifyArgs {
             let args = EtherscanVerificationProvider::default()
                 .create_verify_request(&self, &context)
                 .await?;
-            println!("{}", args.source);
+            sh_println!("{}", args.source)?;
             return Ok(())
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{}` deployed on {chain}", self.address);
+        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
         self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
@@ -386,7 +399,10 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        println!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default());
+        sh_println!(
+            "Checking verification status on {}",
+            self.etherscan.chain.unwrap_or_default()
+        )?;
         self.verifier.verifier.client(&self.etherscan.key())?.check(self).await
     }
 }

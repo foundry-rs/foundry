@@ -72,7 +72,7 @@ impl Spinner {
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        print!("\r\x33[2K\r{indicator} {}", self.message);
+        let _ = sh_print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
@@ -112,11 +112,11 @@ impl SpinnerReporter {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
                             // new line so past messages are not overwritten
-                            println!();
+                            let _ = sh_println!();
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
                             // end with a newline
-                            println!();
+                            let _ = sh_println!();
                             let _ = ack.send(());
                             break
                         }

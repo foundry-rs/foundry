@@ -127,9 +127,8 @@ pub fn needs_setup(abi: &JsonAbi) -> bool {
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
-            println!(
-                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                "Warning:".yellow().bold(),
+            let _ = sh_warn!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 setup_fn.signature()
             );
         }
@@ -449,19 +448,19 @@ pub async fn print_traces(
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    println!("Traces:");
+    sh_println!("Traces:")?;
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena_with_bytecodes(arena, verbose));
+        sh_println!("{}", render_trace_arena_with_bytecodes(arena, verbose))?;
     }
-    println!();
+    sh_println!()?;
 
     if result.success {
-        println!("{}", "Transaction successfully executed.".green());
+        sh_println!("{}", "Transaction successfully executed.".green())?;
     } else {
-        println!("{}", "Transaction failed.".red());
+        sh_err!("Transaction failed.")?;
     }
 
-    println!("Gas used: {}", result.gas_used);
+    sh_println!("Gas used: {}", result.gas_used)?;
     Ok(())
 }

@@ -255,7 +255,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                     .map(|(_, chain)| *chain as u64)
                     .format(", ")
             );
-            sh_warn!("{}", msg)?;
+            sh_warn!("{msg}")?;
         }
         Ok(())
     }

@@ -26,7 +26,10 @@ use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{
+    opts::{CoreBuildArgs, ShellOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
@@ -210,6 +213,9 @@ pub struct ScriptArgs {
 
     #[command(flatten)]
     pub retry: RetryArgs,
+
+    #[clap(flatten)]
+    pub shell: ShellOpts,
 }
 
 impl ScriptArgs {

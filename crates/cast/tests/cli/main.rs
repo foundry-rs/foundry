@@ -6,8 +6,8 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file,
     rpc::{
-        next_http_rpc_endpoint, next_mainnet_etherscan_api_key, next_rpc_endpoint,
-        next_ws_rpc_endpoint,
+        next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
+        next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -33,7 +33,7 @@ Options:
 
 Display options:
       --color <COLOR>
-          Log messages coloring
+          The color of the log messages
 
           Possible values:
           - auto:   Intelligently guess whether to use color output (default)
@@ -46,8 +46,18 @@ Display options:
   -q, --quiet
           Do not print log messages
 
-      --verbose
-          Use verbose output
+  -v, --verbosity...
+          Verbosity level of the log messages.
+          
+          Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
+          
+          Depending on the context the verbosity levels have different meanings.
+          
+          For example, the verbosity levels of the EVM are:
+          - 2 (-vv): Print logs for all tests.
+          - 3 (-vvv): Print execution traces for failing tests.
+          - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
+          - 5 (-vvvvv): Print execution and setup traces for all tests.
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -640,8 +650,7 @@ casttest!(rpc_with_args, |_prj, cmd| {
 
     // Call `cast rpc eth_getBlockByNumber 0x123 false`
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    .assert_json_stdout(str![[r#"
 {"number":"0x123","hash":"0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524","transactions":[],"totalDifficulty":"0x4dea420908b","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","extraData":"0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32","nonce":"0x29d6547c196e00e0","miner":"0xbb7b8287f3f0a933474a79eae42cbca977791171","difficulty":"0x494433b31","gasLimit":"0x1388","gasUsed":"0x0","uncles":[],"sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","size":"0x220","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","stateRoot":"0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4","mixHash":"0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0","parentHash":"0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017","timestamp":"0x55ba4564"}
 
 "#]]);
@@ -660,8 +669,7 @@ casttest!(rpc_raw_params, |_prj, cmd| {
         "--raw",
         r#"["0x123", false]"#,
     ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+    .assert_json_stdout(str![[r#"
 {"number":"0x123","hash":"0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524","transactions":[],"totalDifficulty":"0x4dea420908b","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","extraData":"0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32","nonce":"0x29d6547c196e00e0","miner":"0xbb7b8287f3f0a933474a79eae42cbca977791171","difficulty":"0x494433b31","gasLimit":"0x1388","gasUsed":"0x0","uncles":[],"sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","size":"0x220","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","stateRoot":"0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4","mixHash":"0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0","parentHash":"0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017","timestamp":"0x55ba4564"}
 
 "#]]);
@@ -677,8 +685,7 @@ casttest!(rpc_raw_params_stdin, |_prj, cmd| {
             stdin.write_all(b"\n[\n\"0x123\",\nfalse\n]\n").unwrap();
         },
     )
-    .assert_success()
-    .stdout_eq(str![[r#"
+    .assert_json_stdout(str![[r#"
 {"number":"0x123","hash":"0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524","transactions":[],"totalDifficulty":"0x4dea420908b","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","extraData":"0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32","nonce":"0x29d6547c196e00e0","miner":"0xbb7b8287f3f0a933474a79eae42cbca977791171","difficulty":"0x494433b31","gasLimit":"0x1388","gasUsed":"0x0","uncles":[],"sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","size":"0x220","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","stateRoot":"0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4","mixHash":"0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0","parentHash":"0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017","timestamp":"0x55ba4564"}
 
 "#]]);
@@ -1124,6 +1131,23 @@ casttest!(storage_layout_simple, |_prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/pull/9332>
+casttest!(storage_layout_simple_json, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout_complex, |_prj, cmd| {
     cmd.args([
@@ -1155,6 +1179,22 @@ casttest!(storage_layout_complex, |_prj, cmd| {
 | _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
 
 "#]]);
+});
+
+casttest!(storage_layout_complex_json, |_prj, cmd| {
+    cmd.args([
+        "storage",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        "--block",
+        "21034138",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
 });
 
 casttest!(balance, |_prj, cmd| {
@@ -1500,6 +1540,54 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3473>
+casttest!(test_non_mainnet_traces, |prj, cmd| {
+    prj.clear();
+    cmd.args([
+        "run",
+        "0xa003e419e2d7502269eb5eda56947b580120e00abfd5b5460d08f8af44a0c24f",
+        "--rpc-url",
+        next_rpc_endpoint(NamedChain::Optimism).as_str(),
+        "--etherscan-api-key",
+        next_etherscan_api_key(NamedChain::Optimism).as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [33841] FiatTokenProxy::fallback(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8])
+    ├─ [26673] FiatTokenV2_2::approve(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8]) [delegatecall]
+    │   ├─ emit Approval(owner: 0x9a95Af47C51562acfb2107F44d7967DF253197df, spender: 0x111111125421cA6dc452d289314280a0f8842A65, value: 164054805 [1.64e8])
+    │   └─ ← [Return] true
+    └─ ← [Return] true
+...
+
+"#]]);
+});
+
+// tests that displays a sample contract artifact
+// <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
+casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "artifact",
+        "--etherscan-api-key",
+        &next_mainnet_etherscan_api_key(),
+        "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"{
+  "abi": [],
+  "bytecode": {
+    "object": "0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033"
+  }
+}
 
 "#]]);
 });
