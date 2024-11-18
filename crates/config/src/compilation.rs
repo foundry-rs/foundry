@@ -14,12 +14,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SettingsOverrides {
     pub name: String,
-    via_ir: Option<bool>,
+    pub via_ir: Option<bool>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
-    evm_version: Option<EvmVersion>,
-    optimizer: Option<bool>,
-    optimizer_runs: Option<usize>,
-    bytecode_hash: Option<BytecodeHash>,
+    pub evm_version: Option<EvmVersion>,
+    pub optimizer: Option<bool>,
+    pub optimizer_runs: Option<usize>,
+    pub bytecode_hash: Option<BytecodeHash>,
 }
 
 impl SettingsOverrides {
@@ -65,20 +65,20 @@ pub enum RestrictionsError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompilationRestrictions {
     pub paths: GlobMatcher,
-    version: Option<VersionReq>,
-    via_ir: Option<bool>,
-    bytecode_hash: Option<BytecodeHash>,
+    pub version: Option<VersionReq>,
+    pub via_ir: Option<bool>,
+    pub bytecode_hash: Option<BytecodeHash>,
 
-    min_optimizer_runs: Option<usize>,
-    optimizer_runs: Option<usize>,
-    max_optimizer_runs: Option<usize>,
+    pub min_optimizer_runs: Option<usize>,
+    pub optimizer_runs: Option<usize>,
+    pub max_optimizer_runs: Option<usize>,
 
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
-    min_evm_version: Option<EvmVersion>,
+    pub min_evm_version: Option<EvmVersion>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
-    evm_version: Option<EvmVersion>,
+    pub evm_version: Option<EvmVersion>,
     #[serde(default, with = "serde_helpers::display_from_str_opt")]
-    max_evm_version: Option<EvmVersion>,
+    pub max_evm_version: Option<EvmVersion>,
 }
 
 impl TryFrom<CompilationRestrictions> for RestrictionsWithVersion<MultiCompilerRestrictions> {
