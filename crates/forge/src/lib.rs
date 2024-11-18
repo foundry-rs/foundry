@@ -10,7 +10,7 @@ extern crate tracing;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
-    InvariantConfig, NatSpec,
+    InvariantConfig, NatSpec, TestConfig,
 };
 use proptest::test_runner::{
     FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
@@ -43,10 +43,13 @@ pub struct TestOptions {
     /// The base "invariant" test configuration. To be used as a fallback in case
     /// no more specific configs are found for a given run.
     pub invariant: InvariantConfig,
+    ///
+    pub test: TestConfig,
     /// Contains per-test specific "fuzz" configurations.
     pub inline_fuzz: InlineConfig<FuzzConfig>,
     /// Contains per-test specific "invariant" configurations.
     pub inline_invariant: InlineConfig<InvariantConfig>,
+    pub inline_test: InlineConfig<TestConfig>,
 }
 
 impl TestOptions {
@@ -58,11 +61,12 @@ impl TestOptions {
         profiles: Vec<String>,
         base_fuzz: FuzzConfig,
         base_invariant: InvariantConfig,
+        base_test: TestConfig,
     ) -> Result<Self, InlineConfigError> {
         let natspecs: Vec<NatSpec> = NatSpec::parse(output, root);
         let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
         let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
-
+        let mut inline_test = InlineConfig::<TestConfig>::default();
         // Validate all natspecs
         for natspec in &natspecs {
             validate_profiles(natspec, &profiles)?;
@@ -77,16 +81,23 @@ impl TestOptions {
             if let Some(invariant) = base_invariant.merge(natspec)? {
                 inline_invariant.insert_contract(&natspec.contract, invariant);
             }
+
+            if let Some(test) = base_test.merge(natspec)? {
+                inline_test.insert_contract(&natspec.contract, test);
+            }
         }
 
         for (natspec, f) in natspecs.iter().filter_map(|n| n.function.as_ref().map(|f| (n, f))) {
             // Apply in-line configurations for the current profile
             let c = &natspec.contract;
 
+            tracing::info!("Parent contract of natspec: {:?}", c);
+
             // We might already have inserted contract-level configs above, so respect data already
             // present in inline configs.
             let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
             let base_invariant = inline_invariant.get(c, f).unwrap_or(&base_invariant);
+            let base_test = inline_test.get(c, f).unwrap_or(&base_test);
 
             if let Some(fuzz) = base_fuzz.merge(natspec)? {
                 inline_fuzz.insert_fn(c, f, fuzz);
@@ -95,9 +106,21 @@ impl TestOptions {
             if let Some(invariant) = base_invariant.merge(natspec)? {
                 inline_invariant.insert_fn(c, f, invariant);
             }
+
+            if let Some(test) = base_test.merge(natspec)? {
+                tracing::info!("Inserting test config {:?} for {:?}::{:?}", test, c, f);
+                inline_test.insert_fn(c, f, test);
+            }
         }
 
-        Ok(Self { fuzz: base_fuzz, invariant: base_invariant, inline_fuzz, inline_invariant })
+        Ok(Self {
+            fuzz: base_fuzz,
+            invariant: base_invariant,
+            test: base_test,
+            inline_fuzz,
+            inline_invariant,
+            inline_test,
+        })
     }
 
     /// Returns a "fuzz" test runner instance. Parameters are used to select tight scoped fuzz
@@ -190,6 +213,7 @@ impl TestOptions {
 pub struct TestOptionsBuilder {
     fuzz: Option<FuzzConfig>,
     invariant: Option<InvariantConfig>,
+    test: Option<TestConfig>,
     profiles: Option<Vec<String>>,
 }
 
@@ -203,6 +227,12 @@ impl TestOptionsBuilder {
     /// Sets a [`InvariantConfig`] to be used as base "invariant" configuration.
     pub fn invariant(mut self, conf: InvariantConfig) -> Self {
         self.invariant = Some(conf);
+        self
+    }
+
+    /// Sets a [`TestConfig`] to be used as base "test" configuration.
+    pub fn test(mut self, conf: TestConfig) -> Self {
+        self.test = Some(conf);
         self
     }
 
@@ -228,6 +258,7 @@ impl TestOptionsBuilder {
             self.profiles.unwrap_or_else(|| vec![Config::selected_profile().into()]);
         let base_fuzz = self.fuzz.unwrap_or_default();
         let base_invariant = self.invariant.unwrap_or_default();
-        TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
+        let base_test = self.test.unwrap_or_default();
+        TestOptions::new(output, root, profiles, base_fuzz, base_invariant, base_test)
     }
 }

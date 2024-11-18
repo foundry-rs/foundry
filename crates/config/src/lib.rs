@@ -104,6 +104,9 @@ pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
 mod invariant;
 pub use invariant::InvariantConfig;
 
+mod test;
+pub use test::TestConfig;
+
 mod inline;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
