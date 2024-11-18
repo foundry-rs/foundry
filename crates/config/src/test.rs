@@ -36,8 +36,7 @@ impl InlineConfigParser for TestConfig {
                 "evm-version" => {
                     conf_clone.evm_version = EvmVersion::from_str(value.as_str()).map_err(|_| {
                         InlineConfigParserError::InvalidConfigProperty(format!(
-                            "evm-version {}",
-                            value
+                            "evm-version {value}",
                         ))
                     })?
                 }

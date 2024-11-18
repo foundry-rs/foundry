@@ -663,7 +663,7 @@ impl ContractRunner<'_> {
 
         // Prepare fuzz test execution.
         let fuzz_fixtures = setup.fuzz_fixtures.clone();
-        let (executor, test_result, address) = match self.prepare_test(func, setup, &test_config) {
+        let (executor, test_result, address) = match self.prepare_test(func, setup, test_config) {
             Ok(res) => res,
             Err(res) => return res,
         };
