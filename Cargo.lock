@@ -800,6 +800,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "annotate-snippets"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24e35ed54e5ea7997c14ed4c70ba043478db1112e98263b3b035907aa197d991"
+dependencies = [
+ "anstyle",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3761,7 +3771,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
+source = "git+https://github.com/foundry-rs/compilers?rev=d8dc8715#d8dc87157d68ae22b8d9aa4d62bbd6a8962539b0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3784,7 +3794,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "solang-parser",
+ "solar-parse",
  "svm-rs",
  "svm-rs-builds",
  "tempfile",
@@ -3798,7 +3808,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
+source = "git+https://github.com/foundry-rs/compilers?rev=d8dc8715#d8dc87157d68ae22b8d9aa4d62bbd6a8962539b0"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3807,7 +3817,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
+source = "git+https://github.com/foundry-rs/compilers?rev=d8dc8715#d8dc87157d68ae22b8d9aa4d62bbd6a8962539b0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3830,7 +3840,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
+source = "git+https://github.com/foundry-rs/compilers?rev=d8dc8715#d8dc87157d68ae22b8d9aa4d62bbd6a8962539b0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3844,7 +3854,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.11.6"
-source = "git+https://github.com/foundry-rs/compilers?rev=ffda182#ffda1825e69e9e3e9c78e572addcde667508d1c1"
+source = "git+https://github.com/foundry-rs/compilers?rev=d8dc8715#d8dc87157d68ae22b8d9aa4d62bbd6a8962539b0"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -4700,6 +4710,10 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+ "allocator-api2",
+]
 
 [[package]]
 name = "hashbrown"
@@ -5256,6 +5270,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
 
 [[package]]
+name = "index_vec"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44faf5bb8861a9c72e20d3fb0fdbd59233e43056e2b80475ab0aacdc2e781355"
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5576,6 +5596,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lasso"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e14eda50a3494b3bf7b9ce51c52434a761e383d7238ce1dd5dcec2fbc13e9fb"
+dependencies = [
+ "dashmap",
+ "hashbrown 0.14.5",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5710,6 +5740,12 @@ dependencies = [
  "string_cache_codegen",
  "tendril",
 ]
+
+[[package]]
+name = "match_cfg"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffbee8634e0d45d258acb448e7eaab3fce7a0a467395d4d9f228e3c1f01fb2e4"
 
 [[package]]
 name = "matchers"
@@ -8341,6 +8377,109 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar-ast"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5aeaf7a4bd326242c909bd287291226a540b62b36fa5824880248f4b1d4d6af"
+dependencies = [
+ "alloy-primitives",
+ "bumpalo",
+ "either",
+ "num-bigint",
+ "num-rational",
+ "semver 1.0.23",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-macros",
+ "strum",
+ "typed-arena",
+]
+
+[[package]]
+name = "solar-config"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31d00d672a40a1a3620d7696f01a2d3301abf883d8168e1a9da3bf83f0c8e343"
+dependencies = [
+ "strum",
+]
+
+[[package]]
+name = "solar-data-structures"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b6e4eb0b72ed7adbb808897c85de08ea99609774a58c72e3dce55c758043ca2"
+dependencies = [
+ "bumpalo",
+ "index_vec",
+ "indexmap 2.6.0",
+ "parking_lot",
+ "rayon",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "solar-interface"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21fb8925638f3da1bba7a9a6ebeac3511e5c6354f921f2bb2e1ddce4ac70c107"
+dependencies = [
+ "annotate-snippets",
+ "anstream",
+ "anstyle",
+ "const-hex",
+ "derive_builder",
+ "dunce",
+ "itertools 0.10.5",
+ "itoa",
+ "lasso",
+ "match_cfg",
+ "normalize-path",
+ "rayon",
+ "scc",
+ "scoped-tls",
+ "solar-config",
+ "solar-data-structures",
+ "solar-macros",
+ "thiserror",
+ "tracing",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "solar-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0cc54b74e214647c1bbfc098d080cc5deac77f8dcb99aca91747276b01a15ad"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "solar-parse"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b82c3659c15975cd80e5e1c44591278c230c59ad89082d797837499a4784e1b"
+dependencies = [
+ "alloy-primitives",
+ "bitflags 2.6.0",
+ "bumpalo",
+ "itertools 0.10.5",
+ "memchr",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "smallvec",
+ "solar-ast",
+ "solar-data-structures",
+ "solar-interface",
+ "tracing",
+]
+
+[[package]]
 name = "soldeer-commands"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9229,6 +9368,12 @@ dependencies = [
  "thiserror",
  "utf-8",
 ]
+
+[[package]]
+name = "typed-arena"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"
