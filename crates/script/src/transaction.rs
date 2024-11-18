@@ -152,7 +152,7 @@ impl ScriptTransactionBuilder {
         // Add the additional contracts created in this transaction, so we can verify them later.
         created_contracts.retain(|contract| {
             // Filter out the contract that was created by the transaction itself.
-            self.transaction.contract_address.map_or(true, |addr| addr != contract.address)
+            self.transaction.contract_address != Some(contract.address)
         });
 
         self.transaction.additional_contracts = created_contracts;

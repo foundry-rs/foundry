@@ -3,7 +3,7 @@ pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
-import "../logs/console.sol";
+import "../../default/logs/console.sol";
 
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);

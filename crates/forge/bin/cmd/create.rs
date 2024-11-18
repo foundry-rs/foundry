@@ -20,7 +20,9 @@ use foundry_common::{
     fmt::parse_tokens,
     shell,
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
+use foundry_compilers::{
+    artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize, ArtifactId,
+};
 use foundry_config::{
     figment::{
         self,
@@ -106,9 +108,9 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output = compile::compile_target(&target_path, &project, shell::is_json())?;
+        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
-        let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
+        let (abi, bin, id) = remove_contract(output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -148,8 +150,17 @@ impl CreateArgs {
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            self.deploy(abi, bin, params, provider, chain_id, sender, config.transaction_timeout)
-                .await
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                chain_id,
+                sender,
+                config.transaction_timeout,
+                id,
+            )
+            .await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
@@ -157,8 +168,17 @@ impl CreateArgs {
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
-            self.deploy(abi, bin, params, provider, chain_id, deployer, config.transaction_timeout)
-                .await
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                chain_id,
+                deployer,
+                config.transaction_timeout,
+                id,
+            )
+            .await
         }
     }
 
@@ -177,13 +197,14 @@ impl CreateArgs {
         &self,
         constructor_args: Option<String>,
         chain: u64,
+        id: &ArtifactId,
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
         let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
             contract: Some(self.contract.clone()),
-            compiler_version: None,
+            compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
@@ -204,6 +225,7 @@ impl CreateArgs {
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -229,6 +251,7 @@ impl CreateArgs {
         chain: u64,
         deployer_address: Address,
         timeout: u64,
+        id: ArtifactId,
     ) -> Result<()> {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
@@ -305,7 +328,7 @@ impl CreateArgs {
                 constructor_args = Some(hex::encode(encoded_args));
             }
 
-            self.verify_preflight_check(constructor_args.clone(), chain).await?;
+            self.verify_preflight_check(constructor_args.clone(), chain, &id).await?;
         }
 
         // Deploy the actual contract
@@ -339,7 +362,7 @@ impl CreateArgs {
         let verify = forge_verify::VerifyArgs {
             address,
             contract: Some(self.contract),
-            compiler_version: None,
+            compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations,
@@ -357,6 +380,7 @@ impl CreateArgs {
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
         };
         sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
