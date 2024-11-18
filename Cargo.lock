@@ -3723,6 +3723,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-macros",
+ "itertools 0.13.0",
  "num-format",
  "reqwest",
  "semver 1.0.23",

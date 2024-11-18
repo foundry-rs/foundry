@@ -3,6 +3,8 @@ use foundry_compilers::{
     artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
+use foundry_config::find_project_root;
+use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
@@ -16,6 +18,8 @@ use std::{
     time::Duration,
 };
 use yansi::Paint;
+
+use crate::shell;
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -153,12 +157,18 @@ impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
         // Verbose message with dirty files displays first to avoid being overlapped
         // by the spinner in .tick() which prints repeatedly over the same line.
-        if foundry_common::shell::verbosity() > 0 {
+        if shell::verbosity() > 0 {
+            let project_root = find_project_root(None);
+
             self.send_msg(format!(
-                "Compiling files\n{}",
+                "Files to compile:\n{}",
                 dirty_files
                     .iter()
-                    .map(|path| path.display().to_string())
+                    .map(|path| {
+                        let trimmed_path = path.strip_prefix(&project_root).unwrap_or(path);
+                        format!("- {}", trimmed_path.display())
+                    })
+                    .sorted()
                     .collect::<Vec<String>>()
                     .join("\n")
             ));
