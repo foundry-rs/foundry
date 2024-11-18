@@ -19,6 +19,7 @@ pub struct SettingsOverrides {
     evm_version: Option<EvmVersion>,
     optimizer: Option<bool>,
     optimizer_runs: Option<usize>,
+    bytecode_hash: Option<BytecodeHash>,
 }
 
 impl SettingsOverrides {
@@ -39,6 +40,10 @@ impl SettingsOverrides {
 
         if let Some(optimizer_runs) = self.optimizer_runs {
             settings.solc.optimizer.runs = Some(optimizer_runs);
+        }
+
+        if let Some(bytecode_hash) = self.bytecode_hash {
+            settings.solc.bytecode_hash = Some(bytecode_hash);
         }
     }
 }
