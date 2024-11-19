@@ -35,8 +35,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait,
-    TxEip4844Variant, TxEnvelope,
+    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::{
@@ -2912,7 +2911,25 @@ pub fn transaction_build(
         }
     }
 
-    let transaction: Transaction = eth_transaction.clone().into();
+    let mut transaction: Transaction = eth_transaction.clone().into();
+
+    if eth_transaction.is_legacy() {
+        transaction.effective_gas_price = Some(transaction.effective_gas_price(base_fee))
+    }
+
+    if eth_transaction.is_dynamic_fee() {
+        if block.is_none() && info.is_none() {
+            // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
+            transaction.effective_gas_price = Some(transaction.max_fee_per_gas());
+        } else {
+            // if transaction is already mined, gas price is considered base fee + priority
+            // fee: the effective gas price.
+            let base_fee = base_fee.map_or(0u128, |g| g as u128);
+            let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
+            transaction.effective_gas_price =
+                Some(base_fee.saturating_add(max_priority_fee_per_gas));
+        }
+    }
 
     let envelope = transaction.inner;
 
@@ -2921,20 +2938,7 @@ pub fn transaction_build(
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
 
-            if eth_transaction.is_dynamic_fee() {
-                if block.is_none() && info.is_none() {
-                    // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-                    tx.gas_price = tx.max_fee_per_gas();
-                } else {
-                    // if transaction is already mined, gas price is considered base fee + priority
-                    // fee: the effective gas price.
-                    let base_fee = base_fee.map_or(0u128, |g| g as u128);
-                    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
-                    tx.gas_price = base_fee.saturating_add(max_priority_fee_per_gas);
-                }
-            }
-
-            tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
+            // tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
 
             // need to check if the signature of the transaction is impersonated, if so then we
             // can't recover the sender, instead we use the sender from the executed transaction and
@@ -2960,7 +2964,7 @@ pub fn transaction_build(
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
 
-            tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
+            // tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
 
             // need to check if the signature of the transaction is impersonated, if so then we
             // can't recover the sender, instead we use the sender from the executed transaction and
@@ -2986,20 +2990,7 @@ pub fn transaction_build(
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
 
-            if eth_transaction.is_dynamic_fee() {
-                if block.is_none() && info.is_none() {
-                    // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-                    tx.gas_price = tx.max_fee_per_gas();
-                } else {
-                    // if transaction is already mined, gas price is considered base fee + priority
-                    // fee: the effective gas price.
-                    let base_fee = base_fee.map_or(0u128, |g| g as u128);
-                    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas().unwrap_or(0);
-                    tx.gas_price = base_fee.saturating_add(max_priority_fee_per_gas);
-                }
-            }
-
-            tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
+            // tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
 
             // need to check if the signature of the transaction is impersonated, if so then we
             // can't recover the sender, instead we use the sender from the executed transaction and
@@ -3025,33 +3016,27 @@ pub fn transaction_build(
             let mut hash = *signed_tx.hash();
             let tx_variant = signed_tx.tx_mut();
 
-            match tx_variant {
-                TxEip4844Variant::TxEip4844(tx) => {
-                    if info.is_some() && tx.ty() == 0x7E {
-                        tx.nonce = info.as_ref().unwrap().nonce;
-                    }
-                    tx.to = if let Some(to) =
-                        info.as_ref().map_or(eth_transaction.to(), |status| status.to)
-                    {
-                        to
-                    } else {
-                        Address::ZERO
-                    };
-                }
+            // match tx_variant {
+            //     TxEip4844Variant::TxEip4844(tx) => {
+            //         tx.to = if let Some(to) =
+            //             info.as_ref().map_or(eth_transaction.to(), |status| status.to)
+            //         {
+            //             to
+            //         } else {
+            //             Address::ZERO
+            //         };
+            //     }
 
-                TxEip4844Variant::TxEip4844WithSidecar(tx) => {
-                    if info.is_some() && tx.ty() == 0x7E {
-                        tx.tx.nonce = info.as_ref().unwrap().nonce;
-                    }
-                    tx.tx.to = if let Some(to) =
-                        info.as_ref().map_or(eth_transaction.to(), |status| status.to)
-                    {
-                        to
-                    } else {
-                        Address::ZERO
-                    };
-                }
-            }
+            //     TxEip4844Variant::TxEip4844WithSidecar(tx) => {
+            //         tx.tx.to = if let Some(to) =
+            //             info.as_ref().map_or(eth_transaction.to(), |status| status.to)
+            //         {
+            //             to
+            //         } else {
+            //             Address::ZERO
+            //         };
+            //     }
+            // }
 
             // need to check if the signature of the transaction is impersonated, if so then we
             // can't recover the sender, instead we use the sender from the executed transaction and
@@ -3078,12 +3063,12 @@ pub fn transaction_build(
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
 
-            tx.to = if let Some(to) = info.as_ref().map_or(eth_transaction.to(), |status| status.to)
-            {
-                to
-            } else {
-                Address::ZERO
-            };
+            // tx.to = if let Some(to) = info.as_ref().map_or(eth_transaction.to(), |status|
+            // status.to) {
+            //     to
+            // } else {
+            //     Address::ZERO
+            // };
 
             // need to check if the signature of the transaction is impersonated, if so then we
             // can't recover the sender, instead we use the sender from the executed transaction and
