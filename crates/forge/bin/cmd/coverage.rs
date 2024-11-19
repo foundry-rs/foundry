@@ -16,7 +16,7 @@ use forge::{
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
+    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
@@ -94,23 +94,12 @@ impl CoverageArgs {
         // Set up the project
         let mut project = config.create_project(false, false)?;
         if self.ir_minimum {
-            // TODO: How to detect solc version if the user does not specify a solc version in
-            // config  case1: specify local installed solc ?
-            //  case2: multiple solc versions used and  auto_detect_solc == true
-            if let Some(SolcReq::Version(version)) = &config.solc {
-                if *version < Version::new(0, 8, 13) {
-                    return Err(eyre::eyre!(
-                            "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
-                        ));
-                }
-            }
-
             // print warning message
             sh_warn!("{}", concat!(
-                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
+                "`--ir-minimum` enables viaIR with minimum optimization, \
                  which can result in inaccurate source mappings.\n",
                 "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                "Note that \"viaIR\" is production ready since Solidity 0.8.13 and above.\n",
                 "See more: https://github.com/foundry-rs/foundry/issues/3357",
             ))?;
 
@@ -119,7 +108,15 @@ impl CoverageArgs {
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
             project.settings.solc.settings =
-                project.settings.solc.settings.with_via_ir_minimum_optimization()
+                project.settings.solc.settings.with_via_ir_minimum_optimization();
+            let version = if let Some(SolcReq::Version(version)) = &config.solc {
+                version
+            } else {
+                // Sanitize settings for solc 0.8.4 if version cannot be detected.
+                // See <https://github.com/foundry-rs/foundry/issues/9322>.
+                &Version::new(0, 8, 4)
+            };
+            project.settings.solc.settings.sanitize(version, SolcLanguage::Solidity);
         } else {
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;

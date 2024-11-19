@@ -2,10 +2,18 @@
 
 use foundry_config::{NamedChain, NamedChain::Optimism};
 use rand::seq::SliceRandom;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    LazyLock,
+use std::{
+    env,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        LazyLock,
+    },
 };
+
+/// Env var key for ws archive endpoints.
+const ENV_WS_ARCHIVE_ENDPOINTS: &str = "WS_ARCHIVE_URLS";
+/// Env var key for http archive endpoints.
+const ENV_HTTP_ARCHIVE_ENDPOINTS: &str = "HTTP_ARCHIVE_URLS";
 
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -118,14 +126,30 @@ pub fn next_ws_endpoint(chain: NamedChain) -> String {
 
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_KEYS.len();
-    format!("https://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+    next_archive_endpoint(false)
 }
 
 /// Returns endpoint that has access to archive state
 pub fn next_ws_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_KEYS.len();
-    format!("wss://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+    next_archive_endpoint(true)
+}
+
+/// Returns endpoint that has access to archive state, http or ws.
+/// Use env vars (comma separated urls) or default inline keys (Alchemy for ws, Infura for http).
+fn next_archive_endpoint(is_ws: bool) -> String {
+    let env_urls = if is_ws { ENV_WS_ARCHIVE_ENDPOINTS } else { ENV_HTTP_ARCHIVE_ENDPOINTS };
+
+    let rpc_env_vars = env::var(env_urls).unwrap_or_default();
+    if !rpc_env_vars.is_empty() {
+        let urls = rpc_env_vars.split(',').collect::<Vec<&str>>();
+        urls.choose(&mut rand::thread_rng()).unwrap().to_string()
+    } else if is_ws {
+        let idx = next() % ALCHEMY_KEYS.len();
+        format!("wss://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+    } else {
+        let idx = next() % INFURA_KEYS.len();
+        format!("https://mainnet.infura.io/v3/{}", INFURA_KEYS[idx])
+    }
 }
 
 /// Returns the next etherscan api key
