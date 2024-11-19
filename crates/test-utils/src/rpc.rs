@@ -118,8 +118,8 @@ pub fn next_ws_endpoint(chain: NamedChain) -> String {
 
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_KEYS.len();
-    format!("https://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+    let idx = next() % INFURA_KEYS.len();
+    format!("https://mainnet.infura.io/v3/{}", INFURA_KEYS[idx])
 }
 
 /// Returns endpoint that has access to archive state

@@ -575,7 +575,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:USDTCallingTest
 [PASS] test() ([GAS])
 Traces:
-  [9406] USDTCallingTest::test()
+  [9385] USDTCallingTest::test()
     ├─ [0] VM::createSelectFork("[..]")
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
