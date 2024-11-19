@@ -769,9 +769,7 @@ pub struct TestSetup {
 
 impl TestSetup {
     pub fn failed(reason: String) -> Self {
-        let mut this = Self::default();
-        this.reason = Some(reason);
-        this
+        Self { reason: Some(reason), ..Default::default() }
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {

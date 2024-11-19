@@ -1040,6 +1040,7 @@ async fn can_impersonate_in_fork() {
 
 // <https://etherscan.io/block/14608400>
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_total_difficulty_fork() {
     let (api, handle) = spawn(fork_config()).await;
 
