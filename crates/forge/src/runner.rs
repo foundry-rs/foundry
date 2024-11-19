@@ -478,7 +478,8 @@ impl ContractRunner<'_> {
 
         let mut executor = self.executor.clone();
 
-        let change_isolate = executor.inspector().enable_isolation != config.isolate;
+        let change_isolate =
+            config.isolate.is_some_and(|isolate| executor.inspector().enable_isolation != isolate);
         let change_evm_verion = config
             .evm_version
             .is_some_and(|evm_version| executor.spec_id() != evm_spec_id(&evm_version, false));
@@ -490,7 +491,7 @@ impl ContractRunner<'_> {
             }
 
             if change_isolate {
-                executor.inspector_mut().enable_isolation(config.isolate);
+                executor.inspector_mut().enable_isolation(config.isolate.unwrap());
             }
         }
 
@@ -716,7 +717,8 @@ impl ContractRunner<'_> {
         let mut executor = Cow::Borrowed(&self.executor);
         let mut test_result = TestResult::new(setup);
 
-        let change_isolate = executor.inspector().enable_isolation != config.isolate;
+        let change_isolate =
+            config.isolate.is_some_and(|isolate| executor.inspector().enable_isolation != isolate);
         let change_evm_verion = config
             .evm_version
             .is_some_and(|evm_version| executor.spec_id() != evm_spec_id(&evm_version, false));
@@ -730,7 +732,7 @@ impl ContractRunner<'_> {
             }
 
             if change_isolate {
-                executor.inspector_mut().enable_isolation(config.isolate);
+                executor.inspector_mut().enable_isolation(config.isolate.unwrap());
             }
         }
 

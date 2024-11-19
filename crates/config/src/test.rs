@@ -10,7 +10,7 @@ use crate::{inline::InlineConfigParserError, InlineConfigParser};
 #[derive(Clone, Debug, Default)]
 pub struct TestConfig {
     pub evm_version: Option<EvmVersion>,
-    pub isolate: bool,
+    pub isolate: Option<bool>,
 }
 
 impl InlineConfigParser for TestConfig {
@@ -43,9 +43,9 @@ impl InlineConfigParser for TestConfig {
                         })?)
                 }
                 "isolate" => {
-                    conf_clone.isolate = value.parse().map_err(|_| {
+                    conf_clone.isolate = Some(bool::from_str(&value).map_err(|_| {
                         InlineConfigParserError::InvalidConfigProperty(format!("isolate {value}"))
-                    })?
+                    })?)
                 }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
