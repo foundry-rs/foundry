@@ -10,6 +10,7 @@ use crate::{inline::InlineConfigParserError, InlineConfigParser};
 #[derive(Clone, Debug, Default)]
 pub struct TestConfig {
     pub evm_version: Option<EvmVersion>,
+    pub isolate: bool,
 }
 
 impl InlineConfigParser for TestConfig {

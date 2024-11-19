@@ -470,7 +470,7 @@ impl ContractRunner<'_> {
         call_after_invariant: bool,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
-        test_config: &TestConfig,
+        config: &TestConfig,
     ) -> TestResult {
         let address = setup.address;
         let fuzz_fixtures = setup.fuzz_fixtures.clone();
@@ -478,9 +478,20 @@ impl ContractRunner<'_> {
 
         let mut executor = self.executor.clone();
 
-        if let Some(evm_version) = test_config.evm_version {
-            let spec_id = evm_spec_id(&evm_version, false);
-            executor.set_spec_id(spec_id);
+        let change_isolate = executor.inspector().enable_isolation != config.isolate;
+        let change_evm_verion = config
+            .evm_version
+            .is_some_and(|evm_version| executor.spec_id() != evm_spec_id(&evm_version, false));
+
+        if change_isolate || change_evm_verion {
+            if change_evm_verion {
+                let spec_id = evm_spec_id(&config.evm_version.unwrap(), false);
+                executor.set_spec_id(spec_id);
+            }
+
+            if change_isolate {
+                executor.inspector_mut().enable_isolation(config.isolate);
+            }
         }
 
         // First, run the test normally to see if it needs to be skipped.
@@ -705,10 +716,22 @@ impl ContractRunner<'_> {
         let mut executor = Cow::Borrowed(&self.executor);
         let mut test_result = TestResult::new(setup);
 
-        if let Some(evm_version) = config.evm_version {
-            let spec_id = evm_spec_id(&evm_version, false);
+        let change_isolate = executor.inspector().enable_isolation != config.isolate;
+        let change_evm_verion = config
+            .evm_version
+            .is_some_and(|evm_version| executor.spec_id() != evm_spec_id(&evm_version, false));
+
+        if change_isolate || change_evm_verion {
             let executor = executor.to_mut();
-            executor.set_spec_id(spec_id);
+
+            if change_evm_verion {
+                let spec_id = evm_spec_id(&config.evm_version.unwrap(), false);
+                executor.set_spec_id(spec_id);
+            }
+
+            if change_isolate {
+                executor.inspector_mut().enable_isolation(config.isolate);
+            }
         }
 
         // Apply before test configured functions (if any).
