@@ -78,7 +78,7 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 ...
 | Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |--------------|------------------|-------------------|--------------------|---------------------|
-| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+| HugeContract |              194 |            49,344 |             24,382 |                -192 |
 ...
 "#
     ]);
@@ -87,10 +87,10 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
         str![[r#"
 {
    "HugeContract":{
-      "runtime_size":202,
-      "init_size":49359,
-      "runtime_margin":24374,
-      "init_margin":-207
+      "runtime_size":194,
+      "init_size":49344,
+      "runtime_margin":24382,
+      "init_margin":-192
    }
 }
 "#]]
@@ -105,7 +105,7 @@ forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
 ...
 | Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |--------------|------------------|-------------------|--------------------|---------------------|
-| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+| HugeContract |              194 |            49,344 |             24,382 |                -192 |
 ...
 "#
     ]);
@@ -117,10 +117,10 @@ forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
             str![[r#"
 {
   "HugeContract": {
-    "runtime_size": 202,
-    "init_size": 49359,
-    "runtime_margin": 24374,
-    "init_margin": -207
+    "runtime_size": 194,
+    "init_size": 49344,
+    "runtime_margin": 24382,
+    "init_margin": -192
   }
 } 
 "#]]
@@ -145,7 +145,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ...
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |----------|------------------|-------------------|--------------------|---------------------|
-| Counter  |              247 |               277 |             24,329 |              48,875 |
+| Counter  |              236 |               263 |             24,340 |              48,889 |
 ...
 "#
     ]);
