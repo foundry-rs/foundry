@@ -4,7 +4,7 @@ use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-        RlpEcdsaTx, TxEip7702,
+        TxEip7702,
     },
     AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559,
     TxEip2930, TxEnvelope, TxLegacy, TxReceipt,
@@ -1073,7 +1073,6 @@ impl Encodable2718 for TypedTransaction {
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         match ty {
-            0x04 => return Ok(Self::EIP7702(TxEip7702::rlp_decode_signed(buf)?)),
             0x7E => return Ok(Self::Deposit(DepositTransaction::decode(buf)?)),
             _ => {}
         }
@@ -1081,6 +1080,7 @@ impl Decodable2718 for TypedTransaction {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
             TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
             TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+            TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
             _ => unreachable!(),
         }
     }
