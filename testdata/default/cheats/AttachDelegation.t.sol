@@ -10,7 +10,7 @@ contract AttachDelegationTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     uint256 alice_pk = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     address payable alice = payable(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
-    uint256 bob_pk=0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+    uint256 bob_pk = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
     address bob = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
 
     SimpleDelegateContract implementation;
@@ -27,11 +27,7 @@ contract AttachDelegationTest is DSTest {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
         bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
-        calls[0] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: data,
-            value: 0
-        });
+        calls[0] = SimpleDelegateContract.Call({to: address(token), data: data, value: 0});
         // executing as bob to make clear that we don't need to execute the tx as alice
         vm.broadcast(bob_pk);
         vm.attachDelegation(signedDelegation);
@@ -49,13 +45,10 @@ contract AttachDelegationTest is DSTest {
         vm.attachDelegation(signedDelegation);
 
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](2);
-        calls[0] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: abi.encodeCall(ERC20.mint, (50, bob)),
-            value: 0
-        });
+        calls[0] =
+            SimpleDelegateContract.Call({to: address(token), data: abi.encodeCall(ERC20.mint, (50, bob)), value: 0});
         calls[1] = SimpleDelegateContract.Call({
-            to: address(token), 
+            to: address(token),
             data: abi.encodeCall(ERC20.mint, (50, address(this))),
             value: 0
         });
@@ -68,14 +61,10 @@ contract AttachDelegationTest is DSTest {
 
     function testSwitchAttachDelegation() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
-        
+
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
         bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
-        calls[0] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: data,
-            value: 0
-        });
+        calls[0] = SimpleDelegateContract.Call({to: address(token), data: data, value: 0});
 
         vm.broadcast(bob_pk);
         vm.attachDelegation(signedDelegation);
@@ -84,11 +73,11 @@ contract AttachDelegationTest is DSTest {
         emit ExecutedBy(1);
         SimpleDelegateContract(alice).execute(calls);
 
-        // switch to implementation2 
+        // switch to implementation2
         Vm.SignedDelegation memory signedDelegation2 = vm.signDelegation(address(implementation2), alice_pk);
         vm.broadcast(bob_pk);
         vm.attachDelegation(signedDelegation2);
-        
+
         vm.expectEmit(true, true, true, true);
         emit ExecutedBy(2);
         SimpleDelegateContract(alice).execute(calls);
@@ -100,16 +89,12 @@ contract AttachDelegationTest is DSTest {
     function testAttachDelegationRevertInvalidSignature() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         // change v from 1 to 0
-        signedDelegation.v = 0;
+        signedDelegation.v = (signedDelegation.v + 1) % 2;
         vm.attachDelegation(signedDelegation);
-        
+
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
         bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
-        calls[0] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: data,
-            value: 0
-        });
+        calls[0] = SimpleDelegateContract.Call({to: address(token), data: data, value: 0});
 
         vm.broadcast(alice_pk);
         // empty revert because no bytecode was set to Alice's account
@@ -123,7 +108,7 @@ contract AttachDelegationTest is DSTest {
         vm.broadcast(alice_pk);
         // send tx to increment alice's nonce
         token.mint(1, bob);
-        
+
         vm.expectRevert("vm.attachDelegation: invalid nonce");
         vm.attachDelegation(signedDelegation);
     }
@@ -131,11 +116,7 @@ contract AttachDelegationTest is DSTest {
     function testCallSingleSignAndAttachDelegation() public {
         SimpleDelegateContract.Call[] memory calls = new SimpleDelegateContract.Call[](1);
         bytes memory data = abi.encodeCall(ERC20.mint, (100, bob));
-        calls[0] = SimpleDelegateContract.Call({
-            to: address(token),
-            data: data,
-            value: 0
-        });
+        calls[0] = SimpleDelegateContract.Call({to: address(token), data: data, value: 0});
         vm.signAndAttachDelegation(address(implementation), alice_pk);
         bytes memory code = address(alice).code;
         require(code.length > 0, "no code written to alice");
@@ -149,6 +130,7 @@ contract AttachDelegationTest is DSTest {
 contract SimpleDelegateContract {
     event Executed(address indexed to, uint256 value, bytes data);
     event ExecutedBy(uint256 id);
+
     struct Call {
         bytes data;
         address to;
@@ -156,7 +138,7 @@ contract SimpleDelegateContract {
     }
 
     uint256 public immutable id;
-    
+
     constructor(uint256 _id) {
         id = _id;
     }
