@@ -8,6 +8,7 @@ use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
+use url::Url;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EvmOpts {
@@ -102,8 +103,13 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            let truncated_url: String = fork_url.to_string().drain(..fork_url.len() / 2).collect();
-            format!("Could not instantiate forked environment with fork url: {truncated_url}[..]")
+            let mut err_msg = "Could not instantiate forked environment".to_string();
+            if let Ok(url) = Url::parse(fork_url) {
+                if let Some(provider) = url.host() {
+                    err_msg.push_str(&format!(" with provider {provider}"));
+                }
+            }
+            err_msg
         })
     }
 

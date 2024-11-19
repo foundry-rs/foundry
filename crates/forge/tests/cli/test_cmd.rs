@@ -2639,3 +2639,29 @@ contract ScrollForkTest is Test {
     cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
         .assert_success();
 });
+
+// Test that only provider is included in failed fork error.
+forgetest_init!(test_display_provider_on_error, |prj, cmd| {
+    prj.add_test(
+        "ForkTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkTest is Test {
+    function test_fork_err_message() public {
+        vm.createSelectFork("https://eth-mainnet.g.alchemy.com/v2/DUMMY_KEY");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ForkTest.t.sol:ForkTest
+[FAIL: vm.createSelectFork:  Could not instantiate forked environment with provider eth-mainnet.g.alchemy.com;] test_fork_err_message() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+
+"#]]);
+});
