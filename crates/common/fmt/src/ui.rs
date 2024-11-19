@@ -323,7 +323,7 @@ impl UIfmt for AccessListItem {
 impl UIfmt for TxEnvelope {
     fn pretty(&self) -> String {
         match &self {
-            TxEnvelope::Eip2930(tx) => format!(
+            Self::Eip2930(tx) => format!(
                 "
 accessList           {}
 chainId              {}
@@ -355,7 +355,7 @@ yParity              {}",
                 self.value().pretty(),
                 (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
-            TxEnvelope::Eip1559(tx) => format!(
+            Self::Eip1559(tx) => format!(
                 "
 accessList           {}
 chainId              {}
@@ -389,7 +389,7 @@ yParity              {}",
                 self.value().pretty(),
                 (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
-            TxEnvelope::Eip4844(tx) => format!(
+            Self::Eip4844(tx) => format!(
                 "
 accessList           {}
 blobVersionedHashes  {}
@@ -427,7 +427,7 @@ yParity              {}",
                 self.value().pretty(),
                 (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
-            TxEnvelope::Eip7702(tx) => format!(
+            Self::Eip7702(tx) => format!(
                 "
 accessList           {}
 authorizationList    {}
@@ -504,8 +504,8 @@ value                {}",
 impl UIfmt for AnyTxEnvelope {
     fn pretty(&self) -> String {
         match self {
-            AnyTxEnvelope::Ethereum(envelop) => envelop.pretty(),
-            AnyTxEnvelope::Unknown(tx) => {
+            Self::Ethereum(envelop) => envelop.pretty(),
+            Self::Unknown(tx) => {
                 format!(
                     "
 hash {}
