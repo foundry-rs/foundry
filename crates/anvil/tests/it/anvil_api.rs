@@ -779,7 +779,6 @@ async fn test_reorg() {
     let signature = accounts[5].sign_transaction_sync(&mut tx).unwrap();
     let tx = tx.into_signed(signature);
     let mut encoded = vec![];
-    // tx.tx().encode_with_signature(tx.signature(), &mut encoded, false);
     tx.eip2718_encode(&mut encoded);
 
     let pre_bal = provider.get_balance(accounts[5].address()).await.unwrap();

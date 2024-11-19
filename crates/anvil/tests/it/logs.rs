@@ -193,7 +193,7 @@ async fn watch_events() {
         let hash = provider
             .get_block_by_number(
                 BlockNumberOrTag::from(starting_block_number + i + 1),
-                alloy_rpc_types::BlockTransactionsKind::Hashes,
+                false.into(),
             )
             .await
             .unwrap()
