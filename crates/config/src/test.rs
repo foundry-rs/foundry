@@ -42,6 +42,11 @@ impl InlineConfigParser for TestConfig {
                             ))
                         })?)
                 }
+                "isolate" => {
+                    conf_clone.isolate = value.parse().map_err(|_| {
+                        InlineConfigParserError::InvalidConfigProperty(format!("isolate {value}"))
+                    })?
+                }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
