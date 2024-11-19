@@ -5,9 +5,9 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract Fee {
-    uint fee;
+    uint256 fee;
 
-    function blobbasefee() public returns (uint) {
+    function blobbasefee() public returns (uint256) {
         fee = block.blobbasefee;
         return fee;
     }
@@ -23,7 +23,7 @@ contract InlineConfigTest is DSTest {
 
     /// forge-config: default.test.isolate = true
     function test_blobbasefee() public {
-        uint f = fee.blobbasefee();
+        uint256 f = fee.blobbasefee();
         assert(f == 1);
     }
 
@@ -35,7 +35,7 @@ contract InlineConfigTest is DSTest {
 
     function testFuzz_blobbasefee(uint8 x) public {
         vm.blobBaseFee(x);
-        uint f = vm.getBlobBaseFee();
+        uint256 f = vm.getBlobBaseFee();
         assert(f == x);
     }
 
@@ -43,7 +43,7 @@ contract InlineConfigTest is DSTest {
     function testFuzz_blobbasefeeRevert(uint8 x) public {
         vm.expectRevert();
         vm.blobBaseFee(x);
-        uint f = vm.getBlobBaseFee();
+        uint256 f = vm.getBlobBaseFee();
         assert(f == x);
     }
 
