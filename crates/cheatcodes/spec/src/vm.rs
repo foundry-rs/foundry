@@ -308,7 +308,7 @@ interface Vm {
         bool success;
     }
 
-    /// Holds a signed EIP-7702 authorization for an authority account to delegate to an implementation.    
+    /// Holds a signed EIP-7702 authorization for an authority account to delegate to an implementation.
     struct SignedDelegation {
         /// The y-parity of the recovered secp256k1 signature (0 or 1).
         uint8 v;
