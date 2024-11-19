@@ -596,6 +596,7 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
         let AnyRpcTransaction { inner, .. } = value;
+        let from = inner.from;
         match inner.inner {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
@@ -605,10 +606,11 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
                 _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
             },
-            AnyTxEnvelope::Unknown(tx) => {
+            AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
                 if tx.ty() == DEPOSIT_TX_TYPE_ID {
                     let nonce = get_field::<U64>(&tx.inner.fields, "nonce")?;
+                    tx.inner.fields.insert("from".to_string(), serde_json::to_value(from).unwrap());
                     let deposit_tx =
                         tx.inner.fields.deserialize_into::<TxDeposit>().map_err(|e| {
                             ConversionError::Custom(format!(
