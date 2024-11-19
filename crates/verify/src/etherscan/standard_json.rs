@@ -18,7 +18,8 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             .wrap_err("Failed to get standard json input")?
             .normalize_evm_version(&context.compiler_version);
 
-        input.settings.libraries.libs = input
+        let mut settings = context.compiler_settings.solc.settings.clone();
+        settings.libraries.libs = input
             .settings
             .libraries
             .libs
@@ -28,8 +29,12 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             })
             .collect();
 
+        settings.remappings = input.settings.remappings;
+
         // remove all incompatible settings
-        input.settings.sanitize(&context.compiler_version, SolcLanguage::Solidity);
+        settings.sanitize(&context.compiler_version, SolcLanguage::Solidity);
+
+        input.settings = settings;
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
