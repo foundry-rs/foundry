@@ -34,8 +34,8 @@ use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
-    eip2718::Decodable2718, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Ethereum,
-    NetworkWallet, TransactionBuilder, TransactionResponse,
+    eip2718::Decodable2718, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet,
+    TransactionBuilder, TransactionResponse,
 };
 use alloy_primitives::{
     map::{HashMap, HashSet},
@@ -58,7 +58,7 @@ use alloy_rpc_types::{
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Transaction,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportErrorKind;
@@ -2344,10 +2344,10 @@ impl EthApi {
     /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
     ///
     /// Handler for ETH RPC call: `txpool_inspect`
-    pub async fn txpool_content(&self) -> Result<TxpoolContent> {
+    pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
-        let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> Result<Transaction> {
+        let mut content = TxpoolContent::<AnyRpcTransaction>::default();
+        fn convert(tx: Arc<PoolTransaction>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
             let mut tx = transaction_build(
                 Some(tx.hash()),
@@ -2361,20 +2361,7 @@ impl EthApi {
             // in case the transaction is impersonated.
             tx.from = from;
 
-            match tx.inner.inner {
-                AnyTxEnvelope::Ethereum(ref envelope) => {
-                    let tx = Transaction {
-                        block_hash: tx.block_hash,
-                        block_number: tx.block_number,
-                        from: tx.from,
-                        transaction_index: tx.transaction_index,
-                        effective_gas_price: tx.effective_gas_price,
-                        inner: envelope.clone(),
-                    };
-                    Ok(tx)
-                }
-                AnyTxEnvelope::Unknown(_) => Err(BlockchainError::UnknownTransactionType),
-            }
+            Ok(tx)
         }
 
         for pending in self.pool.ready_transactions() {

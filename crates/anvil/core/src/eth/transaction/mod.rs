@@ -1072,9 +1072,8 @@ impl Encodable2718 for TypedTransaction {
 
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
-        match ty {
-            0x7E => return Ok(Self::Deposit(DepositTransaction::decode(buf)?)),
-            _ => {}
+        if ty == 0x7E {
+            return Ok(Self::Deposit(DepositTransaction::decode(buf)?))
         }
         match TxEnvelope::typed_decode(ty, buf)? {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
