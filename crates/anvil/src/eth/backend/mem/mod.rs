@@ -1875,55 +1875,11 @@ impl Backend {
         let Block { header, transactions, .. } = block;
 
         let hash = header.hash_slow();
-        let Header {
-            parent_hash,
-            ommers_hash,
-            beneficiary,
-            state_root,
-            transactions_root,
-            receipts_root,
-            logs_bloom,
-            difficulty,
-            number,
-            gas_limit,
-            gas_used,
-            timestamp,
-            requests_hash,
-            extra_data,
-            mix_hash,
-            nonce,
-            base_fee_per_gas,
-            withdrawals_root,
-            blob_gas_used,
-            excess_blob_gas,
-            parent_beacon_block_root,
-        } = header;
+        let Header { number, withdrawals_root, .. } = header;
 
         let block = AlloyBlock {
             header: AlloyHeader {
-                inner: AnyHeader {
-                    parent_hash,
-                    ommers_hash,
-                    beneficiary,
-                    state_root,
-                    transactions_root,
-                    receipts_root,
-                    number,
-                    gas_used,
-                    gas_limit,
-                    extra_data,
-                    logs_bloom,
-                    timestamp,
-                    difficulty,
-                    mix_hash: Some(mix_hash),
-                    nonce: Some(nonce),
-                    base_fee_per_gas,
-                    withdrawals_root,
-                    blob_gas_used,
-                    excess_blob_gas,
-                    parent_beacon_block_root,
-                    requests_hash,
-                },
+                inner: AnyHeader::from(header),
                 hash,
                 total_difficulty: Some(self.total_difficulty()),
                 size: Some(size),
@@ -2922,34 +2878,37 @@ pub fn transaction_build(
         };
 
         let ser = serde_json::to_value(&dep_tx).unwrap();
-        let mut fields = OtherFields::default();
+        let maybe_deposit_fields = OtherFields::try_from(ser);
 
-        if let serde_json::Value::Object(map) = ser {
-            for (k, v) in map {
-                fields.insert(k, v);
+        match maybe_deposit_fields {
+            Ok(fields) => {
+                let inner = UnknownTypedTransaction {
+                    ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
+                    fields,
+                    memo: Default::default(),
+                };
+
+                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+                    hash: eth_transaction.hash(),
+                    inner,
+                });
+
+                let tx = Transaction {
+                    inner: envelope,
+                    block_hash: block
+                        .as_ref()
+                        .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+                    block_number: block.as_ref().map(|block| block.header.number),
+                    transaction_index: info.as_ref().map(|info| info.transaction_index),
+                    effective_gas_price: None,
+                    from,
+                };
+
+                return WithOtherFields::new(tx);
             }
-
-            let inner = UnknownTypedTransaction {
-                ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
-                fields,
-                memo: Default::default(),
-            };
-
-            let envelope =
-                AnyTxEnvelope::Unknown(UnknownTxEnvelope { hash: eth_transaction.hash(), inner });
-
-            let tx = Transaction {
-                inner: envelope,
-                block_hash: block
-                    .as_ref()
-                    .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
-                block_number: block.as_ref().map(|block| block.header.number),
-                transaction_index: info.as_ref().map(|info| info.transaction_index),
-                effective_gas_price: None,
-                from,
-            };
-
-            return WithOtherFields::new(tx);
+            Err(_) => {
+                warn!(target: "backend", "failed to serialize deposit transaction");
+            }
         }
     }
 
@@ -2961,9 +2920,6 @@ pub fn transaction_build(
         TxEnvelope::Legacy(mut signed_tx) => {
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
-            if info.is_some() && tx.ty() == 0x7E {
-                tx.nonce = info.as_ref().unwrap().nonce;
-            }
 
             if eth_transaction.is_dynamic_fee() {
                 if block.is_none() && info.is_none() {
@@ -3003,9 +2959,6 @@ pub fn transaction_build(
         TxEnvelope::Eip1559(mut signed_tx) => {
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
-            if info.is_some() && tx.ty() == 0x7E {
-                tx.nonce = info.as_ref().unwrap().nonce;
-            }
 
             tx.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to).into();
 
@@ -3032,9 +2985,6 @@ pub fn transaction_build(
         TxEnvelope::Eip2930(mut signed_tx) => {
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
-            if info.is_some() && tx.ty() == 0x7E {
-                tx.nonce = info.as_ref().unwrap().nonce;
-            }
 
             if eth_transaction.is_dynamic_fee() {
                 if block.is_none() && info.is_none() {
@@ -3127,9 +3077,6 @@ pub fn transaction_build(
         TxEnvelope::Eip7702(mut signed_tx) => {
             let mut hash = *signed_tx.hash();
             let tx = signed_tx.tx_mut();
-            if info.is_some() && tx.ty() == 0x7E {
-                tx.nonce = info.as_ref().unwrap().nonce;
-            }
 
             tx.to = if let Some(to) = info.as_ref().map_or(eth_transaction.to(), |status| status.to)
             {
