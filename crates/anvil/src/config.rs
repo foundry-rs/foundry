@@ -189,7 +189,7 @@ pub struct NodeConfig {
     pub alphanet: bool,
     /// Do not print log messages.
     pub silent: bool,
-    /// The path where old states are cached.
+    /// The path where states are cached.
     pub cache_path: Option<PathBuf>,
 }
 
@@ -972,7 +972,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the path where old states are cached
+    /// Sets the path where states are cached
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
