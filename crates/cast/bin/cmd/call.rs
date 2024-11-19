@@ -202,18 +202,8 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(
-                trace,
-                &config,
-                chain,
-                labels,
-                debug,
-                decode_internal,
-                false,
-                false,
-                false,
-            )
-            .await?;
+            handle_traces(trace, &config, chain, labels, debug, decode_internal, false, false)
+                .await?;
 
             return Ok(());
         }

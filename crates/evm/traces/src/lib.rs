@@ -11,7 +11,10 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    shell,
+};
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::{
     types::{DecodedTraceStep, TraceMemberOrder},
@@ -183,7 +186,7 @@ pub async fn decode_trace_arena(
 
 /// Render a collection of call traces to a string.
 pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
-    render_trace_arena_inner(arena, false, false, false)
+    render_trace_arena_inner(arena, false, false)
 }
 
 /// Render a collection of call traces to a string optionally including contract creation bytecodes
@@ -191,10 +194,9 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
 pub fn render_trace_arena_inner(
     arena: &SparsedTraceArena,
     with_bytecodes: bool,
-    to_json: bool,
     with_storage_changes: bool,
 ) -> String {
-    if to_json {
+    if shell::is_json() {
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to write traces");
     }
 

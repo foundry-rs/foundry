@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{fs, TestFunctionExt};
+use foundry_common::{fs, shell, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, CompactDeployedBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -387,7 +387,6 @@ pub async fn handle_traces(
     debug: bool,
     decode_internal: bool,
     verbose: bool,
-    json: bool,
     with_state_changes: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
@@ -438,7 +437,7 @@ pub async fn handle_traces(
             .build();
         debugger.try_run_tui()?;
     } else {
-        print_traces(&mut result, &decoder, verbose, json, with_state_changes).await?;
+        print_traces(&mut result, &decoder, verbose, with_state_changes).await?;
     }
 
     Ok(())
@@ -448,21 +447,20 @@ pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
     verbose: bool,
-    json: bool,
     state_changes: bool,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    if !json {
+    if !shell::is_json() {
         sh_println!("Traces:")?;
     }
 
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        sh_println!("{}", render_trace_arena_inner(arena, verbose, json, state_changes))?;
+        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
-    if json {
+    if shell::is_json() {
         return Ok(());
     }
 

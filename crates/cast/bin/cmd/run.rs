@@ -48,10 +48,6 @@ pub struct RunArgs {
     #[arg(long)]
     quick: bool,
 
-    /// Prints the trace in JSON format.
-    #[arg(long, short)]
-    json: bool,
-
     /// Prints the state changes
     #[arg(long)]
     with_state_changes: bool,
@@ -178,7 +174,7 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            if !self.json {
+            if !shell::is_json() {
                 sh_println!("Executing previous transactions from the block.")?;
             }
 
@@ -260,7 +256,6 @@ impl RunArgs {
             self.debug,
             self.decode_internal,
             shell::verbosity() > 0,
-            self.json,
             self.with_state_changes,
         )
         .await?;
