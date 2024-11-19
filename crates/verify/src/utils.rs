@@ -2,10 +2,10 @@ use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{
-    network::{AnyRpcBlock, AnyTxEnvelope, TransactionBuilder},
+    network::{AnyRpcBlock, AnyTxEnvelope},
     Provider,
 };
-use alloy_rpc_types::{BlockId, Transaction, TransactionRequest, TransactionTrait};
+use alloy_rpc_types::{BlockId, Transaction, TransactionRequest};
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
@@ -353,23 +353,10 @@ pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
 }
 
 pub fn into_tx_request(tx: Transaction<AnyTxEnvelope>) -> TransactionRequest {
-    let mut req = TransactionRequest::default()
-        .from(tx.from)
-        .with_gas_limit(tx.gas_limit())
-        .with_kind(tx.kind())
-        .with_input(tx.input().clone())
-        .with_nonce(tx.nonce());
-
-    if tx.ty() == 0 {
-        req.gas_price = tx.gas_price();
-    } else if tx.ty() == 2 {
-        req.max_fee_per_gas = Some(tx.max_fee_per_gas());
-        req.max_priority_fee_per_gas = tx.max_priority_fee_per_gas();
+    match tx.inner {
+        AnyTxEnvelope::Ethereum(tx) => tx.into(),
+        AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
     }
-
-    req.transaction_type = Some(tx.ty());
-
-    req
 }
 
 pub fn deploy_contract(

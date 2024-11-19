@@ -3,7 +3,7 @@
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{
-    network::{AnyNetwork, AnyTxEnvelope, ReceiptResponse, TransactionBuilder},
+    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
 };
 use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
@@ -55,14 +55,9 @@ impl TransactionReceiptWithRevertReason {
             .map_err(|err| eyre::eyre!("unable to fetch transaction: {err}"))?
             .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
-        let envelope = match transaction.inner.inner {
-            AnyTxEnvelope::Ethereum(envelope) => envelope,
-            _ => return Err(eyre::eyre!("unsupported transaction type")),
-        };
-
         if let Some(block_hash) = self.receipt.block_hash {
             match provider
-                .call(&WithOtherFields::new(envelope.into()))
+                .call(&transaction.inner.inner.into())
                 .block(BlockId::Hash(block_hash.into()))
                 .await
             {

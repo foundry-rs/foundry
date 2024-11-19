@@ -7,7 +7,7 @@ use alloy_consensus::{
         RlpEcdsaTx, TxEip7702,
     },
     AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559,
-    TxEip2930, TxEnvelope, TxLegacy, TxReceipt, TxType,
+    TxEip2930, TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
@@ -987,130 +987,13 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
             return Ok(Self::Deposit(deposit));
         }
 
-        let tx = tx.inner;
-        let sig_hash = match tx.inner {
-            TxEnvelope::Legacy(ref t) => (*t.signature(), *t.hash()),
-            TxEnvelope::Eip2930(ref t) => (*t.signature(), *t.hash()),
-            TxEnvelope::Eip1559(ref t) => (*t.signature(), *t.hash()),
-            TxEnvelope::Eip4844(ref t) => (*t.signature(), *t.hash()),
-            TxEnvelope::Eip7702(ref t) => (*t.signature(), *t.hash()),
-            _ => {
-                return Err(ConversionError::Custom(
-                    "UnsupportedTxType - MissingSignature".to_string(),
-                ))
-            }
-        };
-        match tx.inner.tx_type() {
-            TxType::Legacy => {
-                let legacy = TxLegacy {
-                    chain_id: tx.chain_id(),
-                    nonce: tx.nonce(),
-                    gas_price: tx
-                        .gas_price()
-                        .ok_or(ConversionError::Custom("MissingGasPrice".to_string()))?,
-                    gas_limit: tx.gas_limit(),
-                    value: tx.value(),
-                    input: tx.input().clone(),
-                    to: tx.kind(),
-                };
-
-                Ok(Self::Legacy(Signed::new_unchecked(legacy, sig_hash.0, sig_hash.1)))
-            }
-            TxType::Eip1559 => {
-                let eip1559 = TxEip1559 {
-                    chain_id: tx
-                        .chain_id()
-                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
-                    nonce: tx.nonce(),
-                    max_fee_per_gas: tx.max_fee_per_gas(),
-                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas().ok_or(
-                        ConversionError::Custom("MissingMaxPriorityFeePerGas".to_string()),
-                    )?,
-                    gas_limit: tx.gas_limit(),
-                    value: tx.value(),
-                    input: tx.input().clone(),
-                    to: tx.kind(),
-                    access_list: tx
-                        .access_list()
-                        .cloned()
-                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
-                };
-                Ok(Self::EIP1559(Signed::new_unchecked(eip1559, sig_hash.0, sig_hash.1)))
-            }
-            TxType::Eip2930 => {
-                let eip2930 = TxEip2930 {
-                    chain_id: tx
-                        .chain_id()
-                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
-                    nonce: tx.nonce(),
-                    gas_price: tx
-                        .gas_price()
-                        .ok_or(ConversionError::Custom("MissingGasPrice".to_string()))?,
-                    gas_limit: tx.gas_limit(),
-                    value: tx.value(),
-                    input: tx.input().clone(),
-                    to: tx.kind(),
-                    access_list: tx
-                        .access_list()
-                        .cloned()
-                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
-                };
-                Ok(Self::EIP2930(Signed::new_unchecked(eip2930, sig_hash.0, sig_hash.1)))
-            }
-            TxType::Eip4844 => {
-                let eip4844 = TxEip4844 {
-                    chain_id: tx
-                        .chain_id()
-                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
-                    nonce: tx.nonce(),
-                    max_fee_per_gas: tx.max_fee_per_gas(),
-                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas().ok_or(
-                        ConversionError::Custom("MissingMaxPriorityFeePerGas".to_string()),
-                    )?,
-                    max_fee_per_blob_gas: tx
-                        .max_fee_per_blob_gas()
-                        .ok_or(ConversionError::Custom("MissingMaxFeePerBlobGas".to_string()))?,
-                    to: tx.to().ok_or(ConversionError::Custom("MissingTo".to_string()))?,
-                    value: tx.value(),
-                    gas_limit: tx.gas_limit(),
-                    access_list: tx
-                        .access_list()
-                        .cloned()
-                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
-                    blob_versioned_hashes: tx
-                        .blob_versioned_hashes()
-                        .ok_or(ConversionError::Custom("MissingBlobVersionedHashes".to_string()))?
-                        .to_vec(),
-                    input: tx.input().clone(),
-                };
-                Ok(Self::EIP4844(Signed::new_unchecked(
-                    TxEip4844Variant::TxEip4844(eip4844),
-                    sig_hash.0,
-                    sig_hash.1,
-                )))
-            }
-            TxType::Eip7702 => {
-                let eip7702 = TxEip7702 {
-                    chain_id: tx
-                        .chain_id()
-                        .ok_or(ConversionError::Custom("MissingChainId".to_string()))?,
-                    nonce: tx.nonce(),
-                    max_fee_per_gas: tx.max_fee_per_gas(),
-                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas().ok_or(
-                        ConversionError::Custom("MissingMaxPriorityFeePerGas".to_string()),
-                    )?,
-                    to: tx.to().ok_or(ConversionError::Custom("MissingTo".to_string()))?,
-                    value: tx.value(),
-                    gas_limit: tx.gas_limit(),
-                    access_list: tx
-                        .access_list()
-                        .cloned()
-                        .ok_or(ConversionError::Custom("MissingAccessList".to_string()))?,
-                    input: tx.input().clone(),
-                    authorization_list: tx.authorization_list().unwrap_or_default().to_vec(),
-                };
-                Ok(Self::EIP7702(Signed::new_unchecked(eip7702, sig_hash.0, sig_hash.1)))
-            }
+        match tx.inner.inner {
+            TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
+            TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
+            TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
+            TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+            TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
+            _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
         }
     }
 }
