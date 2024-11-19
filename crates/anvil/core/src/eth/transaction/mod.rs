@@ -275,50 +275,65 @@ impl From<MaybeImpersonatedTransaction> for RpcTransaction {
 
 pub fn to_alloy_transaction_with_hash_and_sender(
     transaction: TypedTransaction,
-    _hash: B256,
+    hash: B256,
     from: Address,
 ) -> RpcTransaction {
     match transaction {
-        TypedTransaction::Legacy(t) => RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from,
-            effective_gas_price: None,
-            inner: TxEnvelope::Legacy(t),
-        },
-        TypedTransaction::EIP2930(t) => RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from,
-            effective_gas_price: None,
-            inner: TxEnvelope::Eip2930(t),
-        },
-        TypedTransaction::EIP1559(t) => RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from,
-            effective_gas_price: None,
-            inner: TxEnvelope::Eip1559(t),
-        },
-        TypedTransaction::EIP4844(t) => RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from,
-            effective_gas_price: None,
-            inner: TxEnvelope::Eip4844(t),
-        },
-        TypedTransaction::EIP7702(t) => RpcTransaction {
-            block_hash: None,
-            block_number: None,
-            transaction_index: None,
-            from,
-            effective_gas_price: None,
-            inner: TxEnvelope::Eip7702(t),
-        },
+        TypedTransaction::Legacy(t) => {
+            let (tx, sig, _) = t.into_parts();
+            RpcTransaction {
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from,
+                effective_gas_price: None,
+                inner: TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+            }
+        }
+        TypedTransaction::EIP2930(t) => {
+            let (tx, sig, _) = t.into_parts();
+            RpcTransaction {
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from,
+                effective_gas_price: None,
+                inner: TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+            }
+        }
+        TypedTransaction::EIP1559(t) => {
+            let (tx, sig, _) = t.into_parts();
+            RpcTransaction {
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from,
+                effective_gas_price: None,
+                inner: TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+            }
+        }
+        TypedTransaction::EIP4844(t) => {
+            let (tx, sig, _) = t.into_parts();
+            RpcTransaction {
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from,
+                effective_gas_price: None,
+                inner: TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+            }
+        }
+        TypedTransaction::EIP7702(t) => {
+            let (tx, sig, _) = t.into_parts();
+            RpcTransaction {
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from,
+                effective_gas_price: None,
+                inner: TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+            }
+        }
         TypedTransaction::Deposit(_t) => {
             unreachable!("cannot reach here, handled in `transaction_build` ")
         }

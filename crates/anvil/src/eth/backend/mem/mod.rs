@@ -2927,22 +2927,12 @@ pub fn transaction_build(
 
     let envelope = transaction.inner;
 
-    let mut hash = *envelope.tx_hash();
-    // need to check if the signature of the transaction is impersonated, if so then we
-    // can't recover the sender, instead we use the sender from the executed transaction and
-    // set the // impersonated hash.
-    if eth_transaction.is_impersonated() {
-        hash = eth_transaction.impersonated_hash(transaction.from);
-    }
-
     // if a specific hash was provided we update the transaction's hash
     // This is important for impersonated transactions since they all use the
     // `BYPASS_SIGNATURE` which would result in different hashes
     // Note: for impersonated transactions this only concerns pending transactions because
     // there's // no `info` yet.
-    if let Some(tx_hash) = tx_hash {
-        hash = tx_hash;
-    }
+    let hash = tx_hash.unwrap_or(*envelope.tx_hash());
 
     let envelope = match envelope {
         TxEnvelope::Legacy(signed_tx) => {
