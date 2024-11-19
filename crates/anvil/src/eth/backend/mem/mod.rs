@@ -2909,114 +2909,67 @@ pub fn transaction_build(
 
     let mut transaction: Transaction = eth_transaction.clone().into();
 
-    if eth_transaction.is_legacy() {
-        transaction.effective_gas_price = Some(transaction.effective_gas_price(base_fee))
-    }
-
-    if eth_transaction.is_dynamic_fee() {
+    let effective_gas_price = if !eth_transaction.is_dynamic_fee() {
+        transaction.effective_gas_price(base_fee)
+    } else {
         if block.is_none() && info.is_none() {
             // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-            transaction.effective_gas_price = Some(transaction.max_fee_per_gas());
+            transaction.max_fee_per_gas()
         } else {
             // if transaction is already mined, gas price is considered base fee + priority
             // fee: the effective gas price.
             let base_fee = base_fee.map_or(0u128, |g| g as u128);
             let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
-            transaction.effective_gas_price =
-                Some(base_fee.saturating_add(max_priority_fee_per_gas));
+
+            base_fee.saturating_add(max_priority_fee_per_gas)
         }
-    }
+    };
+
+    transaction.effective_gas_price = Some(effective_gas_price);
 
     let envelope = transaction.inner;
 
+    let mut hash = *envelope.tx_hash();
+    // need to check if the signature of the transaction is impersonated, if so then we
+    // can't recover the sender, instead we use the sender from the executed transaction and
+    // set the // impersonated hash.
+    if eth_transaction.is_impersonated() {
+        hash = eth_transaction.impersonated_hash(transaction.from);
+    }
+
+    // if a specific hash was provided we update the transaction's hash
+    // This is important for impersonated transactions since they all use the
+    // `BYPASS_SIGNATURE` which would result in different hashes
+    // Note: for impersonated transactions this only concerns pending transactions because
+    // there's // no `info` yet.
+    if let Some(tx_hash) = tx_hash {
+        hash = tx_hash;
+    }
+
     let envelope = match envelope {
-        TxEnvelope::Legacy(mut signed_tx) => {
-            let mut hash = *signed_tx.hash();
-            let tx = signed_tx.tx_mut();
-
-            // need to check if the signature of the transaction is impersonated, if so then we
-            // can't recover the sender, instead we use the sender from the executed transaction and
-            // set the // impersonated hash.
-            if eth_transaction.is_impersonated() {
-                hash = eth_transaction.impersonated_hash(transaction.from);
-            }
-
-            // if a specific hash was provided we update the transaction's hash
-            // This is important for impersonated transactions since they all use the
-            // `BYPASS_SIGNATURE` which would result in different hashes
-            // Note: for impersonated transactions this only concerns pending transactions because
-            // there's // no `info` yet.
-            if let Some(tx_hash) = tx_hash {
-                hash = tx_hash;
-            }
-
-            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
-
+        TxEnvelope::Legacy(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
         }
-        TxEnvelope::Eip1559(mut signed_tx) => {
-            let mut hash = *signed_tx.hash();
-            let tx = signed_tx.tx_mut();
-
-            if eth_transaction.is_impersonated() {
-                hash = eth_transaction.impersonated_hash(transaction.from);
-            }
-
-            if let Some(tx_hash) = tx_hash {
-                hash = tx_hash;
-            }
-
-            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
-
+        TxEnvelope::Eip1559(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
         }
-        TxEnvelope::Eip2930(mut signed_tx) => {
-            let mut hash = *signed_tx.hash();
-            let tx = signed_tx.tx_mut();
-
-            if eth_transaction.is_impersonated() {
-                hash = eth_transaction.impersonated_hash(transaction.from);
-            }
-
-            if let Some(tx_hash) = tx_hash {
-                hash = tx_hash;
-            }
-
-            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
-
+        TxEnvelope::Eip2930(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
         }
-        TxEnvelope::Eip4844(mut signed_tx) => {
-            let mut hash = *signed_tx.hash();
-            let tx_variant = signed_tx.tx_mut();
-
-            if eth_transaction.is_impersonated() {
-                hash = eth_transaction.impersonated_hash(transaction.from);
-            }
-
-            if let Some(tx_hash) = tx_hash {
-                hash = tx_hash;
-            }
-
-            let new_signed =
-                Signed::new_unchecked(tx_variant.clone(), *signed_tx.signature(), hash);
-
+        TxEnvelope::Eip4844(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
         }
-        TxEnvelope::Eip7702(mut signed_tx) => {
-            let mut hash = *signed_tx.hash();
-            let tx = signed_tx.tx_mut();
-
-            if eth_transaction.is_impersonated() {
-                hash = eth_transaction.impersonated_hash(transaction.from);
-            }
-
-            if let Some(tx_hash) = tx_hash {
-                hash = tx_hash;
-            }
-
-            let new_signed = Signed::new_unchecked(tx.clone(), *signed_tx.signature(), hash);
-
+        TxEnvelope::Eip7702(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
         }
         _ => unreachable!("unknown tx type"),
@@ -3032,13 +2985,9 @@ pub fn transaction_build(
         // need to check if the signature of the transaction is impersonated, if so then we
         // can't recover the sender, instead we use the sender from the executed transaction and
         // set the // impersonated hash.
-        from: if eth_transaction.is_impersonated() {
-            info.as_ref().map(|info| info.from).unwrap_or_default()
-        } else {
-            eth_transaction.recover().expect("can recover signed tx")
-        },
+        from: eth_transaction.recover().expect("can recover signed tx"),
         // deprecated
-        effective_gas_price: None,
+        effective_gas_price: Some(effective_gas_price),
     };
     WithOtherFields::new(tx)
 }

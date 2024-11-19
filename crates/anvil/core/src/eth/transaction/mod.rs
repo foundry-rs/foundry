@@ -596,7 +596,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
         let AnyRpcTransaction { inner, .. } = value;
-        let from = inner.from;
         match inner.inner {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
@@ -610,22 +609,33 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 // Try to convert to deposit transaction
                 if tx.ty() == DEPOSIT_TX_TYPE_ID {
                     let nonce = get_field::<U64>(&tx.inner.fields, "nonce")?;
-                    let source_hash = get_field::<B256>(&tx.inner.fields, "sourceHash")?;
-                    let to = get_field::<Address>(&tx.inner.fields, "to")?;
-                    let mint = get_field::<U256>(&tx.inner.fields, "mint")?;
-                    let value = get_field::<U256>(&tx.inner.fields, "value")?;
-                    let gas_limit = get_field::<U64>(&tx.inner.fields, "gas")?;
-                    let input = get_field::<Bytes>(&tx.inner.fields, "input")?;
+                    let deposit_tx =
+                        tx.inner.fields.deserialize_into::<TxDeposit>().map_err(|e| {
+                            ConversionError::Custom(format!(
+                                "Failed to deserialize deposit tx: {e}"
+                            ))
+                        })?;
+
+                    let TxDeposit {
+                        source_hash,
+                        is_system_transaction,
+                        value,
+                        gas_limit,
+                        input,
+                        mint,
+                        from,
+                        to,
+                    } = deposit_tx;
 
                     let deposit_tx = DepositTransaction {
                         nonce: nonce.to(),
                         source_hash,
                         from,
-                        kind: TxKind::from(to),
-                        mint,
+                        kind: to,
+                        mint: mint.map(|m| U256::from(m)).unwrap_or_default(),
                         value,
-                        gas_limit: gas_limit.to(),
-                        is_system_tx: true,
+                        gas_limit,
+                        is_system_tx: is_system_transaction,
                         input,
                     };
 
@@ -637,6 +647,7 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
         }
     }
 }
+
 fn get_field<T: serde::de::DeserializeOwned>(
     fields: &OtherFields,
     key: &str,
