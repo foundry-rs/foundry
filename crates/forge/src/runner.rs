@@ -404,6 +404,7 @@ impl ContractRunner<'_> {
                             call_after_invariant,
                             &known_contracts,
                             identified_contracts.as_ref().unwrap(),
+                            test_config,
                         )
                     }
                     _ => unreachable!(),
@@ -469,25 +470,28 @@ impl ContractRunner<'_> {
         call_after_invariant: bool,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
+        test_config: &TestConfig,
     ) -> TestResult {
         let address = setup.address;
         let fuzz_fixtures = setup.fuzz_fixtures.clone();
         let mut test_result = TestResult::new(setup);
 
+        let mut executor = self.executor.clone();
+
+        if let Some(evm_version) = test_config.evm_version {
+            let spec_id = evm_spec_id(&evm_version, false);
+            executor.set_spec_id(spec_id);
+        }
+
         // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::Skip(reason)) = self.executor.call(
-            self.sender,
-            address,
-            func,
-            &[],
-            U256::ZERO,
-            Some(self.revert_decoder),
-        ) {
+        if let Err(EvmError::Skip(reason)) =
+            executor.call(self.sender, address, func, &[], U256::ZERO, Some(self.revert_decoder))
+        {
             return test_result.invariant_skip(reason);
         };
 
         let mut evm = InvariantExecutor::new(
-            self.executor.clone(),
+            executor.clone(),
             runner,
             invariant_config.clone(),
             identified_contracts,
@@ -519,7 +523,7 @@ impl ContractRunner<'_> {
                 })
                 .collect::<Vec<BasicTxDetails>>();
             if let Ok((success, replayed_entirely)) = check_sequence(
-                self.executor.clone(),
+                executor.clone(),
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
                 invariant_contract.address,
@@ -537,7 +541,7 @@ impl ContractRunner<'_> {
                     // exit without executing new runs.
                     let _ = replay_run(
                         &invariant_contract,
-                        self.executor.clone(),
+                        executor.clone(),
                         known_contracts,
                         identified_contracts.clone(),
                         &mut test_result.logs,
@@ -580,7 +584,7 @@ impl ContractRunner<'_> {
                     match replay_error(
                         &case_data,
                         &invariant_contract,
-                        self.executor.clone(),
+                        executor.clone(),
                         known_contracts,
                         identified_contracts.clone(),
                         &mut test_result.logs,
@@ -616,7 +620,7 @@ impl ContractRunner<'_> {
             _ => {
                 if let Err(err) = replay_run(
                     &invariant_contract,
-                    self.executor.clone(),
+                    executor.clone(),
                     known_contracts,
                     identified_contracts.clone(),
                     &mut test_result.logs,
