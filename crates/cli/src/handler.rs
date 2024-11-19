@@ -32,7 +32,7 @@ impl EyreHandler for Handler {
     }
 }
 
-/// Installs the Foundry [eyre] and [panic](std::panic) hooks as the global ones.
+/// Installs the Foundry [eyre] and [panic](mod@std::panic) hooks as the global ones.
 ///
 /// # Details
 ///
