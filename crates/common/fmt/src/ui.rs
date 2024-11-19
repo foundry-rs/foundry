@@ -1,10 +1,10 @@
 //! Helper trait and functions to format Ethereum types.
 
 use alloy_consensus::{
-    AnyReceiptEnvelope, BlockHeader, Eip658Value, Receipt, ReceiptWithBloom,
-    Transaction as TxTrait, TxEnvelope, TxType,
+    AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope,
+    TxType,
 };
-use alloy_network::{AnyRpcBlock, AnyTxEnvelope, ReceiptResponse};
+use alloy_network::{AnyHeader, AnyRpcBlock, AnyTxEnvelope, ReceiptResponse};
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64, U8};
 use alloy_rpc_types::{
     AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Header, Log, Transaction,
@@ -270,7 +270,7 @@ transactionIndex: {}",
     }
 }
 
-impl<T: UIfmt, H: BlockHeader> UIfmt for Block<T, Header<H>> {
+impl<T: UIfmt> UIfmt for Block<T, Header<AnyHeader>> {
     fn pretty(&self) -> String {
         format!(
             "
@@ -870,8 +870,42 @@ pub fn get_pretty_block_attr(block: &AnyRpcBlock, attr: &str) -> Option<String> 
     }
 }
 
-fn pretty_block_basics<T, H: BlockHeader>(block: &Block<T, alloy_rpc_types::Header<H>>) -> String {
-    let Block { header, uncles: _, transactions: _, withdrawals: _ } = block;
+fn pretty_block_basics<T>(block: &Block<T, alloy_rpc_types::Header<AnyHeader>>) -> String {
+    let Block {
+        header:
+            Header {
+                hash,
+                size,
+                total_difficulty,
+                inner:
+                    AnyHeader {
+                        parent_hash,
+                        ommers_hash,
+                        beneficiary,
+                        state_root,
+                        transactions_root,
+                        receipts_root,
+                        logs_bloom,
+                        difficulty,
+                        number,
+                        gas_limit,
+                        gas_used,
+                        timestamp,
+                        extra_data,
+                        mix_hash,
+                        nonce,
+                        base_fee_per_gas,
+                        withdrawals_root,
+                        blob_gas_used,
+                        excess_blob_gas,
+                        parent_beacon_block_root,
+                        requests_hash,
+                    },
+            },
+        uncles: _,
+        transactions: _,
+        withdrawals: _,
+    } = block;
     format!(
         "
 baseFeePerGas        {}
@@ -898,33 +932,33 @@ totalDifficulty      {}
 blobGasUsed          {}
 excessBlobGas        {}
 requestsHash         {}",
-        header.base_fee_per_gas().pretty(),
-        header.difficulty().pretty(),
-        header.extra_data().pretty(),
-        header.gas_limit().pretty(),
-        header.gas_used().pretty(),
-        header.hash.pretty(),
-        header.logs_bloom().pretty(),
-        header.beneficiary().pretty(),
-        header.mix_hash().pretty(),
-        header.nonce().pretty(),
-        header.number().pretty(),
-        header.parent_hash().pretty(),
-        header.parent_beacon_block_root().pretty(),
-        header.transactions_root().pretty(),
-        header.receipts_root().pretty(),
-        header.ommers_hash().pretty(),
-        header.size.pretty(),
-        header.state_root().pretty(),
-        header.timestamp().pretty(),
-        chrono::DateTime::from_timestamp(header.timestamp() as i64, 0)
+        base_fee_per_gas.pretty(),
+        difficulty.pretty(),
+        extra_data.pretty(),
+        gas_limit.pretty(),
+        gas_used.pretty(),
+        hash.pretty(),
+        logs_bloom.pretty(),
+        beneficiary.pretty(),
+        mix_hash.pretty(),
+        nonce.pretty(),
+        number.pretty(),
+        parent_hash.pretty(),
+        parent_beacon_block_root.pretty(),
+        transactions_root.pretty(),
+        receipts_root.pretty(),
+        ommers_hash.pretty(),
+        size.pretty(),
+        state_root.pretty(),
+        timestamp.pretty(),
+        chrono::DateTime::from_timestamp(*timestamp as i64, 0)
             .expect("block timestamp in range")
             .to_rfc2822(),
-        header.withdrawals_root().pretty(),
-        header.total_difficulty.pretty(),
-        header.blob_gas_used().pretty(),
-        header.excess_blob_gas().pretty(),
-        header.requests_hash().pretty(),
+        withdrawals_root.pretty(),
+        total_difficulty.pretty(),
+        blob_gas_used.pretty(),
+        excess_blob_gas.pretty(),
+        requests_hash.pretty(),
     )
 }
 
