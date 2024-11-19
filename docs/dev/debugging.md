@@ -21,4 +21,4 @@ Filters are explained in detail in the [`env_logger` crate docs](https://docs.rs
 ### Compiler input and output
 
 You can get the compiler input JSON and output JSON by passing the `--build-info` flag.
-This will create two files: one for the input and one for the output.
+This will create two files: one for the input and one for the outputs.
