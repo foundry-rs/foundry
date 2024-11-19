@@ -9,7 +9,7 @@ use crate::{inline::InlineConfigParserError, InlineConfigParser};
 /// Used to parse InlineConfig.
 #[derive(Clone, Debug, Default)]
 pub struct TestConfig {
-    pub evm_version: EvmVersion,
+    pub evm_version: Option<EvmVersion>,
 }
 
 impl InlineConfigParser for TestConfig {
@@ -34,11 +34,12 @@ impl InlineConfigParser for TestConfig {
             let value = pair.1;
             match key.as_str() {
                 "evm-version" => {
-                    conf_clone.evm_version = EvmVersion::from_str(value.as_str()).map_err(|_| {
-                        InlineConfigParserError::InvalidConfigProperty(format!(
-                            "evm-version {value}",
-                        ))
-                    })?
+                    conf_clone.evm_version =
+                        Some(EvmVersion::from_str(value.as_str()).map_err(|_| {
+                            InlineConfigParserError::InvalidConfigProperty(format!(
+                                "evm-version {value}",
+                            ))
+                        })?)
                 }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }

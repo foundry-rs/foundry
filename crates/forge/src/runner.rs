@@ -701,9 +701,8 @@ impl ContractRunner<'_> {
         let mut executor = Cow::Borrowed(&self.executor);
         let mut test_result = TestResult::new(setup);
 
-        let spec_id = evm_spec_id(&config.evm_version, false);
-
-        {
+        if let Some(evm_version) = config.evm_version {
+            let spec_id = evm_spec_id(&evm_version, false);
             let executor = executor.to_mut();
             executor.set_spec_id(spec_id);
         }

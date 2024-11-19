@@ -93,8 +93,6 @@ impl TestOptions {
             // Apply in-line configurations for the current profile
             let c = &natspec.contract;
 
-            tracing::info!("Parent contract of natspec: {:?}", c);
-
             // We might already have inserted contract-level configs above, so respect data already
             // present in inline configs.
             let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
@@ -110,7 +108,6 @@ impl TestOptions {
             }
 
             if let Some(test) = base_test.merge(natspec)? {
-                tracing::info!("Inserting test config {:?} for {:?}::{:?}", test, c, f);
                 inline_test.insert_fn(c, f, test);
             }
         }
