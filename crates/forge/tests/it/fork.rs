@@ -2,7 +2,7 @@
 
 use crate::{
     config::*,
-    test_helpers::{RE_PATH_SEPARATOR, TEST_DATA_DEFAULT},
+    test_helpers::{RE_PATH_SEPARATOR, TEST_DATA_DEFAULT, TEST_DATA_PARIS},
 };
 use alloy_chains::Chain;
 use forge::result::SuiteResult;
@@ -35,9 +35,9 @@ async fn test_cheats_fork_revert() {
 /// Executes all non-reverting fork cheatcodes
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork() {
-    let mut config = TEST_DATA_DEFAULT.config.clone();
+    let mut config = TEST_DATA_PARIS.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_PARIS.runner_with_config(config);
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -86,7 +86,7 @@ async fn test_launch_fork_ws() {
 /// Tests that we can transact transactions in forking mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transact_fork() {
-    let runner = TEST_DATA_DEFAULT.runner();
+    let runner = TEST_DATA_PARIS.runner();
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Transact"));
     TestConfig::with_filter(runner, filter).run().await;
 }

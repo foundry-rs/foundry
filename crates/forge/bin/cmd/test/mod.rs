@@ -23,7 +23,7 @@ use foundry_cli::{
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
-    compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
+    compilers::{multi::MultiCompilerLanguage, Language},
     utils::source_files_iter,
     ProjectCompileOutput,
 };
@@ -203,7 +203,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
 

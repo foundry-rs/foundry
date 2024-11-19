@@ -1,6 +1,9 @@
 //! Forge tests for core functionality.
 
-use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
+use crate::{
+    config::*,
+    test_helpers::{TEST_DATA_DEFAULT, TEST_DATA_PARIS},
+};
 use forge::result::SuiteResult;
 use foundry_evm::traces::TraceKind;
 use foundry_test_utils::Filter;
@@ -799,6 +802,28 @@ async fn test_legacy_assertions() {
             vec![
                 ("testFlagNotSetSuccess()", true, None, None, None),
                 ("testFlagSetFailure()", false, None, None, None),
+            ],
+        )]),
+    );
+}
+
+/// Test `beforeTest` functionality and `selfdestruct`.
+/// See <https://github.com/foundry-rs/foundry/issues/1543>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_before_setup_with_selfdestruct() {
+    let filter = Filter::new(".*", ".*BeforeTestSelfDestructTest", ".*");
+    let results = TEST_DATA_PARIS.runner().test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "paris/core/BeforeTest.t.sol:BeforeTestSelfDestructTest",
+            vec![
+                ("testKill()", true, None, None, None),
+                ("testA()", true, None, None, None),
+                ("testSimpleA()", true, None, None, None),
+                ("testB()", true, None, None, None),
+                ("testC(uint256)", true, None, None, None),
             ],
         )]),
     );
