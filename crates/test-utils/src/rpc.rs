@@ -126,17 +126,17 @@ pub fn next_ws_endpoint(chain: NamedChain) -> String {
 
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
-    next_archive_rpc_endpoint(false)
+    next_archive_endpoint(false)
 }
 
 /// Returns endpoint that has access to archive state
 pub fn next_ws_archive_rpc_endpoint() -> String {
-    next_archive_rpc_endpoint(true)
+    next_archive_endpoint(true)
 }
 
 /// Returns endpoint that has access to archive state, http or ws.
 /// Use env vars (comma separated urls) or default inline keys (Alchemy for ws, Infura for http).
-fn next_archive_rpc_endpoint(is_ws: bool) -> String {
+fn next_archive_endpoint(is_ws: bool) -> String {
     let env_urls = if is_ws { ENV_WS_ARCHIVE_ENDPOINTS } else { ENV_HTTP_ARCHIVE_ENDPOINTS };
 
     let rpc_env_vars = env::var(env_urls).unwrap_or_default();

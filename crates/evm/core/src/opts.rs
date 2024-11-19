@@ -102,7 +102,8 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {fork_url}")
+            let truncated_url: String = fork_url.to_string().drain(..fork_url.len() / 2).collect();
+            format!("Could not instantiate forked environment with fork url: {truncated_url}[..]")
         })
     }
 
