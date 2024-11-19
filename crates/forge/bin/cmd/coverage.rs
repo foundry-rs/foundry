@@ -96,7 +96,7 @@ impl CoverageArgs {
         if self.ir_minimum {
             // print warning message
             sh_warn!("{}", concat!(
-                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
+                "`--ir-minimum` enables viaIR with minimum optimization, \
                  which can result in inaccurate source mappings.\n",
                 "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
                 "Note that \"viaIR\" is production ready since Solidity 0.8.13 and above.\n",
