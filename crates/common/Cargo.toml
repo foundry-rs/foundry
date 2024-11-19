@@ -50,11 +50,12 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
+itertools.workspace = true
 num-format.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

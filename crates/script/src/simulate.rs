@@ -16,7 +16,7 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, ContractData};
+use foundry_common::ContractData;
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -205,9 +205,8 @@ impl PreSimulationState {
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
-                let contract_name = get_contract_name(contract_id);
                 if let Ok(Some((_, data))) =
-                    self.build_data.known_contracts.find_by_name_or_identifier(contract_name)
+                    self.build_data.known_contracts.find_by_name_or_identifier(contract_id)
                 {
                     return Some((*addr, data));
                 }

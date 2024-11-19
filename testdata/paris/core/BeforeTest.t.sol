@@ -10,7 +10,7 @@ contract SelfDestructor {
 }
 
 // https://github.com/foundry-rs/foundry/issues/1543
-contract Issue1543Test is DSTest {
+contract BeforeTestSelfDestructTest is DSTest {
     SelfDestructor killer;
     uint256 a;
     uint256 b;
