@@ -573,6 +573,37 @@
           "description": "Status of the transaction, retrieved from the transaction receipt."
         }
       ]
+    },
+    {
+      "name": "SignedDelegation",
+      "description": "Holds a signed EIP-7702 authorization for an authority account to delegate to an implementation.",
+      "fields": [
+        {
+          "name": "v",
+          "ty": "uint8",
+          "description": "The y-parity of the recovered secp256k1 signature (0 or 1)."
+        },
+        {
+          "name": "r",
+          "ty": "bytes32",
+          "description": "First 32 bytes of the signature."
+        },
+        {
+          "name": "s",
+          "ty": "bytes32",
+          "description": "Second 32 bytes of the signature."
+        },
+        {
+          "name": "nonce",
+          "ty": "uint64",
+          "description": "The current nonce of the authority account at signing time.\n Used to ensure signature can't be replayed after account nonce changes."
+        },
+        {
+          "name": "implementation",
+          "ty": "address",
+          "description": "Address of the contract implementation that will be delegated to.\n Gets encoded into delegation code: 0xef0100 || implementation."
+        }
+      ]
     }
   ],
   "cheatcodes": [
