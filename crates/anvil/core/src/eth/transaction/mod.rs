@@ -966,51 +966,6 @@ impl TypedTransaction {
     }
 }
 
-impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
-    type Error = ConversionError;
-
-    fn try_from(tx: WithOtherFields<RpcTransaction>) -> Result<Self, Self::Error> {
-        if tx.ty() == 0x7E {
-            let mint = tx
-                .other
-                .get_deserialized::<U256>("mint")
-                .ok_or(ConversionError::Custom("MissingMint".to_string()))?
-                .map_err(|_| ConversionError::Custom("Cannot deserialize mint".to_string()))?;
-
-            let source_hash = tx
-                .other
-                .get_deserialized::<B256>("sourceHash")
-                .ok_or(ConversionError::Custom("MissingSourceHash".to_string()))?
-                .map_err(|_| {
-                    ConversionError::Custom("Cannot deserialize source hash".to_string())
-                })?;
-
-            let deposit = DepositTransaction {
-                nonce: tx.nonce(),
-                is_system_tx: true,
-                from: tx.from,
-                kind: tx.kind(),
-                value: tx.value(),
-                gas_limit: tx.gas_limit(),
-                input: tx.input().clone(),
-                mint,
-                source_hash,
-            };
-
-            return Ok(Self::Deposit(deposit));
-        }
-
-        match tx.inner.inner {
-            TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
-            TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
-            TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
-            TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
-            TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-            _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
-        }
-    }
-}
-
 impl Encodable for TypedTransaction {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         if !self.is_legacy() {

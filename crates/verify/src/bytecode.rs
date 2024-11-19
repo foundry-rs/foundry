@@ -2,13 +2,16 @@
 use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
-        check_and_encode_args, check_explorer_args, configure_env_block, into_tx_request,
-        maybe_predeploy_contract, BytecodeType, JsonResult,
+        check_and_encode_args, check_explorer_args, configure_env_block, maybe_predeploy_contract,
+        BytecodeType, JsonResult,
     },
     verify::VerifierArgs,
 };
 use alloy_primitives::{hex, Address, Bytes, U256};
-use alloy_provider::{network::TransactionBuilder, Provider};
+use alloy_provider::{
+    network::{AnyTxEnvelope, TransactionBuilder},
+    Provider,
+};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
@@ -332,7 +335,10 @@ impl VerifyBytecodeArgs {
             );
         };
 
-        let mut transaction = into_tx_request(transaction.inner);
+        let mut transaction: TransactionRequest = match transaction.inner.inner {
+            AnyTxEnvelope::Ethereum(tx) => tx.into(),
+            AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
+        };
 
         // Extract creation code from creation tx input.
         let maybe_creation_code =

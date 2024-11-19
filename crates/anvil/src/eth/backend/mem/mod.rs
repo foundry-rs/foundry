@@ -2980,9 +2980,6 @@ pub fn transaction_build(
             .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
-        // need to check if the signature of the transaction is impersonated, if so then we
-        // can't recover the sender, instead we use the sender from the executed transaction and
-        // set the // impersonated hash.
         from: eth_transaction.recover().expect("can recover signed tx"),
         // deprecated
         effective_gas_price: Some(effective_gas_price),

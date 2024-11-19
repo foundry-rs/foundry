@@ -1,11 +1,8 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::{
-    network::{AnyRpcBlock, AnyTxEnvelope},
-    Provider,
-};
-use alloy_rpc_types::{BlockId, Transaction, TransactionRequest};
+use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
@@ -350,13 +347,6 @@ pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
-}
-
-pub fn into_tx_request(tx: Transaction<AnyTxEnvelope>) -> TransactionRequest {
-    match tx.inner {
-        AnyTxEnvelope::Ethereum(tx) => tx.into(),
-        AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
-    }
 }
 
 pub fn deploy_contract(
