@@ -2907,7 +2907,7 @@ pub fn transaction_build(
                 return WithOtherFields::new(tx);
             }
             Err(_) => {
-                warn!(target: "backend", "failed to serialize deposit transaction");
+                error!(target: "backend", "failed to serialize deposit transaction");
             }
         }
     }
