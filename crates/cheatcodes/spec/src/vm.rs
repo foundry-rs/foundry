@@ -308,6 +308,22 @@ interface Vm {
         bool success;
     }
 
+    /// Holds a signed EIP-7702 authorization for an authority account to delegate to an implementation.
+    struct SignedDelegation {
+        /// The y-parity of the recovered secp256k1 signature (0 or 1).
+        uint8 v;
+        /// First 32 bytes of the signature.
+        bytes32 r;
+        /// Second 32 bytes of the signature.
+        bytes32 s;
+        /// The current nonce of the authority account at signing time.
+        /// Used to ensure signature can't be replayed after account nonce changes.
+        uint64 nonce;
+        /// Address of the contract implementation that will be delegated to.
+        /// Gets encoded into delegation code: 0xef0100 || implementation.
+        address implementation;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -2017,6 +2033,18 @@ interface Vm {
     /// Takes a signed transaction and broadcasts it to the network.
     #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
+
+    /// Sign an EIP-7702 authorization for delegation
+    #[cheatcode(group = Scripting)]
+    function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
+
+    /// Designate the next call as an EIP-7702 transaction
+    #[cheatcode(group = Scripting)]
+    function attachDelegation(SignedDelegation memory signedDelegation) external;
+
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]

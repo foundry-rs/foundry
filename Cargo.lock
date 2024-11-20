@@ -3701,6 +3701,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-primitives",
