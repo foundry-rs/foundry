@@ -1,10 +1,13 @@
 //! tests for anvil specific logic
 
+use std::{path::PathBuf, time::Duration};
+
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
+use tempfile::tempdir;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -117,4 +120,19 @@ async fn test_cancun_fields() {
     assert_eq!(block.withdrawals, Some(Default::default()));
     assert!(block.header.blob_gas_used.is_some());
     assert!(block.header.excess_blob_gas.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cache_path() {
+    let tmp_dir = tempdir().unwrap().path().to_path_buf();
+    let cache_path = tmp_dir.join("custom-anvil-cache");
+    let (_api, _handle) = spawn(
+        NodeConfig::test()
+            .with_cache_path(Some(cache_path.clone()))
+            .with_max_persisted_states(Some(3600 as usize))
+            .with_blocktime(Some(Duration::from_millis(1))),
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
 }
