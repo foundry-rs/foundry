@@ -17,14 +17,19 @@ use std::{
     },
 };
 
-/// Returns the currently set verbosity.
+/// Returns the currently set verbosity level.
 pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
 }
 
-/// Returns whether the verbosity level is [`Verbosity::Quiet`].
+/// Set the verbosity level.
+pub fn set_verbosity(verbosity: Verbosity) {
+    Shell::get().set_verbosity(verbosity);
+}
+
+/// Returns whether the output mode is [`OutputMode::Quiet`].
 pub fn is_quiet() -> bool {
-    verbosity().is_quiet()
+    Shell::get().output_mode().is_quiet()
 }
 
 /// Returns whether the output format is [`OutputFormat::Json`].
@@ -68,11 +73,9 @@ impl TtyWidth {
     }
 }
 
-/// The requested verbosity of output.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub enum Verbosity {
-    /// All output
-    Verbose,
+/// The requested output mode.
+pub enum OutputMode {
     /// Default output
     #[default]
     Normal,
@@ -80,20 +83,14 @@ pub enum Verbosity {
     Quiet,
 }
 
-impl Verbosity {
-    /// Returns true if the verbosity level is `Verbose`.
-    #[inline]
-    pub fn is_verbose(self) -> bool {
-        self == Self::Verbose
-    }
-
-    /// Returns true if the verbosity level is `Normal`.
+impl OutputMode {
+    /// Returns true if the output mode is `Normal`.
     #[inline]
     pub fn is_normal(self) -> bool {
         self == Self::Normal
     }
 
-    /// Returns true if the verbosity level is `Quiet`.
+    /// Returns true if the output mode is `Quiet`.
     #[inline]
     pub fn is_quiet(self) -> bool {
         self == Self::Quiet
@@ -124,6 +121,9 @@ impl OutputFormat {
     }
 }
 
+/// The verbosity level.
+pub type Verbosity = u8;
+
 /// An abstraction around console output that remembers preferences for output
 /// verbosity and color.
 pub struct Shell {
@@ -134,7 +134,10 @@ pub struct Shell {
     /// The format to use for message output.
     output_format: OutputFormat,
 
-    /// How verbose messages should be.
+    /// The verbosity mode to use for message output.
+    output_mode: OutputMode,
+
+    /// The verbosity level to use for message output.
     verbosity: Verbosity,
 
     /// Flag that indicates the current line needs to be cleared before
@@ -145,6 +148,8 @@ pub struct Shell {
 impl fmt::Debug for Shell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut s = f.debug_struct("Shell");
+        s.field("output_format", &self.output_format);
+        s.field("output_mode", &self.output_mode);
         s.field("verbosity", &self.verbosity);
         if let ShellOut::Stream { color_choice, .. } = self.output {
             s.field("color_choice", &color_choice);
@@ -190,12 +195,22 @@ impl Shell {
     /// output.
     #[inline]
     pub fn new() -> Self {
-        Self::new_with(OutputFormat::Text, ColorChoice::Auto, Verbosity::Verbose)
+        Self::new_with(
+            OutputFormat::Text,
+            OutputMode::Normal,
+            ColorChoice::Auto,
+            Verbosity::default(),
+        )
     }
 
     /// Creates a new shell with the given color choice and verbosity.
     #[inline]
-    pub fn new_with(format: OutputFormat, color: ColorChoice, verbosity: Verbosity) -> Self {
+    pub fn new_with(
+        format: OutputFormat,
+        mode: OutputMode,
+        color: ColorChoice,
+        verbosity: Verbosity,
+    ) -> Self {
         Self {
             output: ShellOut::Stream {
                 stdout: AutoStream::new(std::io::stdout(), color.to_anstream_color_choice()),
@@ -204,6 +219,7 @@ impl Shell {
                 stderr_tty: std::io::stderr().is_terminal(),
             },
             output_format: format,
+            output_mode: mode,
             verbosity,
             needs_clear: AtomicBool::new(false),
         }
@@ -215,7 +231,8 @@ impl Shell {
         Self {
             output: ShellOut::Empty(std::io::empty()),
             output_format: OutputFormat::Text,
-            verbosity: Verbosity::Quiet,
+            output_mode: OutputMode::Quiet,
+            verbosity: 0,
             needs_clear: AtomicBool::new(false),
         }
     }
@@ -266,15 +283,27 @@ impl Shell {
         }
     }
 
-    /// Gets the verbosity of the shell.
+    /// Gets the output format of the shell.
+    #[inline]
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format
+    }
+
+    /// Gets the output mode of the shell.
+    #[inline]
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
+    }
+
+    /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
     #[inline]
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
 
-    /// Gets the output format of the shell.
-    pub fn output_format(&self) -> OutputFormat {
-        self.output_format
+    /// Sets the verbosity level.
+    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+        self.verbosity = verbosity;
     }
 
     /// Gets the current color choice.
@@ -338,24 +367,6 @@ impl Shell {
         }
     }
 
-    /// Runs the callback only if we are in verbose mode.
-    #[inline]
-    pub fn verbose(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Verbose => callback(self),
-            _ => Ok(()),
-        }
-    }
-
-    /// Runs the callback if we are not in verbose mode.
-    #[inline]
-    pub fn concise(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Verbose => Ok(()),
-            _ => callback(self),
-        }
-    }
-
     /// Prints a red 'error' message. Use the [`sh_err!`] macro instead.
     /// This will render a message in [ERROR] style with a bold `Error: ` prefix.
     ///
@@ -370,8 +381,8 @@ impl Shell {
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     pub fn warn(&mut self, message: impl fmt::Display) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Quiet => Ok(()),
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
             _ => self.print(&"Warning", &WARN, Some(&message), false),
         }
     }
@@ -387,10 +398,9 @@ impl Shell {
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        if self.verbosity == Verbosity::Quiet {
-            Ok(())
-        } else {
-            self.write_stdout(fragment, &Style::new())
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
+            _ => self.write_stdout(fragment, &Style::new()),
         }
     }
 
@@ -405,10 +415,9 @@ impl Shell {
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
     pub fn print_err(&mut self, fragment: impl fmt::Display) -> Result<()> {
-        if self.verbosity == Verbosity::Quiet {
-            Ok(())
-        } else {
-            self.write_stderr(fragment, &Style::new())
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
+            _ => self.write_stderr(fragment, &Style::new()),
         }
     }
 
@@ -421,8 +430,8 @@ impl Shell {
         message: Option<&dyn fmt::Display>,
         justified: bool,
     ) -> Result<()> {
-        match self.verbosity {
-            Verbosity::Quiet => Ok(()),
+        match self.output_mode {
+            OutputMode::Quiet => Ok(()),
             _ => {
                 self.maybe_err_erase_line();
                 self.output.message_stderr(status, style, message, justified)

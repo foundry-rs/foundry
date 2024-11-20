@@ -8,6 +8,7 @@ use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
+use url::Url;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EvmOpts {
@@ -102,7 +103,13 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {fork_url}")
+            let mut err_msg = "Could not instantiate forked environment".to_string();
+            if let Ok(url) = Url::parse(fork_url) {
+                if let Some(provider) = url.host() {
+                    err_msg.push_str(&format!(" with provider {provider}"));
+                }
+            }
+            err_msg
         })
     }
 
@@ -192,10 +199,6 @@ impl EvmOpts {
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
-            if url.contains("mainnet") {
-                trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::mainnet());
-            }
             trace!(?url, "retrieving chain via eth_chainId");
             let provider = ProviderBuilder::new(url.as_str())
                 .compute_units_per_second(self.get_compute_units_per_second())
@@ -205,6 +208,14 @@ impl EvmOpts {
 
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
+            }
+
+            // Provider URLs could be of the format `{CHAIN_IDENTIFIER}-mainnet`
+            // (e.g. Alchemy `opt-mainnet`, `arb-mainnet`), fallback to this method only
+            // if we're not able to retrieve chain id from `RetryProvider`.
+            if url.contains("mainnet") {
+                trace!(?url, "auto detected mainnet chain");
+                return Some(Chain::mainnet());
             }
         }
 

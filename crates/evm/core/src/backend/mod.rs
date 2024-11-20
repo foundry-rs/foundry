@@ -1922,8 +1922,9 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
-    env.block.blob_excess_gas_and_price =
-        block.header.excess_blob_gas.map(BlobExcessGasAndPrice::new);
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+        env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas));
+    }
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
@@ -1971,7 +1972,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        if !persistent_accounts.map_or(false, |accounts| accounts.contains(addr)) {
+        if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in acc.storage.iter_mut() {
                 val.present_value = db.storage(*addr, *key)?;

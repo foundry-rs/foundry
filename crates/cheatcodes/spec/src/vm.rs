@@ -616,6 +616,22 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startPrank(address msgSender, address txOrigin) external;
 
+    /// Sets the *next* delegate call's `msg.sender` to be the input address.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prank(address msgSender, bool delegateCall) external;
+
+    /// Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startPrank(address msgSender, bool delegateCall) external;
+
+    /// Sets the *next* delegate call's `msg.sender` to be the input address, and the `tx.origin` to be the second input.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prank(address msgSender, address txOrigin, bool delegateCall) external;
+
+    /// Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called, and the `tx.origin` to be the second input.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startPrank(address msgSender, address txOrigin, bool delegateCall) external;
+
     /// Resets subsequent calls' `msg.sender` to be `address(this)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopPrank() external;

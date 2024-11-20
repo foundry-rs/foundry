@@ -78,10 +78,24 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 ...
 | Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |--------------|------------------|-------------------|--------------------|---------------------|
-| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+| HugeContract |              194 |            49,344 |             24,382 |                -192 |
 ...
 "#
     ]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
+        str![[r#"
+{
+   "HugeContract":{
+      "runtime_size":194,
+      "init_size":49344,
+      "runtime_margin":24382,
+      "init_margin":-192
+   }
+}
+"#]]
+        .is_json(),
+    );
 });
 
 forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
@@ -91,10 +105,27 @@ forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
 ...
 | Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |--------------|------------------|-------------------|--------------------|---------------------|
-| HugeContract |              202 |            49,359 |             24,374 |                -207 |
+| HugeContract |              194 |            49,344 |             24,382 |                -192 |
 ...
 "#
     ]);
+
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--ignore-eip-3860", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "HugeContract": {
+    "runtime_size": 194,
+    "init_size": 49344,
+    "runtime_margin": 24382,
+    "init_margin": -192
+  }
+} 
+"#]]
+            .is_json(),
+        );
 });
 
 // tests build output is as expected
@@ -114,10 +145,24 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ...
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |----------|------------------|-------------------|--------------------|---------------------|
-| Counter  |              247 |               277 |             24,329 |              48,875 |
+| Counter  |              236 |               263 |             24,340 |              48,889 |
 ...
 "#
     ]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "Counter": {
+    "runtime_size": 247,
+    "init_size": 277,
+    "runtime_margin": 24329,
+    "init_margin": 48875
+  }
+} 
+"#]]
+        .is_json(),
+    );
 });
 
 // tests that skip key in config can be used to skip non-compilable contract

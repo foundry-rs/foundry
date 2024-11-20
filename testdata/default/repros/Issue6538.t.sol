@@ -9,9 +9,9 @@ contract Issue6538Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function test_transact() public {
-        bytes32 lastHash = 0xdbdce1d5c14a6ca17f0e527ab762589d6a73f68697606ae0bb90df7ac9ec5087;
+        bytes32 lastHash = 0x4b70ca8c5a0990b43df3064372d424d46efa41dfaab961754b86c5afb2df4f61;
         vm.createSelectFork("mainnet", lastHash);
-        bytes32 txhash = 0xadbe5cf9269a001d50990d0c29075b402bcc3a0b0f3258821881621b787b35c6;
+        bytes32 txhash = 0x7dcff74771babf9c23363c4228e55a27f50224d4596b1ba6608b0b45712f94ba;
         vm.transact(txhash);
     }
 }

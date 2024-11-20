@@ -355,6 +355,8 @@ interface Vm {
     function pauseTracing() external view;
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
+    function prank(address msgSender, bool delegateCall) external;
+    function prank(address msgSender, address txOrigin, bool delegateCall) external;
     function prevrandao(bytes32 newPrevrandao) external;
     function prevrandao(uint256 newPrevrandao) external;
     function projectRoot() external view returns (string memory path);
@@ -462,6 +464,8 @@ interface Vm {
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
+    function startPrank(address msgSender, bool delegateCall) external;
+    function startPrank(address msgSender, address txOrigin, bool delegateCall) external;
     function startSnapshotGas(string calldata name) external;
     function startSnapshotGas(string calldata group, string calldata name) external;
     function startStateDiffRecording() external;
