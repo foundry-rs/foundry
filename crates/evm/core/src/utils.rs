@@ -236,7 +236,7 @@ pub fn create2_handler_register<I: InspectorExt>(
             if create2_overrides_inner
                 .borrow()
                 .last()
-                .map_or(false, |(depth, _)| *depth == ctx.evm.journaled_state.depth())
+                .is_some_and(|(depth, _)| *depth == ctx.evm.journaled_state.depth())
             {
                 let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
                 outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);

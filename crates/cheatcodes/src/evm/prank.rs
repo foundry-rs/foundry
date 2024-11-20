@@ -16,6 +16,8 @@ pub struct Prank {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
+    /// Whether the prank should be be applied to delegate call
+    pub delegate_call: bool,
     /// Whether the prank has been used yet (false if unused)
     pub used: bool,
 }
@@ -29,8 +31,18 @@ impl Prank {
         new_origin: Option<Address>,
         depth: u64,
         single_call: bool,
+        delegate_call: bool,
     ) -> Self {
-        Self { prank_caller, prank_origin, new_caller, new_origin, depth, single_call, used: false }
+        Self {
+            prank_caller,
+            prank_origin,
+            new_caller,
+            new_origin,
+            depth,
+            single_call,
+            delegate_call,
+            used: false,
+        }
     }
 
     /// Apply the prank by setting `used` to true iff it is false
@@ -47,28 +59,56 @@ impl Prank {
 impl Cheatcode for prank_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender } = self;
-        prank(ccx, msgSender, None, true)
+        prank(ccx, msgSender, None, true, false)
     }
 }
 
 impl Cheatcode for startPrank_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender } = self;
-        prank(ccx, msgSender, None, false)
+        prank(ccx, msgSender, None, false, false)
     }
 }
 
 impl Cheatcode for prank_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender, txOrigin } = self;
-        prank(ccx, msgSender, Some(txOrigin), true)
+        prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
 impl Cheatcode for startPrank_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { msgSender, txOrigin } = self;
-        prank(ccx, msgSender, Some(txOrigin), false)
+        prank(ccx, msgSender, Some(txOrigin), false, false)
+    }
+}
+
+impl Cheatcode for prank_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { msgSender, delegateCall } = self;
+        prank(ccx, msgSender, None, true, *delegateCall)
+    }
+}
+
+impl Cheatcode for startPrank_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { msgSender, delegateCall } = self;
+        prank(ccx, msgSender, None, false, *delegateCall)
+    }
+}
+
+impl Cheatcode for prank_3Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { msgSender, txOrigin, delegateCall } = self;
+        prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
+    }
+}
+
+impl Cheatcode for startPrank_3Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { msgSender, txOrigin, delegateCall } = self;
+        prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)
     }
 }
 
@@ -85,6 +125,7 @@ fn prank(
     new_caller: &Address,
     new_origin: Option<&Address>,
     single_call: bool,
+    delegate_call: bool,
 ) -> Result {
     let prank = Prank::new(
         ccx.caller,
@@ -93,7 +134,14 @@ fn prank(
         new_origin.copied(),
         ccx.ecx.journaled_state.depth(),
         single_call,
+        delegate_call,
     );
+
+    // Ensure that code exists at `msg.sender` if delegate calling.
+    if delegate_call {
+        let code = ccx.code(*new_caller)?;
+        ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
+    }
 
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.prank {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");

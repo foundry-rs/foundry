@@ -88,7 +88,7 @@ impl InitArgs {
             }
         } else {
             // if target is not empty
-            if root.read_dir().map_or(false, |mut i| i.next().is_some()) {
+            if root.read_dir().is_ok_and(|mut i| i.next().is_some()) {
                 if !force {
                     eyre::bail!(
                         "Cannot run `init` on a non-empty directory.\n\

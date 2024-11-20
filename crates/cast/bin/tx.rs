@@ -252,7 +252,7 @@ where
         };
 
         if self.state.to.is_none() && code.is_none() {
-            let has_value = self.tx.value.map_or(false, |v| !v.is_zero());
+            let has_value = self.tx.value.is_some_and(|v| !v.is_zero());
             let has_auth = self.auth.is_some();
             // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
             // without a value.

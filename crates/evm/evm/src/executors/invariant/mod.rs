@@ -204,10 +204,7 @@ impl InvariantTest {
 
     /// Merge current collected coverage with the new coverage from last fuzzed call.
     pub fn merge_coverage(&self, new_coverage: Option<HitMaps>) {
-        match &mut self.execution_data.borrow_mut().coverage {
-            Some(prev) => prev.merge(new_coverage.unwrap()),
-            opt => *opt = new_coverage,
-        }
+        HitMaps::merge_opt(&mut self.execution_data.borrow_mut().coverage, new_coverage);
     }
 
     /// Update metrics for a fuzzed selector, extracted from tx details.

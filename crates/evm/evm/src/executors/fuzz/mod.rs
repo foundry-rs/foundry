@@ -127,11 +127,7 @@ impl FuzzedExecutor {
                         data.logs.extend(case.logs);
                     }
 
-                    // Collect and merge coverage if `forge snapshot` context.
-                    match &mut data.coverage {
-                        Some(prev) => prev.merge(case.coverage.unwrap()),
-                        opt => *opt = case.coverage,
-                    }
+                    HitMaps::merge_opt(&mut data.coverage, case.coverage);
 
                     data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 

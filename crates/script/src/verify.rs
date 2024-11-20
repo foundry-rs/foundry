@@ -116,7 +116,7 @@ impl VerifyBundle {
             if data.split_at(create2_offset).1.starts_with(bytecode) {
                 let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
 
-                if artifact.source.extension().map_or(false, |e| e.to_str() == Some("vy")) {
+                if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
@@ -155,6 +155,7 @@ impl VerifyBundle {
                     evm_version: None,
                     show_standard_json_input: false,
                     guess_constructor_args: false,
+                    compilation_profile: Some(artifact.profile.to_string()),
                 };
 
                 return Some(verify)

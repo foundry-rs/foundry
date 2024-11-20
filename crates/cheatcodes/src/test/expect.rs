@@ -633,7 +633,7 @@ pub(crate) fn handle_expect_emit(
             return false
         }
         // Maybe match source address.
-        if event_to_fill_or_check.address.map_or(false, |addr| addr != log.address) {
+        if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
             return false;
         }
         // Maybe match data.
