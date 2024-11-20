@@ -138,6 +138,7 @@ impl RunArgs {
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
+        let create2_deployer = evm_opts.create2_deployer;
         let (mut env, fork, chain, alphanet) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
@@ -171,6 +172,7 @@ impl RunArgs {
             self.decode_internal,
             shell::verbosity() > 4,
             alphanet,
+            create2_deployer,
         );
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());

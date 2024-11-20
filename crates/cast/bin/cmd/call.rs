@@ -175,6 +175,7 @@ impl CallArgs {
                 config.fork_block_number = Some(block_number);
             }
 
+            let create2_deployer = evm_opts.create2_deployer;
             let (mut env, fork, chain, alphanet) =
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
