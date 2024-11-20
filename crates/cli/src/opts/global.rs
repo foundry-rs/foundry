@@ -1,6 +1,5 @@
 use clap::{ArgAction, Parser};
 use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity};
-use rayon::{current_num_threads, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 /// Global options.
@@ -37,71 +36,15 @@ pub struct GlobalOpts {
     /// The color of the log messages.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
     color: Option<ColorChoice>,
-
-    /// Number of threads to use.
-    ///
-    /// If 0, the number of threads will be equal to the number of logical CPUs.
-    /// If set to a value greater than 0, it will use that number of threads capped at the number
-    /// of logical CPUs.
-    ///
-    /// If not provided it will not spawn the global thread pool.
-    #[clap(
-        short,
-        long,
-        global = true,
-        verbatim_doc_comment,
-        visible_alias = "threads",
-        help_heading = "Concurrency options"
-    )]
-    jobs: Option<usize>,
 }
 
 impl GlobalOpts {
     /// Initialize the global options.
     pub fn init(self) -> eyre::Result<()> {
-        // Initialize the global thread pool.
-        self.try_spawn(None)?;
-
         // Set the global shell.
         self.shell().set();
 
         Ok(())
-    }
-
-    /// Spawn a new global thread pool.
-    pub fn try_spawn(self, jobs: Option<usize>) -> Result<(), rayon::ThreadPoolBuildError> {
-        if let Some(jobs) = jobs.or_else(|| self.jobs(false)) {
-            trace!(target: "forge::cli", "starting global thread pool with up to {} threads", jobs);
-
-            // Attempt to spawn the global thread pool with the specified number of threads.
-            // If it is already initialized simply return.
-            if ThreadPoolBuilder::new().num_threads(jobs).build_global().is_err() {
-                warn!(target: "forge::cli", "global thread pool already initialized");
-            }
-
-            Ok(())
-        } else {
-            // If `--jobs` is not provided, do not spawn the global thread pool.
-            Ok(())
-        }
-    }
-
-    /// Get the number of threads to use.
-    ///
-    /// Try to use the number of threads specified by `--jobs` if provided, otherwise use the number
-    /// of logical CPUs.
-    pub fn jobs(&self, default: bool) -> Option<usize> {
-        if let Some(jobs) = self.jobs {
-            if jobs == 0 {
-                return Some(current_num_threads());
-            }
-
-            Some(jobs.min(current_num_threads()))
-        } else if default {
-            return Some(current_num_threads());
-        } else {
-            return None;
-        }
     }
 
     /// Create a new shell instance.

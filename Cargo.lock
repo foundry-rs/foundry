@@ -3681,7 +3681,6 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "indicatif",
- "rayon",
  "regex",
  "serde",
  "serde_json",

@@ -149,6 +149,11 @@ pub struct TestArgs {
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
 
+    /// Max concurrent threads to use.
+    /// Default value is the number of available CPUs.
+    #[arg(long, short = 'j', visible_alias = "jobs")]
+    pub threads: Option<usize>,
+
     /// Show test execution progress.
     #[arg(long)]
     pub show_progress: bool,
@@ -275,7 +280,7 @@ impl TestArgs {
         // If not specified then the number of threads determined by rayon will be used.
         if let Some(test_threads) = config.threads {
             trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
-            self.global.try_spawn(Some(test_threads))?;
+            rayon::ThreadPoolBuilder::new().num_threads(test_threads).build_global()?;
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -893,7 +898,7 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
-        if let Some(threads) = self.global.jobs(true) {
+        if let Some(threads) = self.threads {
             dict.insert("threads".to_string(), threads.into());
         }
 
