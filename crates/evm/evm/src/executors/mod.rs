@@ -713,6 +713,12 @@ impl std::ops::DerefMut for DeployResult {
     }
 }
 
+impl From<DeployResult> for RawCallResult {
+    fn from(d: DeployResult) -> Self {
+        d.raw
+    }
+}
+
 /// The result of a raw call.
 #[derive(Debug)]
 pub struct RawCallResult {
@@ -780,6 +786,23 @@ impl Default for RawCallResult {
 }
 
 impl RawCallResult {
+    /// Unpacks an EVM result.
+    pub fn from_evm_result(r: Result<Self, EvmError>) -> eyre::Result<(Self, Option<String>)> {
+        match r {
+            Ok(r) => Ok((r, None)),
+            Err(EvmError::Execution(e)) => Ok((e.raw, Some(e.reason))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Unpacks an execution result.
+    pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
+        match r {
+            Ok(r) => (r, None),
+            Err(e) => (e.raw, Some(e.reason)),
+        }
+    }
+
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
         if let Some(reason) = SkipReason::decode(&self.result) {
