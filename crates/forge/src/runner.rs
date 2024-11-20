@@ -157,15 +157,9 @@ impl ContractRunner<'_> {
                         raw: RawCallResult { traces, labels, logs, coverage, .. },
                         reason,
                     } = *err;
-                    (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
+                    (logs, traces, labels, Some(reason), coverage)
                 }
-                Err(err) => (
-                    Vec::new(),
-                    None,
-                    HashMap::default(),
-                    Some(format!("setup failed: {err}")),
-                    None,
-                ),
+                Err(err) => (Vec::new(), None, HashMap::default(), Some(err.to_string()), None),
             };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
