@@ -624,6 +624,7 @@ impl ScriptConfig {
                 stack
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .alphanet(self.evm_opts.alphanet)
+                    .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
