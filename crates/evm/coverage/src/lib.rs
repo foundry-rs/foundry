@@ -174,6 +174,14 @@ impl CoverageReport {
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
+    pub fn merge_opt(a: &mut Option<Self>, b: Option<Self>) {
+        match (a, b) {
+            (_, None) => {}
+            (a @ None, Some(b)) => *a = Some(b),
+            (Some(a), Some(b)) => a.merge(b),
+        }
+    }
+
     pub fn merge(&mut self, other: Self) {
         for (code_hash, hit_map) in other.0 {
             if let Some(HitMap { hits: extra_hits, .. }) = self.insert(code_hash, hit_map) {
