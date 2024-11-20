@@ -23,7 +23,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceMode},
 };
 use foundry_linking::{LinkOutput, Linker};
-use rayon::{current_num_threads, prelude::*};
+use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
     borrow::Borrow,
