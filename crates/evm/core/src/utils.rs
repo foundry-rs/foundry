@@ -210,7 +210,7 @@ pub fn create2_handler_register<I: InspectorExt>(
                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
-                        output: format!("missing CREATE2 deployer: {}", create2_deployer).into(),
+                        output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
                         gas: Gas::new(gas_limit),
                     },
                     memory_offset: 0..0,
