@@ -118,7 +118,7 @@ forgetest_init!(tests_invalid_config_key, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.args(&["test", "--mt", "testInvalidInlineConf"]).assert_failure().stderr_eq(
+    cmd.args(["test", "--mt", "testInvalidInlineConf"]).assert_failure().stderr_eq(
         r#"Error: Inline config error detected at forge-config:default.invalid.runs=1024
 
 Context:
