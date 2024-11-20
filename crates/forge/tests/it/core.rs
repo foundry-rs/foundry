@@ -23,7 +23,7 @@ async fn test_core() {
                 vec![(
                     "setUp()",
                     false,
-                    Some("setup failed: revert: setup failed predictably".to_string()),
+                    Some("revert: setup failed predictably".to_string()),
                     None,
                     None,
                 )],
@@ -70,13 +70,7 @@ async fn test_core() {
             ),
             (
                 "default/core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
-                vec![(
-                    "setUp()",
-                    false,
-                    Some("setup failed: execution error".to_string()),
-                    None,
-                    None,
-                )],
+                vec![("setUp()", false, Some("execution error".to_string()), None, None)],
             ),
             (
                 "default/core/MultipleAfterInvariant.t.sol:MultipleAfterInvariant",
