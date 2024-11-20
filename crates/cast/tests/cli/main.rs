@@ -28,6 +28,11 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+  -j, --threads <THREADS>
+          Number of threads to use. Zero specifies the number of logical cores
+          
+          [aliases: jobs]
+
   -V, --version
           Print version
 

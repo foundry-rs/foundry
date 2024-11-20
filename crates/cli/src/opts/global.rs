@@ -3,7 +3,7 @@ use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbos
 use serde::{Deserialize, Serialize};
 
 /// Global options.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Parser)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Parser)]
 pub struct GlobalOpts {
     /// Verbosity level of the log messages.
     ///
@@ -16,39 +16,47 @@ pub struct GlobalOpts {
     /// - 3 (-vvv): Print execution traces for failing tests.
     /// - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
     /// - 5 (-vvvvv): Print execution and setup traces for all tests.
-    #[clap(short, long, global = true, verbatim_doc_comment, conflicts_with = "quiet", action = ArgAction::Count, help_heading = "Display options")]
-    pub verbosity: Verbosity,
+    #[arg(help_heading = "Display options", global = true, short, long, verbatim_doc_comment, conflicts_with = "quiet", action = ArgAction::Count)]
+    verbosity: Verbosity,
 
     /// Do not print log messages.
-    #[clap(short, long, global = true, alias = "silent", help_heading = "Display options")]
+    #[arg(help_heading = "Display options", global = true, short, long, alias = "silent")]
     quiet: bool,
 
     /// Format log messages as JSON.
-    #[clap(
-        long,
-        global = true,
-        alias = "format-json",
-        conflicts_with_all = &["quiet", "color"],
-        help_heading = "Display options"
-    )]
+    #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color"])]
     json: bool,
 
     /// The color of the log messages.
-    #[clap(long, global = true, value_enum, help_heading = "Display options")]
+    #[arg(help_heading = "Display options", global = true, long, value_enum)]
     color: Option<ColorChoice>,
+
+    /// Number of threads to use. Zero specifies the number of logical cores.
+    #[arg(global = true, long, short = 'j', visible_alias = "jobs")]
+    threads: Option<usize>,
 }
 
 impl GlobalOpts {
     /// Initialize the global options.
-    pub fn init(self) -> eyre::Result<()> {
+    pub fn init(&self) -> eyre::Result<()> {
         // Set the global shell.
         self.shell().set();
+
+        // Initialize the thread pool only if `threads` was requested to avoid unnecessary overhead.
+        if self.threads.is_some() {
+            self.force_init_thread_pool()?;
+        }
 
         Ok(())
     }
 
+    /// Initialize the global thread pool.
+    pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
+        init_thread_pool(self.threads.unwrap_or(0))
+    }
+
     /// Create a new shell instance.
-    pub fn shell(self) -> Shell {
+    pub fn shell(&self) -> Shell {
         let mode = match self.quiet {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
@@ -61,4 +69,13 @@ impl GlobalOpts {
 
         Shell::new_with(format, mode, color, self.verbosity)
     }
+}
+
+/// Initialize the global thread pool.
+pub fn init_thread_pool(threads: usize) -> eyre::Result<()> {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("foundry-{i}"))
+        .num_threads(threads)
+        .build_global()?;
+    Ok(())
 }
