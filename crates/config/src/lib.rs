@@ -108,7 +108,10 @@ mod invariant;
 pub use invariant::InvariantConfig;
 
 mod inline;
-pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec, InlineConfigParserError};
+pub use inline::{
+    validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser,
+    InlineConfigParserError, NatSpec,
+};
 
 pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
