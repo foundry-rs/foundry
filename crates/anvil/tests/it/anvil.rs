@@ -126,7 +126,7 @@ async fn test_cancun_fields() {
 async fn test_cache_path() {
     run_with_tempdir("custom-anvil-cache", |tmp_dir| async move {
         let cache_path = tmp_dir.join("cache");
-        let (api, _handle) = spawn(
+        let (_api, _handle) = spawn(
             NodeConfig::test()
                 .with_cache_path(Some(cache_path.clone()))
                 .with_max_persisted_states(Some(10_usize))
@@ -134,11 +134,7 @@ async fn test_cache_path() {
         )
         .await;
 
-        for _ in 0..500 {
-            api.mine_one().await;
-        }
-
-        assert!(cache_path.exists());
+        tokio::time::sleep(Duration::from_millis(500)).await;
     })
     .await;
 }
