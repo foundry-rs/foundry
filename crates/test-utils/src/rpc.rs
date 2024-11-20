@@ -91,13 +91,14 @@ static ETHERSCAN_OPTIMISM_KEYS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| vec!["JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46"]);
 
 /// Returns the next index to use.
-fn next() -> usize {
+fn next_idx() -> usize {
     static NEXT_INDEX: AtomicUsize = AtomicUsize::new(0);
     NEXT_INDEX.fetch_add(1, Ordering::SeqCst)
 }
 
-fn num_keys() -> usize {
-    INFURA_KEYS.len() + ALCHEMY_KEYS.len()
+/// Returns the next item in the list to use.
+fn next<T>(list: &[T]) -> &T {
+    &list[next_idx() % list.len()]
 }
 
 /// Returns the next _mainnet_ rpc endpoint in inline
@@ -142,21 +143,17 @@ fn next_archive_endpoint(is_ws: bool) -> String {
     let rpc_env_vars = env::var(env_urls).unwrap_or_default();
     if !rpc_env_vars.is_empty() {
         let urls = rpc_env_vars.split(',').collect::<Vec<&str>>();
-        let idx = next() % urls.len();
-        urls[idx].to_string()
+        next(&urls).to_string()
     } else if is_ws {
-        let idx = next() % ALCHEMY_KEYS.len();
-        format!("wss://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+        format!("wss://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
     } else {
-        let idx = next() % ALCHEMY_KEYS.len();
-        format!("https://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+        format!("https://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
     }
 }
 
 /// Returns the next etherscan api key
 pub fn next_mainnet_etherscan_api_key() -> String {
-    let idx = next() % ETHERSCAN_MAINNET_KEYS.len();
-    ETHERSCAN_MAINNET_KEYS[idx].to_string()
+    next_etherscan_api_key(NamedChain::Mainnet)
 }
 
 /// Returns the next etherscan api key for given chain.
@@ -165,8 +162,7 @@ pub fn next_etherscan_api_key(chain: NamedChain) -> String {
         Optimism => &ETHERSCAN_OPTIMISM_KEYS,
         _ => &ETHERSCAN_MAINNET_KEYS,
     };
-    let idx = next() % keys.len();
-    keys[idx].to_string()
+    next(keys).to_string()
 }
 
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
@@ -176,7 +172,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://mainnet.base.org".to_string();
     }
 
-    let idx = next() % num_keys();
+    let idx = next_idx() % (INFURA_KEYS.len() + ALCHEMY_KEYS.len());
     let is_infura = idx < INFURA_KEYS.len();
 
     let key = if is_infura { INFURA_KEYS[idx] } else { ALCHEMY_KEYS[idx - INFURA_KEYS.len()] };
