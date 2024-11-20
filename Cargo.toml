@@ -203,6 +203,7 @@ alloy-transport = { version = "0.5.4", default-features = false }
 alloy-transport-http = { version = "0.5.4", default-features = false }
 alloy-transport-ipc = { version = "0.5.4", default-features = false }
 alloy-transport-ws = { version = "0.5.4", default-features = false }
+alloy-node-bindings = { version = "0.5.4", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "0.8.11"

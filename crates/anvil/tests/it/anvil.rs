@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
+use alloy_node_bindings::utils::run_with_tempdir;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
-use tempfile::tempdir;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -124,15 +124,21 @@ async fn test_cancun_fields() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cache_path() {
-    let tmp_dir = tempdir().unwrap().path().to_path_buf();
-    let cache_path = tmp_dir.join("custom-anvil-cache");
-    let (_api, _handle) = spawn(
-        NodeConfig::test()
-            .with_cache_path(Some(cache_path.clone()))
-            .with_max_persisted_states(Some(3600 as usize))
-            .with_blocktime(Some(Duration::from_millis(1))),
-    )
-    .await;
+    run_with_tempdir("custom-anvil-cache", |tmp_dir| async move {
+        let cache_path = tmp_dir.join("cache");
+        let (api, _handle) = spawn(
+            NodeConfig::test()
+                .with_cache_path(Some(cache_path.clone()))
+                .with_max_persisted_states(Some(10_usize))
+                .with_blocktime(Some(Duration::from_millis(1))),
+        )
+        .await;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+        for _ in 0..500 {
+            api.mine_one().await;
+        }
+
+        assert!(cache_path.exists());
+    })
+    .await;
 }
