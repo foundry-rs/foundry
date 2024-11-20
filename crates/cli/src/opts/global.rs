@@ -1,11 +1,10 @@
 use clap::{ArgAction, Parser};
 use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity};
+use serde::{Deserialize, Serialize};
 
-// note: `verbose` and `quiet` cannot have `short` because of conflicts with multiple commands.
-
-/// Global shell options.
-#[derive(Clone, Copy, Debug, Default, Parser)]
-pub struct ShellOpts {
+/// Global options.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Parser)]
+pub struct GlobalOpts {
     /// Verbosity level of the log messages.
     ///
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
@@ -22,7 +21,7 @@ pub struct ShellOpts {
 
     /// Do not print log messages.
     #[clap(short, long, global = true, alias = "silent", help_heading = "Display options")]
-    pub quiet: bool,
+    quiet: bool,
 
     /// Format log messages as JSON.
     #[clap(
@@ -32,14 +31,23 @@ pub struct ShellOpts {
         conflicts_with_all = &["quiet", "color"],
         help_heading = "Display options"
     )]
-    pub json: bool,
+    json: bool,
 
     /// The color of the log messages.
     #[clap(long, global = true, value_enum, help_heading = "Display options")]
-    pub color: Option<ColorChoice>,
+    color: Option<ColorChoice>,
 }
 
-impl ShellOpts {
+impl GlobalOpts {
+    /// Initialize the global options.
+    pub fn init(self) -> eyre::Result<()> {
+        // Set the global shell.
+        self.shell().set();
+
+        Ok(())
+    }
+
+    /// Create a new shell instance.
     pub fn shell(self) -> Shell {
         let mode = match self.quiet {
             true => OutputMode::Quiet,

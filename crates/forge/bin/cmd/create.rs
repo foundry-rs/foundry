@@ -10,7 +10,7 @@ use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge_verify::RetryArgs;
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
@@ -89,7 +89,7 @@ pub struct CreateArgs {
     eth: EthereumOpts,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     retry: RetryArgs,
@@ -201,7 +201,7 @@ impl CreateArgs {
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let mut verify = forge_verify::VerifyArgs {
+        let mut verify = VerifyArgs {
             address: Default::default(),
             contract: Some(self.contract.clone()),
             compiler_version: Some(id.version.to_string()),
@@ -359,7 +359,7 @@ impl CreateArgs {
         } else {
             None
         };
-        let verify = forge_verify::VerifyArgs {
+        let verify = VerifyArgs {
             address,
             contract: Some(self.contract),
             compiler_version: Some(id.version.to_string()),

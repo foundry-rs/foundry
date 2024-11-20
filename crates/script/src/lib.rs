@@ -27,7 +27,7 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
 use foundry_cli::{
-    opts::{CoreBuildArgs, ShellOpts},
+    opts::{CoreBuildArgs, GlobalOpts},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -78,6 +78,10 @@ foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
@@ -213,9 +217,6 @@ pub struct ScriptArgs {
 
     #[command(flatten)]
     pub retry: RetryArgs,
-
-    #[clap(flatten)]
-    pub shell: ShellOpts,
 }
 
 impl ScriptArgs {
