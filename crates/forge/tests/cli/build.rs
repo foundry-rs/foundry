@@ -87,10 +87,10 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
         str![[r#"
 {
    "HugeContract":{
-      "runtime_size":194,
-      "init_size":49344,
-      "runtime_margin":24382,
-      "init_margin":-192
+      "runtime_size":202,
+      "init_size":49359,
+      "runtime_margin":24374,
+      "init_margin":-207
    }
 }
 "#]]
@@ -117,10 +117,10 @@ forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
             str![[r#"
 {
   "HugeContract": {
-    "runtime_size": 194,
-    "init_size": 49344,
-    "runtime_margin": 24382,
-    "init_margin": -192
+    "runtime_size": 202,
+    "init_size": 49359,
+    "runtime_margin": 24374,
+    "init_margin": -207
   }
 } 
 "#]]
