@@ -35,11 +35,11 @@ pub struct VerifyBytecodeArgs {
     pub contract: ContractInfo,
 
     /// The block at which the bytecode should be verified.
-    #[clap(long, value_name = "BLOCK")]
+    #[arg(long, value_name = "BLOCK")]
     pub block: Option<BlockId>,
 
     /// The constructor args to generate the creation code.
-    #[clap(
+    #[arg(
         long,
         num_args(1..),
         conflicts_with_all = &["constructor_args_path", "encoded_constructor_args"],
@@ -65,14 +65,15 @@ pub struct VerifyBytecodeArgs {
     pub constructor_args_path: Option<PathBuf>,
 
     /// The rpc url to use for verification.
-    #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
+    #[arg(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    #[clap(flatten)]
+    /// Etherscan options.
+    #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
     /// Verifier options.
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: VerifierArgs,
 
     /// The project's root path.
@@ -83,7 +84,7 @@ pub struct VerifyBytecodeArgs {
     pub root: Option<PathBuf>,
 
     /// Ignore verification for creation or runtime bytecode.
-    #[clap(long, value_name = "BYTECODE_TYPE")]
+    #[arg(long, value_name = "BYTECODE_TYPE")]
     pub ignore: Option<BytecodeType>,
 }
 
