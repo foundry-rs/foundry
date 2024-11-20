@@ -18,9 +18,9 @@ const ENV_HTTP_ARCHIVE_ENDPOINTS: &str = "HTTP_ARCHIVE_URLS";
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
-        "6cb19d07ca2d44f59befd61563b1037b",
-        "6d46c0cca653407b861f3f93f7b0236a",
-        "69a36846dec146e3a2898429be60be85",
+        // "6cb19d07ca2d44f59befd61563b1037b",
+        // "6d46c0cca653407b861f3f93f7b0236a",
+        // "69a36846dec146e3a2898429be60be85",
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
         // "5c812e02193c4ba793f8c214317582bd",
@@ -39,11 +39,11 @@ static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
         "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
         "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
-        "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
-        "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
-        "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
-        "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
-        "U4hsGWgl9lBM1j3jhSgJ4gbjHg2jRwKy",
+        // "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
+        // "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
+        // "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
+        // "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
+        // "U4hsGWgl9lBM1j3jhSgJ4gbjHg2jRwKy",
         "K-uNlqYoYCO9cdBHcifwCDAcEjDy1UHL",
         "GWdgwabOE2XfBdLp_gIq-q6QHa7DSoag",
         "Uz0cF5HCXFtpZlvd9NR7kHxfB_Wdpsx7",
@@ -147,7 +147,7 @@ fn next_archive_endpoint(is_ws: bool) -> String {
     } else if is_ws {
         format!("wss://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
     } else {
-        format!("https://mainnet.infura.io/v3/{}", next(&INFURA_KEYS))
+        format!("https://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
     }
 }
 
