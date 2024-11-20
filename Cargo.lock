@@ -3706,6 +3706,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-primitives",
@@ -3770,9 +3771,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9edf09554357ebfcd2ea28503badbaca311aac3c947d269a6bae5256543aa172"
+checksum = "bb4df7894aa6a5371df998d3945a801e21daafaf5aa20541be8c25671768c984"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3808,9 +3809,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "134b2499a20136716422f1ae5afd3a5d6c2ef833bf97b7c956285ca96c1d9743"
+checksum = "732c9950ef23e96584e8b9f022562dbceb5b8d33dbb7a6ec033ee3b3e63d26e2"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3818,9 +3819,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78a9be34b3a43e77871e5bbd75f4a81d23eebf8f098519ae1ae9e163a0f3d0da"
+checksum = "b43d648a62b85344d1d7cc445541a2db6aa85b5acd971799f0cc3c18bbdf801b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3842,9 +3843,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1738950051ebcee2135adac07b3ef1708c6377ffed0c5e9a2bb485f31498befb"
+checksum = "167b634d89209acd6c28d9f4abd19e0d77e93a40595fb1c42dab7b4ca7a2bfe5"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3857,9 +3858,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ac2d9982eedb0eb3819f82c7efa1e28c1f78e031cdfb6adfa34690364fe5e0d"
+checksum = "dfe866840fe05f80cd105cd7f535f5c567a500a3dda80e70f6ebe8f149001544"
 dependencies = [
  "alloy-primitives",
  "cfg-if",

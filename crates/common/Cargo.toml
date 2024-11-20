@@ -20,6 +20,7 @@ foundry-config.workspace = true
 
 alloy-contract.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-eips.workspace = true
 alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true
 alloy-primitives = { workspace = true, features = [

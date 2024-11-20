@@ -112,10 +112,10 @@ impl PreSimulationState {
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
-            .map(|transaction| async {
+            .map(|mut transaction| async {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
+                let tx = transaction.tx_mut();
 
-                let tx = transaction.tx();
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
                     .simulate(
@@ -124,6 +124,7 @@ impl PreSimulationState {
                         to,
                         tx.input().map(Bytes::copy_from_slice),
                         tx.value(),
+                        tx.authorization_list(),
                     )
                     .wrap_err("Internal EVM error during simulation")?;
 
