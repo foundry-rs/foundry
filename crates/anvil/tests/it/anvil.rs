@@ -1,6 +1,6 @@
 //! tests for anvil specific logic
 
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
