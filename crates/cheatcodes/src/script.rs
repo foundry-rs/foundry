@@ -1,9 +1,9 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, PrimitiveSignature, B256, U256};
 use alloy_rpc_types::Authorization;
-use alloy_signer::{Signature, SignerSync};
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
@@ -104,9 +104,13 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     Ok(())
 }
 
-fn sig_to_delegation(sig: Signature, nonce: u64, implementation: Address) -> SignedDelegation {
+fn sig_to_delegation(
+    sig: PrimitiveSignature,
+    nonce: u64,
+    implementation: Address,
+) -> SignedDelegation {
     SignedDelegation {
-        v: sig.v().y_parity() as u8,
+        v: sig.v() as u8,
         r: sig.r().into(),
         s: sig.s().into(),
         nonce,
@@ -114,8 +118,8 @@ fn sig_to_delegation(sig: Signature, nonce: u64, implementation: Address) -> Sig
     }
 }
 
-fn sig_to_auth(sig: Signature, auth: Authorization) -> SignedAuthorization {
-    SignedAuthorization::new_unchecked(auth, sig.v().y_parity() as u8, sig.r(), sig.s())
+fn sig_to_auth(sig: PrimitiveSignature, auth: Authorization) -> SignedAuthorization {
+    SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s())
 }
 
 impl Cheatcode for startBroadcast_0Call {
