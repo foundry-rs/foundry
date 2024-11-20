@@ -5,6 +5,9 @@ pub enum InlineConfigParserError {
     /// The property cannot be mapped to the configuration object
     #[error("'{0}' is an invalid config property")]
     InvalidConfigProperty(String),
+    /// An invalid config key has been provided
+    #[error("'{0}' is an invalid config key. Available config keys are: {1}")]
+    InvalidConfigKey(String, String),
     /// An invalid profile has been provided
     #[error("'{0}' specifies an invalid profile. Available profiles are: {1}")]
     InvalidProfile(String, String),

@@ -2,6 +2,13 @@ use super::{remove_whitespaces, InlineConfigParserError};
 use crate::{inline::INLINE_CONFIG_PREFIX, InlineConfigError, NatSpec};
 use regex::Regex;
 
+/// Used to detect invalid configuration keys in the inline config.
+///
+/// # Example
+///
+/// forge-config: default.fuzz.runs = 100 - `fuzz` is a valid key
+/// forge-config: default.wrong.runs = 100 - `wrong` is an invalid key
+const VALID_CONFIG_KEYS: [&str; 2] = ["fuzz", "invariant"];
 /// This trait is intended to parse configurations from
 /// structured text. Foundry users can annotate Solidity test functions,
 /// providing special configs just for the execution of a specific test.
@@ -41,10 +48,27 @@ where
     fn merge(&self, natspec: &NatSpec) -> Result<Option<Self>, InlineConfigError> {
         let config_key = Self::config_key();
 
-        let configs = natspec
-            .current_profile_configs()
-            .filter(|l| l.contains(&config_key))
-            .collect::<Vec<String>>();
+        let mut configs = Vec::new();
+        for line in natspec.current_profile_configs() {
+            if !VALID_CONFIG_KEYS.iter().any(|&key| line.contains(key)) {
+                let wrong_key = line
+                    .split('.')
+                    .nth(1) // Get the part after the first dot (profile.KEY.value)
+                    .unwrap_or("unknown-config-key")
+                    .to_string();
+                return Err(InlineConfigError {
+                    line,
+                    source: InlineConfigParserError::InvalidConfigKey(
+                        wrong_key,
+                        format!("{VALID_CONFIG_KEYS:?}"),
+                    ),
+                });
+            }
+
+            if line.contains(&config_key) {
+                configs.push(line);
+            }
+        }
 
         self.try_merge(&configs).map_err(|e| {
             let line = natspec.debug_context();

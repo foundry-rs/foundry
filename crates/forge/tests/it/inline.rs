@@ -3,7 +3,7 @@
 use crate::test_helpers::{ForgeTestData, ForgeTestProfile, TEST_DATA_DEFAULT};
 use forge::{result::TestKind, TestOptionsBuilder};
 use foundry_config::{FuzzConfig, InvariantConfig};
-use foundry_test_utils::Filter;
+use foundry_test_utils::{forgetest_init, Filter};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
@@ -98,3 +98,30 @@ fn build_test_options_just_one_valid_profile() {
     // per-test configs for "default" and "ci" profiles
     assert!(build_result.is_err());
 }
+
+forgetest_init!(tests_invalid_config_key, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.insert_ds_test();
+
+    prj.add_test(
+        "InvalidInlineConf.t.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InvalidInlineConf is Test {
+            /// forge-config: default.fuzz.runs = 1024
+            /// forge-config: default.invalid.runs = 1024
+            function testInvalidInlineConf() public {}
+        }
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(&["test", "--mt", "testInvalidInlineConf"]).assert_failure().stderr_eq(
+        r#"Error: Inline config error detected at forge-config:default.invalid.runs=1024
+
+Context:
+- 'invalid' is an invalid config key. Available config keys are: [..]"#,
+    );
+});
