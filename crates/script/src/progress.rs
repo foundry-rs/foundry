@@ -80,16 +80,21 @@ impl SequenceProgressState {
     pub fn tx_sent(&mut self, tx_hash: B256) {
         // Avoid showing more than 10 spinners.
         if self.tx_spinners.len() < 10 {
-            let spinner = ProgressBar::new_spinner()
-                .with_style(
-                    ProgressStyle::with_template("    {spinner:.green} {msg}")
-                        .unwrap()
-                        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
-                )
-                .with_message(format!("{} {}", "[Pending]".yellow(), tx_hash));
+            let spinner = if !shell::is_quiet() {
+                let spinner = ProgressBar::new_spinner()
+                    .with_style(
+                        ProgressStyle::with_template("    {spinner:.green} {msg}")
+                            .unwrap()
+                            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
+                    )
+                    .with_message(format!("{} {}", "[Pending]".yellow(), tx_hash));
 
-            let spinner = self.multi.insert_before(&self.txs, spinner);
-            spinner.enable_steady_tick(Duration::from_millis(100));
+                let spinner = self.multi.insert_before(&self.txs, spinner);
+                spinner.enable_steady_tick(Duration::from_millis(100));
+                spinner
+            } else {
+                ProgressBar::hidden()
+            };
 
             self.tx_spinners.insert(tx_hash, spinner);
         }
