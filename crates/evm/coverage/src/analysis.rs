@@ -3,7 +3,7 @@ use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rayon::prelude::*;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone, Debug)]
@@ -592,5 +592,5 @@ pub struct SourceFile<'a> {
     /// The source code.
     pub source: String,
     /// The AST of the source code.
-    pub ast: &'a Ast,
+    pub ast: Cow<'a, Ast>,
 }

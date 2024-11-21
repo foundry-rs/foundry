@@ -17,12 +17,13 @@ use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
-    output, Artifact, ArtifactId, Project, ProjectCompileOutput,
+    Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use semver::Version;
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -178,7 +179,7 @@ impl CoverageArgs {
                     trace!(root=?project_paths.root, ?file, "reading source file");
 
                     let source = SourceFile {
-                        ast,
+                        ast: Cow::Borrowed(ast),
                         source: fs::read_to_string(&file)
                             .wrap_err("Could not read source code for analysis")?,
                     };
@@ -191,6 +192,39 @@ impl CoverageArgs {
             }
         } else {
             // Cached sources
+            for (id, artifact) in output.artifact_ids() {
+                // Filter out dependencies
+                if !self.include_libs && project_paths.has_library_ancestor(&id.source) {
+                    continue;
+                }
+
+                let version = id.version;
+                let source_file = if let Some(source_file) = artifact.source_file() {
+                    source_file
+                } else {
+                    sh_warn!("ast source file not found for {}", id.source.display())?;
+                    continue;
+                };
+
+                report.add_source(version.clone(), source_file.id as usize, id.source.clone());
+
+                if let Some(ast) = source_file.ast {
+                    let file = project_paths.root.join(id.source);
+                    trace!(root=?project_paths.root, ?file, "reading source file");
+
+                    let source = SourceFile {
+                        ast: Cow::Owned(ast),
+                        source: fs::read_to_string(&file)
+                            .wrap_err("Could not read source code for analysis")?,
+                    };
+
+                    versioned_sources
+                        .entry(version.clone())
+                        .or_default()
+                        .sources
+                        .insert(source_file.id as usize, source);
+                }
+            }
         }
 
         // Get source maps and bytecodes

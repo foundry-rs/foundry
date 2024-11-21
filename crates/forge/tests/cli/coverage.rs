@@ -1506,16 +1506,16 @@ contract AContractTest is DSTest {
 "#]],
     );
 
-    // forge build - This should not compile the contracts again.
+    // forge build - Should not compile the contracts again.
     cmd.forge_fuse().arg("build").assert_success().stdout_eq(
         r#"No files changed, compilation skipped
 "#,
     );
 
-    // TODO: forge coverage - Should not compile again.
+    // forge coverage - Should not compile the contracts again.
     cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
-
+        str![[r#"No files changed, compilation skipped
+...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
