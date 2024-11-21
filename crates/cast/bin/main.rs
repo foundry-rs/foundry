@@ -50,8 +50,9 @@ fn run() -> Result<()> {
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
+
     let args = CastArgs::parse();
-    args.shell.shell().set();
+    args.global.init()?;
     main_args(args)
 }
 

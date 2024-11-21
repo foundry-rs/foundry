@@ -13,7 +13,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
-    BlockId, BlockNumberOrTag, TransactionRequest,
+    BlockId, BlockNumberOrTag, BlockTransactionsKind, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use anvil::{
@@ -643,7 +643,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
 
     let Multicall::getCurrentBlockCoinbaseReturn { coinbase } =
         multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
-    assert_eq!(coinbase, latest_block.header.miner);
+    assert_eq!(coinbase, latest_block.header.beneficiary);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -718,14 +718,16 @@ async fn test_reorg() {
 
     // The first 3 reorged blocks should have 5 transactions each
     for num in 14..17 {
-        let block = provider.get_block_by_number(num.into(), true).await.unwrap();
+        let block =
+            provider.get_block_by_number(num.into(), BlockTransactionsKind::Full).await.unwrap();
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
 
     // Verify that historic blocks are still accessible
     for num in (0..14).rev() {
-        let _ = provider.get_block_by_number(num.into(), true).await.unwrap();
+        let _ =
+            provider.get_block_by_number(num.into(), BlockTransactionsKind::Full).await.unwrap();
     }
 
     // Send a few more transaction to verify the chain can still progress
@@ -777,7 +779,7 @@ async fn test_reorg() {
     let signature = accounts[5].sign_transaction_sync(&mut tx).unwrap();
     let tx = tx.into_signed(signature);
     let mut encoded = vec![];
-    tx.tx().encode_with_signature(tx.signature(), &mut encoded, false);
+    tx.eip2718_encode(&mut encoded);
 
     let pre_bal = provider.get_balance(accounts[5].address()).await.unwrap();
     api.anvil_reorg(ReorgOptions {
