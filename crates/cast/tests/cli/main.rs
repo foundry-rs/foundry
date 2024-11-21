@@ -29,7 +29,7 @@ Options:
           Print help (see a summary with '-h')
 
   -j, --threads <THREADS>
-          Number of threads to use. Zero specifies the number of logical cores
+          Number of threads to use. Specifying 0 defaults to the number of logical cores
           
           [aliases: jobs]
 

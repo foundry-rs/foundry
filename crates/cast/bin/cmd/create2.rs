@@ -72,7 +72,7 @@ pub struct Create2Args {
     #[arg(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
     init_code_hash: Option<String>,
 
-    /// Number of threads to use. Zero specifies the number of logical cores.
+    /// Number of threads to use. Specifying 0 defaults to the number of logical cores.
     #[arg(global = true, long, short = 'j', visible_alias = "jobs")]
     threads: Option<usize>,
 
