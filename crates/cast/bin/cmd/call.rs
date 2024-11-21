@@ -81,6 +81,10 @@ pub struct CallArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -127,6 +131,7 @@ impl CallArgs {
             decode_internal,
             labels,
             data,
+            with_local_artifacts,
             ..
         } = self;
 
@@ -195,7 +200,16 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(trace, &config, chain, labels, debug, decode_internal, false).await?;
+            handle_traces(
+                trace,
+                &config,
+                chain,
+                labels,
+                with_local_artifacts,
+                debug,
+                decode_internal,
+            )
+            .await?;
 
             return Ok(());
         }

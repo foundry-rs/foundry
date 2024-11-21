@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{fs, TestFunctionExt};
+use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -14,9 +14,9 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        debug::DebugTraceIdentifier,
+        debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{CachedSignatures, EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
         Traces,
     },
@@ -383,10 +383,25 @@ pub async fn handle_traces(
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
+    with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
-    verbose: bool,
 ) -> Result<()> {
+    let (known_contracts, local_sources) = if with_local_artifacts {
+        let _ = sh_println!("Compiling project to generate artifacts");
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new().quiet(true);
+        let output = compiler.compile(&project)?;
+        (
+            Some(ContractsByArtifact::new(
+                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+            )),
+            Some(ContractSources::from_project_output(&output, project.root(), None)?),
+        )
+    } else {
+        (None, None)
+    };
+
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
@@ -398,45 +413,48 @@ pub async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
-    let mut decoder = CallTraceDecoderBuilder::new()
+
+    let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,
-        )?)
-        .build();
-
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    if let Some(etherscan_identifier) = &mut etherscan_identifier {
-        for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-            decoder.identify(trace, etherscan_identifier);
-        }
+        )?);
+    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
+    if let Some(contracts) = &known_contracts {
+        builder = builder.with_known_contracts(contracts);
+        identifier = identifier.with_local(contracts);
     }
 
-    if decode_internal {
-        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
+    let mut decoder = builder.build();
+
+    for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    if decode_internal || debug {
+        let sources = if let Some(local_sources) = local_sources {
+            local_sources
+        } else if let Some(ref etherscan_identifier) = identifier.etherscan {
             etherscan_identifier.get_compiled_contracts().await?
         } else {
             Default::default()
         };
+
+        if debug {
+            let mut debugger = Debugger::builder()
+                .traces(result.traces.expect("missing traces"))
+                .decoder(&decoder)
+                .sources(sources)
+                .build();
+            debugger.try_run_tui()?;
+            return Ok(())
+        }
+
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    if debug {
-        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
-        let mut debugger = Debugger::builder()
-            .traces(result.traces.expect("missing traces"))
-            .decoder(&decoder)
-            .sources(sources)
-            .build();
-        debugger.try_run_tui()?;
-    } else {
-        print_traces(&mut result, &decoder, verbose).await?;
-    }
+    print_traces(&mut result, &decoder, shell::verbosity() > 0).await?;
 
     Ok(())
 }

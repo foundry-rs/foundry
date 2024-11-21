@@ -8,11 +8,9 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{cache_local_signatures, handle_traces, init_progress, TraceResult},
+    utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{
-    compile::ProjectCompiler, is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE,
-};
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -90,12 +88,9 @@ pub struct RunArgs {
     #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
 
-    /// If generate a file with the signatures of the functions and events of the project.
-    /// The file will be saved in the foundry cache directory.
-    ///
-    /// default value: false
-    #[arg(long, visible_alias = "cls")]
-    pub cache_local_signatures: bool,
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 impl RunArgs {
@@ -255,26 +250,14 @@ impl RunArgs {
             }
         };
 
-        if self.cache_local_signatures {
-            let project = config.project()?;
-            let compiler = ProjectCompiler::new().quiet(true);
-            let output = compiler.compile(&project)?;
-            if let Err(err) = cache_local_signatures(&output, Config::foundry_cache_dir().unwrap())
-            {
-                warn!(target: "cast::run", ?err, "failed to flush signature cache");
-            } else {
-                trace!(target: "cast::run", "flushed signature cache")
-            }
-        }
-
         handle_traces(
             result,
             &config,
             chain,
             self.label,
+            self.with_local_artifacts,
             self.debug,
             self.decode_internal,
-            shell::verbosity() > 0,
         )
         .await?;
 

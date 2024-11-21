@@ -4,13 +4,14 @@ use comfy_table::Table;
 use eyre::Result;
 use foundry_cli::{
     opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
-    utils::FoundryPathExt,
+    utils::{cache_local_signatures, FoundryPathExt},
 };
 use foundry_common::{
     compile::{compile_target, ProjectCompiler},
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
+use foundry_config::Config;
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
@@ -67,11 +68,34 @@ pub enum SelectorsSubcommands {
         #[command(flatten)]
         project_paths: ProjectPathsArgs,
     },
+
+    /// Cache project selectors (enables trace with local contracts functions and events).
+    #[command(visible_alias = "c")]
+    Cache {
+        #[command(flatten)]
+        project_paths: ProjectPathsArgs,
+    },
 }
 
 impl SelectorsSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
+            Self::Cache { project_paths } => {
+                sh_println!("Caching selectors for contracts in the project...")?;
+                let build_args = CoreBuildArgs {
+                    project_paths,
+                    compiler: CompilerArgs {
+                        extra_output: vec![ContractOutputSelection::Abi],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+
+                // compile the project to get the artifacts/abis
+                let project = build_args.project()?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                cache_local_signatures(&outcome, Config::foundry_cache_dir().unwrap())?
+            }
             Self::Upload { contract, all, project_paths } => {
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
