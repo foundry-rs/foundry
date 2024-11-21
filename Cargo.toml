@@ -278,7 +278,7 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.6"
-soldeer-commands = "=0.5.1"
+soldeer-commands = "=0.5.2"
 strum = "0.26"
 tempfile = "3.13"
 tikv-jemallocator = "0.6"
