@@ -92,7 +92,7 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let mut project = config.create_project(false, false)?;
+        let mut project = config.create_project(config.cache, false)?;
 
         // Set a different artifacts path for coverage. `out/coverage`.
         // This is done to avoid overwriting the artifacts of the main build that maybe built with
