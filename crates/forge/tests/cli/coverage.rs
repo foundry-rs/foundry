@@ -1447,3 +1447,70 @@ contract AContract {
 
 "#]]);
 });
+
+forgetest!(test_diff_coverage_dir, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // forge build
+    cmd.arg("build").assert_success();
+
+    // forge coverage
+    // Assert 100% coverage (init function coverage called in setUp is accounted).
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]],
+    );
+
+    // forge build - This should not compile the contracts again.
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(
+        r#"No files changed, compilation skipped
+"#,
+    );
+
+    // TODO: forge coverage - Should not compile again.
+});
