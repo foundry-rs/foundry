@@ -10,6 +10,7 @@ use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
+use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -71,10 +72,6 @@ pub struct NodeArgs {
     /// [default: m/44'/60'/0'/0/]
     #[arg(long)]
     pub derivation_path: Option<String>,
-
-    /// Don't print anything on startup and don't print logs
-    #[arg(long)]
-    pub silent: bool,
 
     /// The EVM hardfork to use.
     ///
@@ -254,10 +251,11 @@ impl NodeArgs {
             .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
+            .disable_min_priority_fee(self.evm_opts.disable_min_priority_fee)
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
-            .set_silent(self.silent)
+            .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
@@ -545,7 +543,11 @@ pub struct AnvilEvmArgs {
         value_name = "FEE",
         help_heading = "Environment config"
     )]
-    pub block_base_fee_per_gas: Option<u128>,
+    pub block_base_fee_per_gas: Option<u64>,
+
+    /// Disable the enforcement of a minimum suggested priority fee.
+    #[arg(long, visible_alias = "no-priority-fee", help_heading = "Environment config")]
+    pub disable_min_priority_fee: bool,
 
     /// The chain ID.
     #[arg(long, alias = "chain", help_heading = "Environment config")]
@@ -559,8 +561,9 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable autoImpersonate on startup
-    #[arg(long, visible_alias = "auto-impersonate")]
+    /// Enables automatic impersonation on startup. This allows any transaction sender to be
+    /// simulated as different accounts, which is useful for testing contract behavior.
+    #[arg(long, visible_alias = "auto-unlock")]
     pub auto_impersonate: bool,
 
     /// Run an Optimism chain
@@ -576,7 +579,7 @@ pub struct AnvilEvmArgs {
     pub memory_limit: Option<u64>,
 
     /// Enable Alphanet features
-    #[arg(long, visible_alias = "alphanet")]
+    #[arg(long, visible_alias = "odyssey")]
     pub alphanet: bool,
 }
 

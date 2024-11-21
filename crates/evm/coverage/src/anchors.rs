@@ -1,9 +1,9 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
+use alloy_primitives::map::{DefaultHashBuilder, HashMap, HashSet};
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::interpreter::opcode;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
@@ -11,9 +11,9 @@ pub fn find_anchors(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
     items: &[CoverageItem],
-    items_by_source_id: &FxHashMap<usize, Vec<usize>>,
+    items_by_source_id: &HashMap<usize, Vec<usize>>,
 ) -> Vec<ItemAnchor> {
-    let mut seen = FxHashSet::default();
+    let mut seen = HashSet::with_hasher(DefaultHashBuilder::default());
     source_map
         .iter()
         .filter_map(|element| items_by_source_id.get(&(element.index()? as usize)))
@@ -171,7 +171,7 @@ pub fn find_anchor_branch(
 /// Calculates whether `element` is within the range of the target `location`.
 fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> bool {
     // Source IDs must match.
-    let source_ids_match = element.index().map_or(false, |a| a as usize == location.source_id);
+    let source_ids_match = element.index().is_some_and(|a| a as usize == location.source_id);
     if !source_ids_match {
         return false;
     }

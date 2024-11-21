@@ -31,8 +31,8 @@ use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
     primitives::{
-        BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TxEnv, TxKind,
+        AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,
+        ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
     },
 };
 use std::borrow::Cow;
@@ -378,6 +378,21 @@ impl Executor {
         self.call_with_env(env)
     }
 
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization list.
+    pub fn call_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, to.into(), calldata, value);
+        env.tx.authorization_list = Some(AuthorizationList::Signed(authorization_list));
+        self.call_with_env(env)
+    }
+
     /// Performs a raw call to an account on the current state of the VM.
     pub fn transact_raw(
         &mut self,
@@ -663,7 +678,7 @@ pub enum EvmError {
     Skip(SkipReason),
     /// Any other error.
     #[error(transparent)]
-    Eyre(#[from] eyre::Error),
+    Eyre(eyre::Error),
 }
 
 impl From<ExecutionErr> for EvmError {
@@ -675,6 +690,16 @@ impl From<ExecutionErr> for EvmError {
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
         Self::Abi(err.into())
+    }
+}
+
+impl From<eyre::Error> for EvmError {
+    fn from(err: eyre::Report) -> Self {
+        let mut chained_cause = String::new();
+        for cause in err.chain() {
+            chained_cause.push_str(format!("{cause}; ").as_str());
+        }
+        Self::Eyre(eyre::format_err!("{chained_cause}"))
     }
 }
 
@@ -700,6 +725,12 @@ impl std::ops::DerefMut for DeployResult {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
+    }
+}
+
+impl From<DeployResult> for RawCallResult {
+    fn from(d: DeployResult) -> Self {
+        d.raw
     }
 }
 
@@ -770,6 +801,23 @@ impl Default for RawCallResult {
 }
 
 impl RawCallResult {
+    /// Unpacks an EVM result.
+    pub fn from_evm_result(r: Result<Self, EvmError>) -> eyre::Result<(Self, Option<String>)> {
+        match r {
+            Ok(r) => Ok((r, None)),
+            Err(EvmError::Execution(e)) => Ok((e.raw, Some(e.reason))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Unpacks an execution result.
+    pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
+        match r {
+            Ok(r) => (r, None),
+            Err(e) => (e.raw, Some(e.reason)),
+        }
+    }
+
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
         if let Some(reason) = SkipReason::decode(&self.result) {

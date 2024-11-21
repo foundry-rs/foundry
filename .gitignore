@@ -1,6 +1,7 @@
 .DS_STORE
 /target
 out/
+snapshots/
 out.json
 .idea
 .vscode

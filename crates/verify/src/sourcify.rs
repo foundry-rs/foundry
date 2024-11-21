@@ -8,7 +8,6 @@ use eyre::Result;
 use foundry_common::{fs, retry::Retry};
 use futures::FutureExt;
 use reqwest::Url;
-use revm_primitives::map::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -41,11 +40,11 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let resp = retry
             .run_async(|| {
                 async {
-                    println!(
+                    sh_println!(
                         "\nSubmitting verification for [{}] {:?}.",
                         context.target_name,
                         args.address.to_string()
-                    );
+                    )?;
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")
@@ -114,8 +113,7 @@ impl SourcifyVerificationProvider {
         let metadata = context.get_target_metadata()?;
         let imports = context.get_target_imports()?;
 
-        let mut files =
-            HashMap::with_capacity_and_hasher(2 + imports.len(), FxBuildHasher::default());
+        let mut files = HashMap::with_capacity_and_hasher(2 + imports.len(), Default::default());
 
         let metadata = serde_json::to_string_pretty(&metadata)?;
         files.insert("metadata.json".to_string(), metadata);
@@ -147,15 +145,15 @@ impl SourcifyVerificationProvider {
         match response.status.as_str() {
             "perfect" => {
                 if let Some(ts) = &response.storage_timestamp {
-                    println!("Contract source code already verified. Storage Timestamp: {ts}");
+                    sh_println!("Contract source code already verified. Storage Timestamp: {ts}")?;
                 } else {
-                    println!("Contract successfully verified");
+                    sh_println!("Contract successfully verified")?;
                 }
             }
             "partial" => {
-                println!("The recompiled contract partially matches the deployed version");
+                sh_println!("The recompiled contract partially matches the deployed version")?;
             }
-            "false" => println!("Contract source code is not verified"),
+            "false" => sh_println!("Contract source code is not verified")?,
             s => eyre::bail!("Unknown status from sourcify. Status: {s:?}"),
         }
         Ok(())

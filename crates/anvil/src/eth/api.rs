@@ -4,8 +4,8 @@ use super::{
 };
 use crate::{
     eth::{
-        backend,
         backend::{
+            self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
             notifications::NewBlockNotifications,
@@ -23,21 +23,27 @@ use crate::{
             },
             Pool,
         },
-        sign,
-        sign::Signer,
+        sign::{self, Signer},
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{eip2718::Decodable2718, BlockResponse};
+use alloy_network::{
+    eip2718::Decodable2718, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet,
+    TransactionBuilder, TransactionResponse,
+};
 use alloy_primitives::{
     map::{HashMap, HashSet},
-    Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64,
+    Address, Bytes, PrimitiveSignature as Signature, TxHash, TxKind, B256, B64, U256, U64,
+};
+use alloy_provider::utils::{
+    eip1559_default_estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+    EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
 };
 use alloy_rpc_types::{
     anvil::{
@@ -51,12 +57,10 @@ use alloy_rpc_types::{
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
-    AccessList, AccessListResult, AnyNetworkBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
-    Transaction,
+    AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
 };
 use alloy_serde::WithOtherFields;
-use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -65,6 +69,7 @@ use anvil_core::{
             transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
             TypedTransactionRequest,
         },
+        wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
     types::{ReorgOptions, TransactionData, Work},
@@ -82,6 +87,7 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
+use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
@@ -319,6 +325,7 @@ impl EthApi {
             EthRequest::SetIntervalMining(interval) => {
                 self.anvil_set_interval_mining(interval).to_rpc_result()
             }
+            EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
@@ -449,6 +456,14 @@ impl EthApi {
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
+            EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
+            EthRequest::WalletSendTransaction(tx) => {
+                self.wallet_send_transaction(*tx).await.to_rpc_result()
+            }
+            EthRequest::AnvilAddCapability(addr) => self.anvil_add_capability(addr).to_rpc_result(),
+            EthRequest::AnvilSetExecutor(executor_pk) => {
+                self.anvil_set_executor(executor_pk).to_rpc_result()
+            }
         }
     }
 
@@ -459,13 +474,11 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
-                let nil_signature: alloy_primitives::Signature =
-                    alloy_primitives::Signature::from_scalars_and_parity(
-                        B256::with_last_byte(1),
-                        B256::with_last_byte(1),
-                        Parity::Parity(false),
-                    )
-                    .unwrap();
+                let nil_signature = Signature::from_scalars_and_parity(
+                    B256::with_last_byte(1),
+                    B256::with_last_byte(1),
+                    false,
+                );
                 return build_typed_transaction(request, nil_signature)
             }
             _ => {
@@ -498,10 +511,7 @@ impl EthApi {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => TxEnvelope::try_from(tx.inner)
-                    .map_or(Err(BlockchainError::FailedToDecodeTransaction), |tx| {
-                        Ok(Some(tx.encoded_2718().into()))
-                    }),
+                Some(tx) => Ok(Some(tx.inner.inner.encoded_2718().into())),
                 None => Ok(None),
             },
         }
@@ -592,7 +602,11 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
         if self.backend.is_eip1559() {
-            self.backend.base_fee().saturating_add(self.lowest_suggestion_tip())
+            if self.backend.is_min_priority_fee_enforced() {
+                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+            } else {
+                self.backend.base_fee() as u128
+            }
         } else {
             self.backend.fees().raw_gas_price()
         }
@@ -722,7 +736,7 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
     }
@@ -730,7 +744,7 @@ impl EthApi {
     /// Returns a _full_ block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash_full(hash).await
     }
@@ -738,7 +752,7 @@ impl EthApi {
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(Some(self.pending_block().await));
@@ -750,10 +764,7 @@ impl EthApi {
     /// Returns a _full_ block with given number
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number_full(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(self.pending_block_full().await);
@@ -1165,10 +1176,7 @@ impl EthApi {
     /// this will also scan the mempool for a matching pending transaction
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub async fn transaction_by_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
@@ -1198,7 +1206,7 @@ impl EthApi {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockHashAndIndex");
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
@@ -1210,7 +1218,7 @@ impl EthApi {
         &self,
         block: BlockNumber,
         idx: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
     }
@@ -1242,7 +1250,7 @@ impl EthApi {
         &self,
         block_hash: B256,
         idx: Index,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockHashAndIndex");
         let number =
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
@@ -1262,7 +1270,7 @@ impl EthApi {
         &self,
         block_number: BlockNumber,
         idx: Index,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockNumberAndIndex");
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
@@ -1405,7 +1413,7 @@ impl EthApi {
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
         // newest block"
-        response.base_fee_per_gas.push(self.backend.fees().base_fee());
+        response.base_fee_per_gas.push(self.backend.fees().base_fee() as u128);
 
         // Same goes for the `base_fee_per_blob_gas`:
         // > [..] includes the next block after the newest of the returned range, because this
@@ -1524,7 +1532,7 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockHashAndIndex");
         match self.backend.transaction_by_block_hash_and_index(block_hash, index).await? {
-            Some(tx) => self.inner_raw_transaction(tx.hash).await,
+            Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
     }
@@ -1539,7 +1547,7 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockNumberAndIndex");
         match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
-            Some(tx) => self.inner_raw_transaction(tx.hash).await,
+            Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
     }
@@ -1646,6 +1654,14 @@ impl EthApi {
         Ok(self.miner.is_auto_mine())
     }
 
+    /// Returns the value of mining interval, if set.
+    ///
+    /// Handler for ETH RPC call: `anvil_getIntervalMining`.
+    pub fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
+        node_info!("anvil_getIntervalMining");
+        Ok(self.miner.get_interval())
+    }
+
     /// Enables or disables, based on the single boolean argument, the automatic mining of new
     /// blocks with each new transaction submitted to the network.
     ///
@@ -1678,12 +1694,12 @@ impl EthApi {
 
         // mine all the blocks
         for _ in 0..blocks.to::<u64>() {
-            self.mine_one().await;
-
             // If we have an interval, jump forwards in time to the "next" timestamp
             if let Some(interval) = interval {
                 self.backend.time().increase_time(interval);
             }
+
+            self.mine_one().await;
         }
 
         Ok(())
@@ -2147,10 +2163,7 @@ impl EthApi {
     /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
     /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
     /// and `ganache` may change the `0x0` placeholder.
-    pub async fn evm_mine_detailed(
-        &self,
-        opts: Option<MineOptions>,
-    ) -> Result<Vec<AnyNetworkBlock>> {
+    pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<AnyRpcBlock>> {
         node_info!("evm_mine_detailed");
 
         let mined_blocks = self.do_evm_mine(opts).await?;
@@ -2168,7 +2181,7 @@ impl EthApi {
                     BlockTransactions::Hashes(_) | BlockTransactions::Uncle => unreachable!(),
                 };
                 for tx in block_txs.iter_mut() {
-                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
+                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.tx_hash()) {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
                             if !receipt
@@ -2302,7 +2315,7 @@ impl EthApi {
             let to = tx.to();
             let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = tx.gas_limit();
+            let gas = tx.gas_limit() as u128;
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
@@ -2331,10 +2344,10 @@ impl EthApi {
     /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
     ///
     /// Handler for ETH RPC call: `txpool_inspect`
-    pub async fn txpool_content(&self) -> Result<TxpoolContent> {
+    pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
-        let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> Transaction {
+        let mut content = TxpoolContent::<AnyRpcTransaction>::default();
+        fn convert(tx: Arc<PoolTransaction>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
             let mut tx = transaction_build(
                 Some(tx.hash()),
@@ -2347,21 +2360,153 @@ impl EthApi {
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
             tx.from = from;
-            tx.inner
+
+            Ok(tx)
         }
 
         for pending in self.pool.ready_transactions() {
             let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(pending));
+            entry.insert(key, convert(pending)?);
         }
         for queued in self.pool.pending_transactions() {
             let entry = content.pending.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(queued));
+            entry.insert(key, convert(queued)?);
         }
 
         Ok(content)
+    }
+}
+
+// ===== impl Wallet endppoints =====
+impl EthApi {
+    /// Get the capabilities of the wallet.
+    ///
+    /// See also [EIP-5792][eip-5792].
+    ///
+    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
+    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
+        node_info!("wallet_getCapabilities");
+        Ok(self.backend.get_capabilities())
+    }
+
+    pub async fn wallet_send_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<TxHash> {
+        node_info!("wallet_sendTransaction");
+
+        // Validate the request
+        // reject transactions that have a non-zero value to prevent draining the executor.
+        if request.value.is_some_and(|val| val > U256::ZERO) {
+            return Err(WalletError::ValueNotZero.into())
+        }
+
+        // reject transactions that have from set, as this will be the executor.
+        if request.from.is_some() {
+            return Err(WalletError::FromSet.into());
+        }
+
+        // reject transaction requests that have nonce set, as this is managed by the executor.
+        if request.nonce.is_some() {
+            return Err(WalletError::NonceSet.into());
+        }
+
+        let capabilities = self.backend.get_capabilities();
+        let valid_delegations: &[Address] = capabilities
+            .get(self.chain_id())
+            .map(|caps| caps.delegation.addresses.as_ref())
+            .unwrap_or_default();
+
+        if let Some(authorizations) = &request.authorization_list {
+            if authorizations.iter().any(|auth| !valid_delegations.contains(&auth.address)) {
+                return Err(WalletError::InvalidAuthorization.into());
+            }
+        }
+
+        // validate the destination address
+        match (request.authorization_list.is_some(), request.to) {
+            // if this is an eip-1559 tx, ensure that it is an account that delegates to a
+            // whitelisted address
+            (false, Some(TxKind::Call(addr))) => {
+                let acc = self.backend.get_account(addr).await?;
+
+                let delegated_address = acc
+                    .code
+                    .map(|code| match code {
+                        Bytecode::Eip7702(c) => c.address(),
+                        _ => Address::ZERO,
+                    })
+                    .unwrap_or_default();
+
+                // not a whitelisted address, or not an eip-7702 bytecode
+                if delegated_address == Address::ZERO ||
+                    !valid_delegations.contains(&delegated_address)
+                {
+                    return Err(WalletError::IllegalDestination.into());
+                }
+            }
+            // if it's an eip-7702 tx, let it through
+            (true, _) => (),
+            // create tx's disallowed
+            _ => return Err(WalletError::IllegalDestination.into()),
+        }
+
+        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
+
+        let from = NetworkWallet::<Ethereum>::default_signer_address(&wallet);
+
+        let nonce = self.get_transaction_count(from, Some(BlockId::latest())).await?;
+
+        request.nonce = Some(nonce);
+
+        let chain_id = self.chain_id();
+
+        request.chain_id = Some(chain_id);
+
+        request.from = Some(from);
+
+        let gas_limit_fut = self.estimate_gas(request.clone(), Some(BlockId::latest()), None);
+
+        let fees_fut = self.fee_history(
+            U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
+            BlockNumber::Latest,
+            vec![EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
+        );
+
+        let (gas_limit, fees) = tokio::join!(gas_limit_fut, fees_fut);
+
+        let gas_limit = gas_limit?;
+        let fees = fees?;
+
+        request.gas = Some(gas_limit.to());
+
+        let base_fee = fees.latest_block_base_fee().unwrap_or_default();
+
+        let estimation = eip1559_default_estimator(base_fee, &fees.reward.unwrap_or_default());
+
+        request.max_fee_per_gas = Some(estimation.max_fee_per_gas);
+        request.max_priority_fee_per_gas = Some(estimation.max_priority_fee_per_gas);
+        request.gas_price = None;
+
+        let envelope = request.build(&wallet).await.map_err(|_| WalletError::InternalError)?;
+
+        self.send_raw_transaction(envelope.encoded_2718().into()).await
+    }
+
+    /// Add an address to the delegation capability of wallet.
+    ///
+    /// This entails that the executor will now be able to sponsor transactions to this address.
+    pub fn anvil_add_capability(&self, address: Address) -> Result<()> {
+        node_info!("anvil_addCapability");
+        self.backend.add_capability(address);
+        Ok(())
+    }
+
+    pub fn anvil_set_executor(&self, executor_pk: String) -> Result<Address> {
+        node_info!("anvil_setExecutor");
+        self.backend.set_executor(executor_pk)
     }
 }
 
@@ -2485,7 +2630,8 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to());
+        let mut highest_gas_limit =
+            request.gas.map_or(block_env.gas_limit.to::<u128>(), |g| g as u128);
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
@@ -2507,7 +2653,7 @@ impl EthApi {
         }
 
         let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(highest_gas_limit);
+        call_to_estimate.gas = Some(highest_gas_limit as u64);
 
         // execute the call without writing to db
         let ethres =
@@ -2541,7 +2687,7 @@ impl EthApi {
 
         // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > 1 {
-            request.gas = Some(mid_gas_limit);
+            request.gas = Some(mid_gas_limit as u64);
             let ethres = self.backend.call_with_state(
                 &state,
                 request.clone(),
@@ -2643,14 +2789,14 @@ impl EthApi {
     }
 
     /// Returns the pending block with tx hashes
-    async fn pending_block(&self) -> AnyNetworkBlock {
+    async fn pending_block(&self) -> AnyRpcBlock {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let info = self.backend.pending_block(transactions).await;
         self.backend.convert_block(info.block)
     }
 
     /// Returns the full pending block with `Transaction` objects
-    async fn pending_block_full(&self) -> Option<AnyNetworkBlock> {
+    async fn pending_block_full(&self) -> Option<AnyRpcBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
             self.backend.pending_block(transactions).await;
@@ -2688,7 +2834,7 @@ impl EthApi {
         let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
-        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit());
+        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit() as u64);
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {
@@ -2765,7 +2911,7 @@ impl EthApi {
             TypedTransactionRequest::Legacy(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                Parity::NonEip155(false),
+                false,
             ),
             TypedTransactionRequest::EIP2930(_) |
             TypedTransactionRequest::EIP1559(_) |
@@ -2773,10 +2919,9 @@ impl EthApi {
             TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                Parity::Parity(false),
+                false,
             ),
         }
-        .unwrap()
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`
@@ -2898,7 +3043,7 @@ fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> 
                 TxKind::Create => MIN_CREATE_GAS,
             },
             TypedTransactionRequest::EIP4844(_) => MIN_TRANSACTION_GAS,
-            TypedTransactionRequest::Deposit(req) => match req.kind {
+            TypedTransactionRequest::Deposit(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },

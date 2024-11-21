@@ -33,8 +33,10 @@ use foundry_compilers::{
         Compiler,
     },
     error::SolcError,
+    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
-    ConfigurableArtifacts, Project, ProjectPathsConfig, VyperLanguage,
+    ConfigurableArtifacts, Graph, Project, ProjectPathsConfig, RestrictionsWithVersion,
+    VyperLanguage,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -43,9 +45,12 @@ use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::mpsc::{self, RecvTimeoutError},
+    time::Duration,
 };
 
 mod macros;
@@ -114,6 +119,9 @@ use vyper::VyperConfig;
 mod bind_json;
 use bind_json::BindJsonConfig;
 
+mod compilation;
+use compilation::{CompilationRestrictions, SettingsOverrides};
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -175,6 +183,8 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// where the gas snapshots are stored
+    pub snapshots: PathBuf,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -192,6 +202,8 @@ pub struct Config {
     pub gas_reports: Vec<String>,
     /// list of contracts to ignore for gas reports
     pub gas_reports_ignore: Vec<String>,
+    /// Whether to include gas reports for tests.
+    pub gas_reports_include_tests: bool,
     /// The Solc instance to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -234,6 +246,8 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
+    /// Timeout that should be used for any rpc calls
+    pub eth_rpc_timeout: Option<u64>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -464,9 +478,20 @@ pub struct Config {
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
 
+    /// Use EOF-enabled solc for compilation.
+    pub eof: bool,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
+
+    /// Additional settings profiles to use when compiling.
+    #[serde(default)]
+    pub additional_compiler_profiles: Vec<SettingsOverrides>,
+
+    /// Restrictions on compilation of certain files.
+    #[serde(default)]
+    pub compilation_restrictions: Vec<CompilationRestrictions>,
 
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -527,6 +552,9 @@ impl Config {
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+
+    /// Docker image with eof-enabled solc binary
+    pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
 
     /// Returns the current `Config`
     ///
@@ -718,6 +746,7 @@ impl Config {
         self.out = p(&root, &self.out);
         self.broadcast = p(&root, &self.broadcast);
         self.cache_path = p(&root, &self.cache_path);
+        self.snapshots = p(&root, &self.snapshots);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -783,6 +812,8 @@ impl Config {
         config.libs.sort_unstable();
         config.libs.dedup();
 
+        config.sanitize_eof_settings();
+
         config
     }
 
@@ -797,6 +828,22 @@ impl Config {
             self.remappings.iter_mut().for_each(|r| {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
+        }
+    }
+
+    /// Adjusts settings if EOF compilation is enabled.
+    ///
+    /// This includes enabling via_ir, eof_version and ensuring that evm_version is not lower than
+    /// Prague.
+    pub fn sanitize_eof_settings(&mut self) {
+        if self.eof {
+            self.via_ir = true;
+            if self.eof_version.is_none() {
+                self.eof_version = Some(EofVersion::V1);
+            }
+            if self.evm_version < EvmVersion::Prague {
+                self.evm_version = EvmVersion::Prague;
+            }
         }
     }
 
@@ -834,12 +881,66 @@ impl Config {
         self.create_project(false, true)
     }
 
+    /// Builds mapping with additional settings profiles.
+    fn additional_settings(
+        &self,
+        base: &MultiCompilerSettings,
+    ) -> BTreeMap<String, MultiCompilerSettings> {
+        let mut map = BTreeMap::new();
+
+        for profile in &self.additional_compiler_profiles {
+            let mut settings = base.clone();
+            profile.apply(&mut settings);
+            map.insert(profile.name.clone(), settings);
+        }
+
+        map
+    }
+
+    /// Resolves globs and builds a mapping from individual source files to their restrictions
+    fn restrictions(
+        &self,
+        paths: &ProjectPathsConfig,
+    ) -> Result<BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>>, SolcError>
+    {
+        let mut map = BTreeMap::new();
+
+        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let (sources, _) = graph.into_sources();
+
+        for res in &self.compilation_restrictions {
+            for source in sources.keys().filter(|path| {
+                if res.paths.is_match(path) {
+                    true
+                } else if let Ok(path) = path.strip_prefix(&paths.root) {
+                    res.paths.is_match(path)
+                } else {
+                    false
+                }
+            }) {
+                let res: RestrictionsWithVersion<_> =
+                    res.clone().try_into().map_err(SolcError::msg)?;
+                if !map.contains_key(source) {
+                    map.insert(source.clone(), res);
+                } else {
+                    map.get_mut(source.as_path()).unwrap().merge(res);
+                }
+            }
+        }
+
+        Ok(map)
+    }
+
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
+        let settings = self.compiler_settings()?;
+        let paths = self.project_paths();
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
-            .paths(self.project_paths())
-            .settings(self.compiler_settings()?)
+            .additional_settings(self.additional_settings(&settings))
+            .restrictions(self.restrictions(&paths)?)
+            .settings(settings)
+            .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -885,6 +986,12 @@ impl Config {
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
+        // Remove snapshot directory.
+        let snapshot_dir = project.root().join(&self.snapshots);
+        if snapshot_dir.exists() {
+            let _ = fs::remove_dir_all(&snapshot_dir);
+        }
+
         Ok(())
     }
 
@@ -894,7 +1001,44 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
+    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
+        if self.eof {
+            let (tx, rx) = mpsc::channel();
+            let root = self.root.0.clone();
+            std::thread::spawn(move || {
+                tx.send(
+                    Solc::new_with_args(
+                        "docker",
+                        [
+                            "run",
+                            "--rm",
+                            "-i",
+                            "-v",
+                            &format!("{}:/app/root", root.display()),
+                            Self::EOF_SOLC_IMAGE,
+                        ],
+                    )
+                    .map(Some),
+                )
+            });
+            // If it takes more than 1 second, this likely means we are pulling the image.
+            return match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(res) => res,
+                Err(RecvTimeoutError::Timeout) => {
+                    // `sh_warn!` is a circular dependency, preventing us from using it here.
+                    eprintln!(
+                        "{}",
+                        yansi::Paint::yellow(
+                            "Pulling Docker image for eof-solc, this might take some time..."
+                        )
+                    );
+
+                    rx.recv().expect("sender dropped")
+                }
+                Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
+            }
+        }
         if let Some(ref solc) = self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
@@ -1018,23 +1162,6 @@ impl Config {
     }
 
     /// Returns all configured remappings.
-    ///
-    /// **Note:** this will add an additional `<src>/=<src path>` remapping here, see
-    /// [Self::get_source_dir_remapping()]
-    ///
-    /// So that
-    ///
-    /// ```solidity
-    /// import "./math/math.sol";
-    /// import "contracts/tokens/token.sol";
-    /// ```
-    ///
-    /// in `contracts/contract.sol` are resolved to
-    ///
-    /// ```text
-    /// contracts/tokens/token.sol
-    /// contracts/math/math.sol
-    /// ```
     pub fn get_all_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.remappings.iter().map(|m| m.clone().into())
     }
@@ -2086,12 +2213,14 @@ impl Default for Config {
             cache: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
+            snapshots: "snapshots".into(),
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Paris,
+            evm_version: EvmVersion::Cancun,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
+            gas_reports_include_tests: false,
             solc: None,
             vyper: Default::default(),
             auto_detect_solc: true,
@@ -2138,6 +2267,7 @@ impl Default for Config {
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
             eth_rpc_jwt: None,
+            eth_rpc_timeout: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
@@ -2181,6 +2311,9 @@ impl Default for Config {
             eof_version: None,
             alphanet: false,
             transaction_timeout: 120,
+            additional_compiler_profiles: Default::default(),
+            compilation_restrictions: Default::default(),
+            eof: false,
             _non_exhaustive: (),
         }
     }
@@ -2376,6 +2509,10 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
                     dict.insert("solc".to_string(), v);
                 }
             }
+
+            if let Some(v) = dict.remove("odyssey") {
+                dict.insert("alphanet".to_string(), v);
+            }
             map.insert(profile, dict);
         }
         Ok(map)
@@ -2385,7 +2522,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 /// A provider that sets the `src` and `output` path depending on their existence.
 struct DappHardhatDirProvider<'a>(&'a Path);
 
-impl<'a> Provider for DappHardhatDirProvider<'a> {
+impl Provider for DappHardhatDirProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Dapp Hardhat dir compat")
     }
@@ -4816,6 +4953,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
+    #[allow(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {

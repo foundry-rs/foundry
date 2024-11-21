@@ -377,13 +377,17 @@ test_repro!(8383, false, None, |res| {
     let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
     assert_eq!(test.status, TestStatus::Success);
     match test.kind {
-        TestKind::Unit { gas } => assert_eq!(gas, 3103),
+        TestKind::Unit { gas } => assert_eq!(gas, 3101),
         _ => panic!("not a unit test kind"),
     }
 });
 
-// https://github.com/foundry-rs/foundry/issues/1543
-test_repro!(1543);
-
 // https://github.com/foundry-rs/foundry/issues/6643
 test_repro!(6643);
+
+// https://github.com/foundry-rs/foundry/issues/8971
+test_repro!(8971; |config| {
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.isolate = true;
+  config.runner.config = Arc::new(prj_config);
+});

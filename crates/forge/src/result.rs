@@ -13,13 +13,13 @@ use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{EvmError, RawCallResult},
+    executors::{invariant::InvariantMetrics, RawCallResult},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
@@ -151,20 +151,19 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
         if outcome.allow_failure || failures == 0 {
             return Ok(());
         }
 
-        if !shell::verbosity().is_normal() {
+        if shell::is_quiet() || silent {
             // TODO: Avoid process::exit
             std::process::exit(1);
         }
 
-        shell::println("")?;
-        shell::println("Failing tests:")?;
+        sh_println!("\nFailing tests:")?;
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {
@@ -172,18 +171,18 @@ impl TestOutcome {
             }
 
             let term = if failed > 1 { "tests" } else { "test" };
-            shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
+            sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                sh_println!("{}", result.short_result(name))?;
             }
-            shell::println("")?;
+            sh_println!()?;
         }
         let successes = outcome.passed();
-        shell::println(format!(
+        sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
-        ))?;
+        )?;
 
         // TODO: Avoid process::exit
         std::process::exit(1);
@@ -389,11 +388,14 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
+    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
+    /// Used for json output.
+    pub decoded_logs: Vec<String>,
+
     /// What kind of test this was
     pub kind: TestKind,
 
     /// Traces
-    #[serde(skip)]
     pub traces: Traces,
 
     /// Additional traces to use for gas report.
@@ -411,6 +413,9 @@ pub struct TestResult {
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Any captured gas snapshots along the test's execution which should be accumulated.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
 
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
@@ -464,7 +469,7 @@ impl TestResult {
     /// Creates a new test result starting from test setup results.
     pub fn new(setup: TestSetup) -> Self {
         Self {
-            labeled_addresses: setup.labeled_addresses,
+            labeled_addresses: setup.labels,
             logs: setup.logs,
             traces: setup.traces,
             coverage: setup.coverage,
@@ -485,7 +490,7 @@ impl TestResult {
             logs: setup.logs,
             traces: setup.traces,
             coverage: setup.coverage,
-            labeled_addresses: setup.labeled_addresses,
+            labeled_addresses: setup.labels,
             ..Default::default()
         }
     }
@@ -531,6 +536,7 @@ impl TestResult {
 
         if let Some(cheatcodes) = raw_call_result.cheatcodes {
             self.breakpoints = cheatcodes.breakpoints;
+            self.gas_snapshots = cheatcodes.gas_snapshots;
             self.deprecated_cheatcodes = cheatcodes.deprecated;
         }
 
@@ -572,7 +578,8 @@ impl TestResult {
 
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(mut self, reason: SkipReason) -> Self {
-        self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
+        self.kind =
+            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
         self
@@ -585,7 +592,8 @@ impl TestResult {
         invariant_name: &String,
         call_sequence: Vec<BaseCounterExample>,
     ) -> Self {
-        self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
+        self.kind =
+            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
         self.status = TestStatus::Failure;
         self.reason = if replayed_entirely {
             Some(format!("{invariant_name} replay failure"))
@@ -598,13 +606,15 @@ impl TestResult {
 
     /// Returns the fail result for invariant test setup.
     pub fn invariant_setup_fail(mut self, e: Report) -> Self {
-        self.kind = TestKind::Invariant { runs: 0, calls: 0, reverts: 0 };
+        self.kind =
+            TestKind::Invariant { runs: 0, calls: 0, reverts: 0, metrics: HashMap::default() };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
         self
     }
 
     /// Returns the invariant test result.
+    #[allow(clippy::too_many_arguments)]
     pub fn invariant_result(
         mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
@@ -613,11 +623,13 @@ impl TestResult {
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
     ) -> Self {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
+            metrics,
         };
         self.status = match success {
             true => TestStatus::Success,
@@ -639,21 +651,17 @@ impl TestResult {
         format!("{self} {name} {}", self.kind.report())
     }
 
-    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
-    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
-        self.logs.extend(call_result.logs.clone());
-        self.labeled_addresses.extend(call_result.labels.clone());
-        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(call_result.coverage.clone());
+    /// Merges the given raw call result into `self`.
+    pub fn extend(&mut self, call_result: RawCallResult) {
+        self.logs.extend(call_result.logs);
+        self.labeled_addresses.extend(call_result.labels);
+        self.traces.extend(call_result.traces.map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage);
     }
 
-    /// Function to merge given coverage in current test result coverage.
+    /// Merges the given coverage result into `self`.
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
-        let old_coverage = std::mem::take(&mut self.coverage);
-        self.coverage = match (old_coverage, other_coverage) {
-            (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
-            (a, b) => a.or(b),
-        };
+        HitMaps::merge_opt(&mut self.coverage, other_coverage);
     }
 }
 
@@ -662,19 +670,19 @@ impl TestResult {
 pub enum TestKindReport {
     Unit { gas: u64 },
     Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
-    Invariant { runs: usize, calls: usize, reverts: usize },
+    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
 }
 
 impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
+        match self {
             Self::Unit { gas } => {
                 write!(f, "(gas: {gas})")
             }
             Self::Fuzz { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            Self::Invariant { runs, calls, reverts } => {
+            Self::Invariant { runs, calls, reverts, metrics: _ } => {
                 write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
             }
         }
@@ -708,7 +716,7 @@ pub enum TestKind {
         median_gas: u64,
     },
     /// An invariant test.
-    Invariant { runs: usize, calls: usize, reverts: usize },
+    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
 }
 
 impl Default for TestKind {
@@ -720,89 +728,54 @@ impl Default for TestKind {
 impl TestKind {
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
-        match *self {
-            Self::Unit { gas } => TestKindReport::Unit { gas },
+        match self {
+            Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
             Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
-                TestKindReport::Fuzz { runs, mean_gas, median_gas }
+                TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
-            Self::Invariant { runs, calls, reverts } => {
-                TestKindReport::Invariant { runs, calls, reverts }
-            }
+            Self::Invariant { runs, calls, reverts, metrics: _ } => TestKindReport::Invariant {
+                runs: *runs,
+                calls: *calls,
+                reverts: *reverts,
+                metrics: HashMap::default(),
+            },
         }
     }
 }
 
+/// The result of a test setup.
+///
+/// Includes the deployment of the required libraries and the test contract itself, and the call to
+/// the `setUp()` function.
 #[derive(Clone, Debug, Default)]
 pub struct TestSetup {
-    /// The address at which the test contract was deployed
+    /// The address at which the test contract was deployed.
     pub address: Address,
-    /// The logs emitted during setup
-    pub logs: Vec<Log>,
-    /// Call traces of the setup
-    pub traces: Traces,
-    /// Addresses labeled during setup
-    pub labeled_addresses: AddressHashMap<String>,
-    /// The reason the setup failed, if it did
-    pub reason: Option<String>,
-    /// Coverage info during setup
-    pub coverage: Option<HitMaps>,
-    /// Defined fuzz test fixtures
+    /// Defined fuzz test fixtures.
     pub fuzz_fixtures: FuzzFixtures,
+
+    /// The logs emitted during setup.
+    pub logs: Vec<Log>,
+    /// Addresses labeled during setup.
+    pub labels: AddressHashMap<String>,
+    /// Call traces of the setup.
+    pub traces: Traces,
+    /// Coverage info during setup.
+    pub coverage: Option<HitMaps>,
+
+    /// The reason the setup failed, if it did.
+    pub reason: Option<String>,
 }
 
 impl TestSetup {
-    pub fn from_evm_error_with(
-        error: EvmError,
-        mut logs: Vec<Log>,
-        mut traces: Traces,
-        mut labeled_addresses: AddressHashMap<String>,
-    ) -> Self {
-        match error {
-            EvmError::Execution(err) => {
-                // force the tracekind to be setup so a trace is shown.
-                traces.extend(err.raw.traces.map(|traces| (TraceKind::Setup, traces)));
-                logs.extend(err.raw.logs);
-                labeled_addresses.extend(err.raw.labels);
-                Self::failed_with(logs, traces, labeled_addresses, err.reason)
-            }
-            e => Self::failed_with(
-                logs,
-                traces,
-                labeled_addresses,
-                format!("failed to deploy contract: {e}"),
-            ),
-        }
-    }
-
-    pub fn success(
-        address: Address,
-        logs: Vec<Log>,
-        traces: Traces,
-        labeled_addresses: AddressHashMap<String>,
-        coverage: Option<HitMaps>,
-        fuzz_fixtures: FuzzFixtures,
-    ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
-    }
-
-    pub fn failed_with(
-        logs: Vec<Log>,
-        traces: Traces,
-        labeled_addresses: AddressHashMap<String>,
-        reason: String,
-    ) -> Self {
-        Self {
-            address: Address::ZERO,
-            logs,
-            traces,
-            labeled_addresses,
-            reason: Some(reason),
-            coverage: None,
-            fuzz_fixtures: FuzzFixtures::default(),
-        }
-    }
-
     pub fn failed(reason: String) -> Self {
         Self { reason: Some(reason), ..Default::default() }
+    }
+
+    pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
+        self.logs.extend(raw.logs);
+        self.labels.extend(raw.labels);
+        self.traces.extend(raw.traces.map(|traces| (trace_kind, traces)));
+        HitMaps::merge_opt(&mut self.coverage, raw.coverage);
     }
 }

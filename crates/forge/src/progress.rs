@@ -48,7 +48,7 @@ impl TestsProgressState {
     pub fn end_suite_progress(&mut self, suite_name: &String, result_summary: String) {
         if let Some(suite_progress) = self.suites_progress.remove(suite_name) {
             self.multi.suspend(|| {
-                println!("{suite_name}\n  ↪ {result_summary}");
+                let _ = sh_println!("{suite_name}\n  ↪ {result_summary}");
             });
             suite_progress.finish_and_clear();
             // Increment test progress bar to reflect completed test suite.

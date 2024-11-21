@@ -1,6 +1,7 @@
-//! cli arguments for configuring the evm settings
-use alloy_primitives::{Address, B256, U256};
-use clap::{ArgAction, Parser};
+//! CLI arguments for configuring the EVM settings.
+
+use alloy_primitives::{map::HashMap, Address, B256, U256};
+use clap::Parser;
 use eyre::ContextCompat;
 use foundry_config::{
     figment::{
@@ -11,11 +12,12 @@ use foundry_config::{
     },
     Chain, Config,
 };
-use rustc_hash::FxHashMap;
 use serde::Serialize;
 
+use crate::shell;
+
 /// Map keyed by breakpoints char to their location (contract address, pc)
-pub type Breakpoints = FxHashMap<char, (Address, usize)>;
+pub type Breakpoints = HashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 ///
@@ -101,19 +103,6 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub always_use_create_2_factory: bool,
 
-    /// Verbosity of the EVM.
-    ///
-    /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
-    ///
-    /// Verbosity levels:
-    /// - 2: Print logs for all tests
-    /// - 3: Print execution traces for failing tests
-    /// - 4: Print execution traces for all tests, and setup traces for failing tests
-    /// - 5: Print execution and setup traces for all tests
-    #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count)]
-    #[serde(skip)]
-    pub verbosity: u8,
-
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
@@ -147,7 +136,7 @@ pub struct EvmArgs {
     pub isolate: bool,
 
     /// Whether to enable Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     #[serde(skip)]
     pub alphanet: bool,
 }
@@ -163,9 +152,9 @@ impl Provider for EvmArgs {
         let error = InvalidType(value.to_actual(), "map".into());
         let mut dict = value.into_dict().ok_or(error)?;
 
-        if self.verbosity > 0 {
+        if shell::verbosity() > 0 {
             // need to merge that manually otherwise `from_occurrences` does not work
-            dict.insert("verbosity".to_string(), self.verbosity.into());
+            dict.insert("verbosity".to_string(), shell::verbosity().into());
         }
 
         if self.ffi {

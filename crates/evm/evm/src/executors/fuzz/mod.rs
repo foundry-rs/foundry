@@ -17,7 +17,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::BTreeMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -39,6 +39,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Stores gas snapshots for all fuzz cases
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
@@ -108,9 +110,11 @@ impl FuzzedExecutor {
                 FuzzOutcome::Case(case) => {
                     let mut data = execution_data.borrow_mut();
                     data.gas_by_case.push((case.case.gas, case.case.stipend));
+
                     if data.first_case.is_none() {
                         data.first_case.replace(case.case);
                     }
+
                     if let Some(call_traces) = case.traces {
                         if data.traces.len() == max_traces_to_collect {
                             data.traces.pop();
@@ -118,14 +122,13 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                         data.breakpoints.replace(case.breakpoints);
                     }
+
                     if show_logs {
                         data.logs.extend(case.logs);
                     }
-                    // Collect and merge coverage if `forge snapshot` context.
-                    match &mut data.coverage {
-                        Some(prev) => prev.merge(case.coverage.unwrap()),
-                        opt => *opt = case.coverage,
-                    }
+
+                    HitMaps::merge_opt(&mut data.coverage, case.coverage);
+
                     data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
                     Ok(())

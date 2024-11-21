@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -50,5 +50,11 @@ contract StringManipulationTest is DSTest {
         assertEq(vm.indexOf(input, key2), 7);
         assertEq(vm.indexOf(input, key3), 0);
         assertEq(vm.indexOf(input, key4), type(uint256).max);
+    }
+
+    function testContains() public {
+        string memory subject = "this is a test";
+        assert(vm.contains(subject, "test"));
+        assert(!vm.contains(subject, "foundry"));
     }
 }

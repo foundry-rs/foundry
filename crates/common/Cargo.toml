@@ -20,6 +20,7 @@ foundry-config.workspace = true
 
 alloy-contract.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-eips.workspace = true
 alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true
 alloy-primitives = { workspace = true, features = [
@@ -50,18 +51,22 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
+itertools.workspace = true
 num-format.workspace = true
 reqwest.workspace = true
-rustc-hash.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
+
+anstream.workspace = true
+anstyle.workspace = true
+terminal_size.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true

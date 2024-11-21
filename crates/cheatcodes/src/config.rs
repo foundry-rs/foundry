@@ -1,5 +1,5 @@
 use super::Result;
-use crate::{script::ScriptWallets, Vm::Rpc};
+use crate::Vm::Rpc;
 use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -37,18 +37,20 @@ pub struct CheatsConfig {
     pub fs_permissions: FsPermissions,
     /// Project root
     pub root: PathBuf,
+    /// Absolute Path to broadcast dir i.e project_root/broadcast
+    pub broadcast: PathBuf,
     /// Paths (directories) where file reading/writing is allowed
     pub allowed_paths: Vec<PathBuf>,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
     pub labels: AddressHashMap<String>,
-    /// Script wallets
-    pub script_wallets: Option<ScriptWallets>,
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
+    /// Name of the script/test contract which is currently running.
+    pub running_contract: Option<String>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -63,7 +65,7 @@ impl CheatsConfig {
         config: &Config,
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
-        script_wallets: Option<ScriptWallets>,
+        running_contract: Option<String>,
         running_version: Option<Version>,
     ) -> Self {
         let mut allowed_paths = vec![config.root.0.clone()];
@@ -87,11 +89,12 @@ impl CheatsConfig {
             paths: config.project_paths(),
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.0.clone(),
+            broadcast: config.root.0.clone().join(&config.broadcast),
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
-            script_wallets,
             available_artifacts,
+            running_contract,
             running_version,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
@@ -216,11 +219,12 @@ impl Default for CheatsConfig {
             paths: ProjectPathsConfig::builder().build_with_root("./"),
             fs_permissions: Default::default(),
             root: Default::default(),
+            broadcast: Default::default(),
             allowed_paths: vec![],
             evm_opts: Default::default(),
             labels: Default::default(),
-            script_wallets: None,
             available_artifacts: Default::default(),
+            running_contract: Default::default(),
             running_version: Default::default(),
             assertions_revert: true,
             seed: None,

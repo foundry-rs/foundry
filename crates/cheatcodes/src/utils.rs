@@ -1,12 +1,12 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{map::HashMap, U256};
+use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
-use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
-use proptest::strategy::{Strategy, ValueTree};
+use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use proptest::prelude::Strategy;
 use rand::{Rng, RngCore};
 
 /// Contains locations of traces ignored via cheatcodes.
@@ -133,11 +133,25 @@ impl Cheatcode for randomBytesCall {
     }
 }
 
+impl Cheatcode for randomBytes4Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u32 = state.rng().next_u32();
+        Ok(B32::from(rand_u32).abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytes8Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u64 = state.rng().next_u64();
+        Ok(B64::from(rand_u64).abi_encode())
+    }
+}
+
 impl Cheatcode for pauseTracingCall {
-    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+    fn apply_full(
         &self,
-        ccx: &mut crate::CheatsCtxt<DB>,
-        executor: &mut E,
+        ccx: &mut crate::CheatsCtxt,
+        executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to pause
@@ -157,10 +171,10 @@ impl Cheatcode for pauseTracingCall {
 }
 
 impl Cheatcode for resumeTracingCall {
-    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+    fn apply_full(
         &self,
-        ccx: &mut crate::CheatsCtxt<DB>,
-        executor: &mut E,
+        ccx: &mut crate::CheatsCtxt,
+        executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to unpause
@@ -180,7 +194,7 @@ impl Cheatcode for resumeTracingCall {
 }
 
 impl Cheatcode for setArbitraryStorageCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target } = self;
         ccx.state.arbitrary_storage().mark_arbitrary(target);
 
@@ -189,7 +203,7 @@ impl Cheatcode for setArbitraryStorageCall {
 }
 
 impl Cheatcode for copyStorageCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { from, to } = self;
 
         ensure!(

@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
@@ -24,7 +24,7 @@ use foundry_evm::{
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
         },
-        CallResult, EvmError, ExecutionErr, Executor, ITest, RawCallResult,
+        CallResult, EvmError, Executor, ITest, RawCallResult,
     },
     fuzz::{
         fixture_name,
@@ -35,12 +35,7 @@ use foundry_evm::{
 };
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{
-    borrow::Cow,
-    cmp::min,
-    collections::{BTreeMap, HashMap},
-    time::Instant,
-};
+use std::{borrow::Cow, cmp::min, collections::BTreeMap, time::Instant};
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
 /// libraries affecting nonces of senders used in tests, we are using separate address to
@@ -76,7 +71,7 @@ pub struct ContractRunner<'a> {
     pub span: tracing::Span,
 }
 
-impl<'a> ContractRunner<'a> {
+impl ContractRunner<'_> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
@@ -93,53 +88,51 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_balance(self.sender, U256::MAX)?;
         self.executor.set_balance(CALLER, U256::MAX)?;
 
-        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
+        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools.
         self.executor.set_nonce(self.sender, 1)?;
 
-        // Deploy libraries
+        // Deploy libraries.
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
-        let mut logs = Vec::new();
-        let mut traces = Vec::with_capacity(self.libs_to_deploy.len());
+        let mut result = TestSetup::default();
         for code in self.libs_to_deploy.iter() {
-            match self.executor.deploy(
+            let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
                 U256::ZERO,
                 Some(self.revert_decoder),
-            ) {
-                Ok(d) => {
-                    logs.extend(d.raw.logs);
-                    traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
-                }
-                Err(e) => {
-                    return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
-                }
+            );
+            let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+            result.extend(raw, TraceKind::Deployment);
+            if reason.is_some() {
+                result.reason = reason;
+                return Ok(result);
             }
         }
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
+        result.address = address;
 
         // Set the contracts initial balance before deployment, so it is available during
         // construction
         self.executor.set_balance(address, self.initial_balance)?;
 
         // Deploy the test contract
-        match self.executor.deploy(
+        let deploy_result = self.executor.deploy(
             self.sender,
             self.contract.bytecode.clone(),
             U256::ZERO,
             Some(self.revert_decoder),
-        ) {
-            Ok(d) => {
-                logs.extend(d.raw.logs);
-                traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
-                d.address
-            }
-            Err(e) => {
-                return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
-            }
-        };
+        );
+        if let Ok(dr) = &deploy_result {
+            debug_assert_eq!(dr.address, address);
+        }
+        let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+        result.extend(raw, TraceKind::Deployment);
+        if reason.is_some() {
+            result.reason = reason;
+            return Ok(result);
+        }
 
         // Reset `self.sender`s, `CALLER`s and `LIBRARY_DEPLOYER`'s balance to the initial balance.
         self.executor.set_balance(self.sender, self.initial_balance)?;
@@ -149,51 +142,15 @@ impl<'a> ContractRunner<'a> {
         self.executor.deploy_create2_deployer()?;
 
         // Optionally call the `setUp` function
-        let result = if call_setup {
+        if call_setup {
             trace!("calling setUp");
             let res = self.executor.setup(None, address, Some(self.revert_decoder));
-            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match res {
-                Ok(RawCallResult { traces, labels, logs, coverage, .. }) => {
-                    trace!(%address, "successfully called setUp");
-                    (logs, traces, labels, None, coverage)
-                }
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr {
-                        raw: RawCallResult { traces, labels, logs, coverage, .. },
-                        reason,
-                    } = *err;
-                    (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
-                }
-                Err(err) => (
-                    Vec::new(),
-                    None,
-                    HashMap::default(),
-                    Some(format!("setup failed: {err}")),
-                    None,
-                ),
-            };
-            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
-            logs.extend(setup_logs);
+            let (raw, reason) = RawCallResult::from_evm_result(res)?;
+            result.extend(raw, TraceKind::Setup);
+            result.reason = reason;
+        }
 
-            TestSetup {
-                address,
-                logs,
-                traces,
-                labeled_addresses,
-                reason,
-                coverage,
-                fuzz_fixtures: self.fuzz_fixtures(address),
-            }
-        } else {
-            TestSetup::success(
-                address,
-                logs,
-                traces,
-                Default::default(),
-                None,
-                self.fuzz_fixtures(address),
-            )
-        };
+        result.fuzz_fixtures = self.fuzz_fixtures(address);
 
         Ok(result)
     }
@@ -301,7 +258,7 @@ impl<'a> ContractRunner<'a> {
                 warnings,
             )
         }
-        let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
+        let call_after_invariant = after_invariant_fns.first().is_some_and(|after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
             if !match_sig {
                 warnings.push(format!(
@@ -524,6 +481,11 @@ impl<'a> ContractRunner<'a> {
                 invariant_contract.call_after_invariant,
             ) {
                 if !success {
+                    let _= sh_warn!("\
+                            Replayed invariant failure from {:?} file. \
+                            Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
+                        failure_file.as_path()
+                    );
                     // If sequence still fails then replay error to collect traces and
                     // exit without executing new runs.
                     let _ = replay_run(
@@ -628,6 +590,7 @@ impl<'a> ContractRunner<'a> {
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
+            invariant_result.metrics,
         )
     }
 
@@ -703,11 +666,13 @@ impl<'a> ContractRunner<'a> {
                 // Apply before test configured calldata.
                 match executor.to_mut().transact_raw(self.sender, address, calldata, U256::ZERO) {
                     Ok(call_result) => {
+                        let reverted = call_result.reverted;
+
                         // Merge tx result traces in unit test result.
-                        test_result.merge_call_result(&call_result);
+                        test_result.extend(call_result);
 
                         // To continue unit test execution the call should not revert.
-                        if call_result.reverted {
+                        if reverted {
                             return Err(test_result.single_fail(None))
                         }
                     }
