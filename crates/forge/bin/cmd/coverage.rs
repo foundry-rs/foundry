@@ -102,6 +102,18 @@ impl CoverageArgs {
         project.paths.artifacts = coverage_artifacts_path.clone();
         project.paths.build_infos = coverage_artifacts_path.join("build-info");
 
+        // Set a different compiler cache path for coverage. `cache/coverage`.
+        let cache_file = project
+            .paths
+            .cache
+            .components()
+            .last()
+            .ok_or_else(|| eyre::eyre!("Cache path is empty"))?;
+
+        let cache_dir =
+            project.paths.cache.parent().ok_or_else(|| eyre::eyre!("Cache path is empty"))?;
+        project.paths.cache = cache_dir.join("coverage").join(cache_file);
+
         if self.ir_minimum {
             // print warning message
             sh_warn!("{}", concat!(
