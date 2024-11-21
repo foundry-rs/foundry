@@ -17,7 +17,7 @@ use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
-    Artifact, ArtifactId, Project, ProjectCompileOutput,
+    output, Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
@@ -162,29 +162,35 @@ impl CoverageArgs {
         // Collect source files.
         let project_paths = &project.paths;
         let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
-        for (path, source_file, version) in output.output().sources.sources_with_version() {
-            report.add_source(version.clone(), source_file.id as usize, path.clone());
 
-            // Filter out dependencies
-            if !self.include_libs && project_paths.has_library_ancestor(path) {
-                continue;
+        if !output.output().sources.is_empty() {
+            // Freshly compiled sources
+            for (path, source_file, version) in output.output().sources.sources_with_version() {
+                report.add_source(version.clone(), source_file.id as usize, path.clone());
+
+                // Filter out dependencies
+                if !self.include_libs && project_paths.has_library_ancestor(path) {
+                    continue;
+                }
+
+                if let Some(ast) = &source_file.ast {
+                    let file = project_paths.root.join(path);
+                    trace!(root=?project_paths.root, ?file, "reading source file");
+
+                    let source = SourceFile {
+                        ast,
+                        source: fs::read_to_string(&file)
+                            .wrap_err("Could not read source code for analysis")?,
+                    };
+                    versioned_sources
+                        .entry(version.clone())
+                        .or_default()
+                        .sources
+                        .insert(source_file.id as usize, source);
+                }
             }
-
-            if let Some(ast) = &source_file.ast {
-                let file = project_paths.root.join(path);
-                trace!(root=?project_paths.root, ?file, "reading source file");
-
-                let source = SourceFile {
-                    ast,
-                    source: fs::read_to_string(&file)
-                        .wrap_err("Could not read source code for analysis")?,
-                };
-                versioned_sources
-                    .entry(version.clone())
-                    .or_default()
-                    .sources
-                    .insert(source_file.id as usize, source);
-            }
+        } else {
+            // Cached sources
         }
 
         // Get source maps and bytecodes
