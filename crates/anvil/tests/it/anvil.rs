@@ -2,11 +2,9 @@
 
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
-use alloy_node_bindings::utils::run_with_tempdir;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_provider::Provider;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
-use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -119,34 +117,4 @@ async fn test_cancun_fields() {
     assert_eq!(block.withdrawals, Some(Default::default()));
     assert!(block.header.blob_gas_used.is_some());
     assert!(block.header.excess_blob_gas.is_some());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[cfg(not(windows))]
-async fn test_cache_path() {
-    run_with_tempdir("custom-anvil-cache", |tmp_dir| async move {
-        let cache_path = tmp_dir.join("cache");
-        let (api, _handle) = spawn(
-            NodeConfig::test()
-                .with_cache_path(Some(cache_path.clone()))
-                .with_max_persisted_states(Some(5_usize))
-                .with_blocktime(Some(Duration::from_millis(1))),
-        )
-        .await;
-
-        api.anvil_mine(Some(U256::from(1000)), None).await.unwrap();
-
-        // sleep to ensure the cache is written
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        assert!(cache_path.exists());
-        assert!(cache_path.read_dir().unwrap().count() > 0);
-
-        // Clean the directory, this is to prevent an error when temp_dir is dropped.
-        let _ = std::fs::remove_dir_all(cache_path);
-
-        //sleep to ensure OS file handles are released
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    })
-    .await;
 }

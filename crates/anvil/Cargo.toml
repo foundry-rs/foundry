@@ -117,7 +117,6 @@ alloy-rpc-client = { workspace = true, features = ["pubsub"] }
 alloy-transport-ipc = { workspace = true, features = ["mock"] }
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-transport-ws.workspace = true
-alloy-node-bindings.workspace = true
 alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
