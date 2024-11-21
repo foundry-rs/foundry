@@ -21,7 +21,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    shell, TransactionMaybeSigned,
+    TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -354,13 +354,11 @@ impl BundledState {
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     let mut pending_transactions = vec![];
 
-                    if !shell::is_quiet() {
-                        seq_progress.inner.write().set_status(&format!(
-                            "Sending transactions [{} - {}]",
-                            batch_number * batch_size,
-                            batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
-                        ));
-                    }
+                    seq_progress.inner.write().set_status(&format!(
+                        "Sending transactions [{} - {}]",
+                        batch_number * batch_size,
+                        batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
+                    ));
 
                     for (kind, is_fixed_gas_limit) in batch {
                         let fut = send_transaction(
@@ -385,9 +383,7 @@ impl BundledState {
                             self.sequence.save(true, false)?;
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                            if !shell::is_quiet() {
-                                seq_progress.inner.write().tx_sent(tx_hash);
-                            }
+                            seq_progress.inner.write().tx_sent(tx_hash);
 
                             index += 1;
                         }
@@ -421,15 +417,13 @@ impl BundledState {
             let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
-            if !shell::is_quiet() {
-                seq_progress.inner.write().set_status(&format!(
-                    "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
-                    paid.trim_end_matches('0'),
-                    total_gas,
-                    avg_gas_price.trim_end_matches('0').trim_end_matches('.')
-                ));
-                seq_progress.inner.write().finish();
-            }
+            seq_progress.inner.write().set_status(&format!(
+                "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
+                paid.trim_end_matches('0'),
+                total_gas,
+                avg_gas_price.trim_end_matches('0').trim_end_matches('.')
+            ));
+            seq_progress.inner.write().finish();
         }
 
         sh_println!("\n\n==========================")?;

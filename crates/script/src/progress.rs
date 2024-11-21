@@ -233,10 +233,8 @@ impl ScriptProgress {
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
                     deployment_sequence.remove_pending(receipt.transaction_hash);
 
-                    if !shell::is_quiet() {
-                        let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
-                        seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
-                    }
+                    let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
                     errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
                 }
