@@ -31,7 +31,7 @@ pub struct GlobalOpts {
     #[arg(help_heading = "Display options", global = true, long, value_enum)]
     color: Option<ColorChoice>,
 
-    /// Number of threads to use. Zero specifies the number of logical cores.
+    /// Number of threads to use. Specifying 0 defaults to the number of logical cores.
     #[arg(global = true, long, short = 'j', visible_alias = "jobs")]
     threads: Option<usize>,
 }
