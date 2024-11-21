@@ -731,9 +731,9 @@ where
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         Ok(if raw {
-            format!("0x{}", hex::encode(TxEnvelope::try_from(tx.inner)?.encoded_2718()))
+            format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
         } else if let Some(field) = field {
-            get_pretty_tx_attr(&tx, field.as_str())
+            get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
@@ -995,7 +995,7 @@ where
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number  > to_block {
+                        if block.number  > to_block {
                             break;
                         }
                     }

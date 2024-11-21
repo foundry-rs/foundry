@@ -154,6 +154,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eof_version: None,
         alphanet: false,
         transaction_timeout: 120,
+        additional_compiler_profiles: Default::default(),
+        compilation_restrictions: Default::default(),
         eof: false,
         _non_exhaustive: (),
     };
@@ -776,6 +778,43 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
+
+    // See <https://github.com/foundry-rs/foundry/issues/7014>
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.17", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::London);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.18", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Paris);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.23", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Shanghai);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.26", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Cancun);
 });
 
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.

@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use eyre::Context;
 use foundry_cli::{
     handler,
-    opts::{CoreBuildArgs, ShellOpts},
+    opts::{CoreBuildArgs, GlobalOpts},
     utils::{self, LoadConfig},
 };
 use foundry_common::{evm::EvmArgs, fs};
@@ -50,11 +50,12 @@ const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     #[command(subcommand)]
     pub cmd: Option<ChiselSubcommand>,
-
-    #[clap(flatten)]
-    pub shell: ShellOpts,
 
     /// Path to a directory containing Solidity files to import, or path to a single Solidity file.
     ///
@@ -117,8 +118,9 @@ fn run() -> eyre::Result<()> {
     handler::install();
     utils::subscriber();
     utils::load_dotenv();
+
     let args = Chisel::parse();
-    args.shell.shell().set();
+    args.global.init()?;
     main_args(args)
 }
 

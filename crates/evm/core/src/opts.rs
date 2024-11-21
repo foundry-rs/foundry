@@ -1,13 +1,13 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::AnyNetworkBlock;
+use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
+use url::Url;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EvmOpts {
@@ -86,7 +86,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, AnyNetworkBlock)> {
+    ) -> eyre::Result<(revm::primitives::Env, AnyRpcBlock)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -102,7 +102,13 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {fork_url}")
+            let mut err_msg = "Could not instantiate forked environment".to_string();
+            if let Ok(url) = Url::parse(fork_url) {
+                if let Some(provider) = url.host() {
+                    err_msg.push_str(&format!(" with provider {provider}"));
+                }
+            }
+            err_msg
         })
     }
 

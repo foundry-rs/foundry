@@ -17,12 +17,13 @@ use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
     ens::NameOrAddress,
+    shell,
 };
 use foundry_compilers::{
     artifacts::{ConfigurableContractArtifact, StorageLayout},
     compilers::{
         solc::{Solc, SolcCompiler},
-        Compiler, CompilerSettings,
+        Compiler,
     },
     Artifact, Project,
 };
@@ -31,6 +32,7 @@ use foundry_config::{
     impl_figment_convert_cast, Config,
 };
 use semver::Version;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -45,7 +47,7 @@ pub struct StorageArgs {
     #[arg(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
-    /// The storage slot number.
+    /// The storage slot number. If not provided, it gets the full storage layout.
     #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
@@ -109,18 +111,21 @@ impl StorageArgs {
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
-            let out = ProjectCompiler::new().compile(&project)?;
+            let out = ProjectCompiler::new().quiet(shell::is_json()).compile(&project)?;
             let artifact = out.artifacts().find(|(_, artifact)| {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, block, artifact, true).await;
+                return fetch_and_print_storage(
+                    provider,
+                    address,
+                    block,
+                    artifact,
+                    !shell::is_json(),
+                )
+                .await;
             }
         }
-
-        // Not a forge project or artifact not found
-        // Get code from Etherscan
-        sh_warn!("No matching artifacts found, fetching source code from Etherscan...")?;
 
         if !self.etherscan.has_key() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
@@ -180,7 +185,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, block, artifact, true).await
+        fetch_and_print_storage(provider, address, block, artifact, !shell::is_json()).await
     }
 }
 
@@ -213,6 +218,14 @@ impl StorageValue {
         value[32 - raw_sliced_value.len()..32].copy_from_slice(raw_sliced_value);
         B256::from(value)
     }
+}
+
+/// Represents the storage layout of a contract and its values.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StorageReport {
+    #[serde(flatten)]
+    layout: StorageLayout,
+    values: Vec<B256>,
 }
 
 async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
@@ -255,7 +268,22 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
-        sh_println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?)?;
+        let values: Vec<_> = layout
+            .storage
+            .iter()
+            .zip(&values)
+            .map(|(slot, storage_value)| {
+                let storage_type = layout.types.get(&slot.storage_type);
+                storage_value.value(
+                    slot.offset,
+                    storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()),
+                )
+            })
+            .collect();
+        sh_println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::to_value(StorageReport { layout, values })?)?
+        )?;
         return Ok(())
     }
 
@@ -288,7 +316,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
 
 fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
-    project.settings.update_output_selection(|selection| {
+    project.update_output_selection(|selection| {
         selection.0.values_mut().for_each(|contract_selection| {
             contract_selection
                 .values_mut()

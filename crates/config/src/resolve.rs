@@ -23,15 +23,23 @@ impl UnresolvedEnvVarError {
     pub fn try_resolve(&self) -> Result<String, Self> {
         interpolate(&self.unresolved)
     }
+
+    fn is_simple(&self) -> bool {
+        RE_PLACEHOLDER.captures_iter(&self.unresolved).count() <= 1
+    }
 }
 
 impl fmt::Display for UnresolvedEnvVarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Failed to resolve env var `{}` in `{}`: {}",
-            self.var, self.unresolved, self.source
-        )
+        write!(f, "environment variable `{}` ", self.var)?;
+        f.write_str(match self.source {
+            VarError::NotPresent => "not found",
+            VarError::NotUnicode(_) => "is not valid unicode",
+        })?;
+        if !self.is_simple() {
+            write!(f, " in `{}`", self.unresolved)?;
+        }
+        Ok(())
     }
 }
 
