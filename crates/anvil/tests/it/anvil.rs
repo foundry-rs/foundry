@@ -1,13 +1,12 @@
 //! tests for anvil specific logic
 
-use std::time::Duration;
-
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
 use alloy_node_bindings::utils::run_with_tempdir;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -141,6 +140,7 @@ async fn test_cache_path() {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         assert!(cache_path.exists());
+        assert!(cache_path.read_dir().unwrap().count() > 0);
 
         // Clean the directory, this is to prevent an error when temp_dir is dropped.
         let _ = std::fs::remove_dir_all(cache_path);
