@@ -24,6 +24,7 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
+    InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -235,6 +236,17 @@ impl Executor {
     pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
         self.gas_limit = gas_limit;
         self
+    }
+
+    #[inline]
+    pub fn set_create2_deployer(&mut self, create2_deployer: Address) -> &mut Self {
+        self.inspector_mut().set_create2_deployer(create2_deployer);
+        self
+    }
+
+    #[inline]
+    pub fn create2_deployer(&self) -> Address {
+        self.inspector().create2_deployer()
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
