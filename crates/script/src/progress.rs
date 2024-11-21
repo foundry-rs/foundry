@@ -7,7 +7,7 @@ use alloy_primitives::{
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
-use foundry_common::provider::RetryProvider;
+use foundry_common::{provider::RetryProvider, shell};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
@@ -31,33 +31,42 @@ pub struct SequenceProgressState {
 
 impl SequenceProgressState {
     pub fn new(sequence_idx: usize, sequence: &ScriptSequence, multi: MultiProgress) -> Self {
-        let mut template = "{spinner:.green}".to_string();
-        write!(template, " Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain))
-            .unwrap();
-        template.push_str("{msg}");
+        let mut state = if !shell::is_quiet() {
+            let mut template = "{spinner:.green}".to_string();
+            write!(template, " Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain))
+                .unwrap();
+            template.push_str("{msg}");
 
-        let top_spinner = ProgressBar::new_spinner()
-            .with_style(ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈✅"));
-        let top_spinner = multi.add(top_spinner);
+            let top_spinner = ProgressBar::new_spinner().with_style(
+                ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈✅"),
+            );
+            let top_spinner = multi.add(top_spinner);
 
-        let txs = multi.insert_after(
-            &top_spinner,
-            init_progress(sequence.transactions.len() as u64, "txes").with_prefix("    "),
-        );
+            let txs = multi.insert_after(
+                &top_spinner,
+                init_progress(sequence.transactions.len() as u64, "txes").with_prefix("    "),
+            );
 
-        let receipts = multi.insert_after(
-            &txs,
-            init_progress(sequence.transactions.len() as u64, "receipts").with_prefix("    "),
-        );
+            let receipts = multi.insert_after(
+                &txs,
+                init_progress(sequence.transactions.len() as u64, "receipts").with_prefix("    "),
+            );
 
-        top_spinner.enable_steady_tick(Duration::from_millis(100));
-        txs.enable_steady_tick(Duration::from_millis(1000));
-        receipts.enable_steady_tick(Duration::from_millis(1000));
+            top_spinner.enable_steady_tick(Duration::from_millis(100));
+            txs.enable_steady_tick(Duration::from_millis(1000));
+            receipts.enable_steady_tick(Duration::from_millis(1000));
 
-        txs.set_position(sequence.receipts.len() as u64);
-        receipts.set_position(sequence.receipts.len() as u64);
+            txs.set_position(sequence.receipts.len() as u64);
+            receipts.set_position(sequence.receipts.len() as u64);
 
-        let mut state = Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi };
+            Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
+        } else {
+            let top_spinner = ProgressBar::hidden();
+            let txs = ProgressBar::hidden();
+            let receipts = ProgressBar::hidden();
+
+            Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
+        };
 
         for tx_hash in sequence.pending.iter() {
             state.tx_sent(*tx_hash);
@@ -98,7 +107,10 @@ impl SequenceProgressState {
     /// Same as finish_tx_spinner but also prints a message to stdout above all other progress bars.
     pub fn finish_tx_spinner_with_msg(&mut self, tx_hash: B256, msg: &str) -> std::io::Result<()> {
         self.finish_tx_spinner(tx_hash);
-        self.multi.println(msg)?;
+
+        if !shell::is_quiet() {
+            self.multi.println(msg)?;
+        }
 
         Ok(())
     }
@@ -221,8 +233,10 @@ impl ScriptProgress {
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
                     deployment_sequence.remove_pending(receipt.transaction_hash);
 
-                    let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
-                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+                    if !shell::is_quiet() {
+                        let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                        seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+                    }
 
                     errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
                 }
