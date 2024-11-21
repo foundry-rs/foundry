@@ -12,6 +12,7 @@ use foundry_evm::{
     opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
+    InspectorExt,
 };
 use std::collections::VecDeque;
 
@@ -86,7 +87,7 @@ impl ScriptRunner {
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
-                let create2_deployer = self.evm_opts.create2_deployer;
+                let create2_deployer = self.executor.inspector().create2_deployer();
                 for library in libraries {
                     let address = create2_deployer.create2_from_code(salt, library.as_ref());
                     // Skip if already deployed

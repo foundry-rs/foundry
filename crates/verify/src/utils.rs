@@ -324,8 +324,8 @@ pub async fn get_tracing_executor(
 ) -> Result<(Env, TracingExecutor)> {
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
-    let create2_deployer = evm_opts.create2_deployer;
 
+    let create2_deployer = evm_opts.create2_deployer;
     let (env, fork, _chain, is_alphanet) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
