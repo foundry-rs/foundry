@@ -78,7 +78,7 @@ foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
-    /// Include the global options.
+    // Include global options for users of this struct.
     #[command(flatten)]
     pub global: GlobalOpts,
 
