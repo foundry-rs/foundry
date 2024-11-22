@@ -1524,3 +1524,139 @@ contract AContractTest is DSTest {
 "#]],
     );
 });
+
+forgetest!(test_coverage_multi_solc_versions, |prj, cmd| {
+    prj.insert_ds_test();
+
+    let counter = r#"
+        pragma solidity 0.8.13;
+        contract Counter {
+            uint256 public number;
+
+            function setNumber(uint256 newNumber) public {
+                number = newNumber;
+            }
+
+            function increment() public {
+                number++;
+            }
+        }
+    "#;
+    let counter2 = r#"
+        pragma solidity 0.8.27;
+        contract Counter2 {
+            uint256 public number;
+
+            function setNumber(uint256 newNumber) public {
+                number = newNumber;
+            }
+
+            function increment() public {
+                number++;
+            }
+        }
+    "#;
+
+    let counter_test = r#"
+        pragma solidity ^0.8.13;
+        import "./test.sol";
+        import {Counter} from "./Counter.sol";
+
+        contract CounterTest is DSTest {
+            Counter public counter;
+
+            function setUp() public {
+                counter = new Counter();
+                counter.setNumber(0);
+            }
+
+            function test_Increment() public {
+                counter.increment();
+                assertEq(counter.number(), 1);
+            }
+
+            function testFuzz_SetNumber(uint256 x) public {
+                counter.setNumber(x);
+                assertEq(counter.number(), x);
+            }
+        }
+    "#;
+
+    let counter2_test = r#"
+        pragma solidity ^0.8.13;
+        import "./test.sol";
+        import {Counter2} from "./Counter2.sol";
+
+        contract Counter2Test is DSTest {
+            Counter2 public counter;
+
+            function setUp() public {
+                counter = new Counter2();
+                counter.setNumber(0);
+            }
+
+            function test_Increment() public {
+                counter.increment();
+                assertEq(counter.number(), 1);
+            }
+
+            function testFuzz_SetNumber(uint256 x) public {
+                counter.setNumber(x);
+                assertEq(counter.number(), x);
+            }
+        }
+    "#;
+
+    prj.add_source("Counter.sol", counter).unwrap();
+    prj.add_source("Counter2.sol", counter2).unwrap();
+    prj.add_source("CounterTest.sol", counter_test).unwrap();
+    prj.add_source("Counter2Test.sol", counter2_test).unwrap();
+
+    // no-cache
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+[SOLC_VERSION] [ELAPSED]
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Counter.sol  | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter2.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total            | 100.00% (4/4) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#
+    ]]);
+
+    // cache
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"No files changed, compilation skipped
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Counter.sol  | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter2.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total            | 100.00% (4/4) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#]],
+    );
+
+    // Replace solc version in Counter2.sol
+    let counter2 = counter2.replace("0.8.27", "0.8.25");
+
+    prj.add_source("Counter2.sol", &counter2).unwrap();
+
+    // Should recompile Counter2.sol
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Counter.sol  | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter2.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total            | 100.00% (4/4) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#]],
+    );
+});
