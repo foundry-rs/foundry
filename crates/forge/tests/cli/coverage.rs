@@ -1448,7 +1448,7 @@ contract AContract {
 "#]]);
 });
 
-forgetest!(test_diff_coverage_dir, |prj, cmd| {
+forgetest!(test_coverage_caching, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",

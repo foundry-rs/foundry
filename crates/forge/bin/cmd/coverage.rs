@@ -159,71 +159,42 @@ impl CoverageArgs {
     #[instrument(name = "prepare", skip_all)]
     fn prepare(&self, project: &Project, output: &ProjectCompileOutput) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
-
         // Collect source files.
         let project_paths = &project.paths;
         let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
 
-        if !output.output().sources.is_empty() {
-            // Freshly compiled sources
-            for (path, source_file, version) in output.output().sources.sources_with_version() {
-                report.add_source(version.clone(), source_file.id as usize, path.clone());
-
-                // Filter out dependencies
-                if !self.include_libs && project_paths.has_library_ancestor(path) {
-                    continue;
-                }
-
-                if let Some(ast) = &source_file.ast {
-                    let file = project_paths.root.join(path);
-                    trace!(root=?project_paths.root, ?file, "reading source file");
-
-                    let source = SourceFile {
-                        ast: Cow::Borrowed(ast),
-                        source: fs::read_to_string(&file)
-                            .wrap_err("Could not read source code for analysis")?,
-                    };
-                    versioned_sources
-                        .entry(version.clone())
-                        .or_default()
-                        .sources
-                        .insert(source_file.id as usize, source);
-                }
+        // Account cached and freshly compiled sources
+        for (id, artifact) in output.artifact_ids() {
+            // Filter out dependencies
+            if !self.include_libs && project_paths.has_library_ancestor(&id.source) {
+                continue;
             }
-        } else {
-            // Cached sources
-            for (id, artifact) in output.artifact_ids() {
-                // Filter out dependencies
-                if !self.include_libs && project_paths.has_library_ancestor(&id.source) {
-                    continue;
-                }
 
-                let version = id.version;
-                let source_file = if let Some(source_file) = artifact.source_file() {
-                    source_file
-                } else {
-                    sh_warn!("ast source file not found for {}", id.source.display())?;
-                    continue;
+            let version = id.version;
+            let source_file = if let Some(source_file) = artifact.source_file() {
+                source_file
+            } else {
+                sh_warn!("ast source file not found for {}", id.source.display())?;
+                continue;
+            };
+
+            report.add_source(version.clone(), source_file.id as usize, id.source.clone());
+
+            if let Some(ast) = source_file.ast {
+                let file = project_paths.root.join(id.source);
+                trace!(root=?project_paths.root, ?file, "reading source file");
+
+                let source = SourceFile {
+                    ast: Cow::Owned(ast),
+                    source: fs::read_to_string(&file)
+                        .wrap_err("Could not read source code for analysis")?,
                 };
 
-                report.add_source(version.clone(), source_file.id as usize, id.source.clone());
-
-                if let Some(ast) = source_file.ast {
-                    let file = project_paths.root.join(id.source);
-                    trace!(root=?project_paths.root, ?file, "reading source file");
-
-                    let source = SourceFile {
-                        ast: Cow::Owned(ast),
-                        source: fs::read_to_string(&file)
-                            .wrap_err("Could not read source code for analysis")?,
-                    };
-
-                    versioned_sources
-                        .entry(version.clone())
-                        .or_default()
-                        .sources
-                        .insert(source_file.id as usize, source);
-                }
+                versioned_sources
+                    .entry(version.clone())
+                    .or_default()
+                    .sources
+                    .insert(source_file.id as usize, source);
             }
         }
 
