@@ -1693,6 +1693,7 @@ Transaction successfully executed.
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
 Compiling project to generate artifacts
+No files changed, compilation skipped
 Traces:
   [13520] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)

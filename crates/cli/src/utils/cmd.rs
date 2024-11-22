@@ -387,19 +387,19 @@ pub async fn handle_traces(
     debug: bool,
     decode_internal: bool,
 ) -> Result<()> {
-    let (known_contracts, local_sources) = if with_local_artifacts {
+    let (known_contracts, mut sources) = if with_local_artifacts {
         let _ = sh_println!("Compiling project to generate artifacts");
         let project = config.project()?;
-        let compiler = ProjectCompiler::new().quiet(true);
+        let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;
         (
             Some(ContractsByArtifact::new(
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
             )),
-            Some(ContractSources::from_project_output(&output, project.root(), None)?),
+            ContractSources::from_project_output(&output, project.root(), None)?,
         )
     } else {
-        (None, None)
+        (None, ContractSources::default())
     };
 
     let labels = labels.iter().filter_map(|label_str| {
@@ -433,13 +433,9 @@ pub async fn handle_traces(
     }
 
     if decode_internal || debug {
-        let sources = if let Some(local_sources) = local_sources {
-            local_sources
-        } else if let Some(ref etherscan_identifier) = identifier.etherscan {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
+        if let Some(ref etherscan_identifier) = identifier.etherscan {
+            sources.merge(etherscan_identifier.get_compiled_contracts().await?);
+        }
 
         if debug {
             let mut debugger = Debugger::builder()
