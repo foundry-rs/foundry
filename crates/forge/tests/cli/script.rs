@@ -2069,6 +2069,7 @@ contract SimpleScript is Script {
         "--rpc-url",
         &handle.http_endpoint(),
         "--broadcast",
+        "--slow",
         "SimpleScript",
     ]);
 
