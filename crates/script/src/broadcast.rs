@@ -213,7 +213,12 @@ impl BundledState {
             .sequence
             .sequences()
             .iter()
-            .flat_map(|sequence| sequence.transactions().map(|tx| tx.from().expect("missing from")))
+            .flat_map(|sequence| {
+                sequence
+                    .transactions()
+                    .filter(|tx| tx.is_unsigned())
+                    .map(|tx| tx.from().expect("missing from"))
+            })
             .collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
