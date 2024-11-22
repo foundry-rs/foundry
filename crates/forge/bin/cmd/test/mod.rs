@@ -291,15 +291,14 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
-        // Set up the project.
-        let mut project = config.project()?;
-
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
-            project = config.project()?;
         }
+
+        // Set up the project.
+        let project = config.project()?;
 
         let mut filter = self.filter(&config);
         trace!(target: "forge::test", ?filter, "using filter");
