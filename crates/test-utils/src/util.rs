@@ -883,7 +883,7 @@ impl TestCommand {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
             return assert.with_assert(test_assert());
-        };
+        }
         assert
     }
 
@@ -912,6 +912,12 @@ impl TestCommand {
     #[track_caller]
     pub fn assert_failure(&mut self) -> OutputAssert {
         self.assert().failure()
+    }
+
+    /// Runs the command and asserts that the exit code is `expected`.
+    #[track_caller]
+    pub fn assert_code(&mut self, expected: i32) -> OutputAssert {
+        self.assert().code(expected)
     }
 
     /// Runs the command and asserts that it **failed** nothing was printed to stderr.
