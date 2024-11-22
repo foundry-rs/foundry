@@ -985,6 +985,8 @@ impl Config {
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
+        remove_test_dir(&Some(self.cache_path.clone().join("coverage")));
+        remove_test_dir(&Some(self.cache_path.clone()));
 
         // Remove snapshot directory.
         let snapshot_dir = project.root().join(&self.snapshots);
