@@ -1660,3 +1660,65 @@ forgetest!(test_coverage_multi_solc_versions, |prj, cmd| {
 "#]],
     );
 });
+
+// checks that `clean` also works with the "out" value set in Config
+forgetest!(coverage_cache, |prj, cmd| {    
+    prj.add_source("A", r#"
+contract A {
+    function f() public pure returns (uint) {
+        return 1;
+    }
+}"#).unwrap();
+
+    prj.add_source("B", r#"
+contract B {
+    function f() public pure returns (uint) {
+        return 1;
+    }
+}"#).unwrap();
+
+    let a_test = prj.add_test("A.t.sol", r#"
+import {A} from "../src/A.sol";
+
+contract ATest {
+    function test() public {
+        A a = new A();
+        a.f();
+    }
+}
+    "#).unwrap();
+
+    prj.add_test("B.t.sol", r#"
+    import {B} from "../src/B.sol";
+    
+    contract BTest {
+        function test() public {
+            B a = new B();
+            a.f();
+        }
+    }
+        "#).unwrap();
+    
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+| File      | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-----------|---------------|---------------|---------------|---------------|
+| src/A.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| src/B.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| Total     | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+
+    prj.add_test("A.t.sol", &format!("{} ", std::fs::read_to_string(a_test).unwrap())).unwrap();
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+| File      | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-----------|---------------|---------------|---------------|---------------|
+| src/A.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| Total     | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+
+"#]]);
+});
