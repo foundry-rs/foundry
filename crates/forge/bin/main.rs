@@ -105,9 +105,8 @@ fn run() -> Result<()> {
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
         ForgeSubcommand::Geiger(cmd) => {
-            let check = cmd.check;
             let n = cmd.run()?;
-            if check && n > 0 {
+            if n > 0 {
                 std::process::exit(n as i32);
             }
             Ok(())
