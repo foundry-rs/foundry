@@ -504,7 +504,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
     Ok(format!(
         "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         "event".red(),
-        SolidityHelper::highlight(&format!(
+        SolidityHelper::new().highlight(&format!(
             "{}({})",
             &event.name,
             &event

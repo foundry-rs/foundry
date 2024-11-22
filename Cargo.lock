@@ -2067,6 +2067,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "solang-parser",
+ "solar-parse",
  "strum",
  "tikv-jemallocator",
  "time",
