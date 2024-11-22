@@ -904,6 +904,9 @@ impl Config {
     ) -> Result<BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>>, SolcError>
     {
         let mut map = BTreeMap::new();
+        if self.compilation_restrictions.is_empty() {
+            return Ok(BTreeMap::new());
+        }
 
         let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
         let (sources, _) = graph.into_sources();
