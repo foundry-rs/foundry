@@ -12,11 +12,29 @@ use tokio::sync::RwLock;
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct CachedSignatures {
-    events: BTreeMap<String, String>,
-    functions: BTreeMap<String, String>,
+pub struct CachedSignatures {
+    pub events: BTreeMap<String, String>,
+    pub functions: BTreeMap<String, String>,
 }
 
+impl CachedSignatures {
+    #[instrument(target = "evm::traces")]
+    pub fn load(cache_path: PathBuf) -> Self {
+        let path = cache_path.join("signatures");
+        if path.is_file() {
+            fs::read_json_file(&path)
+                .map_err(
+                    |err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"),
+                )
+                .unwrap_or_default()
+        } else {
+            if let Err(err) = std::fs::create_dir_all(cache_path) {
+                warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
+            }
+            Self::default()
+        }
+    }
+}
 /// An identifier that tries to identify functions and events using signatures found at
 /// `https://openchain.xyz` or a local cache.
 #[derive(Debug)]
@@ -42,16 +60,7 @@ impl SignaturesIdentifier {
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             trace!(target: "evm::traces", ?path, "reading signature cache");
-            let cached = if path.is_file() {
-                fs::read_json_file(&path)
-                    .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
-                    .unwrap_or_default()
-            } else {
-                if let Err(err) = std::fs::create_dir_all(cache_path) {
-                    warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
-                }
-                CachedSignatures::default()
-            };
+            let cached = CachedSignatures::load(cache_path);
             Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
         } else {
             Self {

@@ -10,7 +10,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -87,6 +87,10 @@ pub struct RunArgs {
     /// Enables Alphanet features.
     #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 impl RunArgs {
@@ -251,9 +255,9 @@ impl RunArgs {
             &config,
             chain,
             self.label,
+            self.with_local_artifacts,
             self.debug,
             self.decode_internal,
-            shell::verbosity() > 0,
         )
         .await?;
 
