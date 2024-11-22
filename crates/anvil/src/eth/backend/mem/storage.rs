@@ -41,7 +41,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use revm::primitives::SpecId;
-use std::{collections::VecDeque, fmt, sync::Arc, time::Duration};
+use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
 // === various limits in number of blocks ===
@@ -91,6 +91,12 @@ impl InMemoryBlockStates {
     /// Configures no disk caching
     pub fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
+        self
+    }
+
+    /// Configures the path on disk where the states will cached.
+    pub fn disk_path(mut self, path: PathBuf) -> Self {
+        self.disk_cache = self.disk_cache.with_path(path);
         self
     }
 

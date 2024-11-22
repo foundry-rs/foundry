@@ -189,6 +189,10 @@ pub struct NodeArgs {
 
     #[command(flatten)]
     pub server_config: ServerConfig,
+
+    /// Path to the cache directory where states are stored.    
+    #[arg(long, value_name = "PATH")]
+    pub cache_path: Option<PathBuf>,
 }
 
 #[cfg(windows)]
@@ -274,7 +278,8 @@ impl NodeArgs {
             .with_alphanet(self.evm_opts.alphanet)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
-            .with_memory_limit(self.evm_opts.memory_limit))
+            .with_memory_limit(self.evm_opts.memory_limit)
+            .with_cache_path(self.cache_path))
     }
 
     fn account_generator(&self) -> AccountGenerator {

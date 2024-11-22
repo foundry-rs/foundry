@@ -1779,9 +1779,9 @@ dependencies = [
 
 [[package]]
 name = "bon"
-version = "2.3.0"
+version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97493a391b4b18ee918675fb8663e53646fd09321c58b46afa04e8ce2499c869"
+checksum = "a636f83af97c6946f3f5cf5c268ec02375bf5efd371110292dfd57961f57a509"
 dependencies = [
  "bon-macros",
  "rustversion",
@@ -1789,14 +1789,16 @@ dependencies = [
 
 [[package]]
 name = "bon-macros"
-version = "2.3.0"
+version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2af3eac944c12cdf4423eab70d310da0a8e5851a18ffb192c0a5e3f7ae1663"
+checksum = "a7eaf1bfaa5b8d512abfd36d0c432591fef139d3de9ee54f1f839ea109d70d33"
 dependencies = [
  "darling",
  "ident_case",
+ "prettyplease",
  "proc-macro2",
  "quote",
+ "rustversion",
  "syn 2.0.87",
 ]
 
@@ -3686,6 +3688,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "indicatif",
+ "rayon",
  "regex",
  "serde",
  "serde_json",
@@ -8509,9 +8512,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5969c09f89ae6f0e18d5904e5bdbb8842ba948dad0f8202edb7ea510e35654d"
+checksum = "a4bd924da31914871820d1404b63a89b100097957f6dc7f3bbb9c094f16d8f4e"
 dependencies = [
  "bon",
  "clap",
@@ -8524,9 +8527,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e63aeee0e78b5fba04f005d23a58d20f897720212bd21ad744201cacb9dd34f8"
+checksum = "c7a3129568ab6b38132efa9c956b5ae14c09c0a1a1167353e337081d1d7f0c32"
 dependencies = [
  "bon",
  "chrono",
@@ -8545,7 +8548,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.3",
  "tokio",
  "toml_edit",
  "uuid 1.11.0",

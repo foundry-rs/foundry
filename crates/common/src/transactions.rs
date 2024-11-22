@@ -179,6 +179,10 @@ impl TransactionMaybeSigned {
         Ok(Self::Signed { tx, from })
     }
 
+    pub fn is_unsigned(&self) -> bool {
+        matches!(self, Self::Unsigned(_))
+    }
+
     pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
         match self {
             Self::Unsigned(tx) => Some(tx),

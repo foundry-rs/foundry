@@ -65,7 +65,7 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
-    /// Include the global options.
+    // Include global options for users of this struct.
     #[command(flatten)]
     pub global: GlobalOpts,
 
@@ -148,11 +148,6 @@ pub struct TestArgs {
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
-
-    /// Max concurrent threads to use.
-    /// Default value is the number of available CPUs.
-    #[arg(long, short = 'j', visible_alias = "jobs")]
-    pub threads: Option<usize>,
 
     /// Show test execution progress.
     #[arg(long)]
@@ -275,13 +270,6 @@ impl TestArgs {
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-
-        // Set number of max threads to execute tests.
-        // If not specified then the number of threads determined by rayon will be used.
-        if let Some(test_threads) = config.threads {
-            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
-            rayon::ThreadPoolBuilder::new().num_threads(test_threads).build_global()?;
-        }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -896,10 +884,6 @@ impl Provider for TestArgs {
 
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
-        }
-
-        if let Some(threads) = self.threads {
-            dict.insert("threads".to_string(), threads.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
