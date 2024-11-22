@@ -1,10 +1,12 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
+use alloy_network::TransactionResponse;
 use alloy_primitives::{b256, B256};
+use alloy_rpc_types::{BlockNumberOrTag, Index};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
-    casttest, file,
+    casttest, file, forgetest_async,
     rpc::{
         next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
         next_rpc_endpoint, next_ws_rpc_endpoint,
@@ -1588,6 +1590,112 @@ casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
     "object": "0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033"
   }
 }
+
+"#]]);
+});
+
+// tests cast can decode traces when using project artifacts
+forgetest_async!(decode_traces_with_project_artifacts, |prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "LocalProjectContract",
+        r#"
+contract LocalProjectContract {
+    event LocalProjectContractCreated(address owner);
+
+    constructor() {
+        emit LocalProjectContractCreated(msg.sender);
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "LocalProjectScript",
+        r#"
+import "forge-std/Script.sol";
+import {LocalProjectContract} from "../src/LocalProjectContract.sol";
+
+contract LocalProjectScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        new LocalProjectContract();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "LocalProjectScript",
+    ]);
+
+    cmd.assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Assert cast with local artifacts from outside the project.
+    cmd.cast_fuse()
+        .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Compiling project to generate artifacts
+Nothing to compile
+
+"#]]);
+
+    // Run cast from project dir.
+    cmd.cast_fuse().set_current_dir(prj.root());
+
+    // Assert cast without local artifacts cannot decode traces.
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [13520] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
+    │           data: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
+    └─ ← [Return] 62 bytes of code
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Assert cast with local artifacts can decode traces.
+    cmd.cast_fuse()
+        .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Compiling project to generate artifacts
+Traces:
+  [13520] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
+    └─ ← [Return] 62 bytes of code
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });
