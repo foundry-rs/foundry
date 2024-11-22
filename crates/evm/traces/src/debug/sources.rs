@@ -215,7 +215,9 @@ impl ContractSources {
     /// Merges given contract sources.
     pub fn merge(&mut self, sources: Self) {
         self.sources_by_id.extend(sources.sources_by_id);
-        self.artifacts_by_name.extend(sources.artifacts_by_name);
+        for (name, artifacts) in sources.artifacts_by_name {
+            self.artifacts_by_name.entry(name).or_default().extend(artifacts);
+        }
     }
 
     /// Returns all sources for a contract by name.
