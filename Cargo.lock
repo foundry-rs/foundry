@@ -4076,7 +4076,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "serde",
- "solang-parser",
+ "solar-parse",
  "tempfile",
  "tokio",
  "tracing",
