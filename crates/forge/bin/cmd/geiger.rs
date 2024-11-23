@@ -54,7 +54,7 @@ impl GeigerArgs {
                 Graph::<SolData>::resolve(&paths)?
                     .files()
                     .keys()
-                    .filter(|f| !paths.libraries.iter().any(|lib| f.starts_with(lib)))
+                    .filter(|f| !paths.has_library_ancestor(f))
                     .cloned()
                     .collect()
             } else {
