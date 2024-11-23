@@ -35,7 +35,7 @@ fn run() -> Result<()> {
     utils::enable_paint();
 
     let args = Forge::parse();
-    args.shell.shell().set();
+    args.global.init()?;
     init_execution_context(&args.cmd);
 
     match args.cmd {
@@ -105,9 +105,8 @@ fn run() -> Result<()> {
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
         ForgeSubcommand::Tree(cmd) => cmd.run(),
         ForgeSubcommand::Geiger(cmd) => {
-            let check = cmd.check;
             let n = cmd.run()?;
-            if check && n > 0 {
+            if n > 0 {
                 std::process::exit(n as i32);
             }
             Ok(())

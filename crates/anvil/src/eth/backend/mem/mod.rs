@@ -34,9 +34,14 @@ use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
-use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
+use alloy_consensus::{
+    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_network::EthereumWallet;
+use alloy_network::{
+    AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, EthereumWallet,
+    UnknownTxEnvelope, UnknownTypedTransaction,
+};
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
@@ -53,21 +58,19 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, AnyNetworkBlock, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
-    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
-    Transaction, TransactionReceipt,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
+    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
-use alloy_serde::WithOtherFields;
+use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction,
+        optimism::DepositTransaction, DepositReceipt, MaybeImpersonatedTransaction,
+        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction,
     },
-    utils::meets_eip155,
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
 use anvil_rpc::error::RpcError;
@@ -89,6 +92,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
+use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
@@ -99,12 +103,12 @@ use revm::{
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
-
 pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
@@ -223,6 +227,7 @@ impl Backend {
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
+        cache_path: Option<PathBuf>,
         node_config: Arc<AsyncRwLock<NodeConfig>>,
     ) -> Self {
         // if this is a fork then adjust the blockchain storage
@@ -245,7 +250,7 @@ impl Backend {
             genesis.timestamp
         };
 
-        let states = if prune_state_history_config.is_config_enabled() {
+        let mut states = if prune_state_history_config.is_config_enabled() {
             // if prune state history is enabled, configure the state cache only for memory
             prune_state_history_config
                 .max_memory_history
@@ -259,6 +264,10 @@ impl Backend {
         } else {
             Default::default()
         };
+
+        if let Some(cache_path) = cache_path {
+            states = states.disk_path(cache_path);
+        }
 
         let (slots_in_an_epoch, precompile_factory) = {
             let cfg = node_config.read().await;
@@ -1709,10 +1718,7 @@ impl Backend {
         }
     }
 
-    pub async fn block_by_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx);
@@ -1728,7 +1734,7 @@ impl Backend {
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    ) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx);
@@ -1741,7 +1747,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyNetworkBlock> {
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyRpcBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
@@ -1749,7 +1755,7 @@ impl Backend {
     pub(crate) async fn mined_transactions_by_block_number(
         &self,
         number: BlockNumber,
-    ) -> Option<Vec<WithOtherFields<Transaction>>> {
+    ) -> Option<Vec<AnyRpcTransaction>> {
         if let Some(block) = self.get_block(number) {
             return self.mined_transactions_in_block(&block);
         }
@@ -1760,7 +1766,7 @@ impl Backend {
     pub(crate) fn mined_transactions_in_block(
         &self,
         block: &Block,
-    ) -> Option<Vec<WithOtherFields<Transaction>>> {
+    ) -> Option<Vec<AnyRpcTransaction>> {
         let mut transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
@@ -1777,7 +1783,7 @@ impl Backend {
     pub async fn block_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    ) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx);
@@ -1796,7 +1802,7 @@ impl Backend {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
+    ) -> Result<Option<AnyRpcBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx);
@@ -1849,14 +1855,14 @@ impl Backend {
         self.blockchain.get_block_by_hash(&hash)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyNetworkBlock> {
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyRpcBlock> {
         let block = self.get_block(number)?;
         let mut block = self.convert_block(block);
         block.transactions.convert_to_hashes();
         Some(block)
     }
 
-    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyNetworkBlock> {
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyRpcBlock> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
         let mut block = self.convert_block(block);
@@ -1866,63 +1872,21 @@ impl Backend {
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format.
-    pub fn convert_block(&self, block: Block) -> AnyNetworkBlock {
+    pub fn convert_block(&self, block: Block) -> AnyRpcBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
 
         let hash = header.hash_slow();
-        let Header {
-            parent_hash,
-            ommers_hash,
-            beneficiary,
-            state_root,
-            transactions_root,
-            receipts_root,
-            logs_bloom,
-            difficulty,
-            number,
-            gas_limit,
-            gas_used,
-            timestamp,
-            requests_hash,
-            extra_data,
-            mix_hash,
-            nonce,
-            base_fee_per_gas,
-            withdrawals_root,
-            blob_gas_used,
-            excess_blob_gas,
-            parent_beacon_block_root,
-        } = header;
+        let Header { number, withdrawals_root, .. } = header;
 
         let block = AlloyBlock {
             header: AlloyHeader {
+                inner: AnyHeader::from(header),
                 hash,
-                parent_hash,
-                uncles_hash: ommers_hash,
-                miner: beneficiary,
-                state_root,
-                transactions_root,
-                receipts_root,
-                number,
-                gas_used,
-                gas_limit,
-                extra_data: extra_data.0.into(),
-                logs_bloom,
-                timestamp,
                 total_difficulty: Some(self.total_difficulty()),
-                difficulty,
-                mix_hash: Some(mix_hash),
-                nonce: Some(nonce),
-                base_fee_per_gas,
-                withdrawals_root,
-                blob_gas_used,
-                excess_blob_gas,
-                parent_beacon_block_root,
-                requests_hash,
+                size: Some(size),
             },
-            size: Some(size),
             transactions: alloy_rpc_types::BlockTransactions::Hashes(
                 transactions.into_iter().map(|tx| tx.hash()).collect(),
             ),
@@ -2030,7 +1994,7 @@ impl Backend {
                 if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
                         number: block_number,
-                        coinbase: block.header.miner,
+                        coinbase: block.header.beneficiary,
                         timestamp: U256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
                         prevrandao: block.header.mix_hash,
@@ -2469,7 +2433,7 @@ impl Backend {
         &self,
         number: BlockNumber,
         index: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AnyRpcTransaction>, BlockchainError> {
         if let Some(block) = self.mined_block_by_number(number) {
             return Ok(self.mined_transaction_by_block_hash_and_index(block.header.hash, index));
         }
@@ -2488,7 +2452,7 @@ impl Backend {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AnyRpcTransaction>, BlockchainError> {
         if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
             return Ok(tx);
         }
@@ -2504,7 +2468,7 @@ impl Backend {
         &self,
         block_hash: B256,
         index: Index,
-    ) -> Option<WithOtherFields<Transaction>> {
+    ) -> Option<AnyRpcTransaction> {
         let (info, block, tx) = {
             let storage = self.blockchain.storage.read();
             let block = storage.blocks.get(&block_hash).cloned()?;
@@ -2526,7 +2490,7 @@ impl Backend {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
+    ) -> Result<Option<AnyRpcTransaction>, BlockchainError> {
         trace!(target: "backend", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
             return Ok(tx);
@@ -2539,7 +2503,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
+    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<AnyRpcTransaction> {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
@@ -2604,7 +2568,7 @@ impl Backend {
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
                         let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
-                        StorageProof { key: JsonStorageKey(key), value, proof }
+                        StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),
             };
@@ -2749,7 +2713,7 @@ impl TransactionValidator for Backend {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
                     if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
+                        legacy.tx().chain_id.is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2880,7 +2844,7 @@ impl TransactionValidator for Backend {
     }
 }
 
-/// Creates a `Transaction` as it's expected for the `eth` RPC api from storage data
+/// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 #[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
@@ -2888,56 +2852,134 @@ pub fn transaction_build(
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
-) -> WithOtherFields<Transaction> {
-    let mut transaction: Transaction = eth_transaction.clone().into();
-    if info.is_some() && transaction.transaction_type == Some(0x7E) {
-        transaction.nonce = info.as_ref().unwrap().nonce;
-    }
+) -> AnyRpcTransaction {
+    if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
+        let DepositTransaction {
+            nonce: _,
+            source_hash,
+            from,
+            kind,
+            mint,
+            gas_limit,
+            is_system_tx,
+            input,
+            value,
+        } = deposit_tx.clone();
 
-    if eth_transaction.is_dynamic_fee() {
-        if block.is_none() && info.is_none() {
-            // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
-            transaction.gas_price = transaction.max_fee_per_gas;
-        } else {
-            // if transaction is already mined, gas price is considered base fee + priority fee: the
-            // effective gas price.
-            let base_fee = base_fee.map_or(0u128, |g| g as u128);
-            let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
-            transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
+        let dep_tx = TxDeposit {
+            source_hash,
+            input,
+            from,
+            mint: Some(mint.to()),
+            to: kind,
+            is_system_transaction: is_system_tx,
+            value,
+            gas_limit,
+        };
+
+        let ser = serde_json::to_value(&dep_tx).unwrap();
+        let maybe_deposit_fields = OtherFields::try_from(ser);
+
+        match maybe_deposit_fields {
+            Ok(fields) => {
+                let inner = UnknownTypedTransaction {
+                    ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
+                    fields,
+                    memo: Default::default(),
+                };
+
+                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+                    hash: eth_transaction.hash(),
+                    inner,
+                });
+
+                let tx = Transaction {
+                    inner: envelope,
+                    block_hash: block
+                        .as_ref()
+                        .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+                    block_number: block.as_ref().map(|block| block.header.number),
+                    transaction_index: info.as_ref().map(|info| info.transaction_index),
+                    effective_gas_price: None,
+                    from,
+                };
+
+                return WithOtherFields::new(tx);
+            }
+            Err(_) => {
+                error!(target: "backend", "failed to serialize deposit transaction");
+            }
         }
-    } else {
-        transaction.max_fee_per_gas = None;
-        transaction.max_priority_fee_per_gas = None;
     }
 
-    transaction.block_hash =
-        block.as_ref().map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header))));
+    let mut transaction: Transaction = eth_transaction.clone().into();
 
-    transaction.block_number = block.as_ref().map(|block| block.header.number);
-
-    transaction.transaction_index = info.as_ref().map(|info| info.transaction_index);
-
-    // need to check if the signature of the transaction is impersonated, if so then we
-    // can't recover the sender, instead we use the sender from the executed transaction and set the
-    // impersonated hash.
-    if eth_transaction.is_impersonated() {
-        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default();
-        transaction.hash = eth_transaction.impersonated_hash(transaction.from);
+    let effective_gas_price = if !eth_transaction.is_dynamic_fee() {
+        transaction.effective_gas_price(base_fee)
+    } else if block.is_none() && info.is_none() {
+        // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
+        transaction.max_fee_per_gas()
     } else {
-        transaction.from = eth_transaction.recover().expect("can recover signed tx");
-    }
+        // if transaction is already mined, gas price is considered base fee + priority
+        // fee: the effective gas price.
+        let base_fee = base_fee.map_or(0u128, |g| g as u128);
+        let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas().unwrap_or(0);
+
+        base_fee.saturating_add(max_priority_fee_per_gas)
+    };
+
+    transaction.effective_gas_price = Some(effective_gas_price);
+
+    let envelope = transaction.inner;
 
     // if a specific hash was provided we update the transaction's hash
-    // This is important for impersonated transactions since they all use the `BYPASS_SIGNATURE`
-    // which would result in different hashes
-    // Note: for impersonated transactions this only concerns pending transactions because there's
-    // no `info` yet.
-    if let Some(tx_hash) = tx_hash {
-        transaction.hash = tx_hash;
-    }
+    // This is important for impersonated transactions since they all use the
+    // `BYPASS_SIGNATURE` which would result in different hashes
+    // Note: for impersonated transactions this only concerns pending transactions because
+    // there's // no `info` yet.
+    let hash = tx_hash.unwrap_or(*envelope.tx_hash());
 
-    transaction.to = info.as_ref().map_or(eth_transaction.to(), |status| status.to);
-    WithOtherFields::new(transaction)
+    let envelope = match envelope {
+        TxEnvelope::Legacy(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
+            AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
+        }
+        TxEnvelope::Eip1559(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
+        }
+        TxEnvelope::Eip2930(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
+        }
+        TxEnvelope::Eip4844(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
+        }
+        TxEnvelope::Eip7702(signed_tx) => {
+            let (t, sig, _) = signed_tx.into_parts();
+            let new_signed = Signed::new_unchecked(t, sig, hash);
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
+        }
+        _ => unreachable!("unknown tx type"),
+    };
+
+    let tx = Transaction {
+        inner: envelope,
+        block_hash: block
+            .as_ref()
+            .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
+        block_number: block.as_ref().map(|block| block.header.number),
+        transaction_index: info.as_ref().map(|info| info.transaction_index),
+        from: eth_transaction.recover().expect("can recover signed tx"),
+        // deprecated
+        effective_gas_price: Some(effective_gas_price),
+    };
+    WithOtherFields::new(tx)
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.

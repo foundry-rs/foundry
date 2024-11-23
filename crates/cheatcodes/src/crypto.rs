@@ -15,7 +15,9 @@ use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
-use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
+use p256::ecdsa::{
+    signature::hazmat::PrehashSigner, Signature as P256Signature, SigningKey as P256SigningKey,
+};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -215,23 +217,23 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-fn encode_full_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
+fn encode_full_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
-    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
+    let v = U256::from(sig.v() as u64 + 27);
     let r = B256::from(sig.r());
     let s = B256::from(sig.s());
     (v, r, s).abi_encode()
 }
 
-fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
+fn encode_compact_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
     // Implement EIP-2098 compact signature.
     let r = B256::from(sig.r());
     let mut vs = sig.s();
-    vs.set_bit(255, sig.v().y_parity());
+    vs.set_bit(255, sig.v());
     (r, vs).abi_encode()
 }
 
-fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature> {
+fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::PrimitiveSignature> {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
@@ -243,7 +245,7 @@ fn sign_with_wallet(
     state: &mut Cheatcodes,
     signer: Option<Address>,
     digest: &B256,
-) -> Result<alloy_primitives::Signature> {
+) -> Result<alloy_primitives::PrimitiveSignature> {
     if state.wallets().is_empty() {
         bail!("no wallets available");
     }
@@ -273,7 +275,7 @@ fn sign_with_wallet(
 
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {
     let signing_key = parse_private_key_p256(private_key)?;
-    let signature: Signature = signing_key.sign_prehash(digest.as_slice())?;
+    let signature: P256Signature = signing_key.sign_prehash(digest.as_slice())?;
     let r_bytes: [u8; 32] = signature.r().to_bytes().into();
     let s_bytes: [u8; 32] = signature.s().to_bytes().into();
 
@@ -403,7 +405,7 @@ mod tests {
 
         let result = sign_p256(&pk_u256, &digest).unwrap();
         let result_bytes: [u8; 64] = result.try_into().unwrap();
-        let signature = Signature::from_bytes(&result_bytes.into()).unwrap();
+        let signature = P256Signature::from_bytes(&result_bytes.into()).unwrap();
         let verifying_key = VerifyingKey::from(&signing_key);
         assert!(verifying_key.verify_prehash(digest.as_slice(), &signature).is_ok());
     }

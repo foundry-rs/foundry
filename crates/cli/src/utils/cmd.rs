@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{fs, TestFunctionExt};
+use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -14,9 +14,9 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        debug::DebugTraceIdentifier,
+        debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
         Traces,
     },
@@ -383,10 +383,25 @@ pub async fn handle_traces(
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
+    with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
-    verbose: bool,
 ) -> Result<()> {
+    let (known_contracts, mut sources) = if with_local_artifacts {
+        let _ = sh_println!("Compiling project to generate artifacts");
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new();
+        let output = compiler.compile(&project)?;
+        (
+            Some(ContractsByArtifact::new(
+                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+            )),
+            ContractSources::from_project_output(&output, project.root(), None)?,
+        )
+    } else {
+        (None, ContractSources::default())
+    };
+
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
@@ -398,45 +413,44 @@ pub async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
-    let mut decoder = CallTraceDecoderBuilder::new()
+
+    let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,
-        )?)
-        .build();
-
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    if let Some(etherscan_identifier) = &mut etherscan_identifier {
-        for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-            decoder.identify(trace, etherscan_identifier);
-        }
+        )?);
+    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
+    if let Some(contracts) = &known_contracts {
+        builder = builder.with_known_contracts(contracts);
+        identifier = identifier.with_local(contracts);
     }
 
-    if decode_internal {
-        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
+    let mut decoder = builder.build();
+
+    for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    if decode_internal || debug {
+        if let Some(ref etherscan_identifier) = identifier.etherscan {
+            sources.merge(etherscan_identifier.get_compiled_contracts().await?);
+        }
+
+        if debug {
+            let mut debugger = Debugger::builder()
+                .traces(result.traces.expect("missing traces"))
+                .decoder(&decoder)
+                .sources(sources)
+                .build();
+            debugger.try_run_tui()?;
+            return Ok(())
+        }
+
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    if debug {
-        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
-        let mut debugger = Debugger::builder()
-            .traces(result.traces.expect("missing traces"))
-            .decoder(&decoder)
-            .sources(sources)
-            .build();
-        debugger.try_run_tui()?;
-    } else {
-        print_traces(&mut result, &decoder, verbose).await?;
-    }
+    print_traces(&mut result, &decoder, shell::verbosity() > 0).await?;
 
     Ok(())
 }
@@ -462,5 +476,27 @@ pub async fn print_traces(
     }
 
     sh_println!("Gas used: {}", result.gas_used)?;
+    Ok(())
+}
+
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let path = cache_path.join("signatures");
+    let mut cached_signatures = CachedSignatures::load(cache_path);
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+        }
+    });
+
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }

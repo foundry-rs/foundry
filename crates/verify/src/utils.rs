@@ -1,8 +1,8 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{AnyNetworkBlock, BlockId, Transaction};
+use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
@@ -17,7 +17,7 @@ use reqwest::Url;
 use revm_primitives::{
     db::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId,
+    Bytecode, Env, SpecId, TxKind,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -340,9 +340,9 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyNetworkBlock) {
+pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.miner;
+    env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
@@ -353,11 +353,12 @@ pub fn deploy_contract(
     executor: &mut TracingExecutor,
     env: &Env,
     spec_id: SpecId,
-    transaction: &Transaction,
+    to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
     let env_with_handler = EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(spec_id));
 
-    if let Some(to) = transaction.to {
+    if to.is_some_and(|to| to.is_call()) {
+        let TxKind::Call(to) = to.unwrap() else { unreachable!() };
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
         }

@@ -2,7 +2,7 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -718,7 +718,7 @@ async fn can_get_pending_transaction() {
     api.mine_one().await;
     let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap().unwrap();
 
-    assert_eq!(mined.hash, pending.unwrap().unwrap().hash);
+    assert_eq!(mined.tx_hash(), pending.unwrap().unwrap().tx_hash());
 }
 
 #[tokio::test(flavor = "multi_thread")]

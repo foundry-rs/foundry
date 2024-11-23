@@ -1,7 +1,7 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
@@ -2039,8 +2039,7 @@ forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/8993>
 forgetest_async!(test_broadcast_raw_create2_deployer, |prj, cmd| {
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let (api, handle) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
 
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
@@ -2051,7 +2050,7 @@ import "forge-std/Script.sol";
 contract SimpleScript is Script {
     function run() external {
         // send funds to create2 factory deployer
-        vm.broadcast();
+        vm.startBroadcast();
         payable(0x3fAB184622Dc19b6109349B94811493BF2a45362).transfer(10000000 gwei);
         // deploy create2 factory
         vm.broadcastRawTransaction(
@@ -2070,6 +2069,7 @@ contract SimpleScript is Script {
         "--rpc-url",
         &handle.http_endpoint(),
         "--broadcast",
+        "--slow",
         "SimpleScript",
     ]);
 
@@ -2104,6 +2104,12 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]);
+
+    assert!(!api
+        .get_code(address!("4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+        .await
+        .unwrap()
+        .is_empty());
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {

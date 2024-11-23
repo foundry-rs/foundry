@@ -2,17 +2,25 @@
 
 use foundry_config::{NamedChain, NamedChain::Optimism};
 use rand::seq::SliceRandom;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    LazyLock,
+use std::{
+    env,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        LazyLock,
+    },
 };
+
+/// Env var key for ws archive endpoints.
+const ENV_WS_ARCHIVE_ENDPOINTS: &str = "WS_ARCHIVE_URLS";
+/// Env var key for http archive endpoints.
+const ENV_HTTP_ARCHIVE_ENDPOINTS: &str = "HTTP_ARCHIVE_URLS";
 
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
-        "6cb19d07ca2d44f59befd61563b1037b",
-        "6d46c0cca653407b861f3f93f7b0236a",
-        "69a36846dec146e3a2898429be60be85",
+        // "6cb19d07ca2d44f59befd61563b1037b",
+        // "6d46c0cca653407b861f3f93f7b0236a",
+        // "69a36846dec146e3a2898429be60be85",
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
         // "5c812e02193c4ba793f8c214317582bd",
@@ -31,11 +39,11 @@ static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
         "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
         "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
-        "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
-        "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
-        "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
-        "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
-        "U4hsGWgl9lBM1j3jhSgJ4gbjHg2jRwKy",
+        // "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
+        // "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
+        // "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
+        // "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
+        // "U4hsGWgl9lBM1j3jhSgJ4gbjHg2jRwKy",
         "K-uNlqYoYCO9cdBHcifwCDAcEjDy1UHL",
         "GWdgwabOE2XfBdLp_gIq-q6QHa7DSoag",
         "Uz0cF5HCXFtpZlvd9NR7kHxfB_Wdpsx7",
@@ -83,13 +91,14 @@ static ETHERSCAN_OPTIMISM_KEYS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| vec!["JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46"]);
 
 /// Returns the next index to use.
-fn next() -> usize {
+fn next_idx() -> usize {
     static NEXT_INDEX: AtomicUsize = AtomicUsize::new(0);
     NEXT_INDEX.fetch_add(1, Ordering::SeqCst)
 }
 
-fn num_keys() -> usize {
-    INFURA_KEYS.len() + ALCHEMY_KEYS.len()
+/// Returns the next item in the list to use.
+fn next<T>(list: &[T]) -> &T {
+    &list[next_idx() % list.len()]
 }
 
 /// Returns the next _mainnet_ rpc endpoint in inline
@@ -118,20 +127,33 @@ pub fn next_ws_endpoint(chain: NamedChain) -> String {
 
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_KEYS.len();
-    format!("https://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+    next_archive_endpoint(false)
 }
 
 /// Returns endpoint that has access to archive state
 pub fn next_ws_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_KEYS.len();
-    format!("wss://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
+    next_archive_endpoint(true)
+}
+
+/// Returns endpoint that has access to archive state, http or ws.
+/// Use env vars (comma separated urls) or default inline keys (Alchemy for ws, Infura for http).
+fn next_archive_endpoint(is_ws: bool) -> String {
+    let env_urls = if is_ws { ENV_WS_ARCHIVE_ENDPOINTS } else { ENV_HTTP_ARCHIVE_ENDPOINTS };
+
+    let rpc_env_vars = env::var(env_urls).unwrap_or_default();
+    if !rpc_env_vars.is_empty() {
+        let urls = rpc_env_vars.split(',').collect::<Vec<&str>>();
+        next(&urls).to_string()
+    } else if is_ws {
+        format!("wss://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
+    } else {
+        format!("https://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
+    }
 }
 
 /// Returns the next etherscan api key
 pub fn next_mainnet_etherscan_api_key() -> String {
-    let idx = next() % ETHERSCAN_MAINNET_KEYS.len();
-    ETHERSCAN_MAINNET_KEYS[idx].to_string()
+    next_etherscan_api_key(NamedChain::Mainnet)
 }
 
 /// Returns the next etherscan api key for given chain.
@@ -140,8 +162,7 @@ pub fn next_etherscan_api_key(chain: NamedChain) -> String {
         Optimism => &ETHERSCAN_OPTIMISM_KEYS,
         _ => &ETHERSCAN_MAINNET_KEYS,
     };
-    let idx = next() % keys.len();
-    keys[idx].to_string()
+    next(keys).to_string()
 }
 
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
@@ -151,7 +172,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://mainnet.base.org".to_string();
     }
 
-    let idx = next() % num_keys();
+    let idx = next_idx() % (INFURA_KEYS.len() + ALCHEMY_KEYS.len());
     let is_infura = idx < INFURA_KEYS.len();
 
     let key = if is_infura { INFURA_KEYS[idx] } else { ALCHEMY_KEYS[idx - INFURA_KEYS.len()] };
