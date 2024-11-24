@@ -145,6 +145,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// Timeout for each fuzz run in seconds.
+    #[arg(long, env = "FOUNDRY_FUZZ_TIMEOUT_SECS", value_name = "TIMEOUT_SECS")]
+    pub fuzz_timeout_secs: Option<u64>,
+
+    /// Allow timeouts to not be reported as failures.
+    #[arg(long, env = "FOUNDRY_FUZZ_ALLOW_TIMEOUTS", value_name = "ALLOW_TIMEOUTS")]
+    pub fuzz_allow_timeouts: bool,
+
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
@@ -869,6 +877,12 @@ impl Provider for TestArgs {
         }
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
+        }
+        if let Some(fuzz_timeout_secs) = self.fuzz_timeout_secs {
+            fuzz_dict.insert("timeout_secs".to_string(), fuzz_timeout_secs.into());
+        }
+        if self.fuzz_allow_timeouts {
+            fuzz_dict.insert("allow_timeouts".to_string(), true.into());
         }
         if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
             fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());

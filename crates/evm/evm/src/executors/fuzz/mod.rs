@@ -98,7 +98,19 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
+        // Start a timer if timeout is set
+        let start_time = self.config.timeout_secs.map(|timeout| {
+            (std::time::Instant::now(), std::time::Duration::from_secs(timeout))
+        });
+
         let run_result = self.runner.clone().run(&strategy, |calldata| {
+            // Check if the timeout has been reached
+            if let Some((start_time, timeout)) = start_time {
+                if start_time.elapsed() > timeout {
+                    return Err(TestCaseError::fail("Timeout reached"))
+                }
+            }
+
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             // If running with progress then increment current run.
@@ -193,17 +205,23 @@ impl FuzzedExecutor {
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
+                result.reason = (!reason.is_empty()).then_some(reason.clone());
 
-                let args = if let Some(data) = calldata.get(4..) {
-                    func.abi_decode_input(data, false).unwrap_or_default()
+                if reason == "Timeout reached" {
+                    if self.config.allow_timeouts {
+                        result.success = true;
+                    }
                 } else {
-                    vec![]
-                };
+                    let args = if let Some(data) = calldata.get(4..) {
+                        func.abi_decode_input(data, false).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
 
-                result.counterexample = Some(CounterExample::Single(
-                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                ));
+                    result.counterexample = Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                    ));
+                }
             }
         }
 
