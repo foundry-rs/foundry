@@ -1,7 +1,9 @@
+use std::collections::VecDeque;
+
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
     address, hex,
-    map::{hash_map::Entry, HashMap},
+    map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
 use alloy_sol_types::{SolError, SolValue};
@@ -109,6 +111,8 @@ pub struct ExpectedEmit {
     pub anonymous: bool,
     /// Whether the log was actually found in the subcalls
     pub found: bool,
+    /// Number of times the log is expected to be emitted
+    pub count: u64,
 }
 
 impl Cheatcode for expectCall_0Call {
@@ -221,6 +225,7 @@ impl Cheatcode for expectEmit_0Call {
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             false,
+            1,
         )
     }
 }
@@ -234,6 +239,7 @@ impl Cheatcode for expectEmit_1Call {
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             false,
+            1,
         )
     }
 }
@@ -241,14 +247,28 @@ impl Cheatcode for expectEmit_1Call {
 impl Cheatcode for expectEmit_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false)
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false, 1)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), false)
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), false, 1)
+    }
+}
+
+impl Cheatcode for expectEmit_4Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { checkTopic1, checkTopic2, checkTopic3, checkData, count } = *self;
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth(),
+            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
+            None,
+            false,
+            count,
+        )
     }
 }
 
@@ -261,6 +281,7 @@ impl Cheatcode for expectEmitAnonymous_0Call {
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             true,
+            1,
         )
     }
 }
@@ -274,6 +295,7 @@ impl Cheatcode for expectEmitAnonymous_1Call {
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             true,
+            1,
         )
     }
 }
@@ -281,14 +303,14 @@ impl Cheatcode for expectEmitAnonymous_1Call {
 impl Cheatcode for expectEmitAnonymous_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, true)
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, true, 1)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true)
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true, 1)
     }
 }
 
@@ -537,21 +559,31 @@ fn expect_call(
     Ok(Default::default())
 }
 
+/// Handles expected emits specified by the `expectEmit` cheatcodes.
+///
+/// The second element of the tuple counts the number of times the log has been emitted by a
+/// particular address
+pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<u64>)>;
+
 fn expect_emit(
     state: &mut Cheatcodes,
     depth: u64,
     checks: [bool; 5],
     address: Option<Address>,
     anonymous: bool,
+    count: u64,
 ) -> Result {
-    let expected_emit = ExpectedEmit { depth, checks, address, found: false, log: None, anonymous };
-    if let Some(found_emit_pos) = state.expected_emits.iter().position(|emit| emit.found) {
+    let expected_emit =
+        ExpectedEmit { depth, checks, address, found: false, log: None, anonymous, count };
+    if let Some(found_emit_pos) =
+        state.expected_emits.iter().position(|(emit, _count_map)| emit.found)
+    {
         // The order of emits already found (back of queue) should not be modified, hence push any
         // new emit before first found emit.
-        state.expected_emits.insert(found_emit_pos, expected_emit);
+        state.expected_emits.insert(found_emit_pos, (expected_emit, Default::default()));
     } else {
         // If no expected emits then push new one at the back of queue.
-        state.expected_emits.push_back(expected_emit);
+        state.expected_emits.push_back((expected_emit, Default::default()));
     }
 
     Ok(Default::default())
@@ -572,18 +604,19 @@ pub(crate) fn handle_expect_emit(
     // First, we can return early if all events have been matched.
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
-    if state.expected_emits.iter().all(|expected| expected.found) {
+    if state.expected_emits.iter().all(|(expected, _count_map)| expected.found) {
         return
     }
 
-    let should_fill_logs = state.expected_emits.iter().any(|expected| expected.log.is_none());
+    let should_fill_logs =
+        state.expected_emits.iter().any(|(expected, _count_map)| expected.log.is_none());
     let index_to_fill_or_check = if should_fill_logs {
         // If there's anything to fill, we start with the last event to match in the queue
         // (without taking into account events already matched).
         state
             .expected_emits
             .iter()
-            .position(|emit| emit.found)
+            .position(|(emit, _count_map)| emit.found)
             .unwrap_or(state.expected_emits.len())
             .saturating_sub(1)
     } else {
@@ -592,7 +625,7 @@ pub(crate) fn handle_expect_emit(
         0
     };
 
-    let mut event_to_fill_or_check = state
+    let (mut event_to_fill_or_check, _count_map) = state
         .expected_emits
         .remove(index_to_fill_or_check)
         .expect("we should have an emit to fill or check");
@@ -603,7 +636,9 @@ pub(crate) fn handle_expect_emit(
         if event_to_fill_or_check.anonymous || !log.topics().is_empty() {
             event_to_fill_or_check.log = Some(log.data.clone());
             // If we only filled the expected log then we put it back at the same position.
-            state.expected_emits.insert(index_to_fill_or_check, event_to_fill_or_check);
+            state
+                .expected_emits
+                .insert(index_to_fill_or_check, (event_to_fill_or_check, _count_map));
         } else {
             interpreter.instruction_result = InstructionResult::Revert;
             interpreter.next_action = InterpreterAction::Return {
@@ -647,11 +682,11 @@ pub(crate) fn handle_expect_emit(
     // If we found the event, we can push it to the back of the queue
     // and begin expecting the next event.
     if event_to_fill_or_check.found {
-        state.expected_emits.push_back(event_to_fill_or_check);
+        state.expected_emits.push_back((event_to_fill_or_check, _count_map));
     } else {
         // We did not match this event, so we need to keep waiting for the right one to
         // appear.
-        state.expected_emits.push_front(event_to_fill_or_check);
+        state.expected_emits.push_front((event_to_fill_or_check, _count_map));
     }
 }
 
