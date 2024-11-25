@@ -5,7 +5,7 @@ use crate::{
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use eyre::Result;
-use foundry_common::{fs, retry::Retry, shell};
+use foundry_common::{fs, retry::Retry};
 use futures::FutureExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,6 @@ impl VerificationProvider for SourcifyVerificationProvider {
                         context.target_name,
                         args.address.to_string()
                     )?;
-           
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")

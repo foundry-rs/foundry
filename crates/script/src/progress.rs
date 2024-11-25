@@ -113,11 +113,9 @@ impl SequenceProgressState {
     pub fn finish_tx_spinner_with_msg(&mut self, tx_hash: B256, msg: &str) -> std::io::Result<()> {
         self.finish_tx_spinner(tx_hash);
 
-        if shell::is_quiet() || shell::is_json() {
-            return Ok(());
+        if !(shell::is_quiet() || shell::is_json()) {
+            self.multi.println(msg)?;
         }
-
-        self.multi.println(msg)?;
 
         Ok(())
     }

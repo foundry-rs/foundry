@@ -85,7 +85,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     verify_args.contract_name,
                     verify_args.address
                 )?;
-
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
