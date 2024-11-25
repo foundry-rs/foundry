@@ -714,7 +714,9 @@ pub(crate) fn handle_expect_emit(
         }
 
         // Increment match `count` for `log.address`
-        count_map.entry(log.address).and_modify(|count| *count += 1).or_insert(1);
+        if event_to_fill_or_check.count > 0 {
+            count_map.entry(log.address).and_modify(|count| *count += 1).or_insert(1);
+        }
 
         if let Some(emitter) = event_to_fill_or_check.address {
             let entry = count_map.get(&emitter);

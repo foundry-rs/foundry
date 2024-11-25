@@ -38,6 +38,18 @@ contract Emitter {
         emit Something(topic1, topic2, topic3, data);
     }
 
+    function emitNEvents(
+        uint256 topic1,
+        uint256 topic2,
+        uint256 topic3,
+        uint256 data,
+        uint256 n
+    ) public {
+        for (uint256 i = 0; i < n; i++) {
+            emit Something(topic1, topic2, topic3, data);
+        }
+    }
+
     function emitMultiple(
         uint256[2] memory topic1,
         uint256[2] memory topic2,
@@ -654,11 +666,34 @@ contract ExpectEmitTest is DSTest {
         emitter.emitWindow();
     }
 
+    /// Test zero emits.
     function testNoEmit() public {
         vm.expectEmit(0);
         emit Something(1, 2, 3, 4);
 
         emitter.doesNothing();
+    }
+
+    function testTwoEmits() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitNEvents(1, 2, 3, 4, count);
+    }
+
+    /// Test zero emits from a specific address (emitter).
+    function testNoEmitFromAddress() public {
+        vm.expectEmit(address(emitter), 0);
+        emit Something(1, 2, 3, 4);
+        emitter.doesNothing();
+    }
+
+    function testTwoEmitsFromAddress() public {
+        uint64 count = 2;
+        vm.expectEmit(address(emitter), count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count);
     }
     /// This test will fail if we check that all expected logs were emitted
     /// after every call from the same depth as the call that invoked the cheatcode.
