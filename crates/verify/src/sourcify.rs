@@ -5,10 +5,11 @@ use crate::{
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use eyre::Result;
-use foundry_common::{fs, retry::Retry};
+use foundry_common::{fs, retry::Retry, shell};
 use futures::FutureExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::str::FromStr;
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
@@ -40,11 +41,23 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let resp = retry
             .run_async(|| {
                 async {
-                    sh_println!(
-                        "\nSubmitting verification for [{}] {:?}.",
-                        context.target_name,
-                        args.address.to_string()
-                    )?;
+                    if !shell::is_json() {
+                        sh_println!(
+                            "\nSubmitting verification for [{}] {:?}.",
+                            context.target_name,
+                            args.address.to_string()
+                        )?;
+                    } else {
+                        sh_println!(
+                            "{}",
+                            json!({
+                                "status": "submitting",
+                                "source": context.target_name,
+                                "address": args.address.to_string(),
+                            })
+                        )?;
+                    }
+                    
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")

@@ -21,7 +21,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    TransactionMaybeSigned,
+    shell, TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -359,7 +359,6 @@ impl BundledState {
                         batch_number * batch_size,
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ));
-
                     for (kind, is_fixed_gas_limit) in batch {
                         let fut = send_transaction(
                             provider.clone(),
@@ -384,7 +383,6 @@ impl BundledState {
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
-
                             index += 1;
                         }
 
@@ -426,8 +424,10 @@ impl BundledState {
             seq_progress.inner.write().finish();
         }
 
-        sh_println!("\n\n==========================")?;
-        sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        if !shell::is_json() {
+            sh_println!("\n\n==========================")?;
+            sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        }
 
         Ok(BroadcastedState {
             args: self.args,

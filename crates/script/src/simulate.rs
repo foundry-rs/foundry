@@ -16,7 +16,7 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::ContractData;
+use foundry_common::{shell, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -151,7 +151,7 @@ impl PreSimulationState {
             })
             .collect::<Vec<_>>();
 
-        if self.script_config.evm_opts.verbosity > 3 {
+        if !shell::is_json() && self.script_config.evm_opts.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
@@ -220,9 +220,11 @@ impl PreSimulationState {
     async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
 
-        let n = rpcs.len();
-        let s = if n != 1 { "s" } else { "" };
-        sh_println!("\n## Setting up {n} EVM{s}.")?;
+        if !shell::is_json() {
+            let n = rpcs.len();
+            let s = if n != 1 { "s" } else { "" };
+            sh_println!("\n## Setting up {n} EVM{s}.")?;
+        }
 
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
@@ -348,24 +350,36 @@ impl FilledTransactionsState {
                     provider_info.gas_price()?
                 };
 
-                sh_println!("\n==========================")?;
-                sh_println!("\nChain {}", provider_info.chain)?;
+                if !shell::is_json() {
+                    sh_println!("\n==========================")?;
+                    sh_println!("\nChain {}", provider_info.chain)?;
 
-                sh_println!(
-                    "\nEstimated gas price: {} gwei",
-                    format_units(per_gas, 9)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                        .trim_end_matches('0')
-                        .trim_end_matches('.')
-                )?;
-                sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                sh_println!(
-                    "\nEstimated amount required: {} ETH",
-                    format_units(total_gas.saturating_mul(per_gas), 18)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                        .trim_end_matches('0')
-                )?;
-                sh_println!("\n==========================")?;
+                    sh_println!(
+                        "\nEstimated gas price: {} gwei",
+                        format_units(per_gas, 9)
+                            .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                            .trim_end_matches('0')
+                            .trim_end_matches('.')
+                    )?;
+                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
+                    sh_println!(
+                        "\nEstimated amount required: {} ETH",
+                        format_units(total_gas.saturating_mul(per_gas), 18)
+                            .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                            .trim_end_matches('0')
+                    )?;
+                    sh_println!("\n==========================")?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        serde_json::json!({
+                            "chain": provider_info.chain,
+                            "estimated_gas_price": format_units(per_gas, 9).unwrap_or_else(|_| "[Could not calculate]".to_string()).trim_end_matches('0').trim_end_matches('.'),
+                            "estimated_total_gas_used": total_gas,
+                            "estimated_amount_required": format_units(total_gas.saturating_mul(per_gas), 18).unwrap_or_else(|_| "[Could not calculate]".to_string()).trim_end_matches('0')
+                        })
+                    )?;
+                }
             }
         }
 

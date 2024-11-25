@@ -31,7 +31,13 @@ pub struct SequenceProgressState {
 
 impl SequenceProgressState {
     pub fn new(sequence_idx: usize, sequence: &ScriptSequence, multi: MultiProgress) -> Self {
-        let mut state = if !shell::is_quiet() {
+        let mut state = if shell::is_quiet() || shell::is_json() {
+            let top_spinner = ProgressBar::hidden();
+            let txs = ProgressBar::hidden();
+            let receipts = ProgressBar::hidden();
+
+            Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
+        } else {
             let mut template = "{spinner:.green}".to_string();
             write!(template, " Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain))
                 .unwrap();
@@ -60,12 +66,6 @@ impl SequenceProgressState {
             receipts.set_position(sequence.receipts.len() as u64);
 
             Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
-        } else {
-            let top_spinner = ProgressBar::hidden();
-            let txs = ProgressBar::hidden();
-            let receipts = ProgressBar::hidden();
-
-            Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
         };
 
         for tx_hash in sequence.pending.iter() {
@@ -80,7 +80,9 @@ impl SequenceProgressState {
     pub fn tx_sent(&mut self, tx_hash: B256) {
         // Avoid showing more than 10 spinners.
         if self.tx_spinners.len() < 10 {
-            let spinner = if !shell::is_quiet() {
+            let spinner = if shell::is_quiet() || shell::is_json() {
+                ProgressBar::hidden()
+            } else {
                 let spinner = ProgressBar::new_spinner()
                     .with_style(
                         ProgressStyle::with_template("    {spinner:.green} {msg}")
@@ -92,8 +94,6 @@ impl SequenceProgressState {
                 let spinner = self.multi.insert_before(&self.txs, spinner);
                 spinner.enable_steady_tick(Duration::from_millis(100));
                 spinner
-            } else {
-                ProgressBar::hidden()
             };
 
             self.tx_spinners.insert(tx_hash, spinner);
@@ -113,9 +113,11 @@ impl SequenceProgressState {
     pub fn finish_tx_spinner_with_msg(&mut self, tx_hash: B256, msg: &str) -> std::io::Result<()> {
         self.finish_tx_spinner(tx_hash);
 
-        if !shell::is_quiet() {
-            self.multi.println(msg)?;
+        if shell::is_quiet() || shell::is_json() {
+            return Ok(());
         }
+
+        self.multi.println(msg)?;
 
         Ok(())
     }
