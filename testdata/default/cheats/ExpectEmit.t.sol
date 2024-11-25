@@ -673,6 +673,12 @@ contract ExpectEmitTest is DSTest {
         emitter.doesNothing();
     }
 
+    function testFailNoEmit() public {
+        vm.expectEmit(0);
+        emit Something(1, 2, 3, 4);
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
     function testCountNEmits() public {
         uint64 count = 2;
         vm.expectEmit(count);
@@ -680,6 +686,12 @@ contract ExpectEmitTest is DSTest {
         emitter.emitNEvents(1, 2, 3, 4, count);
     }
 
+    function testFailCountNEmits() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count - 1);
+    }
     /// Test zero emits from a specific address (emitter).
     function testCountNoEmitFromAddress() public {
         vm.expectEmit(address(emitter), 0);
@@ -687,11 +699,24 @@ contract ExpectEmitTest is DSTest {
         emitter.doesNothing();
     }
 
+    function testFailNoEmitFromAddress() public {
+        vm.expectEmit(address(emitter), 0);
+        emit Something(1, 2, 3, 4);
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
     function testCountEmitsFromAddress() public {
         uint64 count = 2;
         vm.expectEmit(address(emitter), count);
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count);
+    }
+
+    function testFailCountEmitsFromAddress() public {
+        uint64 count = 3;
+        vm.expectEmit(address(emitter), count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count - 1);
     }
 
     /// This test will fail if we check that all expected logs were emitted

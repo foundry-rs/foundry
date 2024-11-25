@@ -736,12 +736,6 @@ pub(crate) fn handle_expect_emit(
         }
     }();
 
-    tracing::info!(
-        "Evaluated ExpectedEmitFound {} with expected count {}",
-        event_to_fill_or_check.found,
-        event_to_fill_or_check.count
-    );
-
     // If we found the event, we can push it to the back of the queue
     // and begin expecting the next event.
     if event_to_fill_or_check.found {
