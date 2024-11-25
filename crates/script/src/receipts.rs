@@ -73,7 +73,7 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
     let gas_price = receipt.effective_gas_price;
 
     if shell::is_json() {
-        format!(
+        let _ = sh_println!(
             "{}",
             serde_json::json!({
                 "chain": chain,
@@ -88,7 +88,9 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
                 "gas_used": gas_used,
                 "gas_price": gas_price,
             })
-        )
+        );
+
+        String::new()
     } else {
         format!(
             "\n##### {chain}\n{status} Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n\n",
