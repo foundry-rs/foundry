@@ -1527,7 +1527,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
             self.expected_emits.retain(|(expected, _count_map)| {
-                if expected.found == false && expected.count == 0 {
+                if !expected.found && expected.count == 0 {
                     // This indicates that we were expecting 0 zero events, hence remove it.
                     return false;
                 }
