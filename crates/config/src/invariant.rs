@@ -37,7 +37,7 @@ pub struct InvariantConfig {
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
     /// Optional timeout (in seconds) for each invariant test.
-    pub timeout: Option<u64>,
+    pub timeout: Option<u32>,
 }
 
 impl Default for InvariantConfig {
@@ -112,7 +112,7 @@ impl InlineConfigParser for InvariantConfig {
                 }
                 "shrink-run-limit" => conf_clone.shrink_run_limit = parse_config_u32(key, value)?,
                 "show-metrics" => conf_clone.show_metrics = parse_config_bool(key, value)?,
-                "timeout" => conf_clone.timeout = Some(parse_config_u64(key, value)?),
+                "timeout" => conf_clone.timeout = Some(parse_config_u32(key, value)?),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

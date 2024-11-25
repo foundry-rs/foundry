@@ -100,7 +100,7 @@ impl FuzzedExecutor {
 
         // Start a timer if timeout is set.
         let start_time = self.config.timeout.map(|timeout| {
-            (std::time::Instant::now(), std::time::Duration::from_secs(timeout))
+            (std::time::Instant::now(), std::time::Duration::from_secs(timeout.into()))
         });
 
         let run_result = self.runner.clone().run(&strategy, |calldata| {

@@ -33,7 +33,7 @@ pub struct FuzzConfig {
     /// show `console.log` in fuzz test, defaults to `false`
     pub show_logs: bool,
     /// Optional timeout (in seconds) for each property test
-    pub timeout: Option<u64>,
+    pub timeout: Option<u32>,
 }
 
 impl Default for FuzzConfig {
@@ -94,7 +94,7 @@ impl InlineConfigParser for FuzzConfig {
                 }
                 "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
                 "show-logs" => conf_clone.show_logs = parse_config_bool(key, value)?,
-                "timeout" => conf_clone.timeout = Some(parse_config_u64(key, value)?),
+                "timeout" => conf_clone.timeout = Some(parse_config_u32(key, value)?),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
