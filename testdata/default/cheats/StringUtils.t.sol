@@ -70,7 +70,7 @@ contract StringManipulationTest is DSTest {
         assertEq(vm.format(input2, true, false), "test: true false %s %s");
         assertEq(vm.format(input2, true, false, true), "test: true false true %s");
         assertEq(vm.format(input2, true, false, true, true), "test: true false true true");
-    
+
         assertEq(vm.format("test: %d %s", 1, true), "test: 1 true");
         assertEq(vm.format("test: %s %d", true, 1), "test: true 1");
     }
