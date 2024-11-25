@@ -8,7 +8,7 @@ use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
-use foundry_common::{shell, ContractsByArtifact};
+use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
@@ -219,9 +219,7 @@ async fn verify_contracts(
         let num_verifications = future_verifications.len();
         let mut num_of_successful_verifications = 0;
 
-        if !shell::is_json() {
-            sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
-        }
+        sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
 
         for verification in future_verifications {
             match verification.await {
@@ -238,9 +236,7 @@ async fn verify_contracts(
             return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
         }
 
-        if !shell::is_json() {
-            sh_println!("All ({num_verifications}) contracts were verified!")?;
-        }
+        sh_println!("All ({num_verifications}) contracts were verified!")?;
     }
 
     Ok(())

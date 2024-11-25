@@ -1,10 +1,7 @@
 //! Retry utilities.
 
 use eyre::{Error, Report, Result};
-use serde_json::json;
 use std::{future::Future, time::Duration};
-
-use crate::shell;
 
 /// Error type for Retry.
 #[derive(Debug, thiserror::Error)]
@@ -86,18 +83,6 @@ impl Retry {
 
     fn handle_err(&mut self, err: Error) {
         self.retries -= 1;
-
-        if !shell::is_json() {
-            let _ = sh_warn!("{} ({} tries remaining)", err.root_cause(), self.retries);
-        } else {
-            let _ = sh_eprintln!(
-                "{}",
-                json!({
-                    "status": "retrying",
-                    "error": err.root_cause().to_string(),
-                    "retries": self.retries,
-                })
-            );
-        }
+        let _ = sh_warn!("{} ({} tries remaining)", err.root_cause(), self.retries);
     }
 }
