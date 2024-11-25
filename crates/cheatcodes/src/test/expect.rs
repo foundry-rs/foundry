@@ -272,6 +272,41 @@ impl Cheatcode for expectEmit_4Call {
     }
 }
 
+impl Cheatcode for expectEmit_5Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter, count } = *self;
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth(),
+            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
+            Some(emitter),
+            false,
+            count,
+        )
+    }
+}
+
+impl Cheatcode for expectEmit_6Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { count } = *self;
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false, count)
+    }
+}
+
+impl Cheatcode for expectEmit_7Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { emitter, count } = *self;
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth(),
+            [true; 5],
+            Some(emitter),
+            false,
+            count,
+        )
+    }
+}
+
 impl Cheatcode for expectEmitAnonymous_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
