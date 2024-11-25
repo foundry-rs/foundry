@@ -1,3 +1,5 @@
+use alloy_consensus::Transaction;
+use alloy_network::TransactionResponse;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
@@ -89,6 +91,10 @@ pub struct RunArgs {
     /// Enables Alphanet features.
     #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 impl RunArgs {
@@ -119,10 +125,11 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {
+        if is_known_system_sender(tx.from) || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+        {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
-                tx.hash
+                tx.tx_hash()
             ));
         }
 
@@ -144,7 +151,7 @@ impl RunArgs {
 
         if let Some(block) = &block {
             env.block.timestamp = U256::from(block.header.timestamp);
-            env.block.coinbase = block.header.miner;
+            env.block.coinbase = block.header.beneficiary;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
             env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
@@ -191,27 +198,28 @@ impl RunArgs {
                     // we skip them otherwise this would cause
                     // reverts
                     if is_known_system_sender(tx.from) ||
-                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                        tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
                     }
-                    if tx.hash == tx_hash {
+                    if tx.tx_hash() == tx_hash {
                         break;
                     }
 
                     configure_tx_env(&mut env, &tx.inner);
 
-                    if let Some(to) = tx.to {
-                        trace!(tx=?tx.hash,?to, "executing previous call transaction");
+                    if let Some(to) = Transaction::to(tx) {
+                        trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
                             format!(
                                 "Failed to execute transaction: {:?} in block {}",
-                                tx.hash, env.block.number
+                                tx.tx_hash(),
+                                env.block.number
                             )
                         })?;
                     } else {
-                        trace!(tx=?tx.hash, "executing previous create transaction");
+                        trace!(tx=?tx.tx_hash(), "executing previous create transaction");
                         if let Err(error) = executor.deploy_with_env(env.clone(), None) {
                             match error {
                                 // Reverted transactions should be skipped
@@ -220,7 +228,8 @@ impl RunArgs {
                                     return Err(error).wrap_err_with(|| {
                                         format!(
                                             "Failed to deploy transaction: {:?} in block {}",
-                                            tx.hash, env.block.number
+                                            tx.tx_hash(),
+                                            env.block.number
                                         )
                                     })
                                 }
@@ -239,11 +248,11 @@ impl RunArgs {
 
             configure_tx_env(&mut env, &tx.inner);
 
-            if let Some(to) = tx.to {
-                trace!(tx=?tx.hash, to=?to, "executing call transaction");
+            if let Some(to) = Transaction::to(&tx) {
+                trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
                 TraceResult::try_from(executor.transact_with_env(env))?
             } else {
-                trace!(tx=?tx.hash, "executing create transaction");
+                trace!(tx=?tx.tx_hash(), "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
@@ -253,9 +262,9 @@ impl RunArgs {
             &config,
             chain,
             self.label,
+            self.with_local_artifacts,
             self.debug,
             self.decode_internal,
-            shell::verbosity() > 0,
             self.with_state_changes,
         )
         .await?;

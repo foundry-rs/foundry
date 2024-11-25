@@ -1,6 +1,5 @@
 use clap::Parser;
 use eyre::Result;
-
 use soldeer_commands::Command;
 
 // CLI arguments for `forge soldeer`.

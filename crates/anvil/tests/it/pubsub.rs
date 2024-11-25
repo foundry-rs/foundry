@@ -23,7 +23,7 @@ async fn test_sub_new_heads() {
     api.anvil_set_interval_mining(1).unwrap();
 
     let blocks = blocks.into_stream().take(3).collect::<Vec<_>>().await;
-    let block_numbers = blocks.into_iter().map(|b| b.header.number).collect::<Vec<_>>();
+    let block_numbers = blocks.into_iter().map(|b| b.number).collect::<Vec<_>>();
 
     assert_eq!(block_numbers, vec![1, 2, 3]);
 }
@@ -262,7 +262,7 @@ async fn test_sub_new_heads_fast() {
     let mut block_numbers = Vec::new();
     for _ in 0..num {
         api.mine_one().await;
-        let block_number = blocks.next().await.unwrap().header.number;
+        let block_number = blocks.next().await.unwrap().number;
         block_numbers.push(block_number);
     }
 

@@ -50,6 +50,10 @@ pub struct CallArgs {
     #[arg(long, requires = "trace")]
     debug: bool,
 
+    /// Prints the state changes
+    #[arg(long)]
+    with_state_changes: bool,
+
     #[arg(long, requires = "trace")]
     decode_internal: bool,
 
@@ -81,6 +85,10 @@ pub struct CallArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -124,9 +132,11 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
+            with_state_changes,
             decode_internal,
             labels,
             data,
+            with_local_artifacts,
             ..
         } = self;
 
@@ -202,8 +212,17 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(trace, &config, chain, labels, debug, decode_internal, false, false)
-                .await?;
+            handle_traces(
+                trace,
+                &config,
+                chain,
+                labels,
+                with_local_artifacts,
+                debug,
+                decode_internal,
+                with_state_changes,
+            )
+            .await?;
 
             return Ok(());
         }

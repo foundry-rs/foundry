@@ -13,7 +13,7 @@ use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{invariant::InvariantMetrics, EvmError, RawCallResult},
+    executors::{invariant::InvariantMetrics, RawCallResult},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
@@ -469,7 +469,7 @@ impl TestResult {
     /// Creates a new test result starting from test setup results.
     pub fn new(setup: TestSetup) -> Self {
         Self {
-            labeled_addresses: setup.labeled_addresses,
+            labeled_addresses: setup.labels,
             logs: setup.logs,
             traces: setup.traces,
             coverage: setup.coverage,
@@ -490,7 +490,7 @@ impl TestResult {
             logs: setup.logs,
             traces: setup.traces,
             coverage: setup.coverage,
-            labeled_addresses: setup.labeled_addresses,
+            labeled_addresses: setup.labels,
             ..Default::default()
         }
     }
@@ -651,21 +651,17 @@ impl TestResult {
         format!("{self} {name} {}", self.kind.report())
     }
 
-    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
-    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
-        self.logs.extend(call_result.logs.clone());
-        self.labeled_addresses.extend(call_result.labels.clone());
-        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(call_result.coverage.clone());
+    /// Merges the given raw call result into `self`.
+    pub fn extend(&mut self, call_result: RawCallResult) {
+        self.logs.extend(call_result.logs);
+        self.labeled_addresses.extend(call_result.labels);
+        self.traces.extend(call_result.traces.map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage);
     }
 
-    /// Function to merge given coverage in current test result coverage.
+    /// Merges the given coverage result into `self`.
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
-        let old_coverage = std::mem::take(&mut self.coverage);
-        self.coverage = match (old_coverage, other_coverage) {
-            (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
-            (a, b) => a.or(b),
-        };
+        HitMaps::merge_opt(&mut self.coverage, other_coverage);
     }
 }
 
@@ -747,77 +743,39 @@ impl TestKind {
     }
 }
 
+/// The result of a test setup.
+///
+/// Includes the deployment of the required libraries and the test contract itself, and the call to
+/// the `setUp()` function.
 #[derive(Clone, Debug, Default)]
 pub struct TestSetup {
-    /// The address at which the test contract was deployed
+    /// The address at which the test contract was deployed.
     pub address: Address,
-    /// The logs emitted during setup
-    pub logs: Vec<Log>,
-    /// Call traces of the setup
-    pub traces: Traces,
-    /// Addresses labeled during setup
-    pub labeled_addresses: AddressHashMap<String>,
-    /// The reason the setup failed, if it did
-    pub reason: Option<String>,
-    /// Coverage info during setup
-    pub coverage: Option<HitMaps>,
-    /// Defined fuzz test fixtures
+    /// Defined fuzz test fixtures.
     pub fuzz_fixtures: FuzzFixtures,
+
+    /// The logs emitted during setup.
+    pub logs: Vec<Log>,
+    /// Addresses labeled during setup.
+    pub labels: AddressHashMap<String>,
+    /// Call traces of the setup.
+    pub traces: Traces,
+    /// Coverage info during setup.
+    pub coverage: Option<HitMaps>,
+
+    /// The reason the setup failed, if it did.
+    pub reason: Option<String>,
 }
 
 impl TestSetup {
-    pub fn from_evm_error_with(
-        error: EvmError,
-        mut logs: Vec<Log>,
-        mut traces: Traces,
-        mut labeled_addresses: AddressHashMap<String>,
-    ) -> Self {
-        match error {
-            EvmError::Execution(err) => {
-                // force the tracekind to be setup so a trace is shown.
-                traces.extend(err.raw.traces.map(|traces| (TraceKind::Setup, traces)));
-                logs.extend(err.raw.logs);
-                labeled_addresses.extend(err.raw.labels);
-                Self::failed_with(logs, traces, labeled_addresses, err.reason)
-            }
-            e => Self::failed_with(
-                logs,
-                traces,
-                labeled_addresses,
-                format!("failed to deploy contract: {e}"),
-            ),
-        }
-    }
-
-    pub fn success(
-        address: Address,
-        logs: Vec<Log>,
-        traces: Traces,
-        labeled_addresses: AddressHashMap<String>,
-        coverage: Option<HitMaps>,
-        fuzz_fixtures: FuzzFixtures,
-    ) -> Self {
-        Self { address, logs, traces, labeled_addresses, reason: None, coverage, fuzz_fixtures }
-    }
-
-    pub fn failed_with(
-        logs: Vec<Log>,
-        traces: Traces,
-        labeled_addresses: AddressHashMap<String>,
-        reason: String,
-    ) -> Self {
-        Self {
-            address: Address::ZERO,
-            logs,
-            traces,
-            labeled_addresses,
-            reason: Some(reason),
-            coverage: None,
-            fuzz_fixtures: FuzzFixtures::default(),
-        }
-    }
-
     pub fn failed(reason: String) -> Self {
         Self { reason: Some(reason), ..Default::default() }
+    }
+
+    pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
+        self.logs.extend(raw.logs);
+        self.labels.extend(raw.labels);
+        self.traces.extend(raw.traces.map(|traces| (trace_kind, traces)));
+        HitMaps::merge_opt(&mut self.coverage, raw.coverage);
     }
 }

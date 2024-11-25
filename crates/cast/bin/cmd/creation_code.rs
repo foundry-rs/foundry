@@ -1,3 +1,4 @@
+use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{ext::TraceApi, Provider};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
@@ -143,9 +144,9 @@ pub async fn fetch_creation_code(
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
     let tx_data = tx_data.ok_or_eyre("Could not find creation tx data.")?;
 
-    let bytecode = if tx_data.inner.to.is_none() {
+    let bytecode = if tx_data.to().is_none() {
         // Contract was created using a standard transaction
-        tx_data.inner.input
+        tx_data.input().clone()
     } else {
         // Contract was created using a factory pattern or create2
         // Extract creation code from tx traces
