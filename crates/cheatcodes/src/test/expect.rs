@@ -660,7 +660,7 @@ pub(crate) fn handle_expect_emit(
         0
     };
 
-    let (mut event_to_fill_or_check, _count_map) = state
+    let (mut event_to_fill_or_check, mut count_map) = state
         .expected_emits
         .remove(index_to_fill_or_check)
         .expect("we should have an emit to fill or check");
@@ -670,10 +670,12 @@ pub(crate) fn handle_expect_emit(
         // filled.
         if event_to_fill_or_check.anonymous || !log.topics().is_empty() {
             event_to_fill_or_check.log = Some(log.data.clone());
+            tracing::info!("Filling expected Log");
+            tracing::info!("Expected Count {}", event_to_fill_or_check.count);
             // If we only filled the expected log then we put it back at the same position.
             state
                 .expected_emits
-                .insert(index_to_fill_or_check, (event_to_fill_or_check, _count_map));
+                .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
             interpreter.instruction_result = InstructionResult::Revert;
             interpreter.next_action = InterpreterAction::Return {
@@ -711,17 +713,41 @@ pub(crate) fn handle_expect_emit(
             return false
         }
 
-        true
+        // Increment match `count` for `log.address`
+        count_map.entry(log.address).and_modify(|count| *count += 1).or_insert(1);
+
+        if let Some(emitter) = event_to_fill_or_check.address {
+            let entry = count_map.get(&emitter);
+
+            // If none, we haven't seen the emitter yet. We can't set `found` to true.
+            if entry.is_none() {
+                return false
+            }
+
+            if let Some(count) = entry {
+                if *count == event_to_fill_or_check.count {
+                    return true
+                }
+            }
+            false
+        } else {
+            if count_map.values().sum::<u64>() == event_to_fill_or_check.count {
+                return true
+            }
+            false
+        }
     }();
+
+    tracing::info!("Evaluated ExpectedEmitFound to: {}", event_to_fill_or_check.found);
 
     // If we found the event, we can push it to the back of the queue
     // and begin expecting the next event.
     if event_to_fill_or_check.found {
-        state.expected_emits.push_back((event_to_fill_or_check, _count_map));
+        state.expected_emits.push_back((event_to_fill_or_check, count_map));
     } else {
         // We did not match this event, so we need to keep waiting for the right one to
         // appear.
-        state.expected_emits.push_front((event_to_fill_or_check, _count_map));
+        state.expected_emits.push_front((event_to_fill_or_check, count_map));
     }
 }
 

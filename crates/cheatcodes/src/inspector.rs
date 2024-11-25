@@ -12,8 +12,8 @@ use crate::{
     test::{
         assume::AssumeNoRevert,
         expect::{
-            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
-            ExpectedRevert, ExpectedRevertKind,
+            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedRevert,
+            ExpectedRevertKind,
         },
     },
     utils::IgnoredTraces,
@@ -1526,7 +1526,13 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|(expected, _count_map)| !expected.found);
+            self.expected_emits.retain(|(expected, _count_map)| {
+                if expected.found == false && expected.count == 0 {
+                    // This indicates that we were expecting 0 zero events, hence remove it.
+                    return false;
+                }
+                !expected.found
+            });
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 let msg = if outcome.result.is_ok() {
