@@ -3111,7 +3111,7 @@
       "func": {
         "id": "attachDelegation",
         "description": "Designate the next call as an EIP-7702 transaction",
-        "declaration": "function attachDelegation(SignedDelegation memory signedDelegation) external;",
+        "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address))",
