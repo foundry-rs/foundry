@@ -18,7 +18,6 @@ use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
     abi::encode_function_args,
     retry::{Retry, RetryError},
-    shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
@@ -26,7 +25,6 @@ use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
-use serde_json::json;
 use std::{fmt::Debug, sync::LazyLock};
 
 mod flatten;
@@ -82,22 +80,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry
             .run_async(|| async {
-                if !shell::is_json() {
-                    sh_println!(
-                        "\nSubmitting verification for [{}] {}.",
-                        verify_args.contract_name,
-                        verify_args.address
-                    )?;
-                } else {
-                    sh_println!(
-                        "{}",
-                        json!({
-                            "status": "submitting",
-                            "source": verify_args.contract_name,
-                            "address": verify_args.address.to_string(),
-                        })
-                    )?;
-                }
+                sh_println!(
+                    "\nSubmitting verification for [{}] {}.",
+                    verify_args.contract_name,
+                    verify_args.address
+                )?;
 
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
@@ -120,34 +107,17 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     if resp.result.starts_with("Unable to locate ContractCode at") {
-                        if !shell::is_json() {
-                            warn!("{}", resp.result);
-                        }
-
+                        warn!("{}", resp.result);
                         return Err(eyre!("Etherscan could not detect the deployment."))
                     }
 
-                    if !shell::is_json() {
-                        warn!("Failed verify submission: {:?}", resp);
-                        sh_err!(
-                            "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
-                            `{}`",
-                            resp.message,
-                            resp.result
-                        )?;
-                    } else {
-                        sh_eprintln!(
-                            "{}",
-                            json!({
-                                "status": "failed",
-                                "source": verify_args.contract_name,
-                                "address": verify_args.address.to_string(),
-                                "message": resp.message,
-                                "details": resp.result,
-                            })
-                        )?;
-                    }
-
+                    warn!("Failed verify submission: {:?}", resp);
+                    sh_err!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
+                        `{}`",
+                        resp.message,
+                        resp.result
+                    )?;
                     std::process::exit(1);
                 }
 
@@ -156,26 +126,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            if !shell::is_json() {
-                sh_println!(
-                    "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-                    resp.message,
-                    resp.result,
-                    etherscan.address_url(args.address)
-                )?;
-            } else {
-                sh_println!(
-                    "{}",
-                    json!({
-                        "status": "submitted",
-                        "source": verify_args.contract_name,
-                        "address": verify_args.address.to_string(),
-                        "message": resp.message,
-                        "details": resp.result,
-                        "url": etherscan.address_url(args.address),
-                    })
-                )?;
-            }
+            sh_println!(
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
+                resp.message,
+                resp.result,
+                etherscan.address_url(args.address)
+            )?;
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
@@ -187,19 +143,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 return self.check(check_args).await
             }
         } else {
-            #[allow(clippy::collapsible_if)]
-            if !shell::is_json() {
-                sh_println!("Contract source code already verified")?;
-            } else {
-                sh_println!(
-                    "{}",
-                    json!({
-                        "status": "skipped",
-                        "source": verify_args.contract_name,
-                        "address": verify_args.address.to_string(),
-                    })
-                )?;
-            }
+            sh_println!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -226,44 +170,31 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                     trace!(?resp, "Received verification response");
 
-                    if shell::is_json() {
-                        let _ = sh_println!(
-                            "{}",
-                            json!({
-                                "status": "checking",
-                                "response": resp.message,
-                                "details": resp.result,
-                            })
-                        );
-                    } else {
-                        let _ = sh_println!(
-                            "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                            resp.message,
-                            resp.result
-                        );
+                    let _ = sh_println!(
+                        "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message,
+                        resp.result
+                    );
 
-                        if resp.result == "Pending in queue" {
-                            return Err(RetryError::Retry(
-                                eyre!("Verification is still pending...",),
-                            ))
-                        }
+                    if resp.result == "Pending in queue" {
+                        return Err(RetryError::Retry(eyre!("Verification is still pending...",)))
+                    }
 
-                        if resp.result == "Unable to verify" {
-                            return Err(RetryError::Retry(eyre!("Unable to verify.",)))
-                        }
+                    if resp.result == "Unable to verify" {
+                        return Err(RetryError::Retry(eyre!("Unable to verify.",)))
+                    }
 
-                        if resp.result == "Already Verified" {
-                            let _ = sh_println!("Contract source code already verified");
-                            return Ok(())
-                        }
+                    if resp.result == "Already Verified" {
+                        let _ = sh_println!("Contract source code already verified");
+                        return Ok(())
+                    }
 
-                        if resp.status == "0" {
-                            return Err(RetryError::Break(eyre!("Contract failed to verify.",)))
-                        }
+                    if resp.status == "0" {
+                        return Err(RetryError::Break(eyre!("Contract failed to verify.",)))
+                    }
 
-                        if resp.result == "Pass - Verified" {
-                            let _ = sh_println!("Contract successfully verified");
-                        }
+                    if resp.result == "Pass - Verified" {
+                        let _ = sh_println!("Contract successfully verified");
                     }
 
                     Ok(())

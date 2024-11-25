@@ -2,11 +2,10 @@ use crate::transaction::TransactionWithMetadata;
 use alloy_primitives::{hex, map::HashMap, TxHash};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{fs, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::{
     collections::VecDeque,
     io::{BufWriter, Write},
@@ -128,19 +127,8 @@ impl ScriptSequence {
         }
 
         if !silent {
-            if !shell::is_json() {
-                sh_println!("\nTransactions saved to: {}\n", path.display())?;
-                sh_println!("Sensitive values saved to: {}\n", sensitive_path.display())?;
-            } else {
-                sh_println!(
-                    "{}",
-                    json!({
-                        "status": "saved",
-                        "transactions": path.display().to_string(),
-                        "sensitive": sensitive_path.display().to_string()
-                    })
-                )?;
-            }
+            sh_println!("\nTransactions saved to: {}\n", path.display())?;
+            sh_println!("Sensitive values saved to: {}\n", sensitive_path.display())?;
         }
 
         Ok(())

@@ -14,13 +14,12 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, shell, ContractsByArtifact};
+use foundry_common::{compile::ProjectCompiler, ContractsByArtifact};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config, SolcReq};
 use itertools::Itertools;
 use reqwest::Url;
 use revm_primitives::HashSet;
-use serde_json::json;
 use std::path::PathBuf;
 
 use crate::provider::VerificationContext;
@@ -220,20 +219,7 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-
-        if !shell::is_json() {
-            sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
-        } else {
-            sh_println!(
-                "{}",
-                json!({
-                    "start": "verifying",
-                    "address": self.address,
-                    "chain": chain,
-                })
-            )?;
-        }
-
+        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
         self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {

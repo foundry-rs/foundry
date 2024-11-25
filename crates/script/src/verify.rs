@@ -12,7 +12,6 @@ use foundry_common::{shell, ContractsByArtifact};
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
-use serde_json::json;
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
@@ -230,36 +229,13 @@ async fn verify_contracts(
                     num_of_successful_verifications += 1;
                 }
                 Err(err) => {
-                    if !shell::is_json() {
-                        sh_err!("Failed to verify contract: {err:#}")?;
-                    } else {
-                        sh_eprintln!(
-                            "{}",
-                            json!({
-                                "status": "failed",
-                                "error": format!("{err:#}")
-                            })
-                        )?;
-                    }
+                    sh_err!("Failed to verify contract: {err:#}")?;
                 }
             }
         }
 
         if num_of_successful_verifications < num_verifications {
-            // return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications})
-            // contracts were verified!"))
-
-            if shell::is_json() {
-                sh_eprintln!(
-                    "{}",
-                    json!({
-                        "status": "failed",
-                        "error": format!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!")
-                    })
-                )?;
-            } else {
-                sh_err!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!")?;
-            }
+            return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
         }
 
         if !shell::is_json() {
