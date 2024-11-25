@@ -670,8 +670,6 @@ pub(crate) fn handle_expect_emit(
         // filled.
         if event_to_fill_or_check.anonymous || !log.topics().is_empty() {
             event_to_fill_or_check.log = Some(log.data.clone());
-            tracing::info!("Filling expected Log");
-            tracing::info!("Expected Count {}", event_to_fill_or_check.count);
             // If we only filled the expected log then we put it back at the same position.
             state
                 .expected_emits
@@ -714,9 +712,7 @@ pub(crate) fn handle_expect_emit(
         }
 
         // Increment match `count` for `log.address`
-        if event_to_fill_or_check.count > 0 {
-            count_map.entry(log.address).and_modify(|count| *count += 1).or_insert(1);
-        }
+        count_map.entry(log.address).and_modify(|count| *count += 1).or_insert(1);
 
         if let Some(emitter) = event_to_fill_or_check.address {
             let entry = count_map.get(&emitter);
@@ -740,7 +736,11 @@ pub(crate) fn handle_expect_emit(
         }
     }();
 
-    tracing::info!("Evaluated ExpectedEmitFound to: {}", event_to_fill_or_check.found);
+    tracing::info!(
+        "Evaluated ExpectedEmitFound {} with expected count {}",
+        event_to_fill_or_check.found,
+        event_to_fill_or_check.count
+    );
 
     // If we found the event, we can push it to the back of the queue
     // and begin expecting the next event.

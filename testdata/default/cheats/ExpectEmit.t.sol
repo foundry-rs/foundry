@@ -667,34 +667,33 @@ contract ExpectEmitTest is DSTest {
     }
 
     /// Test zero emits.
-    function testNoEmit() public {
+    function testCountNoEmit() public {
         vm.expectEmit(0);
         emit Something(1, 2, 3, 4);
-
         emitter.doesNothing();
     }
 
-    function testTwoEmits() public {
+    function testCountNEmits() public {
         uint64 count = 2;
         vm.expectEmit(count);
         emit Something(1, 2, 3, 4);
-
         emitter.emitNEvents(1, 2, 3, 4, count);
     }
 
     /// Test zero emits from a specific address (emitter).
-    function testNoEmitFromAddress() public {
+    function testCountNoEmitFromAddress() public {
         vm.expectEmit(address(emitter), 0);
         emit Something(1, 2, 3, 4);
         emitter.doesNothing();
     }
 
-    function testTwoEmitsFromAddress() public {
+    function testCountEmitsFromAddress() public {
         uint64 count = 2;
         vm.expectEmit(address(emitter), count);
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count);
     }
+
     /// This test will fail if we check that all expected logs were emitted
     /// after every call from the same depth as the call that invoked the cheatcode.
     ///
