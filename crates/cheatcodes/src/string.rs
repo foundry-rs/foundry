@@ -210,13 +210,13 @@ impl Cheatcode for format_7Call {
 // format with four arguments
 impl Cheatcode for format_8Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { input, p0, p1 , p2, p3} = self;
+        let Self { input, p0, p1, p2, p3 } = self;
         Ok(console_format(input, &[p0, p1, p2, p3]).abi_encode())
     }
 }
 impl Cheatcode for format_9Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { input, p0, p1 , p2, p3} = self;
+        let Self { input, p0, p1, p2, p3 } = self;
         Ok(console_format(input, &[p0, p1, p2, p3]).abi_encode())
     }
 }
