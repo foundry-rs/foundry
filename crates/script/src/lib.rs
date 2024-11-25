@@ -284,7 +284,10 @@ impl ScriptArgs {
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                if !shell::is_json() {
+                    sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                }
+
                 return Ok(());
             }
 
@@ -298,7 +301,9 @@ impl ScriptArgs {
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
-            sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            if !shell::is_json() {
+                sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            }
             return Ok(());
         }
 
