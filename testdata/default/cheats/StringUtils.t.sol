@@ -57,4 +57,21 @@ contract StringManipulationTest is DSTest {
         assert(vm.contains(subject, "test"));
         assert(!vm.contains(subject, "foundry"));
     }
+
+    function testFormat() public {
+        string memory input1 = "test: %d %d %d %d";
+        assertEq(vm.format(input1, 1), "test: 1 %d %d %d");
+        assertEq(vm.format(input1, 1, 2), "test: 1 2 %d %d");
+        assertEq(vm.format(input1, 1, 2, 3), "test: 1 2 3 %d");
+        assertEq(vm.format(input1, 1, 2, 3, 4), "test: 1 2 3 4");
+
+        string memory input2 = "test: %s %s %s %s";
+        assertEq(vm.format(input2, true), "test: true %s %s %s");
+        assertEq(vm.format(input2, true, false), "test: true false %s %s");
+        assertEq(vm.format(input2, true, false, true), "test: true false true %s");
+        assertEq(vm.format(input2, true, false, true, true), "test: true false true true");
+    
+        assertEq(vm.format("test: %d %s", 1, true), "test: 1 true");
+        assertEq(vm.format("test: %s %d", true, 1), "test: true 1");
+    }
 }

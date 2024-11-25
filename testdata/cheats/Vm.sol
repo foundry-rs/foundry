@@ -254,6 +254,16 @@ interface Vm {
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+    function format(string calldata input, uint256 p0) external pure returns (string memory output);
+    function format(string calldata input, bool p0) external pure returns (string memory output);
+    function format(string calldata input, uint256 p0, uint256 p1) external pure returns (string memory output);
+    function format(string calldata input, bool p0, bool p1) external pure returns (string memory output);
+    function format(string calldata input, uint256 p0, bool p1) external pure returns (string memory output);
+    function format(string calldata input, bool p0, uint256 p1) external pure returns (string memory output);
+    function format(string calldata input, uint256 p0, uint256 p1, uint256 p2) external pure returns (string memory output);
+    function format(string calldata input, bool p0, bool p1, bool p2) external pure returns (string memory output);
+    function format(string calldata input, uint256 p0, uint256 p1, uint256 p2, uint256 p3) external pure returns (string memory output);
+    function format(string calldata input, bool p0, bool p1, bool p2, bool p3) external pure returns (string memory output);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
     function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);
     function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);

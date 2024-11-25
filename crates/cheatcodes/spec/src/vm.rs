@@ -2116,6 +2116,40 @@ interface Vm {
     #[cheatcode(group = String)]
     function contains(string calldata subject, string calldata search) external returns (bool result);
 
+    /// Return the formatted string with one `uint256` argument.
+    #[cheatcode(group = String)]
+    function format(string calldata input, uint256 p0) external pure returns (string memory output);
+    /// Return the formatted string with one `bool` argument.
+    #[cheatcode(group = String)]
+    function format(string calldata input, bool p0) external pure returns (string memory output);
+
+    /// Return the formatted string with two `uint256` arguments.
+    #[cheatcode(group = String)]
+    function format(string calldata input, uint256 p0, uint256 p1) external pure returns (string memory output);
+    /// Return the formatted string with two `bool` arguments.
+    #[cheatcode(group = String)]
+    function format(string calldata input, bool p0, bool p1) external pure returns (string memory output);
+    /// Return the formatted string with one `uint256` argument and one `bool` argument.
+    #[cheatcode(group = String)]
+    function format(string calldata input, uint256 p0, bool p1) external pure returns (string memory output);
+    /// Return the formatted string with one `bool` argument and one `uint256` argument.
+    #[cheatcode(group = String)]
+    function format(string calldata input, bool p0, uint256 p1) external pure returns (string memory output);
+
+    /// Return the formatted string with three `uint256` arguments.
+    #[cheatcode(group = String)]
+    function format(string calldata input, uint256 p0, uint256 p1, uint256 p2) external pure returns (string memory output);
+    /// Return the formatted string with three `bool` arguments.
+    #[cheatcode(group = String)]
+    function format(string calldata input, bool p0, bool p1, bool p2) external pure returns (string memory output);
+
+    /// Return the formatted string with four `uint256` arguments.
+    #[cheatcode(group = String)]
+    function format(string calldata input, uint256 p0, uint256 p1, uint256 p2, uint256 p3) external pure returns (string memory output);
+    /// Return the formatted string with four `bool` arguments.
+    #[cheatcode(group = String)]
+    function format(string calldata input, bool p0, bool p1, bool p2, bool p3) external pure returns (string memory output);
+
     // ======== JSON Parsing and Manipulation ========
 
     // -------- Reading --------

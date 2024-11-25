@@ -4,6 +4,7 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{hex, U256};
 use alloy_sol_types::SolValue;
+use foundry_common::fmt::console_format;
 
 // address
 impl Cheatcode for toString_0Call {
@@ -149,6 +150,74 @@ impl Cheatcode for containsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { subject, search } = self;
         Ok(subject.contains(search).abi_encode())
+    }
+}
+
+// format with one argument
+impl Cheatcode for format_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0 } = self;
+        Ok(console_format(input, &[p0]).abi_encode())
+    }
+}
+impl Cheatcode for format_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0 } = self;
+        Ok(console_format(input, &[p0]).abi_encode())
+    }
+}
+
+// format with two arguments
+impl Cheatcode for format_2Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1 } = self;
+        Ok(console_format(input, &[p0, p1]).abi_encode())
+    }
+}
+impl Cheatcode for format_3Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1 } = self;
+        Ok(console_format(input, &[p0, p1]).abi_encode())
+    }
+}
+impl Cheatcode for format_4Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1 } = self;
+        Ok(console_format(input, &[p0, p1]).abi_encode())
+    }
+}
+impl Cheatcode for format_5Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1 } = self;
+        Ok(console_format(input, &[p0, p1]).abi_encode())
+    }
+}
+
+// format with three arguments
+impl Cheatcode for format_6Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1, p2 } = self;
+        Ok(console_format(input, &[p0, p1, p2]).abi_encode())
+    }
+}
+impl Cheatcode for format_7Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1, p2 } = self;
+        Ok(console_format(input, &[p0, p1, p2]).abi_encode())
+    }
+}
+
+// format with four arguments
+impl Cheatcode for format_8Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1 , p2, p3} = self;
+        Ok(console_format(input, &[p0, p1, p2, p3]).abi_encode())
+    }
+}
+impl Cheatcode for format_9Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { input, p0, p1 , p2, p3} = self;
+        Ok(console_format(input, &[p0, p1, p2, p3]).abi_encode())
     }
 }
 

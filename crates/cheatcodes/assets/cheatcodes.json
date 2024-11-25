@@ -5213,6 +5213,206 @@
     },
     {
       "func": {
+        "id": "format_0",
+        "description": "Return the formatted string with one `uint256` argument.",
+        "declaration": "function format(string calldata input, uint256 p0) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,uint256)",
+        "selector": "0x05c2acc4",
+        "selectorBytes": [
+          5,
+          194,
+          172,
+          196
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_1",
+        "description": "Return the formatted string with one `bool` argument.",
+        "declaration": "function format(string calldata input, bool p0) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,bool)",
+        "selector": "0x2702efd1",
+        "selectorBytes": [
+          39,
+          2,
+          239,
+          209
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_2",
+        "description": "Return the formatted string with two `uint256` arguments.",
+        "declaration": "function format(string calldata input, uint256 p0, uint256 p1) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,uint256,uint256)",
+        "selector": "0x510eeba1",
+        "selectorBytes": [
+          81,
+          14,
+          235,
+          161
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_3",
+        "description": "Return the formatted string with two `bool` arguments.",
+        "declaration": "function format(string calldata input, bool p0, bool p1) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,bool,bool)",
+        "selector": "0xa6bb978e",
+        "selectorBytes": [
+          166,
+          187,
+          151,
+          142
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_4",
+        "description": "Return the formatted string with one `uint256` argument and one `bool` argument.",
+        "declaration": "function format(string calldata input, uint256 p0, bool p1) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,uint256,bool)",
+        "selector": "0x37fab47f",
+        "selectorBytes": [
+          55,
+          250,
+          180,
+          127
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_5",
+        "description": "Return the formatted string with one `bool` argument and one `uint256` argument.",
+        "declaration": "function format(string calldata input, bool p0, uint256 p1) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,bool,uint256)",
+        "selector": "0x34dcd281",
+        "selectorBytes": [
+          52,
+          220,
+          210,
+          129
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_6",
+        "description": "Return the formatted string with three `uint256` arguments.",
+        "declaration": "function format(string calldata input, uint256 p0, uint256 p1, uint256 p2) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,uint256,uint256,uint256)",
+        "selector": "0xb67c2b93",
+        "selectorBytes": [
+          182,
+          124,
+          43,
+          147
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_7",
+        "description": "Return the formatted string with three `bool` arguments.",
+        "declaration": "function format(string calldata input, bool p0, bool p1, bool p2) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,bool,bool,bool)",
+        "selector": "0xf534ab85",
+        "selectorBytes": [
+          245,
+          52,
+          171,
+          133
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_8",
+        "description": "Return the formatted string with four `uint256` arguments.",
+        "declaration": "function format(string calldata input, uint256 p0, uint256 p1, uint256 p2, uint256 p3) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,uint256,uint256,uint256,uint256)",
+        "selector": "0x50734fce",
+        "selectorBytes": [
+          80,
+          115,
+          79,
+          206
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "format_9",
+        "description": "Return the formatted string with four `bool` arguments.",
+        "declaration": "function format(string calldata input, bool p0, bool p1, bool p2, bool p3) external pure returns (string memory output);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "format(string,bool,bool,bool,bool)",
+        "selector": "0x12ba5c43",
+        "selectorBytes": [
+          18,
+          186,
+          92,
+          67
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "fsMetadata",
         "description": "Given a path, query the file system to get information about a file, directory, etc.",
         "declaration": "function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);",
