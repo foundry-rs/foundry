@@ -2040,7 +2040,7 @@ interface Vm {
 
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
-    function attachDelegation(SignedDelegation memory signedDelegation) external;
+    function attachDelegation(SignedDelegation calldata signedDelegation) external;
 
     /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
