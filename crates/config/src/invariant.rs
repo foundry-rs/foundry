@@ -36,6 +36,8 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
+    /// Optional timeout (in seconds) for each invariant test.
+    pub timeout: Option<u64>,
 }
 
 impl Default for InvariantConfig {
@@ -51,6 +53,7 @@ impl Default for InvariantConfig {
             gas_report_samples: 256,
             failure_persist_dir: None,
             show_metrics: false,
+            timeout: None,
         }
     }
 }
@@ -69,6 +72,7 @@ impl InvariantConfig {
             gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
             show_metrics: false,
+            timeout: None,
         }
     }
 
@@ -108,6 +112,7 @@ impl InlineConfigParser for InvariantConfig {
                 }
                 "shrink-run-limit" => conf_clone.shrink_run_limit = parse_config_u32(key, value)?,
                 "show-metrics" => conf_clone.show_metrics = parse_config_bool(key, value)?,
+                "timeout" => conf_clone.timeout = Some(parse_config_u64(key, value)?),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

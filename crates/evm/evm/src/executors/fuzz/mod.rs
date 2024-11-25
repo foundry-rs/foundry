@@ -98,16 +98,21 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
-        // Start a timer if timeout is set
-        let start_time = self.config.timeout_secs.map(|timeout| {
+        // Start a timer if timeout is set.
+        let start_time = self.config.timeout.map(|timeout| {
             (std::time::Instant::now(), std::time::Duration::from_secs(timeout))
         });
 
         let run_result = self.runner.clone().run(&strategy, |calldata| {
-            // Check if the timeout has been reached
+            // Check if the timeout has been reached.
             if let Some((start_time, timeout)) = start_time {
                 if start_time.elapsed() > timeout {
-                    return Err(TestCaseError::fail("Timeout reached"))
+                    // At some point we might want to have a timeout be considered a failure.
+                    // Easiest way to do this is to return an error here if some flag is set.
+                    // Will correctly NOT increment the number of runs that is presented to the
+                    // user because that number is calculated as the length of gas_by_case which
+                    // doesn't get pushed to if we hit this branch.
+                    return Ok(());
                 }
             }
 
@@ -205,23 +210,17 @@ impl FuzzedExecutor {
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason.clone());
+                result.reason = (!reason.is_empty()).then_some(reason);
 
-                if reason == "Timeout reached" {
-                    if self.config.allow_timeouts {
-                        result.success = true;
-                    }
+                let args = if let Some(data) = calldata.get(4..) {
+                    func.abi_decode_input(data, false).unwrap_or_default()
                 } else {
-                    let args = if let Some(data) = calldata.get(4..) {
-                        func.abi_decode_input(data, false).unwrap_or_default()
-                    } else {
-                        vec![]
-                    };
+                    vec![]
+                };
 
-                    result.counterexample = Some(CounterExample::Single(
-                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                    ));
-                }
+                result.counterexample = Some(CounterExample::Single(
+                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                ));
             }
         }
 

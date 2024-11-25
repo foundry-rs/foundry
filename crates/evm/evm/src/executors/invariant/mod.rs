@@ -332,7 +332,24 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures)?;
 
+        // Start a timer if timeout is set.
+        let start_time = self.config.timeout.map(|timeout| {
+            (std::time::Instant::now(), std::time::Duration::from_secs(timeout))
+        });
+
         let _ = self.runner.run(&invariant_strategy, |first_input| {
+            // Check if the timeout has been reached.
+            if let Some((start_time, timeout)) = start_time {
+                if start_time.elapsed() > timeout {
+                    // At some point we might want to have a timeout be considered a failure.
+                    // Easiest way to do this is to return an error here if some flag is set.
+                    // Will correctly NOT increment the number of runs that is presented to the
+                    // user because that number is calculated as the length of fuzz_cases which
+                    // doesn't get push to if we hit this branch.
+                    return Ok(());
+                }
+            }
+
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
                 first_input,
