@@ -684,7 +684,6 @@ pub(crate) fn handle_expect_emit(
     // Increment/set `count` for `log.address` and `log.data`
     match count_map.entry(log.address) {
         Entry::Occupied(mut entry) => {
-            tracing::info!("map[addr={}] is occupied", log.address);
             let log_count_map = entry.get_mut();
 
             // Checks and inserts the log into the map.
@@ -692,7 +691,6 @@ pub(crate) fn handle_expect_emit(
             log_count_map.insert(&log.data);
         }
         Entry::Vacant(entry) => {
-            tracing::info!("map[addr={}] is vacant", log.address);
             let mut log_count_map = LogCountMap::new(
                 &event_to_fill_or_check.log.clone().expect("log should be filled here"),
                 event_to_fill_or_check.checks,
@@ -734,7 +732,6 @@ pub(crate) fn handle_expect_emit(
 
             // If none, we haven't seen the emitter yet. We can't set `found` to true.
             if entry.is_none() {
-                tracing::info!("emitter is none | found = false");
                 return false
             }
 
@@ -745,7 +742,6 @@ pub(crate) fn handle_expect_emit(
                     return true
                 }
             }
-            tracing::info!("found = false");
             false
         } else {
             let log_count_map =
