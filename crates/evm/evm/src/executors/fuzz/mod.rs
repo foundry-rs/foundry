@@ -107,12 +107,7 @@ impl FuzzedExecutor {
             // Check if the timeout has been reached.
             if let Some((start_time, timeout)) = start_time {
                 if start_time.elapsed() > timeout {
-                    // At some point we might want to have a timeout be considered a failure.
-                    // Easiest way to do this is to return an error here if some flag is set.
-                    // Will correctly NOT increment the number of runs that is presented to the
-                    // user because that number is calculated as the length of gas_by_case which
-                    // doesn't get pushed to if we hit this branch.
-                    return Ok(());
+                    return Err(TestCaseError::fail("Timeout reached"));
                 }
             }
 
@@ -210,17 +205,20 @@ impl FuzzedExecutor {
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-
-                let args = if let Some(data) = calldata.get(4..) {
-                    func.abi_decode_input(data, false).unwrap_or_default()
+                if reason == "Timeout reached" {
+                    // If the reason is a timeout, we consider the fuzz test successful.
+                    result.success = true;
                 } else {
-                    vec![]
-                };
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                    let args = calldata
+                            .get(..4)
+                            .and_then(|data| func.abi_decode_input(data, false).ok())
+                            .unwrap_or_default();
 
-                result.counterexample = Some(CounterExample::Single(
-                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                ));
+                    result.counterexample = Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                    ));
+                }
             }
         }
 

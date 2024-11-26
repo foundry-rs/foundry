@@ -341,12 +341,10 @@ impl<'a> InvariantExecutor<'a> {
             // Check if the timeout has been reached.
             if let Some((start_time, timeout)) = start_time {
                 if start_time.elapsed() > timeout {
-                    // At some point we might want to have a timeout be considered a failure.
-                    // Easiest way to do this is to return an error here if some flag is set.
-                    // Will correctly NOT increment the number of runs that is presented to the
-                    // user because that number is calculated as the length of fuzz_cases which
-                    // doesn't get push to if we hit this branch.
-                    return Ok(());
+                    // Since we never record a revert here the test is still considered successful
+                    // even though it timed out. We *want* this behavior for now, so that's ok, but
+                    // future developers should be aware of this.
+                    return Err(TestCaseError::fail("Timeout reached"));
                 }
             }
 
