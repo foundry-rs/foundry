@@ -69,12 +69,8 @@ pub struct CallArgs {
     #[arg(long, short)]
     block: Option<BlockId>,
 
-    /// Print the decoded output as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
-
     /// Enable Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
 
     #[command(subcommand)]
@@ -85,6 +81,10 @@ pub struct CallArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -131,7 +131,7 @@ impl CallArgs {
             decode_internal,
             labels,
             data,
-            json,
+            with_local_artifacts,
             ..
         } = self;
 
@@ -200,12 +200,21 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(trace, &config, chain, labels, debug, decode_internal, false).await?;
+            handle_traces(
+                trace,
+                &config,
+                chain,
+                labels,
+                with_local_artifacts,
+                debug,
+                decode_internal,
+            )
+            .await?;
 
             return Ok(());
         }
 
-        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?);
+        sh_println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block).await?)?;
 
         Ok(())
     }

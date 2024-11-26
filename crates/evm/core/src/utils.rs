@@ -3,12 +3,11 @@ use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256,
     InspectorExt,
 };
+use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
+use alloy_network::AnyTxEnvelope;
 use alloy_primitives::{Address, Selector, TxKind, U256};
-use alloy_provider::{
-    network::{BlockResponse, HeaderResponse},
-    Network,
-};
+use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
@@ -85,8 +84,10 @@ pub fn get_function<'a>(
 }
 
 /// Configures the env for the given RPC transaction.
-pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
-    configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
+pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxEnvelope>) {
+    if let AnyTxEnvelope::Ethereum(tx) = &tx.inner {
+        configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
+    }
 }
 
 /// Configures the env for the given RPC transaction request.
@@ -236,7 +237,7 @@ pub fn create2_handler_register<I: InspectorExt>(
             if create2_overrides_inner
                 .borrow()
                 .last()
-                .map_or(false, |(depth, _)| *depth == ctx.evm.journaled_state.depth())
+                .is_some_and(|(depth, _)| *depth == ctx.evm.journaled_state.depth())
             {
                 let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
                 outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);

@@ -112,7 +112,7 @@ impl BindArgs {
 
         if bindings_root.exists() {
             if !self.overwrite {
-                println!("Bindings found. Checking for consistency.");
+                sh_println!("Bindings found. Checking for consistency.")?;
                 return self.check_existing_bindings(&artifacts, &bindings_root);
             }
 
@@ -122,7 +122,7 @@ impl BindArgs {
 
         self.generate_bindings(&artifacts, &bindings_root)?;
 
-        println!("Bindings have been generated to {}", bindings_root.display());
+        sh_println!("Bindings have been generated to {}", bindings_root.display())?;
         Ok(())
     }
 
@@ -198,7 +198,7 @@ impl BindArgs {
     fn check_existing_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         let mut bindings = self.get_solmacrogen(artifacts)?;
         bindings.generate_bindings()?;
-        println!("Checking bindings for {} contracts", bindings.instances.len());
+        sh_println!("Checking bindings for {} contracts", bindings.instances.len())?;
         bindings.check_consistency(
             &self.crate_name,
             &self.crate_version,
@@ -208,14 +208,14 @@ impl BindArgs {
             self.module,
             self.alloy_version.clone(),
         )?;
-        println!("OK.");
+        sh_println!("OK.")?;
         Ok(())
     }
 
     /// Generate the bindings
     fn generate_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         let mut solmacrogen = self.get_solmacrogen(artifacts)?;
-        println!("Generating bindings for {} contracts", solmacrogen.instances.len());
+        sh_println!("Generating bindings for {} contracts", solmacrogen.instances.len())?;
 
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");

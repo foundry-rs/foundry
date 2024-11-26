@@ -65,7 +65,7 @@ impl EtherscanIdentifier {
             // filter out vyper files
             .filter(|(_, metadata)| !metadata.is_vyper())
             .map(|(address, metadata)| async move {
-                println!("Compiling: {} {address}", metadata.contract_name);
+                sh_println!("Compiling: {} {address}", metadata.contract_name)?;
                 let root = tempfile::tempdir()?;
                 let root_path = root.path();
                 let project = etherscan_project(metadata, root_path)?;
@@ -97,7 +97,7 @@ impl EtherscanIdentifier {
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
     where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)>,
     {
         trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
@@ -114,7 +114,7 @@ impl TraceIdentifier for EtherscanIdentifier {
             Arc::clone(&self.invalid_api_key),
         );
 
-        for (addr, _) in addresses {
+        for (addr, _, _) in addresses {
             if let Some(metadata) = self.contracts.get(addr) {
                 let label = metadata.contract_name.clone();
                 let abi = metadata.abi().ok().map(Cow::Owned);

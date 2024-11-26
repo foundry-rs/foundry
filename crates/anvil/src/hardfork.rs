@@ -135,7 +135,8 @@ impl From<EthereumHardfork> for SpecId {
             EthereumHardfork::Cancun | EthereumHardfork::Latest => Self::CANCUN,
             EthereumHardfork::Prague => Self::PRAGUE,
             // TODO: switch to latest after activation
-            EthereumHardfork::PragueEOF => Self::PRAGUE_EOF,
+            // EOF is included in OSAKA from Revm 16.0.0
+            EthereumHardfork::PragueEOF => Self::OSAKA,
         }
     }
 }

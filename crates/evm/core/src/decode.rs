@@ -191,7 +191,7 @@ impl RevertDecoder {
                 s.push_str(": ");
                 match std::str::from_utf8(data) {
                     Ok(data) => s.push_str(data),
-                    Err(_) => s.push_str(&trimmed_hex(data)),
+                    Err(_) => s.push_str(&hex::encode(data)),
                 }
             }
             s

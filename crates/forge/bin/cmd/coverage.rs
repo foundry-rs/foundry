@@ -13,13 +13,10 @@ use forge::{
     utils::IcPcMap,
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_cli::{
-    p_println,
-    utils::{LoadConfig, STATIC_FUZZ_SEED},
-};
+use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
+    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
@@ -29,7 +26,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -74,9 +70,7 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.test.build_args().silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
         }
@@ -88,10 +82,10 @@ impl CoverageArgs {
         config.ast = true;
 
         let (project, output) = self.build(&config)?;
-        p_println!(!self.test.build_args().silent => "Analysing contracts...");
+        sh_println!("Analysing contracts...")?;
         let report = self.prepare(&project, &output)?;
 
-        p_println!(!self.test.build_args().silent => "Running tests...");
+        sh_println!("Running tests...")?;
         self.collect(project, &output, report, Arc::new(config), evm_opts).await
     }
 
@@ -100,33 +94,29 @@ impl CoverageArgs {
         // Set up the project
         let mut project = config.create_project(false, false)?;
         if self.ir_minimum {
-            // TODO: How to detect solc version if the user does not specify a solc version in
-            // config  case1: specify local installed solc ?
-            //  case2: multiple solc versions used and  auto_detect_solc == true
-            if let Some(SolcReq::Version(version)) = &config.solc {
-                if *version < Version::new(0, 8, 13) {
-                    return Err(eyre::eyre!(
-                            "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
-                        ));
-                }
-            }
-
             // print warning message
-            let msg = concat!(
-                "Warning! \"--ir-minimum\" flag enables viaIR with minimum optimization, \
+            sh_warn!("{}", concat!(
+                "`--ir-minimum` enables viaIR with minimum optimization, \
                  which can result in inaccurate source mappings.\n",
                 "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                "Note that \"viaIR\" is production ready since Solidity 0.8.13 and above.\n",
                 "See more: https://github.com/foundry-rs/foundry/issues/3357",
-            ).yellow();
-            p_println!(!self.test.build_args().silent => "{msg}");
+            ))?;
 
             // Enable viaIR with minimum optimization
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
             project.settings.solc.settings =
-                project.settings.solc.settings.with_via_ir_minimum_optimization()
+                project.settings.solc.settings.with_via_ir_minimum_optimization();
+            let version = if let Some(SolcReq::Version(version)) = &config.solc {
+                version
+            } else {
+                // Sanitize settings for solc 0.8.4 if version cannot be detected.
+                // See <https://github.com/foundry-rs/foundry/issues/9322>.
+                &Version::new(0, 8, 4)
+            };
+            project.settings.solc.settings.sanitize(version, SolcLanguage::Solidity);
         } else {
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;
@@ -254,7 +244,7 @@ impl CoverageArgs {
         let outcome =
             self.test.run_tests(runner, config.clone(), verbosity, &filter, output).await?;
 
-        outcome.ensure_ok()?;
+        outcome.ensure_ok(false)?;
 
         // Add hit data to the coverage report
         let data = outcome.results.iter().flat_map(|(_, suite)| {

@@ -2,7 +2,8 @@
 
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
-use foundry_cli::utils;
+use eyre::Result;
+use foundry_cli::{opts::GlobalOpts, utils};
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -12,6 +13,10 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[derive(Parser)]
 #[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
 pub struct Anvil {
+    /// Include the global options.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     #[command(flatten)]
     pub node: NodeArgs,
 
@@ -33,10 +38,18 @@ pub enum AnvilSubcommand {
     GenerateFigSpec,
 }
 
-fn main() -> eyre::Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::sh_err!("{err:?}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     utils::load_dotenv();
 
     let mut args = Anvil::parse();
+    args.global.init()?;
     args.node.evm_opts.resolve_rpc_alias();
 
     if let Some(cmd) = &args.cmd {

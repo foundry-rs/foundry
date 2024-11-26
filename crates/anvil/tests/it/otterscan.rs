@@ -1,6 +1,7 @@
 //! Tests for otterscan endpoints.
 
 use crate::abi::Multicall;
+use alloy_network::TransactionResponse;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -409,7 +410,7 @@ async fn ots_search_transactions_before() {
 
         // check each individual hash
         result.txs.iter().for_each(|tx| {
-            assert_eq!(hashes.pop(), Some(tx.hash));
+            assert_eq!(hashes.pop(), Some(tx.tx_hash()));
         });
 
         block = result.txs.last().unwrap().block_number.unwrap();
@@ -444,7 +445,7 @@ async fn ots_search_transactions_after() {
 
         // check each individual hash
         result.txs.iter().rev().for_each(|tx| {
-            assert_eq!(hashes.pop_back(), Some(tx.hash));
+            assert_eq!(hashes.pop_back(), Some(tx.tx_hash()));
         });
 
         block = result.txs.first().unwrap().block_number.unwrap();

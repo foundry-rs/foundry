@@ -1321,3 +1321,129 @@ contract AContractTest is DSTest {
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/9270>
+// Test that constructor with no statements is not counted in functions coverage.
+forgetest!(test_ignore_empty_constructors_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    constructor() {}
+
+    function increment() public {}
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructors() public {
+        AContract a = new AContract();
+        a.increment();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert there's only one function (`increment`) reported.
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (1/1) |
+| Total             | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (1/1) |
+
+"#]]);
+});
+
+// Test coverage for `receive` functions.
+forgetest!(test_receive_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public counter = 0;
+
+    constructor() {
+        counter = 1;
+    }
+
+    receive() external payable {
+        counter = msg.value;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructors() public {
+        AContract a = new AContract();
+        address(a).call{value: 5}("");
+        require(a.counter() == 5);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert both constructor and receive functions coverage reported.
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9322>
+// Test coverage with `--ir-minimum` for solidity < 0.8.5.
+forgetest!(test_ir_minimum_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+pragma solidity 0.8.4;
+
+contract AContract {
+    function isContract(address account) internal view returns (bool) {
+        bytes32 codehash;
+        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+        assembly {
+            codehash := extcodehash(account)
+        }
+        return (codehash != accountHash && codehash != 0x0);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert coverage doesn't fail with `Error: Unknown key "inliner"`.
+    cmd.arg("coverage").arg("--ir-minimum").assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines     | % Statements | % Branches    | % Funcs     |
+|-------------------|-------------|--------------|---------------|-------------|
+| src/AContract.sol | 0.00% (0/4) | 0.00% (0/4)  | 100.00% (0/0) | 0.00% (0/1) |
+| Total             | 0.00% (0/4) | 0.00% (0/4)  | 100.00% (0/0) | 0.00% (0/1) |
+
+"#]]);
+});

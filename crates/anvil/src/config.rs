@@ -15,12 +15,12 @@ use crate::{
     mem::{self, in_memory_db::MemDb},
     EthereumHardfork, FeeManager, PrecompileFactory,
 };
+use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{hex, map::HashMap, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{Block, BlockNumberOrTag};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
@@ -99,6 +99,8 @@ pub struct NodeConfig {
     pub gas_price: Option<u128>,
     /// Default base fee
     pub base_fee: Option<u64>,
+    /// If set to `true`, disables the enforcement of a minimum suggested priority fee
+    pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
@@ -121,8 +123,6 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// don't print anything on startup
-    pub silent: bool,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
     /// pins the block number or transaction hash for the state fork
@@ -187,6 +187,10 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Enable Alphanet features.
     pub alphanet: bool,
+    /// Do not print log messages.
+    pub silent: bool,
+    /// The path where states are cached.
+    pub cache_path: Option<PathBuf>,
 }
 
 impl NodeConfig {
@@ -392,7 +396,7 @@ impl NodeConfig {
     /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: true, silent: true, port: 0, ..Default::default() }
+        Self { enable_tracing: true, port: 0, silent: true, ..Default::default() }
     }
 
     /// Returns a new config which does not initialize any accounts on node startup.
@@ -427,11 +431,11 @@ impl Default for NodeConfig {
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
-            silent: false,
             eth_rpc_url: None,
             fork_choice: None,
             account_generator: None,
             base_fee: None,
+            disable_min_priority_fee: false,
             blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
@@ -462,6 +466,8 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             alphanet: false,
+            silent: false,
+            cache_path: None,
         }
     }
 }
@@ -623,6 +629,13 @@ impl NodeConfig {
         self
     }
 
+    /// Disable the enforcement of a minimum suggested priority fee
+    #[must_use]
+    pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
+        self.disable_min_priority_fee = disable_min_priority_fee;
+        self
+    }
+
     /// Sets the init genesis (genesis.json)
     #[must_use]
     pub fn with_genesis(mut self, genesis: Option<Genesis>) -> Self {
@@ -722,18 +735,6 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
-    #[must_use]
-    pub fn silent(self) -> Self {
-        self.set_silent(true)
-    }
-
-    #[must_use]
-    pub fn set_silent(mut self, silent: bool) -> Self {
-        self.silent = silent;
-        self
-    }
-
     /// Sets the ipc path to use
     ///
     /// Note: this is a double Option for
@@ -753,7 +754,7 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
+    /// Disables storage caching
     #[must_use]
     pub fn no_storage_caching(self) -> Self {
         self.with_storage_caching(true)
@@ -911,11 +912,12 @@ impl NodeConfig {
             )
             .expect("Failed writing json");
         }
+
         if self.silent {
             return;
         }
 
-        println!("{}", self.as_string(fork))
+        let _ = sh_println!("{}", self.as_string(fork));
     }
 
     /// Returns the path where the cache file should be stored
@@ -958,6 +960,25 @@ impl NodeConfig {
         self
     }
 
+    /// Makes the node silent to not emit anything on stdout
+    #[must_use]
+    pub fn silent(self) -> Self {
+        self.set_silent(true)
+    }
+
+    #[must_use]
+    pub fn set_silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
+        self
+    }
+
+    /// Sets the path where states are cached
+    #[must_use]
+    pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
+        self.cache_path = cache_path;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -994,6 +1015,7 @@ impl NodeConfig {
         let fees = FeeManager::new(
             cfg.handler_cfg.spec_id,
             self.get_base_fee(),
+            !self.disable_min_priority_fee,
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
         );
@@ -1039,6 +1061,7 @@ impl NodeConfig {
             self.max_persisted_states,
             self.transaction_block_keeper,
             self.block_time,
+            self.cache_path.clone(),
             Arc::new(tokio::sync::RwLock::new(self.clone())),
         )
         .await;
@@ -1279,12 +1302,15 @@ latest block number: {latest_block}"
     /// we only use the gas limit value of the block if it is non-zero and the block gas
     /// limit is enabled, since there are networks where this is not used and is always
     /// `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-    pub(crate) fn fork_gas_limit(&self, block: &Block<WithOtherFields<Transaction>>) -> u128 {
+    pub(crate) fn fork_gas_limit<T: TransactionResponse, H: BlockHeader>(
+        &self,
+        block: &Block<T, H>,
+    ) -> u128 {
         if !self.disable_block_gas_limit {
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
-            } else if block.header.gas_limit > 0 {
-                return block.header.gas_limit as u128;
+            } else if block.header.gas_limit() > 0 {
+                return block.header.gas_limit() as u128;
             }
         }
 
@@ -1323,19 +1349,21 @@ async fn derive_block_and_transactions(
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
-                .get_block_by_number(transaction_block_number.into(), true)
+                .get_block_by_number(
+                    transaction_block_number.into(),
+                    alloy_rpc_types::BlockTransactionsKind::Full,
+                )
                 .await?
                 .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
 
             // Filter out transactions that are after the fork transaction
-            let filtered_transactions: Vec<&alloy_serde::WithOtherFields<Transaction>> =
-                transaction_block
-                    .transactions
-                    .as_transactions()
-                    .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
-                    .iter()
-                    .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
-                    .collect();
+            let filtered_transactions = transaction_block
+                .transactions
+                .as_transactions()
+                .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
+                .iter()
+                .take_while_inclusive(|&transaction| transaction.tx_hash() != transaction_hash.0)
+                .collect::<Vec<_>>();
 
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions

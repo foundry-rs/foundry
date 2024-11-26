@@ -88,7 +88,7 @@ struct Context {
 impl Context {
     /// Returns true if the current function context is the constructor
     pub(crate) fn is_constructor_function(&self) -> bool {
-        self.function.as_ref().map_or(false, |f| matches!(f.ty, FunctionTy::Constructor))
+        self.function.as_ref().is_some_and(|f| matches!(f.ty, FunctionTy::Constructor))
     }
 }
 
@@ -341,7 +341,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     _ => stmt.loc().start(),
                 };
 
-                self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
+                self.find_next_line(start_from).is_some_and(|loc| loc >= end_at)
             }
         }
     }
@@ -560,7 +560,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_doc_block_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
         if line.trim().starts_with('*') {
             let line = line.trim().trim_start_matches('*');
-            let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+            let needs_space = line.chars().next().is_some_and(|ch| !ch.is_whitespace());
             write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
             self.write_comment_line(comment, line)?;
             self.write_whitespace_separator(true)?;
@@ -1628,7 +1628,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                             fmt.config.multiline_func_header,
                             MultilineFuncHeaderStyle::ParamsFirst |
                                 MultilineFuncHeaderStyle::ParamsFirstMulti |
-                                MultilineFuncHeaderStyle::All
+                                MultilineFuncHeaderStyle::All |
+                                MultilineFuncHeaderStyle::AllParams
                         );
                     params_multiline = should_multiline ||
                         multiline ||
@@ -1637,13 +1638,17 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
-                    // Write new line if we have only one parameter and params first set.
-                    if params.len() == 1 &&
+                    // Write new line if we have only one parameter and params first set,
+                    // or if the function definition is multiline and all params set.
+                    let single_param_multiline = matches!(
+                        fmt.config.multiline_func_header,
+                        MultilineFuncHeaderStyle::ParamsFirst
+                    ) || params_multiline &&
                         matches!(
                             fmt.config.multiline_func_header,
-                            MultilineFuncHeaderStyle::ParamsFirst
-                        )
-                    {
+                            MultilineFuncHeaderStyle::AllParams
+                        );
+                    if params.len() == 1 && single_param_multiline {
                         writeln!(fmt.buf())?;
                     }
                     fmt.write_chunks_separated(&params, ",", params_multiline)?;
@@ -1736,7 +1741,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let should_multiline = header_multiline &&
             if params_multiline {
-                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::All | MultilineFuncHeaderStyle::AllParams
+                )
             } else {
                 matches!(
                     self.config.multiline_func_header,
@@ -1937,7 +1945,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         )?;
 
         // EOF newline
-        if self.last_char().map_or(true, |char| char != '\n') {
+        if self.last_char() != Some('\n') {
             writeln!(self.buf())?;
         }
 
@@ -2340,8 +2348,11 @@ impl<W: Write> Visitor for Formatter<'_, W> {
             ""
         };
         let closing_bracket = format!("{prefix}{}", "}");
-        let closing_bracket_loc = args.last().unwrap().loc.end();
-        write_chunk!(self, closing_bracket_loc, "{closing_bracket}")?;
+        if let Some(arg) = args.last() {
+            write_chunk!(self, arg.loc.end(), "{closing_bracket}")?;
+        } else {
+            write_chunk!(self, "{closing_bracket}")?;
+        }
 
         Ok(())
     }
@@ -3248,7 +3259,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
 
                 // we can however check if the contract `is` the `base`, this however also does
                 // not cover all cases
-                let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
+                let is_contract_base = self.context.contract.as_ref().is_some_and(|contract| {
                     contract.base.iter().any(|contract_base| {
                         contract_base
                             .name
@@ -3269,7 +3280,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
                     let is_lowercase =
-                        base_or_modifier.content.chars().next().map_or(false, |c| c.is_lowercase());
+                        base_or_modifier.content.chars().next().is_some_and(|c| c.is_lowercase());
                     if is_lowercase && base_or_modifier.content.ends_with("()") {
                         base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
                     }
