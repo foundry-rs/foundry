@@ -584,6 +584,8 @@ contract ExpectEmitTest is DSTest {
         emitter.emitWindow();
     }
 
+    /// ----- `count` arg tests -----
+
     /// Test zero emits.
     function testCountNoEmit() public {
         vm.expectEmit(0);
@@ -604,12 +606,20 @@ contract ExpectEmitTest is DSTest {
         emitter.emitNEvents(1, 2, 3, 4, count);
     }
 
-    function testFailCountNEmits() public {
+    function testFailCountLessEmits() public {
         uint64 count = 2;
         vm.expectEmit(count);
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count - 1);
     }
+
+    function testCountMoreEmits() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count + 1);
+    }
+
     /// Test zero emits from a specific address (emitter).
 
     function testCountNoEmitFromAddress() public {
