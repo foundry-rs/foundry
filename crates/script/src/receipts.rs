@@ -80,9 +80,9 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
             serde_json::json!({
                 "chain": chain,
                 "status": if success {
-                    "failed"
-                } else {
                     "success"
+                } else {
+                    "failed"
                 },
                 "tx_hash": receipt.transaction_hash,
                 "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
