@@ -1432,21 +1432,26 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                     let count = if let Some(emitter) = expected.address {
                         if let Some(log_count) = count_map.get(&emitter) {
                             // Check if we're counting for a specific Log.
-                            if let Some(log_data) = &expected.log {
-                                log_count.get(log_data).copied().unwrap_or_default()
-                            } else {
-                                log_count.values().sum::<u64>()
-                            }
+                            // if let Some(log_data) = &expected.log {
+                            //     log_count.get(log_data).copied().unwrap_or_default()
+                            // } else {
+                            //     log_count.values().sum::<u64>()
+                            // }
+                            expected
+                                .log
+                                .as_ref()
+                                .map(|l| log_count.count(l))
+                                .unwrap_or(log_count.count_unchecked())
                         } else {
                             0
                         }
                     } else {
                         if expected.log.is_none() {
-                            count_map.values().map(|logs| logs.values().sum::<u64>()).sum()
+                            count_map.values().map(|logs| logs.count_unchecked()).sum()
                         } else {
                             count_map
                                 .values()
-                                .filter_map(|logs| logs.get(expected.log.as_ref().unwrap()))
+                                .map(|logs| logs.count(&expected.log.as_ref().unwrap()))
                                 .sum()
                         }
                     };

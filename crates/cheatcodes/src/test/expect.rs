@@ -684,39 +684,23 @@ pub(crate) fn handle_expect_emit(
     // Increment/set `count` for `log.address` and `log.data`
     match count_map.entry(log.address) {
         Entry::Occupied(mut entry) => {
-            tracing::info!("map[log.address] is occupied");
-            let expected_count = event_to_fill_or_check.count;
+            tracing::info!("map[addr={}] is occupied", log.address);
             let log_count_map = entry.get_mut();
-            let count_entry = log_count_map.entry(log.data.clone());
 
-            match count_entry {
-                Entry::Occupied(mut count_entry) => {
-                    tracing::info!("map[log.data] is occupied");
-                    let count = count_entry.get_mut();
-                    if *count == expected_count {
-                        // If we've already seen the expected count of this log, we can't match it
-                        // again.
-                        // return
-                    }
-                    *count += 1;
-                }
-                Entry::Vacant(count_entry) => {
-                    tracing::info!("map[log.data] is vacant");
-                    count_entry.insert(1);
-                }
-            }
-
-            // If expected.count == 1, ensure a log cannot be emitted more than once regardless of
-            // the emitter. If emitter is Some along with expected.count == 1 then log
-            // cannot be emitted more that once from that specific emitter.
+            // Checks and inserts the log into the map.
+            // If the log doesn't pass the checks, it is ignored and `count` is not incremented.
+            log_count_map.insert(&log.data);
         }
         Entry::Vacant(entry) => {
-            tracing::info!("map[log.address] is vacant");
-            entry.insert({
-                let mut log_count_map = HashMap::default();
-                log_count_map.insert(log.data.clone(), 1);
-                log_count_map
-            });
+            tracing::info!("map[addr={}] is vacant", log.address);
+            let mut log_count_map = LogCountMap::new(
+                &event_to_fill_or_check.log.clone().expect("log should be filled here"),
+                event_to_fill_or_check.checks,
+            );
+
+            log_count_map.insert(&log.data);
+
+            entry.insert(log_count_map);
         }
     }
 
@@ -755,24 +739,20 @@ pub(crate) fn handle_expect_emit(
             }
 
             if let Some(log_count_map) = entry {
-                let count_entry = log_count_map.get(&log.data);
+                let count = log_count_map.count(&log.data);
 
-                // If none, we haven't seen the log yet. We can't set `found` to true.
-                if count_entry.is_none() {
-                    tracing::info!("count_entry is none | found = false");
-                    return false
-                }
-
-                if count_entry.unwrap() >= &expected_count {
+                if count >= expected_count {
                     return true
                 }
             }
             tracing::info!("found = false");
             false
         } else {
-            let log_count_map = count_map.values().find(|log_map| log_map.contains_key(&log.data));
-            if let Some(count) = log_count_map {
-                if count.get(&log.data).unwrap() >= &expected_count {
+            let log_count_map =
+                count_map.values().find(|log_map| log_map.satisfies_checks(&log.data));
+            if let Some(map) = log_count_map {
+                let count = map.count(&log.data);
+                if count >= expected_count {
                     return true
                 }
             }
@@ -795,14 +775,75 @@ pub(crate) fn handle_expect_emit(
 ///
 /// The second element of the tuple counts the number of times the log has been emitted by a
 /// particular address
-pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<HashMap<RawLog, u64>>)>;
+pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<LogCountMap>)>;
 
-// #[derive(Clone, Debug)]
-// struct LogCountMap {
-//     inner: HashMap<(RawLog, [bool; 5]), u64>,
-// }
+#[derive(Clone, Debug, Default)]
+pub struct LogCountMap {
+    checks: [bool; 5],
+    expected_log: RawLog,
+    map: HashMap<RawLog, u64>,
+}
 
-// impl LogCou
+impl LogCountMap {
+    /// Instantiates `LogCountMap`.
+    fn new(expected_log: &RawLog, checks: [bool; 5]) -> Self {
+        Self { checks, expected_log: expected_log.clone(), map: Default::default() }
+    }
+
+    /// Inserts a log into the map and increments the count.
+    ///
+    /// The log must pass all checks against the expected log for the count to increment.
+    ///
+    /// Returns true if the log was inserted and count was incremented.
+    fn insert(&mut self, log: &RawLog) -> bool {
+        // If its already in the map, increment the count without checking.
+        if self.map.get(log).is_some() {
+            self.map.entry(log.clone()).and_modify(|c| *c += 1);
+
+            return true
+        }
+
+        if !self.satisfies_checks(log) {
+            return false
+        }
+
+        self.map.entry(log.clone()).and_modify(|c| *c += 1).or_insert(1);
+
+        true
+    }
+
+    fn satisfies_checks(&self, log: &RawLog) -> bool {
+        // Check topics.
+        if !log
+            .topics()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.checks[*i])
+            .all(|(i, topic)| topic == &self.expected_log.topics()[i])
+        {
+            return false
+        }
+
+        // Check data
+        if self.checks[4] && self.expected_log.data.as_ref() != log.data.as_ref() {
+            return false
+        }
+
+        true
+    }
+
+    pub fn count(&self, log: &RawLog) -> u64 {
+        if !self.satisfies_checks(log) {
+            return 0
+        }
+
+        self.map.values().sum()
+    }
+
+    pub fn count_unchecked(&self) -> u64 {
+        self.map.values().sum()
+    }
+}
 
 fn expect_revert(
     state: &mut Cheatcodes,
