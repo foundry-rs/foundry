@@ -350,33 +350,31 @@ impl FilledTransactionsState {
                     provider_info.gas_price()?
                 };
 
+                let estimated_gas_price_raw = format_units(per_gas, 9)
+                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                let estimated_gas_price =
+                    estimated_gas_price_raw.trim_end_matches('0').trim_end_matches('.');
+
+                let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
+                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                let estimated_amount = estimated_amount_raw.trim_end_matches('0');
+
                 if !shell::is_json() {
                     sh_println!("\n==========================")?;
                     sh_println!("\nChain {}", provider_info.chain)?;
 
-                    sh_println!(
-                        "\nEstimated gas price: {} gwei",
-                        format_units(per_gas, 9)
-                            .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                            .trim_end_matches('0')
-                            .trim_end_matches('.')
-                    )?;
+                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
                     sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                    sh_println!(
-                        "\nEstimated amount required: {} ETH",
-                        format_units(total_gas.saturating_mul(per_gas), 18)
-                            .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                            .trim_end_matches('0')
-                    )?;
+                    sh_println!("\nEstimated amount required: {estimated_amount} ETH",)?;
                     sh_println!("\n==========================")?;
                 } else {
                     sh_println!(
                         "{}",
                         serde_json::json!({
                             "chain": provider_info.chain,
-                            "estimated_gas_price": format_units(per_gas, 9).unwrap_or_else(|_| "[Could not calculate]".to_string()).trim_end_matches('0').trim_end_matches('.'),
+                            "estimated_gas_price": estimated_gas_price,
                             "estimated_total_gas_used": total_gas,
-                            "estimated_amount_required": format_units(total_gas.saturating_mul(per_gas), 18).unwrap_or_else(|_| "[Could not calculate]".to_string()).trim_end_matches('0')
+                            "estimated_amount_required": estimated_amount,
                         })
                     )?;
                 }

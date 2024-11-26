@@ -71,20 +71,22 @@ pub async fn check_tx_status(
 pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
     let gas_used = receipt.gas_used;
     let gas_price = receipt.effective_gas_price;
+    let block_number = receipt.block_number.unwrap_or_default();
+    let success = receipt.inner.inner.inner.receipt.status.coerce_status();
 
     if shell::is_json() {
         let _ = sh_println!(
             "{}",
             serde_json::json!({
                 "chain": chain,
-                "status": if !receipt.inner.inner.inner.receipt.status.coerce_status() {
+                "status": if success {
                     "failed"
                 } else {
                     "success"
                 },
                 "tx_hash": receipt.transaction_hash,
                 "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
-                "block_number": receipt.block_number.unwrap_or_default(),
+                "block_number": block_number,
                 "gas_used": gas_used,
                 "gas_price": gas_price,
             })
@@ -93,19 +95,14 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
         String::new()
     } else {
         format!(
-            "\n##### {chain}\n{status} Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n\n",
-            status = if !receipt.inner.inner.inner.receipt.status.coerce_status() {
-                "❌  [Failed]"
-            } else {
-                "✅  [Success]"
-            },
+            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
+            status = if success { "✅  [Success]" } else { "❌  [Failed]" },
             tx_hash = receipt.transaction_hash,
-            caddr = if let Some(addr) = &receipt.contract_address {
+            contract_address = if let Some(addr) = &receipt.contract_address {
                 format!("\nContract Address: {}", addr.to_checksum(None))
             } else {
                 String::new()
             },
-            bn = receipt.block_number.unwrap_or_default(),
             gas = if gas_price == 0 {
                 format!("Gas Used: {gas_used}")
             } else {
