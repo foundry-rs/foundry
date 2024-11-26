@@ -809,6 +809,10 @@ impl LogCountMap {
     }
 
     fn satisfies_checks(&self, log: &RawLog) -> bool {
+        if log.topics().len() != self.expected_log.topics().len() {
+            return false
+        }
+
         // Check topics.
         if !log
             .topics()
