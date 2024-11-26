@@ -261,6 +261,69 @@ interface Vm {
         uint64 depth;
     }
 
+    /// The result of the `stopDebugTraceRecording` call
+    struct DebugStep {
+        /// The stack before executing the step of the run.
+        /// stack\[0\] represents the top of the stack.
+        /// and only stack data relevant to the opcode execution is contained.
+        uint256[] stack;
+        /// The memory input data before executing the step of the run.
+        /// only input data relevant to the opcode execution is contained.
+        ///
+        /// e.g. for MLOAD, it will have memory\[offset:offset+32\] copied here.
+        /// the offset value can be get by the stack data.
+        bytes memoryInput;
+        /// The opcode that was accessed.
+        uint8 opcode;
+        /// The call depth of the step.
+        uint64 depth;
+        /// Whether the call end up with out of gas error.
+        bool isOutOfGas;
+        /// The contract address where the opcode is running
+        address contractAddr;
+    }
+
+    /// The transaction type (`txType`) of the broadcast.
+    enum BroadcastTxType {
+        /// Represents a CALL broadcast tx.
+        Call,
+        /// Represents a CREATE broadcast tx.
+        Create,
+        /// Represents a CREATE2 broadcast tx.
+        Create2
+    }
+
+    /// Represents a transaction's broadcast details.
+    struct BroadcastTxSummary {
+        /// The hash of the transaction that was broadcasted
+        bytes32 txHash;
+        /// Represent the type of transaction among CALL, CREATE, CREATE2
+        BroadcastTxType txType;
+        /// The address of the contract that was called or created.
+        /// This is address of the contract that is created if the txType is CREATE or CREATE2.
+        address contractAddress;
+        /// The block number the transaction landed in.
+        uint64 blockNumber;
+        /// Status of the transaction, retrieved from the transaction receipt.
+        bool success;
+    }
+
+    /// Holds a signed EIP-7702 authorization for an authority account to delegate to an implementation.
+    struct SignedDelegation {
+        /// The y-parity of the recovered secp256k1 signature (0 or 1).
+        uint8 v;
+        /// First 32 bytes of the signature.
+        bytes32 r;
+        /// Second 32 bytes of the signature.
+        bytes32 s;
+        /// The current nonce of the authority account at signing time.
+        /// Used to ensure signature can't be replayed after account nonce changes.
+        uint64 nonce;
+        /// Address of the contract implementation that will be delegated to.
+        /// Gets encoded into delegation code: 0xef0100 || implementation.
+        address implementation;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -283,9 +346,24 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
-    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
+
+    // -------- Record Debug Traces --------
+
+    /// Records the debug trace during the run.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function startDebugTraceRecording() external;
+
+    /// Stop debug trace recording and returns the recorded debug trace.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);
+
+
+    /// Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cloneAccount(address source, address target) external;
 
     // -------- Record Storage --------
 
@@ -465,6 +543,22 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
 
+    /// Mocks a call to an address, returning specified data.
+    /// Calldata can either be strict or a partial match, e.g. if you only
+    /// pass a Solidity selector to the expected calldata, then the entire Solidity
+    /// function will be mocked.
+    ///
+    /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCall(address callee, bytes4 data, bytes calldata returnData) external;
+
+    /// Mocks a call to an address with a specific `msg.value`, returning specified data.
+    /// Calldata match takes precedence over `msg.value` in case of ambiguity.
+    ///
+    /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
+
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
@@ -480,6 +574,19 @@ interface Vm {
     /// Reverts a call to an address with a specific `msg.value`, with specified revert data.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData)
+        external;
+
+    /// Reverts a call to an address with specified revert data.
+    ///
+    /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCallRevert(address callee, bytes4 data, bytes calldata revertData) external;
+
+    /// Reverts a call to an address with a specific `msg.value`, with specified revert data.
+    ///
+    /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCallRevert(address callee, uint256 msgValue, bytes4 data, bytes calldata revertData)
         external;
 
     /// Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls
@@ -508,6 +615,22 @@ interface Vm {
     /// Sets all subsequent calls' `msg.sender` to be the input address until `stopPrank` is called, and the `tx.origin` to be the second input.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startPrank(address msgSender, address txOrigin) external;
+
+    /// Sets the *next* delegate call's `msg.sender` to be the input address.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prank(address msgSender, bool delegateCall) external;
+
+    /// Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startPrank(address msgSender, bool delegateCall) external;
+
+    /// Sets the *next* delegate call's `msg.sender` to be the input address, and the `tx.origin` to be the second input.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prank(address msgSender, address txOrigin, bool delegateCall) external;
+
+    /// Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called, and the `tx.origin` to be the second input.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startPrank(address msgSender, address txOrigin, bool delegateCall) external;
 
     /// Resets subsequent calls' `msg.sender` to be `address(this)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -685,7 +808,7 @@ interface Vm {
 
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
-    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics)
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
         external
         returns (EthGetLogs[] memory logs);
 
@@ -1491,7 +1614,7 @@ interface Vm {
 
     /// Returns true if the given path points to an existing entity, else returns false.
     #[cheatcode(group = Filesystem)]
-    function exists(string calldata path) external returns (bool result);
+    function exists(string calldata path) external view returns (bool result);
 
     /// Given a path, query the file system to get information about a file, directory, etc.
     #[cheatcode(group = Filesystem)]
@@ -1499,11 +1622,11 @@ interface Vm {
 
     /// Returns true if the path exists on disk and is pointing at a directory, else returns false.
     #[cheatcode(group = Filesystem)]
-    function isDir(string calldata path) external returns (bool result);
+    function isDir(string calldata path) external view returns (bool result);
 
     /// Returns true if the path exists on disk and is pointing at a regular file, else returns false.
     #[cheatcode(group = Filesystem)]
-    function isFile(string calldata path) external returns (bool result);
+    function isFile(string calldata path) external view returns (bool result);
 
     /// Get the path of the current project root.
     #[cheatcode(group = Filesystem)]
@@ -1511,7 +1634,7 @@ interface Vm {
 
     /// Returns the time since unix epoch in milliseconds.
     #[cheatcode(group = Filesystem)]
-    function unixTime() external returns (uint256 milliseconds);
+    function unixTime() external view returns (uint256 milliseconds);
 
     // -------- Reading and writing --------
 
@@ -1632,6 +1755,44 @@ interface Vm {
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
+
+    /// Returns the most recent broadcast for the given contract on `chainId` matching `txType`.
+    ///
+    /// For example:
+    ///
+    /// The most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.
+    ///
+    /// The most recent call can be fetched by passing `txType` as `CALL`.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcast(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);
+
+    /// Returns all broadcasts for the given contract on `chainId` with the specified `txType`.
+    ///
+    /// Sorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcasts(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);
+
+    /// Returns all broadcasts for the given contract on `chainId`.
+    ///
+    /// Sorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.
+    #[cheatcode(group = Filesystem)]
+    function getBroadcasts(string calldata contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);
+
+    /// Returns the most recent deployment for the current `chainId`.
+    #[cheatcode(group = Filesystem)]
+    function getDeployment(string calldata contractName) external view returns (address deployedAddress);
+
+    /// Returns the most recent deployment for the given contract on `chainId`
+    #[cheatcode(group = Filesystem)]
+    function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);
+
+    /// Returns all deployments for the given contract on `chainId`
+    ///
+    /// Sorted in descending order of deployment time i.e descending order of BroadcastTxSummary.blockNumber.
+    ///
+    /// The most recent deployment is the first element, and the oldest is the last.
+    #[cheatcode(group = Filesystem)]
+    function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
 
     // -------- Foreign Function Interface --------
 
@@ -1873,6 +2034,22 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
 
+    /// Sign an EIP-7702 authorization for delegation
+    #[cheatcode(group = Scripting)]
+    function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
+
+    /// Designate the next call as an EIP-7702 transaction
+    #[cheatcode(group = Scripting)]
+    function attachDelegation(SignedDelegation calldata signedDelegation) external;
+
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
+
+    /// Returns addresses of available unlocked wallets in the script environment.
+    #[cheatcode(group = Scripting)]
+    function getWallets() external returns (address[] memory wallets);
+
     // ======== Utilities ========
 
     // -------- Strings --------
@@ -1935,6 +2112,9 @@ interface Vm {
     /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
+    /// Returns true if `search` is found in `subject`, false otherwise.
+    #[cheatcode(group = String)]
+    function contains(string calldata subject, string calldata search) external returns (bool result);
 
     // ======== JSON Parsing and Manipulation ========
 
@@ -2118,13 +2298,13 @@ interface Vm {
         returns (string memory json);
     /// See `serializeJson`.
     #[cheatcode(group = Json)]
-    function serializeJsonType(string calldata typeDescription, bytes memory value)
+    function serializeJsonType(string calldata typeDescription, bytes calldata value)
         external
         pure
         returns (string memory json);
     /// See `serializeJson`.
     #[cheatcode(group = Json)]
-    function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value)
+    function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes calldata value)
         external
         returns (string memory json);
 
@@ -2362,6 +2542,20 @@ interface Vm {
     /// Adds a private key to the local forge wallet and returns the address.
     #[cheatcode(group = Crypto)]
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
+
+    /// Derive a set number of wallets from a mnemonic at the derivation path `m/44'/60'/0'/0/{0..count}`.
+    ///
+    /// The respective private keys are saved to the local forge wallet for later use and their addresses are returned.
+    #[cheatcode(group = Crypto)]
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+
+    /// Derive a set number of wallets from a mnemonic in the specified language at the derivation path `m/44'/60'/0'/0/{0..count}`.
+    ///
+    /// The respective private keys are saved to the local forge wallet for later use and their addresses are returned.
+    #[cheatcode(group = Crypto)]
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count)
+        external
+        returns (address[] memory keyAddrs);
 
     // -------- Uncategorized Utilities --------
 

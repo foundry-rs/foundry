@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM alpine:3.18 as build-environment
+FROM alpine:3.20 as build-environment
 
 ARG TARGETARCH
 WORKDIR /opt
@@ -19,7 +19,7 @@ COPY . .
 RUN git update-index --force-write-index
 
 RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/opt/foundry/target \
-    source $HOME/.profile && cargo build --release --features foundry-cast/aws-kms,forge/aws-kms \
+    source $HOME/.profile && cargo build --release --features cast/aws-kms,forge/aws-kms \
     && mkdir out \
     && mv target/release/forge out/forge \
     && mv target/release/cast out/cast \
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/r
     && strip out/chisel \
     && strip out/anvil;
 
-FROM alpine:3.18 as foundry-client
+FROM alpine:3.20 as foundry-client
 
 RUN apk add --no-cache linux-headers git gcompat libstdc++
 

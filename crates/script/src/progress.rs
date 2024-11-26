@@ -1,13 +1,11 @@
-use crate::{
-    receipts::{check_tx_status, format_receipt, TxStatus},
-    sequence::ScriptSequence,
-};
+use crate::receipts::{check_tx_status, format_receipt, TxStatus};
 use alloy_chains::Chain;
 use alloy_primitives::{
     map::{B256HashMap, HashMap},
     B256,
 };
 use eyre::Result;
+use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
 use foundry_common::provider::RetryProvider;
 use futures::StreamExt;

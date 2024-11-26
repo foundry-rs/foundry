@@ -132,18 +132,6 @@ pub fn format_tokens_raw(tokens: &[DynSolValue]) -> impl Iterator<Item = String>
     tokens.iter().map(format_token_raw)
 }
 
-/// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending on `json`
-/// parameter.
-pub fn print_tokens(tokens: &[DynSolValue], json: bool) {
-    if json {
-        let tokens: Vec<String> = format_tokens_raw(tokens).collect();
-        println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
-    } else {
-        let tokens = format_tokens(tokens);
-        tokens.for_each(|t| println!("{t}"));
-    }
-}
-
 /// Pretty-prints the given value into a string suitable for user output.
 pub fn format_token(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, false).to_string()

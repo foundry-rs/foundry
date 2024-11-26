@@ -4,7 +4,6 @@ use eyre::{Result, WrapErr};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use regex::RegexSetBuilder;
 use std::{
-    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -73,9 +72,9 @@ pub struct Create2Args {
     #[arg(alias = "ch", long, value_name = "HASH", required_unless_present = "init_code")]
     init_code_hash: Option<String>,
 
-    /// Number of threads to use. Defaults to and caps at the number of logical cores.
-    #[arg(short, long)]
-    jobs: Option<NonZeroUsize>,
+    /// Number of threads to use. Specifying 0 defaults to the number of logical cores.
+    #[arg(global = true, long, short = 'j', visible_alias = "jobs")]
+    threads: Option<usize>,
 
     /// Address of the caller. Used for the first 20 bytes of the salt.
     #[arg(long, value_name = "ADDRESS")]
@@ -107,7 +106,7 @@ impl Create2Args {
             salt,
             init_code,
             init_code_hash,
-            jobs,
+            threads,
             caller,
             seed,
             no_random,
@@ -124,7 +123,7 @@ impl Create2Args {
         if let Some(salt) = salt {
             let salt = hex::FromHex::from_hex(salt)?;
             let address = deployer.create2(salt, init_code_hash);
-            println!("{address}");
+            sh_println!("{address}")?;
             return Ok(Create2Output { address, salt });
         }
 
@@ -168,8 +167,8 @@ impl Create2Args {
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
         let mut n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        if let Some(jobs) = jobs {
-            n_threads = n_threads.min(jobs.get());
+        if let Some(threads) = threads {
+            n_threads = n_threads.min(threads);
         }
         if cfg!(test) {
             n_threads = n_threads.min(2);
@@ -191,11 +190,12 @@ impl Create2Args {
             rng.fill_bytes(remaining);
         }
 
-        println!("Configuration:");
-        println!("Init code hash: {init_code_hash}");
-        println!("Regex patterns: {:?}", regex.patterns());
-        println!();
-        println!("Starting to generate deterministic contract address with {n_threads} threads...");
+        sh_println!("Configuration:")?;
+        sh_println!("Init code hash: {init_code_hash}")?;
+        sh_println!("Regex patterns: {:?}\n", regex.patterns())?;
+        sh_println!(
+            "Starting to generate deterministic contract address with {n_threads} threads..."
+        )?;
         let mut handles = Vec::with_capacity(n_threads);
         let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
@@ -249,9 +249,9 @@ impl Create2Args {
 
         let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
         let (address, salt) = results.into_iter().next().unwrap();
-        println!("Successfully found contract address in {:?}", timer.elapsed());
-        println!("Address: {address}");
-        println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0));
+        sh_println!("Successfully found contract address in {:?}", timer.elapsed())?;
+        sh_println!("Address: {address}")?;
+        sh_println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
 
         Ok(Create2Output { address, salt })
     }
@@ -432,8 +432,14 @@ mod tests {
 
     #[test]
     fn j0() {
-        let e =
-            Create2Args::try_parse_from(["foundry-cli", "--starts-with=00", "-j0"]).unwrap_err();
-        let _ = e.print();
+        let args = Create2Args::try_parse_from([
+            "foundry-cli",
+            "--starts-with=00",
+            "--init-code-hash",
+            &B256::ZERO.to_string(),
+            "-j0",
+        ])
+        .unwrap();
+        assert_eq!(args.threads, Some(0));
     }
 }

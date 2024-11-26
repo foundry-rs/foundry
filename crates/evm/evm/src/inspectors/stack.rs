@@ -3,7 +3,7 @@ use super::{
     TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
-use foundry_cheatcodes::CheatcodesExecutor;
+use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -57,6 +57,8 @@ pub struct InspectorStackBuilder {
     pub enable_isolation: bool,
     /// Whether to enable Alphanet features.
     pub alphanet: bool,
+    /// The wallets to set in the cheatcodes context.
+    pub wallets: Option<Wallets>,
 }
 
 impl InspectorStackBuilder {
@@ -84,6 +86,13 @@ impl InspectorStackBuilder {
     #[inline]
     pub fn cheatcodes(mut self, config: Arc<CheatsConfig>) -> Self {
         self.cheatcodes = Some(config);
+        self
+    }
+
+    /// Set the wallets.
+    #[inline]
+    pub fn wallets(mut self, wallets: Wallets) -> Self {
+        self.wallets = Some(wallets);
         self
     }
 
@@ -161,13 +170,20 @@ impl InspectorStackBuilder {
             chisel_state,
             enable_isolation,
             alphanet,
+            wallets,
         } = self;
         let mut stack = InspectorStack::new();
 
         // inspectors
         if let Some(config) = cheatcodes {
-            stack.set_cheatcodes(Cheatcodes::new(config));
+            let mut cheatcodes = Cheatcodes::new(config);
+            // Set wallets if they are provided
+            if let Some(wallets) = wallets {
+                cheatcodes.set_wallets(wallets);
+            }
+            stack.set_cheatcodes(cheatcodes);
         }
+
         if let Some(fuzzer) = fuzzer {
             stack.set_fuzzer(fuzzer);
         }

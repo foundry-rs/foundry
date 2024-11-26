@@ -8,7 +8,7 @@ use crate::{
         DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
-    script::{Broadcast, ScriptWallets},
+    script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
         expect::{
@@ -28,7 +28,6 @@ use alloy_primitives::{
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
-use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
@@ -36,17 +35,21 @@ use foundry_evm_core::{
     utils::new_evm_with_existing_context,
     InspectorExt,
 };
-use foundry_evm_traces::TracingInspector;
+use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
+use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
+    primitives::{
+        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId,
+        EOF_MAGIC_BYTES,
+    },
     EvmContext, InnerEvmContext, Inspector,
 };
 use serde_json::Value;
@@ -84,7 +87,7 @@ pub trait CheatcodesExecutor {
             evm.context.evm.inner.journaled_state.depth += 1;
 
             // Handle EOF bytecode
-            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::PRAGUE_EOF) &&
+            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA) &&
                 inputs.scheme == CreateScheme::Create &&
                 inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
             {
@@ -217,6 +220,14 @@ pub struct BroadcastableTransaction {
     pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionMaybeSigned,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct RecordDebugStepInfo {
+    /// The debug trace node index when the recording starts.
+    pub start_node_idx: usize,
+    /// The original tracer config when the recording starts.
+    pub original_tracer_config: TracingInspectorConfig,
 }
 
 /// Holds gas metering state.
@@ -365,6 +376,11 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
+    /// Currently active EIP-7702 delegation that will be consumed when building the next
+    /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
+    /// transaction construction.
+    pub active_delegation: Option<SignedAuthorization>,
+
     /// The gas price.
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
@@ -395,6 +411,9 @@ pub struct Cheatcodes {
     /// depth. Once that call context has ended, the last vector is removed from the matrix and
     /// merged into the previous vector.
     pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
+
+    /// The information of the debug step recording.
+    pub record_debug_steps_info: Option<RecordDebugStepInfo>,
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
@@ -465,6 +484,8 @@ pub struct Cheatcodes {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// Unlocked wallets used in scripts and testing of scripts.
+    pub wallets: Option<Wallets>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -484,6 +505,7 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
+            active_delegation: Default::default(),
             gas_price: Default::default(),
             prank: Default::default(),
             expected_revert: Default::default(),
@@ -492,6 +514,7 @@ impl Cheatcodes {
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
+            record_debug_steps_info: Default::default(),
             mocked_calls: Default::default(),
             mocked_functions: Default::default(),
             expected_calls: Default::default(),
@@ -511,12 +534,18 @@ impl Cheatcodes {
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
+            wallets: Default::default(),
         }
     }
 
-    /// Returns the configured script wallets.
-    pub fn script_wallets(&self) -> Option<&ScriptWallets> {
-        self.config.script_wallets.as_ref()
+    /// Returns the configured wallets if available, else creates a new instance.
+    pub fn wallets(&mut self) -> &Wallets {
+        self.wallets.get_or_insert(Wallets::new(MultiWallet::default(), None))
+    }
+
+    /// Sets the unlocked wallets.
+    pub fn set_wallets(&mut self, wallets: Wallets) {
+        self.wallets = Some(wallets);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -813,25 +842,23 @@ where {
         // broadcasting.
         if ecx.journaled_state.depth == 0 {
             let sender = ecx.env.tx.caller;
-            if sender != Config::DEFAULT_SENDER {
-                let account = match super::evm::journaled_account(ecx, sender) {
-                    Ok(account) => account,
-                    Err(err) => {
-                        return Some(CallOutcome {
-                            result: InterpreterResult {
-                                result: InstructionResult::Revert,
-                                output: err.abi_encode().into(),
-                                gas,
-                            },
-                            memory_offset: call.return_memory_offset.clone(),
-                        })
-                    }
-                };
-                let prev = account.info.nonce;
-                account.info.nonce = prev.saturating_sub(1);
+            let account = match super::evm::journaled_account(ecx, sender) {
+                Ok(account) => account,
+                Err(err) => {
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: err.abi_encode().into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    })
+                }
+            };
+            let prev = account.info.nonce;
+            account.info.nonce = prev.saturating_sub(1);
 
-                trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
-            }
+            trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
         }
 
         if call.target_address == CHEATCODE_ADDRESS {
@@ -923,6 +950,19 @@ where {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
+            // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
+            if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
+                if prank.delegate_call {
+                    call.target_address = prank.new_caller;
+                    call.caller = prank.new_caller;
+                    let acc = ecx.journaled_state.account(prank.new_caller);
+                    call.value = CallValue::Apparent(acc.info.balance);
+                    if let Some(new_origin) = prank.new_origin {
+                        ecx.env.tx.caller = new_origin;
+                    }
+                }
+            }
+
             if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 let mut prank_applied = false;
 
@@ -983,18 +1023,26 @@ where {
                     let account =
                         ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
 
+                    let mut tx_req = TransactionRequest {
+                        from: Some(broadcast.new_origin),
+                        to: Some(TxKind::from(Some(call.target_address))),
+                        value: call.transfer_value(),
+                        input: TransactionInput::new(call.input.clone()),
+                        nonce: Some(account.info.nonce),
+                        chain_id: Some(ecx.env.cfg.chain_id),
+                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
+                        ..Default::default()
+                    };
+
+                    if let Some(auth_list) = self.active_delegation.take() {
+                        tx_req.authorization_list = Some(vec![auth_list]);
+                    } else {
+                        tx_req.authorization_list = None;
+                    }
+
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.db.active_fork_url(),
-                        transaction: TransactionRequest {
-                            from: Some(broadcast.new_origin),
-                            to: Some(TxKind::from(Some(call.target_address))),
-                            value: call.transfer_value(),
-                            input: TransactionInput::new(call.input.clone()),
-                            nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                            ..Default::default()
-                        }
-                        .into(),
+                        transaction: tx_req.into(),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 

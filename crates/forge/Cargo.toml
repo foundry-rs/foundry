@@ -33,6 +33,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
+forge-script-sequence.workspace = true
 
 ethers-contract-abigen = { workspace = true, features = ["providers"] }
 
@@ -79,20 +80,22 @@ dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
-inferno = { version = "0.11.19", default-features = false }
+inferno = { version = "0.11", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 reqwest = { workspace = true, features = ["json"] }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
+solar-ast.workspace = true
+solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml = { version = "0.8", features = ["preserve_order"] }
-toml_edit = "0.22.4"
+toml = { workspace = true, features = ["preserve_order"] }
+toml_edit = "0.22"
 watchexec = "4.1"
 watchexec-events = "3.0"
 watchexec-signals = "3.0"
@@ -106,7 +109,7 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.7"
 
 # soldeer
-soldeer.workspace = true
+soldeer-commands.workspace = true
 quick-junit = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]
@@ -117,7 +120,6 @@ anvil.workspace = true
 foundry-test-utils.workspace = true
 
 mockall = "0.13"
-criterion = "0.5"
 globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
@@ -143,7 +145,3 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
-
-[[bench]]
-name = "test"
-harness = false

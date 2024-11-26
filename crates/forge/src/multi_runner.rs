@@ -242,7 +242,6 @@ impl MultiContractRunner {
             &self.config,
             self.evm_opts.clone(),
             Some(self.known_contracts.clone()),
-            None,
             Some(artifact_id.name.clone()),
             Some(artifact_id.version.clone()),
         );
@@ -450,7 +449,7 @@ impl MultiContractRunnerBuilder {
             contracts: deployable_contracts,
             evm_opts,
             env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::MERGE),
+            evm_spec: self.evm_spec.unwrap_or(SpecId::CANCUN),
             sender: self.sender,
             revert_decoder,
             fork: self.fork,

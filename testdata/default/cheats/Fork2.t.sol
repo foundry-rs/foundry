@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "../logs/console.sol";
@@ -233,6 +233,12 @@ contract ForkTest is DSTest {
         bytes memory result = vm.rpc("mainnet", "eth_blockNumber", "[]");
         uint256 decodedResult = vm.parseUint(vm.toString(result));
         assertGt(decodedResult, 20_000_000);
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/7858>
+    function testRpcTransactionByHash() public {
+        string memory param = string.concat('["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]');
+        vm.rpc("sepolia", "eth_getTransactionByHash", param);
     }
 }
 

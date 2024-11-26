@@ -1,12 +1,12 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
-    artifacts::{CompactBytecode, CompactDeployedBytecode, Settings},
+    artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
     utils::read_json_file,
-    Artifact, ProjectCompileOutput,
+    Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
@@ -14,9 +14,9 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        debug::DebugTraceIdentifier,
+        debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
         Traces,
     },
@@ -32,17 +32,21 @@ use yansi::Paint;
 /// Runtime Bytecode of the given contract.
 #[track_caller]
 pub fn remove_contract(
-    output: &mut ProjectCompileOutput,
+    output: ProjectCompileOutput,
     path: &Path,
     name: &str,
-) -> Result<(JsonAbi, CompactBytecode, CompactDeployedBytecode)> {
-    let contract = if let Some(contract) = output.remove(path, name) {
-        contract
-    } else {
+) -> Result<(JsonAbi, CompactBytecode, ArtifactId)> {
+    let mut other = Vec::new();
+    let Some((id, contract)) = output.into_artifacts().find_map(|(id, artifact)| {
+        if id.name == name && id.source == path {
+            Some((id, artifact))
+        } else {
+            other.push(id.name);
+            None
+        }
+    }) else {
         let mut err = format!("could not find artifact: `{name}`");
-        if let Some(suggestion) =
-            super::did_you_mean(name, output.artifacts().map(|(name, _)| name)).pop()
-        {
+        if let Some(suggestion) = super::did_you_mean(name, other).pop() {
             if suggestion != name {
                 err = format!(
                     r#"{err}
@@ -64,12 +68,7 @@ pub fn remove_contract(
         .ok_or_else(|| eyre::eyre!("contract {} does not contain bytecode", name))?
         .into_owned();
 
-    let runtime = contract
-        .get_deployed_bytecode()
-        .ok_or_else(|| eyre::eyre!("contract {} does not contain deployed bytecode", name))?
-        .into_owned();
-
-    Ok((abi, bin, runtime))
+    Ok((abi, bin, id))
 }
 
 /// Helper function for finding a contract by ContractName
@@ -128,9 +127,8 @@ pub fn needs_setup(abi: &JsonAbi) -> bool {
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
-            println!(
-                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                "Warning:".yellow().bold(),
+            let _ = sh_warn!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 setup_fn.signature()
             );
         }
@@ -171,6 +169,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
                 NamedChain::ArbitrumTestnet |
+                NamedChain::Etherlink |
+                NamedChain::EtherlinkTestnet |
                 NamedChain::Karura |
                 NamedChain::KaruraTestnet |
                 NamedChain::Mantle |
@@ -275,32 +275,38 @@ where
 
     fn load_config_emit_warnings(self) -> Config {
         let config = self.load_config();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| sh_warn!("{w}").unwrap());
         config
     }
 
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
     }
 
     fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok((config, evm_opts))
     }
 
     fn load_config_unsanitized_emit_warnings(self) -> Config {
         let config = self.load_config_unsanitized();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         config
     }
 
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config_unsanitized()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
+        emit_warnings(&config);
         Ok(config)
+    }
+}
+
+fn emit_warnings(config: &Config) {
+    for warning in &config.warnings {
+        let _ = sh_warn!("{warning}");
     }
 }
 
@@ -354,16 +360,48 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
+impl From<RawCallResult> for TraceResult {
+    fn from(result: RawCallResult) -> Self {
+        Self::from_raw(result, TraceKind::Execution)
+    }
+}
+
+impl TryFrom<Result<RawCallResult>> for TraceResult {
+    type Error = EvmError;
+
+    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
+        match value {
+            Ok(result) => Ok(Self::from(result)),
+            Err(err) => Err(EvmError::from(err)),
+        }
+    }
+}
+
 /// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
+    with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
-    verbose: bool,
 ) -> Result<()> {
+    let (known_contracts, mut sources) = if with_local_artifacts {
+        let _ = sh_println!("Compiling project to generate artifacts");
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new();
+        let output = compiler.compile(&project)?;
+        (
+            Some(ContractsByArtifact::new(
+                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+            )),
+            ContractSources::from_project_output(&output, project.root(), None)?,
+        )
+    } else {
+        (None, ContractSources::default())
+    };
+
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
@@ -375,45 +413,44 @@ pub async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
-    let mut decoder = CallTraceDecoderBuilder::new()
+
+    let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,
-        )?)
-        .build();
-
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    if let Some(etherscan_identifier) = &mut etherscan_identifier {
-        for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-            decoder.identify(trace, etherscan_identifier);
-        }
+        )?);
+    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
+    if let Some(contracts) = &known_contracts {
+        builder = builder.with_known_contracts(contracts);
+        identifier = identifier.with_local(contracts);
     }
 
-    if decode_internal {
-        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
+    let mut decoder = builder.build();
+
+    for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    if decode_internal || debug {
+        if let Some(ref etherscan_identifier) = identifier.etherscan {
+            sources.merge(etherscan_identifier.get_compiled_contracts().await?);
+        }
+
+        if debug {
+            let mut debugger = Debugger::builder()
+                .traces(result.traces.expect("missing traces"))
+                .decoder(&decoder)
+                .sources(sources)
+                .build();
+            debugger.try_run_tui()?;
+            return Ok(())
+        }
+
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    if debug {
-        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
-        let mut debugger = Debugger::builder()
-            .traces(result.traces.expect("missing traces"))
-            .decoder(&decoder)
-            .sources(sources)
-            .build();
-        debugger.try_run()?;
-    } else {
-        print_traces(&mut result, &decoder, verbose).await?;
-    }
+    print_traces(&mut result, &decoder, shell::verbosity() > 0).await?;
 
     Ok(())
 }
@@ -425,19 +462,41 @@ pub async fn print_traces(
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    println!("Traces:");
+    sh_println!("Traces:")?;
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena_with_bytecodes(arena, verbose));
+        sh_println!("{}", render_trace_arena_with_bytecodes(arena, verbose))?;
     }
-    println!();
+    sh_println!()?;
 
     if result.success {
-        println!("{}", "Transaction successfully executed.".green());
+        sh_println!("{}", "Transaction successfully executed.".green())?;
     } else {
-        println!("{}", "Transaction failed.".red());
+        sh_err!("Transaction failed.")?;
     }
 
-    println!("Gas used: {}", result.gas_used);
+    sh_println!("Gas used: {}", result.gas_used)?;
+    Ok(())
+}
+
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let path = cache_path.join("signatures");
+    let mut cached_signatures = CachedSignatures::load(cache_path);
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+        }
+    });
+
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }

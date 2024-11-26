@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
-use foundry_common::fs;
+use foundry_common::{fs, sh_err, sh_println};
 use foundry_config::Config;
 use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
 
@@ -61,12 +61,14 @@ impl ListArgs {
                                 .available_senders(self.max_senders.unwrap())
                                 .await?
                                 .iter()
-                                .for_each(|sender| println!("{} ({})", sender, $label));
+                                .for_each(|sender| {
+                                    let _ = sh_println!("{} ({})", sender, $label);
+                                })
                         }
                     }
                     Err(e) => {
                         if !self.all {
-                            println!("{}", e)
+                            sh_err!("{}", e)?;
                         }
                     }
                 }
@@ -97,7 +99,7 @@ impl ListArgs {
             if path.is_file() {
                 if let Some(file_name) = path.file_name() {
                     if let Some(name) = file_name.to_str() {
-                        println!("{name} (Local)");
+                        sh_println!("{name} (Local)")?;
                     }
                 }
             }
