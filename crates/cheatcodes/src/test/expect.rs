@@ -797,7 +797,7 @@ impl LogCountMap {
     /// Returns true if the log was inserted and count was incremented.
     fn insert(&mut self, log: &RawLog) -> bool {
         // If its already in the map, increment the count without checking.
-        if self.map.get(log).is_some() {
+        if self.map.contains_key(log) {
             self.map.entry(log.clone()).and_modify(|c| *c += 1);
 
             return true

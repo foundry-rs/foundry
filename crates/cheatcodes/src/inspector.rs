@@ -1445,15 +1445,13 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                         } else {
                             0
                         }
+                    } else if expected.log.is_none() {
+                        count_map.values().map(|logs| logs.count_unchecked()).sum()
                     } else {
-                        if expected.log.is_none() {
-                            count_map.values().map(|logs| logs.count_unchecked()).sum()
-                        } else {
-                            count_map
-                                .values()
-                                .map(|logs| logs.count(&expected.log.as_ref().unwrap()))
-                                .sum()
-                        }
+                        count_map
+                            .values()
+                            .map(|logs| logs.count(expected.log.as_ref().unwrap()))
+                            .sum()
                     };
 
                     tracing::info!("expected {} logs, found {count}", expected.count);
