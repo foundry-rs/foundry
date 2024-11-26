@@ -1431,12 +1431,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 .filter_map(|(expected, count_map)| {
                     let count = if let Some(emitter) = expected.address {
                         if let Some(log_count) = count_map.get(&emitter) {
-                            // Check if we're counting for a specific Log.
-                            // if let Some(log_data) = &expected.log {
-                            //     log_count.get(log_data).copied().unwrap_or_default()
-                            // } else {
-                            //     log_count.values().sum::<u64>()
-                            // }
                             expected
                                 .log
                                 .as_ref()
@@ -1463,7 +1457,12 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 })
                 .collect::<Vec<_>>();
 
-            if !expected_counts.is_empty() {
+            // Not all emits were matched.
+            if self.expected_emits.iter().any(|(expected, _count_map)| !expected.found) {
+                outcome.result.result = InstructionResult::Revert;
+                outcome.result.output = "log != expected log".abi_encode().into();
+                return outcome;
+            } else if !expected_counts.is_empty() {
                 let msg = if outcome.result.is_ok() {
                     let (expected, count) = expected_counts.first().unwrap();
                     format!("log emitted {count} times, expected {}", expected.count)
@@ -1475,13 +1474,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
-                return outcome;
-            }
-
-            // Not all emits were matched.
-            if self.expected_emits.iter().any(|(expected, _count_map)| !expected.found) {
-                outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = "log != expected log".abi_encode().into();
                 return outcome;
             } else {
                 // All emits were found, we're good.
