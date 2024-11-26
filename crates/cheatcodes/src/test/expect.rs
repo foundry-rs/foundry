@@ -594,12 +594,6 @@ fn expect_call(
     Ok(Default::default())
 }
 
-/// Handles expected emits specified by the `expectEmit` cheatcodes.
-///
-/// The second element of the tuple counts the number of times the log has been emitted by a
-/// particular address
-pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<u64>)>;
-
 fn expect_emit(
     state: &mut Cheatcodes,
     depth: u64,
@@ -687,6 +681,45 @@ pub(crate) fn handle_expect_emit(
         return
     };
 
+    // Increment/set `count` for `log.address` and `log.data`
+    match count_map.entry(log.address) {
+        Entry::Occupied(mut entry) => {
+            tracing::info!("map[log.address] is occupied");
+            let expected_count = event_to_fill_or_check.count;
+            let log_count_map = entry.get_mut();
+            let count_entry = log_count_map.entry(log.data.clone());
+
+            match count_entry {
+                Entry::Occupied(mut count_entry) => {
+                    tracing::info!("map[log.data] is occupied");
+                    let count = count_entry.get_mut();
+                    if *count == expected_count {
+                        // If we've already seen the expected count of this log, we can't match it
+                        // again.
+                        // return
+                    }
+                    *count += 1;
+                }
+                Entry::Vacant(count_entry) => {
+                    tracing::info!("map[log.data] is vacant");
+                    count_entry.insert(1);
+                }
+            }
+
+            // If expected.count == 1, ensure a log cannot be emitted more than once regardless of
+            // the emitter. If emitter is Some along with expected.count == 1 then log
+            // cannot be emitted more that once from that specific emitter.
+        }
+        Entry::Vacant(entry) => {
+            tracing::info!("map[log.address] is vacant");
+            entry.insert({
+                let mut log_count_map = HashMap::default();
+                log_count_map.insert(log.data.clone(), 1);
+                log_count_map
+            });
+        }
+    }
+
     event_to_fill_or_check.found = || -> bool {
         // Topic count must match.
         if expected.topics().len() != log.topics().len() {
@@ -711,26 +744,37 @@ pub(crate) fn handle_expect_emit(
             return false
         }
 
-        // Increment match `count` for `log.address`
-        count_map.entry(log.address).and_modify(|count| *count += 1).or_insert(1);
-
+        let expected_count = event_to_fill_or_check.count;
         if let Some(emitter) = event_to_fill_or_check.address {
             let entry = count_map.get(&emitter);
 
             // If none, we haven't seen the emitter yet. We can't set `found` to true.
             if entry.is_none() {
+                tracing::info!("emitter is none | found = false");
                 return false
             }
 
-            if let Some(count) = entry {
-                if *count == event_to_fill_or_check.count {
+            if let Some(log_count_map) = entry {
+                let count_entry = log_count_map.get(&log.data);
+
+                // If none, we haven't seen the log yet. We can't set `found` to true.
+                if count_entry.is_none() {
+                    tracing::info!("count_entry is none | found = false");
+                    return false
+                }
+
+                if count_entry.unwrap() >= &expected_count {
                     return true
                 }
             }
+            tracing::info!("found = false");
             false
         } else {
-            if count_map.values().sum::<u64>() == event_to_fill_or_check.count {
-                return true
+            let log_count_map = count_map.values().find(|log_map| log_map.contains_key(&log.data));
+            if let Some(count) = log_count_map {
+                if count.get(&log.data).unwrap() >= &expected_count {
+                    return true
+                }
             }
             false
         }
@@ -746,6 +790,19 @@ pub(crate) fn handle_expect_emit(
         state.expected_emits.push_front((event_to_fill_or_check, count_map));
     }
 }
+
+/// Handles expected emits specified by the `expectEmit` cheatcodes.
+///
+/// The second element of the tuple counts the number of times the log has been emitted by a
+/// particular address
+pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<HashMap<RawLog, u64>>)>;
+
+// #[derive(Clone, Debug)]
+// struct LogCountMap {
+//     inner: HashMap<(RawLog, [bool; 5]), u64>,
+// }
+
+// impl LogCou
 
 fn expect_revert(
     state: &mut Cheatcodes,

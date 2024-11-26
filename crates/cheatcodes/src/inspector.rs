@@ -1425,6 +1425,56 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             // Ignore staticcalls
             !call.is_static;
         if should_check_emits {
+            let expected_counts = self
+                .expected_emits
+                .iter()
+                .filter_map(|(expected, count_map)| {
+                    let count = if let Some(emitter) = expected.address {
+                        if let Some(log_count) = count_map.get(&emitter) {
+                            // Check if we're counting for a specific Log.
+                            if let Some(log_data) = &expected.log {
+                                log_count.get(log_data).copied().unwrap_or_default()
+                            } else {
+                                log_count.values().sum::<u64>()
+                            }
+                        } else {
+                            0
+                        }
+                    } else {
+                        if expected.log.is_none() {
+                            count_map.values().map(|logs| logs.values().sum::<u64>()).sum()
+                        } else {
+                            count_map
+                                .values()
+                                .filter_map(|logs| logs.get(expected.log.as_ref().unwrap()))
+                                .sum()
+                        }
+                    };
+
+                    tracing::info!("expected {} logs, found {count}", expected.count);
+                    if count != expected.count {
+                        Some((expected, count))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if !expected_counts.is_empty() {
+                let msg = if outcome.result.is_ok() {
+                    let (expected, count) = expected_counts.first().unwrap();
+                    format!("log emitted {count} times, expected {}", expected.count)
+                } else {
+                    "expected an emit, but the call reverted instead. \
+                     ensure you're testing the happy path when using `expectEmit`"
+                        .to_string()
+                };
+
+                outcome.result.result = InstructionResult::Revert;
+                outcome.result.output = Error::encode(msg);
+                return outcome;
+            }
+
             // Not all emits were matched.
             if self.expected_emits.iter().any(|(expected, _count_map)| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
@@ -1523,11 +1573,11 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                     }
                 }
             }
-
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
             self.expected_emits.retain(|(expected, _count_map)| {
                 if !expected.found && expected.count == 0 {
+                    tracing::info!("expected.found == false");
                     // This indicates that we were expecting 0 zero events, hence remove it.
                     return false;
                 }
