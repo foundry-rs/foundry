@@ -50,10 +50,6 @@ pub struct RunArgs {
     #[arg(long)]
     quick: bool,
 
-    /// Prints the state changes
-    #[arg(long)]
-    with_state_changes: bool,
-
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
@@ -173,7 +169,7 @@ impl RunArgs {
             evm_version,
             self.debug,
             self.decode_internal,
-            self.with_state_changes,
+            shell::verbosity() > 1,
             alphanet,
         );
         let mut env =
@@ -265,7 +261,6 @@ impl RunArgs {
             self.with_local_artifacts,
             self.debug,
             self.decode_internal,
-            self.with_state_changes,
         )
         .await?;
 

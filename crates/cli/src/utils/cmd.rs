@@ -377,7 +377,6 @@ impl TryFrom<Result<RawCallResult>> for TraceResult {
 }
 
 /// labels the traces, conditionally prints them or opens the debugger
-#[allow(clippy::too_many_arguments)]
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
@@ -386,7 +385,6 @@ pub async fn handle_traces(
     with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
-    with_state_changes: bool,
 ) -> Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         let _ = sh_println!("Compiling project to generate artifacts");
@@ -451,7 +449,7 @@ pub async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    print_traces(&mut result, &decoder, shell::verbosity() > 0, with_state_changes).await?;
+    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 1).await?;
 
     Ok(())
 }

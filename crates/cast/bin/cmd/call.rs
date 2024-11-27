@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -49,10 +49,6 @@ pub struct CallArgs {
     /// Can only be used with `--trace`.
     #[arg(long, requires = "trace")]
     debug: bool,
-
-    /// Prints the state changes
-    #[arg(long)]
-    with_state_changes: bool,
 
     #[arg(long, requires = "trace")]
     decode_internal: bool,
@@ -132,7 +128,6 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
-            with_state_changes,
             decode_internal,
             labels,
             data,
@@ -193,7 +188,7 @@ impl CallArgs {
                 evm_version,
                 debug,
                 decode_internal,
-                false,
+                shell::verbosity() > 1,
                 alphanet,
             );
 
@@ -220,7 +215,6 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
                 decode_internal,
-                with_state_changes,
             )
             .await?;
 

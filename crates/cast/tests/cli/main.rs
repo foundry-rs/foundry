@@ -1713,3 +1713,60 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+// tests cast can decode traces when using project artifacts
+forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Send tx to change counter storage value.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setNumber(uint256)",
+            "111",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Assert cast with verbosity displays storage changes.
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "-vv", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [22287] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    ├─  storage changes:
+    │   @ 0: 0 → 111
+    └─ ← [Stop] 
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
