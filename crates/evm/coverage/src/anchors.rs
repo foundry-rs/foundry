@@ -1,3 +1,5 @@
+use crate::analysis::SourceIdentifier;
+
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use alloy_primitives::map::{DefaultHashBuilder, HashMap, HashSet};
 use eyre::ensure;
@@ -11,12 +13,13 @@ pub fn find_anchors(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
     items: &[CoverageItem],
-    items_by_source_id: &HashMap<usize, Vec<usize>>,
+    items_by_source_id: &HashMap<SourceIdentifier, Vec<usize>>,
+    source_id: &SourceIdentifier,
 ) -> Vec<ItemAnchor> {
     let mut seen = HashSet::with_hasher(DefaultHashBuilder::default());
     source_map
         .iter()
-        .filter_map(|element| items_by_source_id.get(&(element.index()? as usize)))
+        .filter_map(|_element| items_by_source_id.get(source_id))
         .flatten()
         .filter_map(|&item_id| {
             if !seen.insert(item_id) {
@@ -171,7 +174,8 @@ pub fn find_anchor_branch(
 /// Calculates whether `element` is within the range of the target `location`.
 fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> bool {
     // Source IDs must match.
-    let source_ids_match = element.index().is_some_and(|a| a as usize == location.source_id);
+    let source_ids_match =
+        element.index().is_some_and(|a| a as usize == location.source_id.source_id);
     if !source_ids_match {
         return false;
     }

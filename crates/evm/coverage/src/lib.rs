@@ -12,6 +12,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use alloy_primitives::{map::HashMap, Bytes, B256};
+use analysis::SourceIdentifier;
 use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
@@ -36,9 +37,9 @@ pub use inspector::CoverageCollector;
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of source IDs to the source path.
-    pub source_paths: HashMap<(Version, usize), PathBuf>,
+    pub source_paths: HashMap<(Version, SourceIdentifier), PathBuf>,
     /// A map of source paths to source IDs.
-    pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
+    pub source_paths_to_ids: HashMap<(Version, PathBuf), SourceIdentifier>,
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
@@ -51,14 +52,14 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, version: Version, source_id: usize, path: PathBuf) {
-        self.source_paths.insert((version.clone(), source_id), path.clone());
+    pub fn add_source(&mut self, version: Version, source_id: SourceIdentifier, path: PathBuf) {
+        self.source_paths.insert((version.clone(), source_id.clone()), path.clone());
         self.source_paths_to_ids.insert((version, path), source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<usize> {
-        self.source_paths_to_ids.get(&(version, path)).copied()
+    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<SourceIdentifier> {
+        self.source_paths_to_ids.get(&(version, path)).cloned()
     }
 
     /// Add the source maps.
@@ -89,7 +90,7 @@ impl CoverageReport {
         for (version, items) in self.items.iter() {
             for item in items {
                 let Some(path) =
-                    self.source_paths.get(&(version.clone(), item.loc.source_id)).cloned()
+                    self.source_paths.get(&(version.clone(), item.loc.source_id.clone())).cloned()
                 else {
                     continue;
                 };
@@ -107,7 +108,7 @@ impl CoverageReport {
         for (version, items) in self.items.iter() {
             for item in items {
                 let Some(path) =
-                    self.source_paths.get(&(version.clone(), item.loc.source_id)).cloned()
+                    self.source_paths.get(&(version.clone(), item.loc.source_id.clone())).cloned()
                 else {
                     continue;
                 };
@@ -160,7 +161,7 @@ impl CoverageReport {
         self.items.retain(|version, items| {
             items.retain(|item| {
                 self.source_paths
-                    .get(&(version.clone(), item.loc.source_id))
+                    .get(&(version.clone(), item.loc.source_id.clone()))
                     .map(|path| filter(path))
                     .unwrap_or(false)
             });
@@ -259,7 +260,7 @@ impl HitMap {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
     pub version: Version,
-    pub source_id: usize,
+    pub source_id: SourceIdentifier,
     pub contract_name: Arc<str>,
 }
 
@@ -348,7 +349,7 @@ impl Display for CoverageItem {
 #[derive(Clone, Debug)]
 pub struct SourceLocation {
     /// The source ID.
-    pub source_id: usize,
+    pub source_id: SourceIdentifier,
     /// The contract this source range is in.
     pub contract_name: Arc<str>,
     /// Start byte in the source code.

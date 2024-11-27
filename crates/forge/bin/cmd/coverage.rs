@@ -178,7 +178,9 @@ impl CoverageArgs {
                 continue;
             };
 
-            report.add_source(version.clone(), source_file.id as usize, id.source.clone());
+            let file = project_paths.root.join(id.source.clone());
+            let identifier = SourceIdentifier::new(source_file.id as usize, build_id.clone(), file);
+            report.add_source(version.clone(), identifier, id.source.clone());
 
             if let Some(ast) = source_file.ast {
                 let file = project_paths.root.join(id.source);
@@ -198,13 +200,6 @@ impl CoverageArgs {
                     .or_default()
                     .sources
                     .insert(identifier, source);
-            }
-        }
-
-        // Print versioned sources
-        for (identifier, sources) in &versioned_sources {
-            for (id, source) in &sources.sources {
-                tracing::info!(id=?id, "source");
             }
         }
 
@@ -229,17 +224,23 @@ impl CoverageArgs {
             );
 
             for (item_id, item) in source_analysis.items.iter().enumerate() {
-                items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
+                items_by_source_id.entry(item.loc.source_id.clone()).or_default().push(item_id);
             }
 
             let anchors = artifacts
                 .par_iter()
                 .filter(|artifact| artifact.contract_id.version == *version)
                 .map(|artifact| {
-                    let creation_code_anchors =
-                        artifact.creation.find_anchors(&source_analysis, &items_by_source_id);
-                    let deployed_code_anchors =
-                        artifact.deployed.find_anchors(&source_analysis, &items_by_source_id);
+                    let creation_code_anchors = artifact.creation.find_anchors(
+                        &source_analysis,
+                        &items_by_source_id,
+                        &artifact.contract_id.source_id,
+                    );
+                    let deployed_code_anchors = artifact.deployed.find_anchors(
+                        &source_analysis,
+                        &items_by_source_id,
+                        &artifact.contract_id.source_id,
+                    );
                     (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
                 })
                 .collect::<Vec<_>>();
@@ -397,7 +398,11 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+    pub fn new(
+        id: &ArtifactId,
+        source_id: SourceIdentifier,
+        artifact: &impl Artifact,
+    ) -> Option<Self> {
         Some(Self {
             contract_id: ContractId {
                 version: id.version.clone(),
@@ -442,7 +447,8 @@ impl BytecodeData {
     pub fn find_anchors(
         &self,
         source_analysis: &SourceAnalysis,
-        items_by_source_id: &HashMap<usize, Vec<usize>>,
+        items_by_source_id: &HashMap<SourceIdentifier, Vec<usize>>,
+        source_id: &SourceIdentifier,
     ) -> Vec<ItemAnchor> {
         find_anchors(
             &self.bytecode,
@@ -450,6 +456,7 @@ impl BytecodeData {
             &self.ic_pc_map,
             &source_analysis.items,
             items_by_source_id,
+            source_id,
         )
     }
 }
