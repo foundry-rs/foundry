@@ -6,7 +6,7 @@ use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    constants::MAGIC_ASSUME,
+    constants::{MAGIC_ASSUME, TEST_TIMEOUT},
     decode::{RevertDecoder, SkipReason},
 };
 use foundry_evm_coverage::HitMaps;
@@ -18,6 +18,7 @@ use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use std::{cell::RefCell, collections::BTreeMap};
+use std::time::{Duration, Instant};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -99,15 +100,13 @@ impl FuzzedExecutor {
         let show_logs = self.config.show_logs;
 
         // Start a timer if timeout is set.
-        let start_time = self.config.timeout.map(|timeout| {
-            (std::time::Instant::now(), std::time::Duration::from_secs(timeout.into()))
-        });
+        let start_time = start_timer(self.config.timeout);
 
         let run_result = self.runner.clone().run(&strategy, |calldata| {
             // Check if the timeout has been reached.
             if let Some((start_time, timeout)) = start_time {
                 if start_time.elapsed() > timeout {
-                    return Err(TestCaseError::fail("Timeout reached"));
+                    return Err(TestCaseError::fail(TEST_TIMEOUT));
                 }
             }
 
@@ -205,15 +204,16 @@ impl FuzzedExecutor {
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                if reason == "Timeout reached" {
+                if reason == TEST_TIMEOUT {
                     // If the reason is a timeout, we consider the fuzz test successful.
                     result.success = true;
                 } else {
                     result.reason = (!reason.is_empty()).then_some(reason);
-                    let args = calldata
-                        .get(..4)
-                        .and_then(|data| func.abi_decode_input(data, false).ok())
-                        .unwrap_or_default();
+                    let args = if let Some(data) = calldata.get(4..) {
+                        func.abi_decode_input(data, false).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
 
                     result.counterexample = Some(CounterExample::Single(
                         BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
@@ -284,4 +284,12 @@ impl FuzzedExecutor {
             EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary)
         }
     }
+}
+
+
+/// Starts timer for fuzz test, if any timeout configured.
+pub(crate) fn start_timer(timeout: Option<u32>) -> Option<(Instant, Duration)> {
+    timeout.map(|timeout| {
+        (Instant::now(), Duration::from_secs(timeout.into()))
+    })
 }

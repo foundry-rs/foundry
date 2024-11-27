@@ -10,6 +10,7 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+        TEST_TIMEOUT,
     },
     precompiles::PRECOMPILES,
 };
@@ -51,6 +52,7 @@ use serde::{Deserialize, Serialize};
 mod shrink;
 use crate::executors::EvmError;
 pub use shrink::check_sequence;
+use crate::executors::fuzz::start_timer;
 
 sol! {
     interface IInvariantTest {
@@ -333,21 +335,9 @@ impl<'a> InvariantExecutor<'a> {
             self.prepare_test(&invariant_contract, fuzz_fixtures)?;
 
         // Start a timer if timeout is set.
-        let start_time = self.config.timeout.map(|timeout| {
-            (std::time::Instant::now(), std::time::Duration::from_secs(timeout.into()))
-        });
+        let start_time = start_timer(self.config.timeout);
 
         let _ = self.runner.run(&invariant_strategy, |first_input| {
-            // Check if the timeout has been reached.
-            if let Some((start_time, timeout)) = start_time {
-                if start_time.elapsed() > timeout {
-                    // Since we never record a revert here the test is still considered successful
-                    // even though it timed out. We *want* this behavior for now, so that's ok, but
-                    // future developers should be aware of this.
-                    return Err(TestCaseError::fail("Timeout reached"));
-                }
-            }
-
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
                 first_input,
@@ -362,6 +352,17 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             while current_run.depth < self.config.depth {
+                // Check if the timeout has been reached.
+                if let Some((start_time, timeout)) = start_time {
+                    if start_time.elapsed() > timeout {
+                        // Since we never record a revert here the test is still considered
+                        // successful even though it timed out. We *want*
+                        // this behavior for now, so that's ok, but
+                        // future developers should be aware of this.
+                        return Err(TestCaseError::fail(TEST_TIMEOUT));
+                    }
+                }
+
                 let tx = current_run.inputs.last().ok_or_else(|| {
                     TestCaseError::fail("No input generated to call fuzzed target.")
                 })?;
