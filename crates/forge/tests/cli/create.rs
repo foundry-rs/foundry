@@ -145,6 +145,124 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
     prj.write_config(config);
 
+    // Dry-run without the `--broadcast` flag
+    cmd.forge_fuse().args([
+        "create",
+        format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+    ]);
+
+    // Dry-run
+    cmd.assert().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Contract: Counter
+Transaction: {
+  "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "to": null,
+  "maxFeePerGas": "0x77359401",
+  "maxPriorityFeePerGas": "0x1",
+  "gas": "0x17575",
+  "input": "0x6080604052348015600e575f5ffd5b5060c380601a5f395ff3fe6080604052348015600e575f5ffd5b5060043610603a575f3560e01c80633fb5c1cb14603e5780638381f58a14604f578063d09de08a146068575b5f5ffd5b604d6049366004607d565b5f55565b005b60565f5481565b60405190815260200160405180910390f35b604d5f805490806076836093565b9190505550565b5f60208284031215608c575f5ffd5b5035919050565b5f6001820160af57634e487b7160e01b5f52601160045260245ffd5b506001019056fea164736f6c634300081c000a",
+  "nonce": "0x0",
+  "chainId": "0x7a69"
+}
+ABI: [
+  {
+    "type": "function",
+    "name": "increment",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "number",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setNumber",
+    "inputs": [
+      {
+        "name": "newNumber",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  }
+]
+
+
+"#]]);
+
+    // Dry-run with `--json` flag
+    cmd.arg("--json").assert().stdout_eq(str![[r#"
+{
+  "contract": "Counter",
+  "transaction": {
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "to": null,
+    "maxFeePerGas": "0x77359401",
+    "maxPriorityFeePerGas": "0x1",
+    "gas": "0x17575",
+    "input": "0x6080604052348015600e575f5ffd5b5060c380601a5f395ff3fe6080604052348015600e575f5ffd5b5060043610603a575f3560e01c80633fb5c1cb14603e5780638381f58a14604f578063d09de08a146068575b5f5ffd5b604d6049366004607d565b5f55565b005b60565f5481565b60405190815260200160405180910390f35b604d5f805490806076836093565b9190505550565b5f60208284031215608c575f5ffd5b5035919050565b5f6001820160af57634e487b7160e01b5f52601160045260245ffd5b506001019056fea164736f6c634300081c000a",
+    "nonce": "0x0",
+    "chainId": "0x7a69"
+  },
+  "abi": [
+    {
+      "type": "function",
+      "name": "increment",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "number",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setNumber",
+      "inputs": [
+        {
+          "name": "newNumber",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    }
+  ]
+}
+
+"#]]);
+
     cmd.forge_fuse().args([
         "create",
         format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
@@ -156,19 +274,9 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
-[TX_HASH]
-
-"#]]);
-
-    cmd.assert().stdout_eq(str![[r#"
 No files changed, compilation skipped
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
@@ -206,6 +314,7 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
+
     cmd.assert().stdout_eq(str![[r#"
 No files changed, compilation skipped
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -288,6 +397,7 @@ contract TupleArrayConstructorContract {
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--broadcast",
             "--constructor-args",
             "[(1,2), (2,3), (3,4)]",
         ])
