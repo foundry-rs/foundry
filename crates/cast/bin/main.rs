@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -189,7 +189,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
 
         // ABI encoding & decoding
-        CastSubcommand::AbiDecode { sig, calldata, input } => {
+        CastSubcommand::DecodeAbi { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
             print_tokens(&tokens);
         }
@@ -200,16 +200,21 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
-        CastSubcommand::CalldataDecode { sig, calldata } => {
+        CastSubcommand::DecodeCalldata { sig, calldata } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
             print_tokens(&tokens);
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
-        CastSubcommand::StringDecode { data } => {
+        CastSubcommand::DecodeString { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
             print_tokens(&tokens);
+        }
+        CastSubcommand::DecodeEvent { sig, data } => {
+            let event = get_event(sig.as_str())?;
+            let decoded_event = event.decode_log_parts(None, &hex::decode(data)?, false)?;
+            print_tokens(&decoded_event.body);
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
