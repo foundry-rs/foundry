@@ -449,7 +449,7 @@ pub async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 1).await?;
+    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 4).await?;
 
     Ok(())
 }

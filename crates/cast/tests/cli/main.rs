@@ -64,7 +64,7 @@ Display options:
           - 2 (-vv): Print logs for all tests.
           - 3 (-vvv): Print execution traces for failing tests.
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
-          - 5 (-vvvvv): Print execution and setup traces for all tests.
+          - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -1714,7 +1714,7 @@ Transaction successfully executed.
 "#]]);
 });
 
-// tests cast can decode traces when using project artifacts
+// tests cast can decode traces when running with verbosity level > 4
 forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
@@ -1754,7 +1754,13 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
 
     // Assert cast with verbosity displays storage changes.
     cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "-vv", "--rpc-url", &handle.http_endpoint()])
+        .args([
+            "run",
+            format!("{tx_hash}").as_str(),
+            "-vvvvv",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.

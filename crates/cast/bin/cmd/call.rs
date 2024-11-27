@@ -188,7 +188,7 @@ impl CallArgs {
                 evm_version,
                 debug,
                 decode_internal,
-                shell::verbosity() > 1,
+                shell::verbosity() > 4,
                 alphanet,
             );
 

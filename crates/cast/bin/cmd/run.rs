@@ -169,7 +169,7 @@ impl RunArgs {
             evm_version,
             self.debug,
             self.decode_internal,
-            shell::verbosity() > 1,
+            shell::verbosity() > 4,
             alphanet,
         );
         let mut env =
