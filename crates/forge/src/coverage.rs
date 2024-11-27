@@ -223,7 +223,6 @@ impl CoverageReporter for BytecodeReporter {
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id.and_then(|_i| {
-                    // report.source_paths.get(&(contract_id.version.clone(), i as usize))
                     report
                         .source_paths
                         .get(&(contract_id.version.clone(), contract_id.source_id.clone()))
