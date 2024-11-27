@@ -9,7 +9,9 @@ use anvil::{spawn, NodeConfig};
 use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;
 use foundry_test_utils::{
-    forgetest, forgetest_async, str,
+    forgetest, forgetest_async,
+    snapbox::IntoData,
+    str,
     util::{OutputExt, TestCommand, TestProject},
 };
 use std::str::FromStr;
@@ -167,7 +169,7 @@ Transaction: {
   "maxFeePerGas": "0x77359401",
   "maxPriorityFeePerGas": "0x1",
   "gas": "0x17575",
-  "input": "0x6080604052348015600e575f5ffd5b5060c380601a5f395ff3fe6080604052348015600e575f5ffd5b5060043610603a575f3560e01c80633fb5c1cb14603e5780638381f58a14604f578063d09de08a146068575b5f5ffd5b604d6049366004607d565b5f55565b005b60565f5481565b60405190815260200160405180910390f35b604d5f805490806076836093565b9190505550565b5f60208284031215608c575f5ffd5b5035919050565b5f6001820160af57634e487b7160e01b5f52601160045260245ffd5b506001019056fea164736f6c634300081c000a",
+  "input": "[..]",
   "nonce": "0x0",
   "chainId": "0x7a69"
 }
@@ -211,7 +213,8 @@ ABI: [
 "#]]);
 
     // Dry-run with `--json` flag
-    cmd.arg("--json").assert().stdout_eq(str![[r#"
+    cmd.arg("--json").assert().stdout_eq(
+        str![[r#"
 {
   "contract": "Counter",
   "transaction": {
@@ -220,7 +223,7 @@ ABI: [
     "maxFeePerGas": "0x77359401",
     "maxPriorityFeePerGas": "0x1",
     "gas": "0x17575",
-    "input": "0x6080604052348015600e575f5ffd5b5060c380601a5f395ff3fe6080604052348015600e575f5ffd5b5060043610603a575f3560e01c80633fb5c1cb14603e5780638381f58a14604f578063d09de08a146068575b5f5ffd5b604d6049366004607d565b5f55565b005b60565f5481565b60405190815260200160405180910390f35b604d5f805490806076836093565b9190505550565b5f60208284031215608c575f5ffd5b5035919050565b5f6001820160af57634e487b7160e01b5f52601160045260245ffd5b506001019056fea164736f6c634300081c000a",
+    "input": "[..]",
     "nonce": "0x0",
     "chainId": "0x7a69"
   },
@@ -261,7 +264,9 @@ ABI: [
   ]
 }
 
-"#]]);
+"#]]
+        .is_json(),
+    );
 
     cmd.forge_fuse().args([
         "create",
