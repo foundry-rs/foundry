@@ -345,7 +345,7 @@ impl ContractRunner<'_> {
                             Ok((fuzz_config, runner)) => {
                                 self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config)
                             }
-                            Err(err) => TestResult::fail(dbg!(err).to_string()),
+                            Err(err) => TestResult::fail(err.to_string()),
                         }
                     }
                     TestFunctionKind::InvariantTest => {
@@ -359,7 +359,7 @@ impl ContractRunner<'_> {
                                 &known_contracts,
                                 identified_contracts.as_ref().unwrap(),
                             ),
-                            Err(err) => TestResult::fail(dbg!(err).to_string()),
+                            Err(err) => TestResult::fail(err.to_string()),
                         }
                     }
                     _ => unreachable!(),

@@ -88,10 +88,6 @@ impl ForgeTestProfile {
             "fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
         ];
 
-        config.rpc_endpoints = rpc_endpoints();
-        config.allow_paths.push(manifest_root().to_path_buf());
-
-        // no prompt testing
         config.prompt_timeout = 0;
 
         config.gas_limit = u64::MAX.into();
@@ -151,7 +147,7 @@ impl ForgeTestProfile {
             show_metrics: false,
         };
 
-        config
+        config.sanitized()
     }
 }
 
@@ -201,6 +197,9 @@ impl ForgeTestData {
     }
 
     fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
+        config.rpc_endpoints = rpc_endpoints();
+        config.allow_paths.push(manifest_root().to_path_buf());
+
         if config.fs_permissions.is_empty() {
             config.fs_permissions =
                 FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);

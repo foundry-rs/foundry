@@ -2282,10 +2282,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             profiles: vec![Self::DEFAULT_PROFILE],
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            #[cfg(not(feature = "isolate-by-default"))]
-            isolate: false,
-            #[cfg(feature = "isolate-by-default")]
-            isolate: true,
+            isolate: cfg!(feature = "isolate-by-default"),
             root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -2401,11 +2398,12 @@ impl Default for Config {
     }
 }
 
-/// Wrapper for the config's `gas_limit` value necessary because toml-rs can't handle larger number because integers are stored signed: <https://github.com/alexcrichton/toml-rs/issues/256>
+/// Wrapper for the config's `gas_limit` value necessary because toml-rs can't handle larger number
+/// because integers are stored signed: <https://github.com/alexcrichton/toml-rs/issues/256>
 ///
 /// Due to this limitation this type will be serialized/deserialized as String if it's larger than
 /// `i64`
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct GasLimit(#[serde(deserialize_with = "crate::deserialize_u64_or_max")] pub u64);
 
 impl From<u64> for GasLimit {
