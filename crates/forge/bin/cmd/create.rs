@@ -160,8 +160,6 @@ impl CreateArgs {
             provider.get_chain_id().await?
         };
 
-        let contract_name = self.contract.name.clone();
-
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
 
@@ -169,7 +167,6 @@ impl CreateArgs {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
             self.deploy(
-                &contract_name,
                 abi,
                 bin,
                 params,
@@ -189,7 +186,6 @@ impl CreateArgs {
                 .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
             self.deploy(
-                &contract_name,
                 abi,
                 bin,
                 params,
@@ -266,7 +262,6 @@ impl CreateArgs {
     #[allow(clippy::too_many_arguments)]
     async fn deploy<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
         self,
-        contract_name: &str,
         abi: JsonAbi,
         bin: BytecodeObject,
         args: Vec<DynSolValue>,
@@ -359,7 +354,7 @@ impl CreateArgs {
             if !shell::is_json() {
                 sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
 
-                sh_println!("Contract: {contract_name}")?;
+                sh_println!("Contract: {}", self.contract.name)?;
                 sh_println!(
                     "Transaction: {}",
                     serde_json::to_string_pretty(&deployer.tx.clone())?
@@ -369,7 +364,7 @@ impl CreateArgs {
                 sh_warn!("To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more.")?;
             } else {
                 let output = json!({
-                    "contract": contract_name,
+                    "contract": self.contract.name,
                     "transaction": &deployer.tx,
                     "abi":&abi
                 });
