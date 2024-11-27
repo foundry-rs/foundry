@@ -178,9 +178,8 @@ impl CoverageArgs {
                 continue;
             };
 
-            let file = project_paths.root.join(id.source.clone());
-            let identifier = SourceIdentifier::new(source_file.id as usize, build_id.clone(), file);
-            report.add_source(version.clone(), identifier, id.source.clone());
+            let identifier = SourceIdentifier::new(source_file.id as usize, build_id.clone());
+            report.add_source(version.clone(), identifier.clone(), id.source.clone());
 
             if let Some(ast) = source_file.ast {
                 let file = project_paths.root.join(id.source);
@@ -191,9 +190,6 @@ impl CoverageArgs {
                     source: fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 };
-
-                let identifier =
-                    SourceIdentifier::new(source_file.id as usize, build_id.clone(), file);
 
                 versioned_sources
                     .entry(version.clone())

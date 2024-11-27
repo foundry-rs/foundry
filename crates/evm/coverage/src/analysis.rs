@@ -4,7 +4,7 @@ use core::fmt;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rayon::prelude::*;
-use std::{borrow::Cow, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone, Debug)]
@@ -591,26 +591,23 @@ pub struct SourceFiles<'a> {
 /// Serves as a unique identifier for sources across multiple compiler runs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceIdentifier {
-    pub path: PathBuf,
+    /// Source ID is unique for each source file per compilation job but may not be across
+    /// different jobs.
     pub source_id: usize,
+    /// Artifact build id is same for all sources in a single compilation job. But always unique
+    /// across different jobs.
     pub build_id: String,
 }
 
 impl fmt::Display for SourceIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "source_id={} build_id={} path={}",
-            self.source_id,
-            self.build_id,
-            self.path.display()
-        )
+        write!(f, "source_id={} build_id={}", self.source_id, self.build_id,)
     }
 }
 
 impl SourceIdentifier {
-    pub fn new(source_id: usize, build_id: String, path: PathBuf) -> Self {
-        Self { path, source_id, build_id }
+    pub fn new(source_id: usize, build_id: String) -> Self {
+        Self { source_id, build_id }
     }
 }
 
