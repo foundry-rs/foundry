@@ -211,9 +211,9 @@ impl FuzzedExecutor {
                 } else {
                     result.reason = (!reason.is_empty()).then_some(reason);
                     let args = calldata
-                            .get(..4)
-                            .and_then(|data| func.abi_decode_input(data, false).ok())
-                            .unwrap_or_default();
+                        .get(..4)
+                        .and_then(|data| func.abi_decode_input(data, false).ok())
+                        .unwrap_or_default();
 
                     result.counterexample = Some(CounterExample::Single(
                         BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
