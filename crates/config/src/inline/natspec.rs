@@ -85,7 +85,10 @@ impl NatSpec {
 
     /// Returns the path of the contract.
     pub fn path(&self) -> &str {
-        self.contract.split_once(':').unwrap().0
+        match self.contract.split_once(':') {
+            Some((path, _)) => path,
+            None => self.contract.as_str(),
+        }
     }
 
     /// Returns the location of the natspec as a string.

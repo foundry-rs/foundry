@@ -214,7 +214,7 @@ impl ForgeTestData {
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)
-            .with_test_options(TestOptions::new_unparsed(config.clone()))
+            .with_test_options(TestOptions::new(&self.output, config.clone()).unwrap())
             .build(root, &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
