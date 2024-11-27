@@ -125,7 +125,7 @@ fn extend_dict(dict: &mut Dict, new: &Dict) {
 fn extend_value(value: &mut Value, new: &Value) {
     match (value, new) {
         (Value::Dict(tag, dict), Value::Dict(new_tag, new_dict)) => {
-            *tag = new_tag.clone();
+            *tag = *new_tag;
             extend_dict(dict, new_dict);
         }
         (value, new) => *value = new.clone(),

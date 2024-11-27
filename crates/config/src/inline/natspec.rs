@@ -65,7 +65,7 @@ impl NatSpec {
     /// ```
     /// A configuration like `forge-config: ciii.invariant.depth = 1` would result
     /// in an error.
-    pub fn validate_profiles(&self, profiles: &[Profile]) -> Result<(), InlineConfigError> {
+    pub fn validate_profiles(&self, profiles: &[Profile]) -> eyre::Result<()> {
         for config in self.config_values() {
             if !profiles.iter().any(|p| {
                 config
