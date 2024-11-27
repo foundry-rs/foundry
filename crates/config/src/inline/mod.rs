@@ -19,7 +19,7 @@ pub enum InlineConfigErrorKind {
     #[error(transparent)]
     Parse(#[from] toml::de::Error),
     /// An invalid profile has been provided.
-    #[error("invalid profile `{0}`, expected {1}")]
+    #[error("invalid profile `{0}`; valid profiles: {1}")]
     InvalidProfile(String, String),
 }
 
@@ -53,7 +53,7 @@ impl InlineConfig {
     }
 
     /// Inserts a new [`NatSpec`] into the [`InlineConfig`].
-    pub fn insert(&mut self, natspec: &NatSpec) -> eyre::Result<()> {
+    pub fn insert(&mut self, natspec: &NatSpec) -> Result<(), InlineConfigError> {
         let map = if let Some(function) = &natspec.function {
             self.fn_level.entry((natspec.contract.clone(), function.clone())).or_default()
         } else {

@@ -8,10 +8,10 @@ extern crate foundry_common;
 extern crate tracing;
 
 use alloy_primitives::U256;
+use eyre::Result;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
-    figment::{self, Figment},
-    Config, FuzzConfig, InlineConfig, InvariantConfig, NatSpec,
+    figment::Figment, Config, FuzzConfig, InlineConfig, InvariantConfig, NatSpec,
 };
 use proptest::test_runner::{
     FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
@@ -65,23 +65,19 @@ impl TestOptions {
     }
 
     /// Returns the [`Figment`] for the configuration.
-    pub fn figment(&self, contract_id: &str, test_fn: &str) -> Figment {
-        self.inline.merge(contract_id, test_fn, &self.config)
+    pub fn figment(&self, contract: &str, function: &str) -> Result<Figment> {
+        Ok(self.inline.merge(contract, function, &self.config))
     }
 
     /// Returns a "fuzz" test runner instance. Parameters are used to select tight scoped fuzz
     /// configs that apply for a contract-function pair. A fallback configuration is applied
     /// if no specific setup is found for a given input.
     ///
-    /// - `contract_id` is the id of the test contract, expressed as a relative path from the
-    ///   project root.
-    /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_runner(
-        &self,
-        contract_id: &str,
-        test_fn: &str,
-    ) -> figment::Result<(FuzzConfig, TestRunner)> {
-        let config: FuzzConfig = self.figment(contract_id, test_fn).extract_inner("fuzz")?;
+    /// - `contract` is the id of the test contract, expressed as a relative path from the project
+    ///   root.
+    /// - `function` is the name of the test function declared inside the test contract.
+    pub fn fuzz_runner(&self, contract: &str, function: &str) -> Result<(FuzzConfig, TestRunner)> {
+        let config: FuzzConfig = self.figment(contract, function)?.extract_inner("fuzz")?;
         let failure_persist_path = config
             .failure_persist_dir
             .as_ref()
@@ -90,7 +86,7 @@ impl TestOptions {
             .into_os_string()
             .into_string()
             .unwrap();
-        let runner = Self::fuzzer_with_cases(
+        let runner = fuzzer_with_cases(
             config.seed,
             config.runs,
             config.max_test_rejects,
@@ -103,44 +99,44 @@ impl TestOptions {
     /// configs that apply for a contract-function pair. A fallback configuration is applied
     /// if no specific setup is found for a given input.
     ///
-    /// - `contract_id` is the id of the test contract, expressed as a relative path from the
-    ///   project root.
-    /// - `test_fn` is the name of the test function declared inside the test contract.
+    /// - `contract` is the id of the test contract, expressed as a relative path from the project
+    ///   root.
+    /// - `function` is the name of the test function declared inside the test contract.
     pub fn invariant_runner(
         &self,
-        contract_id: &str,
-        test_fn: &str,
-    ) -> figment::Result<(InvariantConfig, TestRunner)> {
-        let figment = self.figment(contract_id, test_fn);
+        contract: &str,
+        function: &str,
+    ) -> Result<(InvariantConfig, TestRunner)> {
+        let figment = self.figment(contract, function)?;
         let config: InvariantConfig = figment.extract_inner("invariant")?;
         let seed: Option<U256> = figment.extract_inner("fuzz.seed").ok();
-        let runner = Self::fuzzer_with_cases(seed, config.runs, config.max_assume_rejects, None);
+        let runner = fuzzer_with_cases(seed, config.runs, config.max_assume_rejects, None);
         Ok((config, runner))
     }
+}
 
-    fn fuzzer_with_cases(
-        seed: Option<U256>,
-        cases: u32,
-        max_global_rejects: u32,
-        file_failure_persistence: Option<Box<dyn FailurePersistence>>,
-    ) -> TestRunner {
-        let config = proptest::test_runner::Config {
-            failure_persistence: file_failure_persistence,
-            cases,
-            max_global_rejects,
-            // Disable proptest shrink: for fuzz tests we provide single counterexample,
-            // for invariant tests we shrink outside proptest.
-            max_shrink_iters: 0,
-            ..Default::default()
-        };
+fn fuzzer_with_cases(
+    seed: Option<U256>,
+    cases: u32,
+    max_global_rejects: u32,
+    file_failure_persistence: Option<Box<dyn FailurePersistence>>,
+) -> TestRunner {
+    let config = proptest::test_runner::Config {
+        failure_persistence: file_failure_persistence,
+        cases,
+        max_global_rejects,
+        // Disable proptest shrink: for fuzz tests we provide single counterexample,
+        // for invariant tests we shrink outside proptest.
+        max_shrink_iters: 0,
+        ..Default::default()
+    };
 
-        if let Some(seed) = seed {
-            trace!(target: "forge::test", %seed, "building deterministic fuzzer");
-            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
-            TestRunner::new_with_rng(config, rng)
-        } else {
-            trace!(target: "forge::test", "building stochastic fuzzer");
-            TestRunner::new(config)
-        }
+    if let Some(seed) = seed {
+        trace!(target: "forge::test", %seed, "building deterministic fuzzer");
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
+        TestRunner::new_with_rng(config, rng)
+    } else {
+        trace!(target: "forge::test", "building stochastic fuzzer");
+        TestRunner::new(config)
     }
 }
