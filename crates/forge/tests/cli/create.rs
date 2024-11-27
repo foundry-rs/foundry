@@ -152,6 +152,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
         rpc.as_str(),
         "--private-key",
         pk.as_str(),
+        "--broadcast",
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
@@ -193,6 +194,7 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
         "--from",
         format!("{dev:?}").as_str(),
         "--unlocked",
+        "--broadcast",
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
@@ -248,6 +250,7 @@ contract ConstructorContract {
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--broadcast",
             "--constructor-args",
             "My Constructor",
         ])
@@ -335,6 +338,7 @@ contract UniswapV2Swap {
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--broadcast",
         ])
         .assert_success()
         .stdout_eq(str![[r#"
