@@ -1474,6 +1474,14 @@ casttest!(string_decode, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(event_decode, |_prj, cmd| {
+    cmd.args(["decode-event", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
+78
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+});
+
 casttest!(format_units, |_prj, cmd| {
     cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
 1

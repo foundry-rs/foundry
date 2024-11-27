@@ -1,3 +1,4 @@
+use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
@@ -98,7 +99,14 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let mut config = self.try_load_config_emit_warnings()?;
+
+        // Install missing dependencies.
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config();
+        }
+
         // Find Project & Compile
         let project = config.project()?;
 
