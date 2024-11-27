@@ -81,7 +81,7 @@ impl TestOptions {
         contract_id: &str,
         test_fn: &str,
     ) -> figment::Result<(FuzzConfig, TestRunner)> {
-        let config: FuzzConfig = self.figment(contract_id, test_fn).extract()?;
+        let config: FuzzConfig = self.figment(contract_id, test_fn).extract_inner("fuzz")?;
         let failure_persist_path = config
             .failure_persist_dir
             .as_ref()
@@ -112,7 +112,7 @@ impl TestOptions {
         test_fn: &str,
     ) -> figment::Result<(InvariantConfig, TestRunner)> {
         let figment = self.figment(contract_id, test_fn);
-        let config: InvariantConfig = figment.extract()?;
+        let config: InvariantConfig = figment.extract_inner("invariant")?;
         let seed: Option<U256> = figment.extract_inner("fuzz.seed").ok();
         let runner = Self::fuzzer_with_cases(seed, config.runs, config.max_assume_rejects, None);
         Ok((config, runner))

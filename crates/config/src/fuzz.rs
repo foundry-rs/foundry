@@ -49,14 +49,9 @@ impl FuzzConfig {
     /// Creates fuzz configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
         Self {
-            runs: 256,
-            max_test_rejects: 65536,
-            seed: None,
-            dictionary: FuzzDictionaryConfig::default(),
-            gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
             failure_persist_file: Some("failures".to_string()),
-            show_logs: false,
+            ..Default::default()
         }
     }
 }

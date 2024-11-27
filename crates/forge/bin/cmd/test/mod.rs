@@ -1061,9 +1061,9 @@ contract FooBarTest is DSTest {
             &prj.root().to_string_lossy(),
         ]);
         let outcome = args.run().await.unwrap();
-        let gas_report = outcome.gas_report.unwrap();
+        let gas_report = outcome.gas_report.as_ref().unwrap();
 
-        assert_eq!(gas_report.contracts.len(), 3);
+        assert_eq!(gas_report.contracts.len(), 3, "{}", outcome.summary(Default::default()));
         let call_cnts = gas_report
             .contracts
             .values()

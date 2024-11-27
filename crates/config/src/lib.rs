@@ -631,16 +631,16 @@ impl Config {
     fn try_from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
-        let figment = figment.select(Profile::new("profile"));
 
-        // HACK: The `"profile"` profile contains all the profiles as keys.
+        // The `"profile"` profile contains all the profiles as keys.
         let mut add_profile = |profile: &Profile| {
             if !config.profiles.contains(profile) {
                 config.profiles.push(profile.clone());
             }
         };
+        let figment = figment.select(Self::PROFILE_SECTION);
         if let Ok(data) = figment.data() {
-            if let Some(profiles) = data.get(&Profile::new("profile")) {
+            if let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION)) {
                 for profile in profiles.keys() {
                     add_profile(&Profile::new(profile));
                 }
