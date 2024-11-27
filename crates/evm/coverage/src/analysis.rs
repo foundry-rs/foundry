@@ -1,9 +1,10 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use alloy_primitives::map::HashMap;
+use core::fmt;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rayon::prelude::*;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
 #[derive(Clone, Debug)]
@@ -538,7 +539,8 @@ impl<'a> SourceAnalyzer<'a> {
             .sources
             .sources
             .par_iter()
-            .flat_map_iter(|(&source_id, SourceFile { source, ast })| {
+            .flat_map_iter(|(SourceIdentifier { path, source_id, build_id }, SourceFile { source, ast, .. })| {
+                tracing::info!(source_id=?source_id, build_id=?build_id, path=?path, "Analyzing source");
                 ast.nodes.iter().map(move |node| {
                     if !matches!(node.node_type, NodeType::ContractDefinition) {
                         return Ok(vec![]);
@@ -556,7 +558,7 @@ impl<'a> SourceAnalyzer<'a> {
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?;
 
-                    let mut visitor = ContractVisitor::new(source_id, source, &name);
+                    let mut visitor = ContractVisitor::new(*source_id, source, &name);
                     visitor.visit_contract(node)?;
                     let mut items = visitor.items;
 
@@ -583,7 +585,34 @@ impl<'a> SourceAnalyzer<'a> {
 #[derive(Debug, Default)]
 pub struct SourceFiles<'a> {
     /// The versioned sources.
-    pub sources: HashMap<usize, SourceFile<'a>>,
+    /// Keyed by build_id and source_id.
+    pub sources: HashMap<SourceIdentifier, SourceFile<'a>>,
+}
+
+/// Serves as a unique identifier for sources across multiple compiler runs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceIdentifier {
+    pub path: PathBuf,
+    pub source_id: usize,
+    pub build_id: String,
+}
+
+impl fmt::Display for SourceIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "source_id={} build_id={} path={}",
+            self.source_id,
+            self.build_id,
+            self.path.display()
+        )
+    }
+}
+
+impl SourceIdentifier {
+    pub fn new(source_id: usize, build_id: String, path: PathBuf) -> Self {
+        Self { path, source_id, build_id }
+    }
 }
 
 /// The source code and AST of a file.

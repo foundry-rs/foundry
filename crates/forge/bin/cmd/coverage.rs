@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
-        analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles},
+        analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles, SourceIdentifier},
         anchors::find_anchors,
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, DebugReporter, ItemAnchor,
         LcovReporter, SummaryReporter,
@@ -162,7 +162,6 @@ impl CoverageArgs {
         // Collect source files.
         let project_paths = &project.paths;
         let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
-
         // Account cached and freshly compiled sources
         for (id, artifact) in output.artifact_ids() {
             // Filter out dependencies
@@ -171,6 +170,7 @@ impl CoverageArgs {
             }
 
             let version = id.version;
+            let build_id = id.build_id;
             let source_file = if let Some(source_file) = artifact.source_file() {
                 source_file
             } else {
@@ -190,11 +190,21 @@ impl CoverageArgs {
                         .wrap_err("Could not read source code for analysis")?,
                 };
 
+                let identifier =
+                    SourceIdentifier::new(source_file.id as usize, build_id.clone(), file);
+
                 versioned_sources
                     .entry(version.clone())
                     .or_default()
                     .sources
-                    .insert(source_file.id as usize, source);
+                    .insert(identifier, source);
+            }
+        }
+
+        // Print versioned sources
+        for (identifier, sources) in &versioned_sources {
+            for (id, source) in &sources.sources {
+                tracing::info!(id=?id, "source");
             }
         }
 
