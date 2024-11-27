@@ -139,7 +139,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     retry: RETRY_CHECK_ON_VERIFY,
                     verifier: args.verifier,
                 };
-                // return check_args.run().await
                 return self.check(check_args).await
             }
         } else {
