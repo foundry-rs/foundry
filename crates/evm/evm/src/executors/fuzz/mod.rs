@@ -17,8 +17,11 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{cell::RefCell, collections::BTreeMap};
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -286,10 +289,7 @@ impl FuzzedExecutor {
     }
 }
 
-
 /// Starts timer for fuzz test, if any timeout configured.
 pub(crate) fn start_timer(timeout: Option<u32>) -> Option<(Instant, Duration)> {
-    timeout.map(|timeout| {
-        (Instant::now(), Duration::from_secs(timeout.into()))
-    })
+    timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into())))
 }

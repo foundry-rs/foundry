@@ -50,9 +50,8 @@ pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
 
 mod shrink;
-use crate::executors::EvmError;
+use crate::executors::{fuzz::start_timer, EvmError};
 pub use shrink::check_sequence;
-use crate::executors::fuzz::start_timer;
 
 sol! {
     interface IInvariantTest {
