@@ -539,7 +539,7 @@ impl<'a> SourceAnalyzer<'a> {
             .sources
             .sources
             .par_iter()
-            .flat_map_iter(|(source_id, SourceFile { source, ast, .. })| {
+            .flat_map_iter(|(source_id, SourceFile { source, ast })| {
                 ast.nodes.iter().map(move |node| {
                     if !matches!(node.node_type, NodeType::ContractDefinition) {
                         return Ok(vec![]);
