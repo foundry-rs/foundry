@@ -3910,6 +3910,7 @@ dependencies = [
  "foundry-compilers",
  "glob",
  "globset",
+ "itertools 0.13.0",
  "mesc",
  "number_prefix",
  "path-slash",

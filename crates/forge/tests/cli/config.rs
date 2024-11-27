@@ -29,6 +29,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
+        profiles: vec![Config::DEFAULT_PROFILE],
         root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),

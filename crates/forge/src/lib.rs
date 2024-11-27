@@ -7,15 +7,16 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
+use alloy_primitives::U256;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
-    validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
-    InvariantConfig, NatSpec,
+    figment::{self, Figment},
+    Config, FuzzConfig, InlineConfig, InvariantConfig, NatSpec,
 };
 use proptest::test_runner::{
     FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
 };
-use std::path::Path;
+use std::sync::Arc;
 
 pub mod coverage;
 
@@ -34,70 +35,38 @@ pub mod result;
 pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
 
-/// Metadata on how to run fuzz/invariant tests
+/// Test configuration.
 #[derive(Clone, Debug, Default)]
 pub struct TestOptions {
-    /// The base "fuzz" test configuration. To be used as a fallback in case
-    /// no more specific configs are found for a given run.
-    pub fuzz: FuzzConfig,
-    /// The base "invariant" test configuration. To be used as a fallback in case
-    /// no more specific configs are found for a given run.
-    pub invariant: InvariantConfig,
-    /// Contains per-test specific "fuzz" configurations.
-    pub inline_fuzz: InlineConfig<FuzzConfig>,
-    /// Contains per-test specific "invariant" configurations.
-    pub inline_invariant: InlineConfig<InvariantConfig>,
+    /// The base configuration.
+    pub config: Arc<Config>,
+    /// Per-test configuration. Merged onto `base_config`.
+    pub inline: InlineConfig,
 }
 
 impl TestOptions {
     /// Tries to create a new instance by detecting inline configurations from the project compile
     /// output.
-    pub fn new(
-        output: &ProjectCompileOutput,
-        root: &Path,
-        profiles: Vec<String>,
-        base_fuzz: FuzzConfig,
-        base_invariant: InvariantConfig,
-    ) -> Result<Self, InlineConfigError> {
-        let natspecs: Vec<NatSpec> = NatSpec::parse(output, root);
-        let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
-        let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
-
-        // Validate all natspecs
+    pub fn new(output: &ProjectCompileOutput, base_config: Arc<Config>) -> eyre::Result<Self> {
+        let natspecs: Vec<NatSpec> = NatSpec::parse(output, &base_config.root);
+        let profiles = &base_config.profiles;
+        let mut inline = InlineConfig::new();
         for natspec in &natspecs {
-            validate_profiles(natspec, &profiles)?;
+            inline.insert(natspec)?;
+            // Validate after parsing as TOML.
+            natspec.validate_profiles(profiles)?;
         }
+        Ok(Self { config: base_config, inline })
+    }
 
-        // Firstly, apply contract-level configurations
-        for natspec in natspecs.iter().filter(|n| n.function.is_none()) {
-            if let Some(fuzz) = base_fuzz.merge(natspec)? {
-                inline_fuzz.insert_contract(&natspec.contract, fuzz);
-            }
+    /// Creates a new instance without parsing inline configuration.
+    pub fn new_unparsed(base_config: Arc<Config>) -> Self {
+        Self { config: base_config, inline: InlineConfig::new() }
+    }
 
-            if let Some(invariant) = base_invariant.merge(natspec)? {
-                inline_invariant.insert_contract(&natspec.contract, invariant);
-            }
-        }
-
-        for (natspec, f) in natspecs.iter().filter_map(|n| n.function.as_ref().map(|f| (n, f))) {
-            // Apply in-line configurations for the current profile
-            let c = &natspec.contract;
-
-            // We might already have inserted contract-level configs above, so respect data already
-            // present in inline configs.
-            let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
-            let base_invariant = inline_invariant.get(c, f).unwrap_or(&base_invariant);
-
-            if let Some(fuzz) = base_fuzz.merge(natspec)? {
-                inline_fuzz.insert_fn(c, f, fuzz);
-            }
-
-            if let Some(invariant) = base_invariant.merge(natspec)? {
-                inline_invariant.insert_fn(c, f, invariant);
-            }
-        }
-
-        Ok(Self { fuzz: base_fuzz, invariant: base_invariant, inline_fuzz, inline_invariant })
+    /// Returns the [`Figment`] for the configuration.
+    pub fn figment(&self, contract_id: &str, test_fn: &str) -> Figment {
+        self.inline.merge(contract_id, test_fn, &self.config)
     }
 
     /// Returns a "fuzz" test runner instance. Parameters are used to select tight scoped fuzz
@@ -107,20 +76,27 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
-        let fuzz_config = self.fuzz_config(contract_id, test_fn).clone();
-        let failure_persist_path = fuzz_config
+    pub fn fuzz_runner(
+        &self,
+        contract_id: &str,
+        test_fn: &str,
+    ) -> figment::Result<(FuzzConfig, TestRunner)> {
+        let config: FuzzConfig = self.figment(contract_id, test_fn).extract()?;
+        let failure_persist_path = config
             .failure_persist_dir
+            .as_ref()
             .unwrap()
-            .join(fuzz_config.failure_persist_file.unwrap())
+            .join(config.failure_persist_file.as_ref().unwrap())
             .into_os_string()
             .into_string()
             .unwrap();
-        self.fuzzer_with_cases(
-            fuzz_config.runs,
-            fuzz_config.max_test_rejects,
+        let runner = Self::fuzzer_with_cases(
+            config.seed,
+            config.runs,
+            config.max_test_rejects,
             Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
-        )
+        );
+        Ok((config, runner))
     }
 
     /// Returns an "invariant" test runner instance. Parameters are used to select tight scoped fuzz
@@ -130,35 +106,20 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn invariant_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
-        let invariant = self.invariant_config(contract_id, test_fn);
-        self.fuzzer_with_cases(invariant.runs, invariant.max_assume_rejects, None)
-    }
-
-    /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz
-    /// configs that apply for a contract-function pair. A fallback configuration is applied
-    /// if no specific setup is found for a given input.
-    ///
-    /// - `contract_id` is the id of the test contract, expressed as a relative path from the
-    ///   project root.
-    /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_config(&self, contract_id: &str, test_fn: &str) -> &FuzzConfig {
-        self.inline_fuzz.get(contract_id, test_fn).unwrap_or(&self.fuzz)
-    }
-
-    /// Returns an "invariant" configuration setup. Parameters are used to select tight scoped
-    /// invariant configs that apply for a contract-function pair. A fallback configuration is
-    /// applied if no specific setup is found for a given input.
-    ///
-    /// - `contract_id` is the id of the test contract, expressed as a relative path from the
-    ///   project root.
-    /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn invariant_config(&self, contract_id: &str, test_fn: &str) -> &InvariantConfig {
-        self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
-    }
-
-    pub fn fuzzer_with_cases(
+    pub fn invariant_runner(
         &self,
+        contract_id: &str,
+        test_fn: &str,
+    ) -> figment::Result<(InvariantConfig, TestRunner)> {
+        let figment = self.figment(contract_id, test_fn);
+        let config: InvariantConfig = figment.extract()?;
+        let seed: Option<U256> = figment.extract_inner("fuzz.seed").ok();
+        let runner = Self::fuzzer_with_cases(seed, config.runs, config.max_assume_rejects, None);
+        Ok((config, runner))
+    }
+
+    fn fuzzer_with_cases(
+        seed: Option<U256>,
         cases: u32,
         max_global_rejects: u32,
         file_failure_persistence: Option<Box<dyn FailurePersistence>>,
@@ -173,7 +134,7 @@ impl TestOptions {
             ..Default::default()
         };
 
-        if let Some(seed) = &self.fuzz.seed {
+        if let Some(seed) = seed {
             trace!(target: "forge::test", %seed, "building deterministic fuzzer");
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
             TestRunner::new_with_rng(config, rng)
@@ -181,53 +142,5 @@ impl TestOptions {
             trace!(target: "forge::test", "building stochastic fuzzer");
             TestRunner::new(config)
         }
-    }
-}
-
-/// Builder utility to create a [`TestOptions`] instance.
-#[derive(Default)]
-#[must_use = "builders do nothing unless you call `build` on them"]
-pub struct TestOptionsBuilder {
-    fuzz: Option<FuzzConfig>,
-    invariant: Option<InvariantConfig>,
-    profiles: Option<Vec<String>>,
-}
-
-impl TestOptionsBuilder {
-    /// Sets a [`FuzzConfig`] to be used as base "fuzz" configuration.
-    pub fn fuzz(mut self, conf: FuzzConfig) -> Self {
-        self.fuzz = Some(conf);
-        self
-    }
-
-    /// Sets a [`InvariantConfig`] to be used as base "invariant" configuration.
-    pub fn invariant(mut self, conf: InvariantConfig) -> Self {
-        self.invariant = Some(conf);
-        self
-    }
-
-    /// Sets available configuration profiles. Profiles are useful to validate existing in-line
-    /// configurations. This argument is necessary in case a `compile_output`is provided.
-    pub fn profiles(mut self, p: Vec<String>) -> Self {
-        self.profiles = Some(p);
-        self
-    }
-
-    /// Creates an instance of [`TestOptions`]. This takes care of creating "fuzz" and
-    /// "invariant" fallbacks, and extracting all inline test configs, if available.
-    ///
-    /// `root` is a reference to the user's project root dir. This is essential
-    /// to determine the base path of generated contract identifiers. This is to provide correct
-    /// matchers for inline test configs.
-    pub fn build(
-        self,
-        output: &ProjectCompileOutput,
-        root: &Path,
-    ) -> Result<TestOptions, InlineConfigError> {
-        let profiles: Vec<String> =
-            self.profiles.unwrap_or_else(|| vec![Config::selected_profile().into()]);
-        let base_fuzz = self.fuzz.unwrap_or_default();
-        let base_invariant = self.invariant.unwrap_or_default();
-        TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
     }
 }

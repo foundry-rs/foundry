@@ -1,8 +1,10 @@
 use crate::Config;
 use alloy_primitives::map::HashMap;
-use std::sync::LazyLock;
-mod conf_parser;
-pub use conf_parser::*;
+use figment::{
+    value::{Dict, Map, Value},
+    Figment, Profile, Provider,
+};
+use itertools::Itertools;
 
 mod error;
 pub use error::*;
@@ -10,52 +12,122 @@ pub use error::*;
 mod natspec;
 pub use natspec::*;
 
-pub const INLINE_CONFIG_FUZZ_KEY: &str = "fuzz";
-pub const INLINE_CONFIG_INVARIANT_KEY: &str = "invariant";
-const INLINE_CONFIG_PREFIX: &str = "forge-config";
+const INLINE_CONFIG_PREFIX: &str = "forge-config:";
 
-static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: LazyLock<String> = LazyLock::new(|| {
-    let selected_profile = Config::selected_profile().to_string();
-    format!("{INLINE_CONFIG_PREFIX}:{selected_profile}.")
-});
+type DataMap = Map<Profile, Dict>;
 
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
 /// to create configs directly bound to a solidity test.
 #[derive(Clone, Debug, Default)]
-pub struct InlineConfig<T> {
-    /// Contract-level configurations, used for functions that do not have a specific
-    /// configuration.
-    contract_level: HashMap<String, T>,
-    /// Maps a (test-contract, test-function) pair
-    /// to a specific configuration provided by the user.
-    fn_level: HashMap<(String, String), T>,
+pub struct InlineConfig {
+    /// Contract-level configuration.
+    contract_level: HashMap<String, DataMap>,
+    /// Function-level configuration.
+    fn_level: HashMap<(String, String), DataMap>,
 }
 
-impl<T> InlineConfig<T> {
-    /// Returns an inline configuration, if any, for a test function.
-    /// Configuration is identified by the pair "contract", "function".
-    pub fn get(&self, contract_id: &str, fn_name: &str) -> Option<&T> {
-        let key = (contract_id.to_string(), fn_name.to_string());
-        self.fn_level.get(&key).or_else(|| self.contract_level.get(contract_id))
+impl InlineConfig {
+    /// Creates a new, empty [`InlineConfig`].
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn insert_contract(&mut self, contract_id: impl Into<String>, config: T) {
-        self.contract_level.insert(contract_id.into(), config);
+    /// Inserts a new [`NatSpec`] into the [`InlineConfig`].
+    pub fn insert(&mut self, natspec: &NatSpec) -> eyre::Result<()> {
+        let map = if let Some(function) = &natspec.function {
+            self.fn_level.entry((natspec.contract.clone(), function.clone())).or_default()
+        } else {
+            self.contract_level.entry(natspec.contract.clone()).or_default()
+        };
+        let joined = natspec.config_values().format("\n").to_string();
+        extend_data_map(map, &toml::from_str::<DataMap>(&joined)?);
+        Ok(())
     }
 
-    /// Inserts an inline configuration, for a test function.
-    /// Configuration is identified by the pair "contract", "function".
-    pub fn insert_fn<C, F>(&mut self, contract_id: C, fn_name: F, config: T)
-    where
-        C: Into<String>,
-        F: Into<String>,
-    {
-        let key = (contract_id.into(), fn_name.into());
-        self.fn_level.insert(key, config);
+    /// Returns a [`figment::Provider`] for this [`InlineConfig`] at the given contract and function
+    /// level.
+    pub fn provide<'a>(&'a self, contract: &'a str, function: &'a str) -> InlineConfigProvider<'a> {
+        InlineConfigProvider { inline: self, contract, function }
+    }
+
+    /// Merges the inline configuration at the given contract and function level with the provided
+    /// base configuration.
+    pub fn merge(&self, contract: &str, function: &str, base: &Config) -> Figment {
+        Figment::from(base).merge(self.provide(contract, function))
+    }
+
+    /// Returns `true` if a configuration is present at the given contract and function level.
+    pub fn contains(&self, contract: &str, function: &str) -> bool {
+        // Order swapped to avoid allocation in `get_function` since order doesn't matter here.
+        self.get_contract(contract)
+            .filter(|map| !map.is_empty())
+            .or_else(|| self.get_function(contract, function))
+            .is_some_and(|map| !map.is_empty())
+    }
+
+    fn get_contract(&self, contract: &str) -> Option<&DataMap> {
+        self.contract_level.get(contract)
+    }
+
+    fn get_function(&self, contract: &str, function: &str) -> Option<&DataMap> {
+        let key = (contract.to_string(), function.to_string());
+        self.fn_level.get(&key)
     }
 }
 
-pub(crate) fn remove_whitespaces(s: &str) -> String {
-    s.chars().filter(|c| !c.is_whitespace()).collect()
+/// [`figment::Provider`] for [`InlineConfig`] at a given contract and function level.
+///
+/// Created by [`InlineConfig::provide`].
+#[derive(Clone, Debug)]
+pub struct InlineConfigProvider<'a> {
+    inline: &'a InlineConfig,
+    contract: &'a str,
+    function: &'a str,
+}
+
+impl Provider for InlineConfigProvider<'_> {
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::named("inline config")
+    }
+
+    fn data(&self) -> figment::Result<DataMap> {
+        let mut map = DataMap::new();
+        if let Some(new) = self.inline.get_contract(self.contract) {
+            extend_data_map(&mut map, new);
+        }
+        if let Some(new) = self.inline.get_function(self.contract, self.function) {
+            extend_data_map(&mut map, new);
+        }
+        Ok(map)
+    }
+}
+
+fn extend_data_map(map: &mut DataMap, new: &DataMap) {
+    for (profile, data) in new {
+        extend_dict(map.entry(profile.clone()).or_default(), data);
+    }
+}
+
+fn extend_dict(dict: &mut Dict, new: &Dict) {
+    for (k, v) in new {
+        match dict.entry(k.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(v.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                extend_value(entry.into_mut(), v);
+            }
+        }
+    }
+}
+
+fn extend_value(value: &mut Value, new: &Value) {
+    match (value, new) {
+        (Value::Dict(tag, dict), Value::Dict(new_tag, new_dict)) => {
+            *tag = new_tag.clone();
+            extend_dict(dict, new_dict);
+        }
+        (value, new) => *value = new.clone(),
+    }
 }

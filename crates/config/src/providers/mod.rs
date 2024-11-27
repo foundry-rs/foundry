@@ -138,8 +138,9 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        if let Some(fallback) = self.provider.data()?.get(&self.fallback) {
-            let mut inner = self.provider.data()?.remove(&self.profile).unwrap_or_default();
+        let data = self.provider.data()?;
+        if let Some(fallback) = data.get(&self.fallback) {
+            let mut inner = data.get(&self.profile).cloned().unwrap_or_default();
             for (k, v) in fallback.iter() {
                 if !inner.contains_key(k) {
                     inner.insert(k.to_owned(), v.clone());
@@ -147,7 +148,7 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
             }
             Ok(self.profile.collect(inner))
         } else {
-            self.provider.data()
+            Ok(data)
         }
     }
 

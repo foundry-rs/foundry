@@ -1,4 +1,5 @@
-use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
+use super::{InlineConfigError, InlineConfigParserError, INLINE_CONFIG_PREFIX};
+use figment::Profile;
 use foundry_compilers::{
     artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
@@ -56,6 +57,32 @@ impl NatSpec {
         natspecs
     }
 
+    /// Checks if all configuration lines use a valid profile.
+    ///
+    /// i.e. Given available profiles
+    /// ```rust
+    /// let _profiles = vec!["ci", "default"];
+    /// ```
+    /// A configuration like `forge-config: ciii.invariant.depth = 1` would result
+    /// in an error.
+    pub fn validate_profiles(&self, profiles: &[Profile]) -> Result<(), InlineConfigError> {
+        for config in self.config_values() {
+            if !profiles.iter().any(|p| {
+                config
+                    .strip_prefix(p.as_str().as_str())
+                    .is_some_and(|rest| rest.trim_start().starts_with('.'))
+            }) {
+                let err_line: String = self.debug_context();
+                let profiles = format!("{profiles:?}");
+                Err(InlineConfigError {
+                    source: InlineConfigParserError::InvalidProfile(config.to_string(), profiles),
+                    line: err_line,
+                })?
+            }
+        }
+        Ok(())
+    }
+
     /// Returns a string describing the natspec
     /// context, for debugging purposes 🐞
     /// i.e. `test/Counter.t.sol:CounterTest:testFuzz_SetNumber`
@@ -63,22 +90,12 @@ impl NatSpec {
         format!("{}:{}", self.contract, self.function.as_deref().unwrap_or_default())
     }
 
-    /// Returns a list of configuration lines that match the current profile
-    pub fn current_profile_configs(&self) -> impl Iterator<Item = String> + '_ {
-        self.config_lines_with_prefix(INLINE_CONFIG_PREFIX_SELECTED_PROFILE.as_str())
-    }
-
-    /// Returns a list of configuration lines that match a specific string prefix
-    pub fn config_lines_with_prefix<'a>(
-        &'a self,
-        prefix: &'a str,
-    ) -> impl Iterator<Item = String> + 'a {
-        self.config_lines().filter(move |l| l.starts_with(prefix))
-    }
-
-    /// Returns a list of all the configuration lines available in the natspec
-    pub fn config_lines(&self) -> impl Iterator<Item = String> + '_ {
-        self.docs.lines().filter(|line| line.contains(INLINE_CONFIG_PREFIX)).map(remove_whitespaces)
+    /// Returns a list of all the configuration values available in the natspec.
+    pub fn config_values(&self) -> impl Iterator<Item = &str> {
+        self.docs.lines().filter_map(|line| {
+            line.find(INLINE_CONFIG_PREFIX)
+                .map(|idx| line[idx + INLINE_CONFIG_PREFIX.len()..].trim())
+        })
     }
 }
 
@@ -259,6 +276,42 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn can_reject_invalid_profiles() {
+        let profiles = ["ci".into(), "default".into()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r"
+            forge-config: ciii.invariant.depth = 1
+            forge-config: default.invariant.depth = 1
+            "
+            .into(),
+        };
+
+        let result = natspec.validate_profiles(&profiles);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn can_accept_valid_profiles() {
+        let profiles = ["ci".into(), "default".into()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r"
+            forge-config: ci.invariant.depth = 1
+            forge-config: default.invariant.depth = 1
+            "
+            .into(),
+        };
+
+        let result = natspec.validate_profiles(&profiles);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn parse_solang() {
         let src = "
 contract C { /// forge-config: default.fuzz.runs = 600
@@ -355,42 +408,13 @@ contract FuzzInlineConf is DSTest {
     #[test]
     fn config_lines() {
         let natspec = natspec();
-        let config_lines = natspec.config_lines();
+        let config_lines = natspec.config_values();
         assert_eq!(
             config_lines.collect::<Vec<_>>(),
-            vec![
-                "forge-config:default.fuzz.runs=600".to_string(),
-                "forge-config:ci.fuzz.runs=500".to_string(),
-                "forge-config:default.invariant.runs=1".to_string()
-            ]
-        )
-    }
-
-    #[test]
-    fn current_profile_configs() {
-        let natspec = natspec();
-        let config_lines = natspec.current_profile_configs();
-
-        assert_eq!(
-            config_lines.collect::<Vec<_>>(),
-            vec![
-                "forge-config:default.fuzz.runs=600".to_string(),
-                "forge-config:default.invariant.runs=1".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn config_lines_with_prefix() {
-        use super::INLINE_CONFIG_PREFIX;
-        let natspec = natspec();
-        let prefix = format!("{INLINE_CONFIG_PREFIX}:default");
-        let config_lines = natspec.config_lines_with_prefix(&prefix);
-        assert_eq!(
-            config_lines.collect::<Vec<_>>(),
-            vec![
-                "forge-config:default.fuzz.runs=600".to_string(),
-                "forge-config:default.invariant.runs=1".to_string()
+            [
+                "default.fuzz.runs = 600".to_string(),
+                "ci.fuzz.runs = 500".to_string(),
+                "default.invariant.runs = 1".to_string()
             ]
         )
     }
@@ -522,3 +546,124 @@ contract FuzzInlineConf is DSTest {
         );
     }
 }
+
+// TODO: Readd
+/*
+#[cfg(test)]
+mod tests {
+    use crate::{FuzzConfig};
+
+    #[test]
+    fn unrecognized_property() {
+        let configs = &["forge-config: default.fuzz.unknownprop = 200".to_string()];
+        let base_config = FuzzConfig::default();
+        if let Err(e) = base_config.try_merge(configs) {
+            assert_eq!(e.to_string(), "'unknownprop' is an invalid config property");
+        } else {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn successful_merge() {
+        let configs = &[
+            "forge-config: default.fuzz.runs = 42424242".to_string(),
+            "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
+            "forge-config: default.fuzz.failure-persist-file = fuzz-failure".to_string(),
+        ];
+        let base_config = FuzzConfig::default();
+        let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
+        assert_eq!(merged.runs, 42424242);
+        assert_eq!(merged.dictionary.dictionary_weight, 42);
+        assert_eq!(merged.failure_persist_file, Some("fuzz-failure".to_string()));
+    }
+
+    #[test]
+    fn merge_is_none() {
+        let empty_config = &[];
+        let base_config = FuzzConfig::default();
+        let merged = base_config.try_merge(empty_config).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn merge_is_none_unrelated_property() {
+        let unrelated_configs = &["forge-config: default.invariant.runs = 2".to_string()];
+        let base_config = FuzzConfig::default();
+        let merged = base_config.try_merge(unrelated_configs).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn override_detection() {
+        let configs = &[
+            "forge-config: default.fuzz.runs = 42424242".to_string(),
+            "forge-config: ci.fuzz.runs = 666666".to_string(),
+            "forge-config: default.invariant.runs = 2".to_string(),
+            "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
+        ];
+        let variables = FuzzConfig::get_config_overrides(configs);
+        assert_eq!(
+            variables,
+            vec![
+                ("runs".into(), "42424242".into()),
+                ("runs".into(), "666666".into()),
+                ("dictionary-weight".into(), "42".into())
+            ]
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::{inline::InlineConfigParser, InvariantConfig};
+
+    #[test]
+    fn unrecognized_property() {
+        let configs = &["forge-config: default.invariant.unknownprop = 200".to_string()];
+        let base_config = InvariantConfig::default();
+        if let Err(e) = base_config.try_merge(configs) {
+            assert_eq!(e.to_string(), "'unknownprop' is an invalid config property");
+        } else {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn successful_merge() {
+        let configs = &["forge-config: default.invariant.runs = 42424242".to_string()];
+        let base_config = InvariantConfig::default();
+        let merged: InvariantConfig = base_config.try_merge(configs).expect("No errors").unwrap();
+        assert_eq!(merged.runs, 42424242);
+    }
+
+    #[test]
+    fn merge_is_none() {
+        let empty_config = &[];
+        let base_config = InvariantConfig::default();
+        let merged = base_config.try_merge(empty_config).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn can_merge_unrelated_properties_into_config() {
+        let unrelated_configs = &["forge-config: default.fuzz.runs = 2".to_string()];
+        let base_config = InvariantConfig::default();
+        let merged = base_config.try_merge(unrelated_configs).expect("No errors");
+        assert!(merged.is_none());
+    }
+
+    #[test]
+    fn override_detection() {
+        let configs = &[
+            "forge-config: default.fuzz.runs = 42424242".to_string(),
+            "forge-config: ci.fuzz.runs = 666666".to_string(),
+            "forge-config: default.invariant.runs = 2".to_string(),
+        ];
+        let variables = InvariantConfig::get_config_overrides(configs);
+        assert_eq!(variables, vec![("runs".into(), "2".into())]);
+    }
+}
+
+*/
