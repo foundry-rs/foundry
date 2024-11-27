@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -182,8 +182,15 @@ impl CallArgs {
             env.cfg.disable_block_gas_limit = true;
             env.block.gas_limit = U256::MAX;
 
-            let mut executor =
-                TracingExecutor::new(env, fork, evm_version, debug, decode_internal, alphanet);
+            let mut executor = TracingExecutor::new(
+                env,
+                fork,
+                evm_version,
+                debug,
+                decode_internal,
+                shell::verbosity() > 4,
+                alphanet,
+            );
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
