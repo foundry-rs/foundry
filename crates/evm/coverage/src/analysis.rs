@@ -1,5 +1,6 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use alloy_primitives::map::HashMap;
+use core::fmt;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rayon::prelude::*;
@@ -9,7 +10,7 @@ use std::{borrow::Cow, sync::Arc};
 #[derive(Clone, Debug)]
 pub struct ContractVisitor<'a> {
     /// The source ID of the contract.
-    source_id: usize,
+    source_id: SourceIdentifier,
     /// The source code that contains the AST being walked.
     source: &'a str,
 
@@ -26,7 +27,7 @@ pub struct ContractVisitor<'a> {
 }
 
 impl<'a> ContractVisitor<'a> {
-    pub fn new(source_id: usize, source: &'a str, contract_name: &'a Arc<str>) -> Self {
+    pub fn new(source_id: SourceIdentifier, source: &'a str, contract_name: &'a Arc<str>) -> Self {
         Self { source_id, source, contract_name, branch_id: 0, last_line: 0, items: Vec::new() }
     }
 
@@ -473,7 +474,7 @@ impl<'a> ContractVisitor<'a> {
         let loc_start =
             self.source.char_indices().map(|(i, _)| i).nth(loc.start).unwrap_or_default();
         SourceLocation {
-            source_id: self.source_id,
+            source_id: self.source_id.clone(),
             contract_name: self.contract_name.clone(),
             start: loc.start as u32,
             length: loc.length.map(|x| x as u32),
@@ -538,7 +539,7 @@ impl<'a> SourceAnalyzer<'a> {
             .sources
             .sources
             .par_iter()
-            .flat_map_iter(|(&source_id, SourceFile { source, ast })| {
+            .flat_map_iter(|(source_id, SourceFile { source, ast })| {
                 ast.nodes.iter().map(move |node| {
                     if !matches!(node.node_type, NodeType::ContractDefinition) {
                         return Ok(vec![]);
@@ -556,7 +557,7 @@ impl<'a> SourceAnalyzer<'a> {
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?;
 
-                    let mut visitor = ContractVisitor::new(source_id, source, &name);
+                    let mut visitor = ContractVisitor::new(source_id.clone(), source, &name);
                     visitor.visit_contract(node)?;
                     let mut items = visitor.items;
 
@@ -583,7 +584,31 @@ impl<'a> SourceAnalyzer<'a> {
 #[derive(Debug, Default)]
 pub struct SourceFiles<'a> {
     /// The versioned sources.
-    pub sources: HashMap<usize, SourceFile<'a>>,
+    /// Keyed by build_id and source_id.
+    pub sources: HashMap<SourceIdentifier, SourceFile<'a>>,
+}
+
+/// Serves as a unique identifier for sources across multiple compiler runs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceIdentifier {
+    /// Source ID is unique for each source file per compilation job but may not be across
+    /// different jobs.
+    pub source_id: usize,
+    /// Artifact build id is same for all sources in a single compilation job. But always unique
+    /// across different jobs.
+    pub build_id: String,
+}
+
+impl fmt::Display for SourceIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "source_id={} build_id={}", self.source_id, self.build_id,)
+    }
+}
+
+impl SourceIdentifier {
+    pub fn new(source_id: usize, build_id: String) -> Self {
+        Self { source_id, build_id }
+    }
 }
 
 /// The source code and AST of a file.

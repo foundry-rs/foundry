@@ -222,8 +222,10 @@ impl CoverageReporter for BytecodeReporter {
                     .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
-                let source_path = source_id.and_then(|i| {
-                    report.source_paths.get(&(contract_id.version.clone(), i as usize))
+                let source_path = source_id.and_then(|_i| {
+                    report
+                        .source_paths
+                        .get(&(contract_id.version.clone(), contract_id.source_id.clone()))
                 });
 
                 let code = format!("{code:?}");
