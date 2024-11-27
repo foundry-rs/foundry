@@ -6,15 +6,34 @@ use figment::{
 };
 use itertools::Itertools;
 
-mod error;
-pub use error::*;
-
 mod natspec;
 pub use natspec::*;
 
 const INLINE_CONFIG_PREFIX: &str = "forge-config:";
 
 type DataMap = Map<Profile, Dict>;
+/// Errors returned when parsing inline config.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum InlineConfigErrorKind {
+    /// Failed to parse inline config as TOML.
+    #[error(transparent)]
+    Parse(#[from] toml::de::Error),
+    /// An invalid profile has been provided.
+    #[error("invalid profile `{0}`, expected {1}")]
+    InvalidProfile(String, String),
+}
+
+/// Wrapper error struct that catches config parsing errors, enriching them with context information
+/// reporting the misconfigured line.
+#[derive(Debug, thiserror::Error)]
+#[error("Inline config error at {location}: {kind}")]
+pub struct InlineConfigError {
+    /// The span of the error in the format:
+    /// `dir/TestContract.t.sol:FuzzContract:10:12:111`
+    pub location: String,
+    /// The inner error
+    pub kind: InlineConfigErrorKind,
+}
 
 /// Represents per-test configurations, declared inline
 /// as structured comments in Solidity test files. This allows
@@ -40,8 +59,23 @@ impl InlineConfig {
         } else {
             self.contract_level.entry(natspec.contract.clone()).or_default()
         };
-        let joined = natspec.config_values().format("\n").to_string();
-        extend_data_map(map, &toml::from_str::<DataMap>(&joined)?);
+        let joined = natspec
+            .config_values()
+            .map(|s| {
+                // Replace `-` with `_` for backwards compatibility with the old parser.
+                if let Some(idx) = s.find('=') {
+                    s[..idx].replace('-', "_") + &s[idx..]
+                } else {
+                    s.to_string()
+                }
+            })
+            .format("\n")
+            .to_string();
+        let data = toml::from_str::<DataMap>(&joined).map_err(|e| InlineConfigError {
+            location: natspec.location_string(),
+            kind: InlineConfigErrorKind::Parse(e),
+        })?;
+        extend_data_map(map, &data);
         Ok(())
     }
 

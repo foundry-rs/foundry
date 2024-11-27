@@ -1,9 +1,10 @@
-use super::{InlineConfigError, InlineConfigParserError, INLINE_CONFIG_PREFIX};
+use super::{InlineConfigError, InlineConfigErrorKind, INLINE_CONFIG_PREFIX};
 use figment::Profile;
 use foundry_compilers::{
     artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
 };
+use itertools::Itertools;
 use serde_json::Value;
 use solang_parser::{helpers::CodeLocation, pt};
 use std::{collections::BTreeMap, path::Path};
@@ -11,15 +12,13 @@ use std::{collections::BTreeMap, path::Path};
 /// Convenient struct to hold in-line per-test configurations
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NatSpec {
-    /// The parent contract of the natspec
+    /// The parent contract of the natspec.
     pub contract: String,
-    /// The function annotated with the natspec. None if the natspec is contract-level
+    /// The function annotated with the natspec. None if the natspec is contract-level.
     pub function: Option<String>,
-    /// The line the natspec appears, in the form
-    /// `row:col:length` i.e. `10:21:122`
+    /// The line the natspec appears, in the form `row:col:length`, i.e. `10:21:122`.
     pub line: String,
-    /// The actual natspec comment, without slashes or block
-    /// punctuation
+    /// The actual natspec comment, without slashes or block punctuation.
     pub docs: String,
 }
 
@@ -72,22 +71,26 @@ impl NatSpec {
                     .strip_prefix(p.as_str().as_str())
                     .is_some_and(|rest| rest.trim_start().starts_with('.'))
             }) {
-                let err_line: String = self.debug_context();
-                let profiles = format!("{profiles:?}");
                 Err(InlineConfigError {
-                    source: InlineConfigParserError::InvalidProfile(config.to_string(), profiles),
-                    line: err_line,
+                    location: self.location_string(),
+                    kind: InlineConfigErrorKind::InvalidProfile(
+                        config.to_string(),
+                        profiles.iter().format(", ").to_string(),
+                    ),
                 })?
             }
         }
         Ok(())
     }
 
-    /// Returns a string describing the natspec
-    /// context, for debugging purposes 🐞
-    /// i.e. `test/Counter.t.sol:CounterTest:testFuzz_SetNumber`
-    pub fn debug_context(&self) -> String {
-        format!("{}:{}", self.contract, self.function.as_deref().unwrap_or_default())
+    /// Returns the path of the contract.
+    pub fn path(&self) -> &str {
+        self.contract.split_once(':').unwrap().0
+    }
+
+    /// Returns the location of the natspec as a string.
+    pub fn location_string(&self) -> String {
+        format!("{}:{}", self.path(), self.line)
     }
 
     /// Returns a list of all the configuration values available in the natspec.
