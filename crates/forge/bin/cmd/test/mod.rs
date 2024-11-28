@@ -269,11 +269,11 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let mut config = self.try_load_config_emit_warnings()?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
-            evm_opts.isolate = true;
+            config.isolate = true;
         } else {
             // Do not collect gas report traces if gas report is not enabled.
             config.fuzz.gas_report_samples = 0;
@@ -320,12 +320,12 @@ impl TestArgs {
         let should_draw = self.flamegraph || self.flamechart;
 
         // Determine print verbosity and executor verbosity.
-        let verbosity = evm_opts.verbosity;
-        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
-            evm_opts.verbosity = 3;
+        let verbosity = config.verbosity;
+        if (self.gas_report && config.verbosity < 3) || self.flamegraph || self.flamechart {
+            config.verbosity = 3;
         }
 
-        let env = evm_opts.evm_env().await?;
+        let env = config.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
         if should_draw && self.decode_internal.is_none() {

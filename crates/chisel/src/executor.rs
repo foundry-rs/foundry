@@ -312,6 +312,7 @@ impl SessionSource {
     ///
     /// A configured [ChiselRunner]
     async fn prepare_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
+        let fc = &self.config.foundry_config;
         let evm_opts = self.config.evm_opts()?;
         let env = evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
@@ -319,7 +320,7 @@ impl SessionSource {
         let backend = match self.config.backend.take() {
             Some(backend) => backend,
             None => {
-                let fork = evm_opts.get_fork(&self.config.foundry_config, env.clone());
+                let fork = evm_opts.get_fork(&fc, env.clone());
                 let backend = Backend::spawn(fork);
                 self.config.backend = Some(backend.clone());
                 backend
@@ -327,23 +328,15 @@ impl SessionSource {
         };
 
         // Build a new executor
-        let gas_limit = evm_opts.gas_limit();
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
-                    CheatsConfig::new(
-                        &self.config.foundry_config,
-                        evm_opts,
-                        None,
-                        None,
-                        Some(self.solc.version.clone()),
-                    )
-                    .into(),
+                    CheatsConfig::new(fc, None, None, Some(self.solc.version.clone())).into(),
                 )
             })
-            .gas_limit(gas_limit)
-            .spec(self.config.foundry_config.evm_spec_id())
-            .legacy_assertions(self.config.foundry_config.legacy_assertions)
+            .gas_limit(fc.gas_limit.0)
+            .spec(fc.evm_spec_id())
+            .legacy_assertions(fc.legacy_assertions)
             .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and

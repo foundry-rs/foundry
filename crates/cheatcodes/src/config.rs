@@ -63,7 +63,6 @@ impl CheatsConfig {
     /// Extracts the necessary settings from the Config
     pub fn new(
         config: &Config,
-        evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         running_contract: Option<String>,
         running_version: Option<Version>,
@@ -80,8 +79,8 @@ impl CheatsConfig {
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
 
         Self {
-            ffi: evm_opts.ffi,
-            always_use_create_2_factory: evm_opts.always_use_create_2_factory,
+            ffi: config.ffi,
+            always_use_create_2_factory: config.always_use_create_2_factory,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             no_storage_caching: config.no_storage_caching,
@@ -91,7 +90,7 @@ impl CheatsConfig {
             root: config.root.0.clone(),
             broadcast: config.root.0.clone().join(&config.broadcast),
             allowed_paths,
-            evm_opts,
+            evm_opts: EvmOpts::from_config(config).unwrap(),
             labels: config.labels.clone(),
             available_artifacts,
             running_contract,
@@ -240,7 +239,6 @@ mod tests {
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
             &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
-            Default::default(),
             None,
             None,
             None,

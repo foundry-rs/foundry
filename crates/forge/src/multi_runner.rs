@@ -240,7 +240,6 @@ impl MultiContractRunner {
 
         let cheats_config = CheatsConfig::new(
             &self.config,
-            self.evm_opts.clone(),
             Some(self.known_contracts.clone()),
             Some(artifact_id.name.clone()),
             Some(artifact_id.version.clone()),
