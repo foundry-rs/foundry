@@ -110,6 +110,10 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.timeout(Duration::from_secs(rpc_timeout));
     }
 
+    if let Some(rpc_headers) = &config.rpc_headers {
+        builder = builder.headers(rpc_headers.clone());
+    }
+
     Ok(builder)
 }
 

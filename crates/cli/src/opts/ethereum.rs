@@ -48,6 +48,10 @@ pub struct RpcOpts {
     /// Default value: 45
     #[arg(long, env = "ETH_RPC_TIMEOUT")]
     pub rpc_timeout: Option<u64>,
+
+    /// Specify custom headers for RPC requests.
+    #[arg(long, env = "ETH_RPC_HEADERS", value_delimiter(','), value_delimiter(' '))]
+    pub headers: Option<Vec<String>>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -94,6 +98,9 @@ impl RpcOpts {
         }
         if let Some(rpc_timeout) = self.rpc_timeout {
             dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
+        }
+        if let Some(headers) = &self.headers {
+            dict.insert("rpc_headers".into(), headers.clone().into());
         }
         dict
     }
