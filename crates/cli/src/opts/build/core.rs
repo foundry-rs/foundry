@@ -144,6 +144,10 @@ pub struct CoreBuildArgs {
     #[command(flatten)]
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
+
+    /// Profile to use for compiling the project.
+    #[arg(long)]
+    pub profile: Option<Profile>,
 }
 
 impl CoreBuildArgs {
@@ -192,6 +196,10 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
             skip.extend(figment.extract_inner::<Vec<String>>("skip").unwrap_or_default());
             figment = figment.merge(("skip", skip));
         };
+
+        if let Some(profile) = &args.profile {
+            figment = figment.select(profile.clone());
+        }
 
         figment
     }
@@ -286,6 +294,12 @@ impl Provider for CoreBuildArgs {
             dict.insert("eof".to_string(), true.into());
         }
 
-        Ok(Map::from([(Config::selected_profile(), dict)]))
+        let profile = if let Some(profile) = &self.profile {
+            profile.clone()
+        } else {
+            Config::selected_profile()
+        };
+
+        Ok(Map::from([(profile, dict)]))
     }
 }
