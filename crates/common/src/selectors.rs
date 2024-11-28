@@ -166,6 +166,7 @@ impl OpenChainClient {
         let expected_len = match selector_type {
             SelectorType::Function => 10, // 0x + hex(4bytes)
             SelectorType::Event => 66,    // 0x + hex(32bytes)
+            _ => eyre::bail!("Could decode only functions and events"),
         };
         if let Some(s) = selectors.iter().find(|s| s.len() != expected_len) {
             eyre::bail!(
@@ -195,6 +196,7 @@ impl OpenChainClient {
             ltype = match selector_type {
                 SelectorType::Function => "function",
                 SelectorType::Event => "event",
+                _ => eyre::bail!("Could decode only functions and events"),
             },
             selectors_str = selectors.join(",")
         );
@@ -214,6 +216,7 @@ impl OpenChainClient {
         let decoded = match selector_type {
             SelectorType::Function => api_response.result.function,
             SelectorType::Event => api_response.result.event,
+            _ => eyre::bail!("Could decode only functions and events"),
         };
 
         Ok(selectors
@@ -391,6 +394,8 @@ pub enum SelectorType {
     Function,
     /// An event selector.
     Event,
+    /// An custom error selector.
+    Error,
 }
 
 /// Decodes the given function or event selector using OpenChain.

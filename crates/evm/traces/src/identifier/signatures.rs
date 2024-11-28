@@ -1,7 +1,7 @@
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{Error, Event, Function};
 use alloy_primitives::{hex, map::HashSet};
 use foundry_common::{
-    abi::{get_event, get_func},
+    abi::{get_error, get_event, get_func},
     fs,
     selectors::{OpenChainClient, SelectorType},
 };
@@ -13,6 +13,7 @@ pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CachedSignatures {
+    pub errors: BTreeMap<String, String>,
     pub events: BTreeMap<String, String>,
     pub functions: BTreeMap<String, String>,
 }
@@ -39,7 +40,7 @@ impl CachedSignatures {
 /// `https://openchain.xyz` or a local cache.
 #[derive(Debug)]
 pub struct SignaturesIdentifier {
-    /// Cached selectors for functions and events.
+    /// Cached selectors for functions, events and custom errors.
     cached: CachedSignatures,
     /// Location where to save `CachedSignatures`.
     cached_path: Option<PathBuf>,
@@ -98,32 +99,36 @@ impl SignaturesIdentifier {
         identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
         get_type: impl Fn(&str) -> eyre::Result<T>,
     ) -> Vec<Option<T>> {
-        let cache = match selector_type {
-            SelectorType::Function => &mut self.cached.functions,
-            SelectorType::Event => &mut self.cached.events,
+        let (cache, with_openchain) = match selector_type {
+            SelectorType::Function => (&mut self.cached.functions, true),
+            SelectorType::Event => (&mut self.cached.events, true),
+            // Openchain API does not support custom errors.
+            SelectorType::Error => (&mut self.cached.errors, false),
         };
 
         let hex_identifiers: Vec<String> =
             identifiers.into_iter().map(hex::encode_prefixed).collect();
 
-        if let Some(client) = &self.client {
-            let query: Vec<_> = hex_identifiers
-                .iter()
-                .filter(|v| !cache.contains_key(v.as_str()))
-                .filter(|v| !self.unavailable.contains(v.as_str()))
-                .collect();
+        if with_openchain {
+            if let Some(client) = &self.client {
+                let query: Vec<_> = hex_identifiers
+                    .iter()
+                    .filter(|v| !cache.contains_key(v.as_str()))
+                    .filter(|v| !self.unavailable.contains(v.as_str()))
+                    .collect();
 
-            if let Ok(res) = client.decode_selectors(selector_type, query.clone()).await {
-                for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
-                    let mut found = false;
-                    if let Some(decoded_results) = selector_result {
-                        if let Some(decoded_result) = decoded_results.into_iter().next() {
-                            cache.insert(hex_id.clone(), decoded_result);
-                            found = true;
+                if let Ok(res) = client.decode_selectors(selector_type, query.clone()).await {
+                    for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
+                        let mut found = false;
+                        if let Some(decoded_results) = selector_result {
+                            if let Some(decoded_result) = decoded_results.into_iter().next() {
+                                cache.insert(hex_id.clone(), decoded_result);
+                                found = true;
+                            }
                         }
-                    }
-                    if !found {
-                        self.unavailable.insert(hex_id.clone());
+                        if !found {
+                            self.unavailable.insert(hex_id.clone());
+                        }
                     }
                 }
             }
@@ -156,6 +161,19 @@ impl SignaturesIdentifier {
     /// Identifies `Event` from its cache or `https://api.openchain.xyz`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
         self.identify_events(&[identifier]).await.pop().unwrap()
+    }
+
+    /// Identifies `Error`s from its cache.
+    pub async fn identify_errors(
+        &mut self,
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Vec<Option<Error>> {
+        self.identify(SelectorType::Error, identifiers, get_error).await
+    }
+
+    /// Identifies `Error` from its cache.
+    pub async fn identify_error(&mut self, identifier: &[u8]) -> Option<Error> {
+        self.identify_errors(&[identifier]).await.pop().unwrap()
     }
 }
 

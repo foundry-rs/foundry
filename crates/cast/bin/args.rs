@@ -539,6 +539,16 @@ pub enum CastSubcommand {
         data: String,
     },
 
+    /// Decode custom error data.
+    #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
+    DecodeError {
+        /// The error signature. If none provided then tries to decode from local cache.
+        #[arg(long = "sig", visible_alias = "error-sig")]
+        sig: Option<String>,
+        /// The error data to decode.
+        data: String,
+    },
+
     /// Decode ABI-encoded input or output data.
     ///
     /// Defaults to decoding output data. To decode input data pass --input.
