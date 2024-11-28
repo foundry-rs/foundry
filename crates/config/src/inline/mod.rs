@@ -12,6 +12,7 @@ pub use natspec::*;
 const INLINE_CONFIG_PREFIX: &str = "forge-config:";
 
 type DataMap = Map<Profile, Dict>;
+
 /// Errors returned when parsing inline config.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InlineConfigErrorKind {

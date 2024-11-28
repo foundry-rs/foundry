@@ -27,6 +27,6 @@ fn has_docker() -> bool {
         return false;
     }
 
-    // `images` also will check for the daemon.
-    std::process::Command::new("docker").arg("images").output().is_ok_and(|s| s.status.success())
+    // `images` will also check for the daemon.
+    std::process::Command::new("docker").arg("images").output().is_ok_and(|o| o.status.success())
 }
