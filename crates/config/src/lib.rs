@@ -256,7 +256,7 @@ pub struct Config {
     ///
     /// You can also the ETH_RPC_HEADERS env variable like so:
     /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
-    pub rpc_headers: Option<Vec<String>>,
+    pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -2280,7 +2280,7 @@ impl Default for Config {
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
-            rpc_headers: None,
+            eth_rpc_headers: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],

@@ -100,7 +100,7 @@ impl RpcOpts {
             dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
         }
         if let Some(headers) = &self.headers {
-            dict.insert("rpc_headers".into(), headers.clone().into());
+            dict.insert("eth_rpc_headers".into(), headers.clone().into());
         }
         dict
     }
