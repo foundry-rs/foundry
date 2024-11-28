@@ -84,10 +84,6 @@ impl BuildArgs {
             config = self.load_config();
         }
 
-        config.check_profile()?;
-
-        tracing::info!("forge b profile {:?}", config.profile);
-
         let project = config.project()?;
 
         // Collect sources to compile if build subdirectories specified.

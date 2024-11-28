@@ -847,21 +847,6 @@ impl Config {
         }
     }
 
-    /// Check profile validity.
-    pub fn check_profile(&self) -> eyre::Result<()> {
-        let available_profiles = get_available_profiles(self.get_config_path())?;
-
-        if !available_profiles.contains(&self.profile.to_string()) {
-            return Err(eyre::eyre!(
-                "Profile `{}` is not available. Available profiles: {:?}",
-                self.profile,
-                available_profiles
-            ));
-        }
-
-        Ok(())
-    }
-
     /// Returns the directory in which dependencies should be installed
     ///
     /// Returns the first dir from `libs` that is not `node_modules` or `lib` if `libs` is empty
