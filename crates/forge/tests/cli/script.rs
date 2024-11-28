@@ -880,6 +880,29 @@ forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
         .await;
 });
 
+forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    // Prepare CREATE2 Deployer
+    api.anvil_set_code(
+        create2,
+        Bytes::from_static(&hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef")),
+    )
+    .await
+    .unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .simulate(ScriptOutcome::ScriptFailed)
+        .broadcast(ScriptOutcome::ScriptFailed);
+});
+
 forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
