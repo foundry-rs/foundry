@@ -4,9 +4,9 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
-use foundry_config::{Chain, Config};
+use foundry_config::{Chain, Config, GasLimit};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -166,7 +166,7 @@ impl EvmOpts {
 
     /// Returns the gas limit to use
     pub fn gas_limit(&self) -> u64 {
-        self.env.block_gas_limit.unwrap_or(self.env.gas_limit)
+        self.env.block_gas_limit.unwrap_or(self.env.gas_limit).0
     }
 
     /// Returns the configured chain id, which will be
@@ -225,8 +225,7 @@ impl EvmOpts {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Env {
     /// The block gas limit.
-    #[serde(deserialize_with = "string_or_number")]
-    pub gas_limit: u64,
+    pub gas_limit: GasLimit,
 
     /// The `CHAINID` opcode value.
     pub chain_id: Option<u64>,
@@ -260,47 +259,10 @@ pub struct Env {
     pub block_prevrandao: B256,
 
     /// the block.gaslimit value during EVM execution
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "string_or_number_opt"
-    )]
-    pub block_gas_limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_gas_limit: Option<GasLimit>,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum Gas {
-    Number(u64),
-    Text(String),
-}
-
-fn string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-    match Gas::deserialize(deserializer)? {
-        Gas::Number(num) => Ok(num),
-        Gas::Text(s) => s.parse().map_err(D::Error::custom),
-    }
-}
-
-fn string_or_number_opt<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-
-    match Option::<Gas>::deserialize(deserializer)? {
-        Some(gas) => match gas {
-            Gas::Number(num) => Ok(Some(num)),
-            Gas::Text(s) => s.parse().map(Some).map_err(D::Error::custom),
-        },
-        _ => Ok(None),
-    }
 }
