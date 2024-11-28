@@ -59,7 +59,7 @@ pub use filter::FilterArgs;
 use forge::{result::TestKind, traces::render_trace_arena_inner};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_args);
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
@@ -162,7 +162,7 @@ pub struct TestArgs {
     pub rerun: bool,
 
     #[command(flatten)]
-    evm_opts: EvmArgs,
+    evm_args: EvmArgs,
 
     #[command(flatten)]
     opts: CoreBuildArgs,
@@ -1001,7 +1001,7 @@ mod tests {
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
             let args = TestArgs::parse_from(["foundry-cli", arg]);
-            assert_eq!(args.evm_opts.env.chain, Some(expected));
+            assert_eq!(args.evm_args.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
             assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
