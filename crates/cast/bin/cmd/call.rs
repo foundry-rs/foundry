@@ -18,7 +18,11 @@ use foundry_config::{
     },
     Config,
 };
-use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
+use foundry_evm::{
+    executors::TracingExecutor,
+    opts::EvmOpts,
+    traces::{InternalTraceMode, TraceMode},
+};
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -183,13 +187,19 @@ impl CallArgs {
             env.cfg.disable_block_gas_limit = true;
             env.block.gas_limit = U256::MAX;
 
+            let trace_mode = TraceMode::Call
+                .with_debug(debug)
+                .with_decode_internal(if decode_internal {
+                    InternalTraceMode::Full
+                } else {
+                    InternalTraceMode::None
+                })
+                .with_state_changes(shell::verbosity() > 4);
             let mut executor = TracingExecutor::new(
                 env,
                 fork,
                 evm_version,
-                debug,
-                decode_internal,
-                shell::verbosity() > 4,
+                trace_mode,
                 alphanet,
                 create2_deployer,
             );

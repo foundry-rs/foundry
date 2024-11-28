@@ -23,6 +23,7 @@ use foundry_config::{
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
+    traces::{InternalTraceMode, TraceMode},
     utils::configure_tx_env,
 };
 
@@ -164,13 +165,19 @@ impl RunArgs {
             }
         }
 
+        let trace_mode = TraceMode::Call
+            .with_debug(self.debug)
+            .with_decode_internal(if self.decode_internal {
+                InternalTraceMode::Full
+            } else {
+                InternalTraceMode::None
+            })
+            .with_state_changes(shell::verbosity() > 4);
         let mut executor = TracingExecutor::new(
             env.clone(),
             fork,
             evm_version,
-            self.debug,
-            self.decode_internal,
-            shell::verbosity() > 4,
+            trace_mode,
             alphanet,
             create2_deployer,
         );

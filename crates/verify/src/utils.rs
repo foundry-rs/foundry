@@ -12,7 +12,10 @@ use foundry_block_explorers::{
 use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
+    traces::TraceMode,
+};
 use reqwest::Url;
 use revm_primitives::{
     db::Database,
@@ -333,9 +336,7 @@ pub async fn get_tracing_executor(
         env.clone(),
         fork,
         Some(fork_config.evm_version),
-        false,
-        false,
-        false,
+        TraceMode::Call,
         is_alphanet,
         create2_deployer,
     );
