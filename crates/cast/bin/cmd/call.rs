@@ -6,7 +6,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, handle_traces, parse_ether_value, TraceResult},
+    utils::{self, handle_traces, parse_ether_value, LoadConfig, TraceResult},
 };
 use foundry_common::{ens::NameOrAddress, shell};
 use foundry_compilers::artifacts::EvmVersion;
@@ -14,11 +14,11 @@ use foundry_config::{
     figment::{
         self,
         value::{Dict, Map},
-        Figment, Metadata, Profile,
+        Metadata, Profile,
     },
-    Config,
+    impl_figment_convert, Config,
 };
-use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
+use foundry_evm::executors::TracingExecutor;
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -111,11 +111,11 @@ pub enum CallSubcommands {
     },
 }
 
+impl_figment_convert!(CallArgs, self, eth);
+
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
-        let figment = Into::<Figment>::into(&self.eth).merge(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::try_from(figment)?.sanitized();
+        let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         let Self {
             to,
@@ -170,11 +170,6 @@ impl CallArgs {
             .await?;
 
         if trace {
-            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
-                // Override Config `fork_block_number` (if set) with CLI value.
-                config.fork_block_number = Some(block_number);
-            }
-
             let (mut env, fork, chain, alphanet) =
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
@@ -241,6 +236,10 @@ impl figment::Provider for CallArgs {
 
         if let Some(evm_version) = self.evm_version {
             map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
+        }
+
+        if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
+            map.insert("fork_block_number".into(), block_number.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), map)]))

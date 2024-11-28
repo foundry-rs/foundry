@@ -133,7 +133,7 @@ impl SessionSource {
                 };
 
                 // Create a new runner
-                let mut runner = self.prepare_runner(final_pc).await;
+                let mut runner = self.prepare_runner(final_pc).await?;
 
                 // Return [ChiselResult] or bubble up error
                 runner.run(bytecode.into_owned())
@@ -311,15 +311,15 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A configured [ChiselRunner]
-    async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
-        let env =
-            self.config.evm_opts.evm_env().await.expect("Could not instantiate fork environment");
+    async fn prepare_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
+        let evm_opts = self.config.evm_opts()?;
+        let env = evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
         // Create an in-memory backend
         let backend = match self.config.backend.take() {
             Some(backend) => backend,
             None => {
-                let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
+                let fork = evm_opts.get_fork(&self.config.foundry_config, env.clone());
                 let backend = Backend::spawn(fork);
                 self.config.backend = Some(backend.clone());
                 backend
@@ -327,12 +327,13 @@ impl SessionSource {
         };
 
         // Build a new executor
+        let gas_limit = evm_opts.gas_limit();
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
                     CheatsConfig::new(
                         &self.config.foundry_config,
-                        self.config.evm_opts.clone(),
+                        evm_opts,
                         None,
                         None,
                         Some(self.solc.version.clone()),
@@ -340,14 +341,14 @@ impl SessionSource {
                     .into(),
                 )
             })
-            .gas_limit(self.config.evm_opts.gas_limit())
+            .gas_limit(gas_limit)
             .spec(self.config.foundry_config.evm_spec_id())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone())
+        Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
 }
 

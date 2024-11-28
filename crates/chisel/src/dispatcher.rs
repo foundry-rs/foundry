@@ -337,7 +337,7 @@ impl ChiselDispatcher {
             },
             ChiselCommand::Fork => {
                 if args.is_empty() || args[0].trim().is_empty() {
-                    self.source_mut().config.evm_opts.fork_url = None;
+                    self.source_mut().config.foundry_config.eth_rpc_url = None;
                     return DispatchResult::CommandSuccess(Some(
                         "Now using local environment.".to_string(),
                     ))
@@ -377,9 +377,8 @@ impl ChiselDispatcher {
                 // Create success message before moving the fork_url
                 let success_msg = format!("Set fork URL to {}", &fork_url.yellow());
 
-                // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
-                // field
-                self.source_mut().config.evm_opts.fork_url = Some(fork_url);
+                // Update the fork_url.
+                self.source_mut().config.foundry_config.eth_rpc_url = Some(fork_url);
 
                 // Clear the backend so that it is re-instantiated with the new fork
                 // upon the next execution of the session source.
@@ -924,7 +923,7 @@ impl ChiselDispatcher {
 
         let mut identifier = TraceIdentifiers::new().with_etherscan(
             &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id().await,
+            session_config.evm_opts()?.get_remote_chain().await,
         )?;
         if !identifier.is_empty() {
             for (_, trace) in &mut result.traces {

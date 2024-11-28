@@ -249,16 +249,8 @@ where
 
     fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)> {
         let figment: Figment = self.into();
-
-        let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::try_from(figment)?.sanitized();
-
-        // update the fork url if it was an alias
-        if let Some(fork_url) = config.get_rpc_url() {
-            trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");
-            evm_opts.fork_url = Some(fork_url?.into_owned());
-        }
-
+        let evm_opts = EvmOpts::from_config(&config)?;
         Ok((config, evm_opts))
     }
 

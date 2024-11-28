@@ -518,7 +518,7 @@ impl TestArgs {
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
+        let remote_chain_id = runner.evm_opts.get_remote_chain().await;
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
@@ -1004,7 +1004,7 @@ mod tests {
             assert_eq!(args.evm_opts.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
-            assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
+            assert_eq!(evm_opts.env.chain, Some(expected));
         };
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));

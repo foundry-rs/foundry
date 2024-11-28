@@ -327,7 +327,7 @@ forgetest_init!(can_detect_config_vals, |prj, _cmd| {
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 });
 
-// checks that `clean` removes dapptools style paths
+// checks that EvmOpts RPC url is set from env var
 forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     let url = "http://127.0.0.1:8545";
     let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
@@ -335,8 +335,8 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     assert!(config.ffi);
 
     std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
-    let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
-    let evm_opts: EvmOpts = figment.extract().unwrap();
+    let config = Config::load_with_root(prj.root());
+    let evm_opts = EvmOpts::from_config(&config).unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
     std::env::remove_var("FOUNDRY_ETH_RPC_URL");
 });

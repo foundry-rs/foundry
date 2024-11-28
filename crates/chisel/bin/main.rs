@@ -131,7 +131,7 @@ async fn main_args(args: Chisel) -> eyre::Result<()> {
     let mut interrupt = false;
 
     // Load configuration
-    let (config, evm_opts) = args.load_config_and_evm_opts()?;
+    let config = args.load_config();
 
     // Create a new cli dispatcher
     let mut dispatcher = ChiselDispatcher::new(chisel::session_source::SessionSourceConfig {
@@ -139,7 +139,6 @@ async fn main_args(args: Chisel) -> eyre::Result<()> {
         traces: config.verbosity > 0,
         foundry_config: config,
         no_vm: args.no_vm,
-        evm_opts,
         backend: None,
         calldata: None,
     })?;

@@ -338,7 +338,7 @@ impl ExecutedState {
 
         let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_etherscan(
             &self.script_config.config,
-            self.script_config.evm_opts.get_remote_chain_id().await,
+            self.script_config.evm_opts.get_remote_chain().await,
         )?;
 
         for (_, trace) in &self.execution_result.traces {

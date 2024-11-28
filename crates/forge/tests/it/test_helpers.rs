@@ -205,7 +205,7 @@ impl ForgeTestData {
                 FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
         }
 
-        let opts = config_evm_opts(&config);
+        let opts = EvmOpts::from_config(&config).unwrap();
 
         let mut builder = self.base_runner();
         let config = Arc::new(config);
@@ -221,7 +221,7 @@ impl ForgeTestData {
 
     /// Builds a tracing runner
     pub fn tracing_runner(&self) -> MultiContractRunner {
-        let mut opts = config_evm_opts(&self.config);
+        let mut opts = EvmOpts::from_config(&self.config).unwrap();
         opts.verbosity = 5;
         self.base_runner()
             .build(self.project.root(), &self.output, opts.local_evm_env(), opts)
@@ -230,9 +230,9 @@ impl ForgeTestData {
 
     /// Builds a runner that runs against forked state
     pub async fn forked_runner(&self, rpc: &str) -> MultiContractRunner {
-        let mut opts = config_evm_opts(&self.config);
+        let mut opts = EvmOpts::from_config(&self.config).unwrap();
 
-        opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
+        opts.env.chain = None; // clear chain id so the correct one gets fetched from the RPC
         opts.fork_url = Some(rpc.to_string());
 
         let env = opts.evm_env().await.expect("Could not instantiate fork environment");
@@ -350,8 +350,4 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("avaxTestnet", RpcEndpoint::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
         ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".into())),
     ])
-}
-
-fn config_evm_opts(config: &Config) -> EvmOpts {
-    config.to_figment(foundry_config::FigmentProviders::None).extract().unwrap()
 }

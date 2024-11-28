@@ -2020,8 +2020,8 @@ mod tests {
 
         let block_num = provider.get_block_number().await.unwrap();
 
-        let config = Config::figment();
-        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        let config = Config::load();
+        let mut evm_opts = EvmOpts::from_config(&config).unwrap();
         evm_opts.fork_block_number = Some(block_num);
 
         let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();

@@ -19,28 +19,11 @@ use crate::shell;
 /// Map keyed by breakpoints char to their location (contract address, pc)
 pub type Breakpoints = HashMap<char, (Address, usize)>;
 
-/// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
+/// EVM-specific CLI arguments.
 ///
-/// All vars are opt-in, their default values are expected to be set by the
-/// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
+/// These are loaded into a figment provider and merged into the global configuration.
 ///
-/// Both have corresponding types in the `evm_adapters` crate which have mandatory fields.
-/// The expected workflow is
-///   1. load the [`foundry_config::Config`]
-///   2. merge with `EvmArgs` into a `figment::Figment`
-///   3. extract `evm_adapters::Opts` from the merged `Figment`
-///
-/// # Example
-///
-/// ```ignore
-/// use foundry_config::Config;
-/// use forge::executor::opts::EvmOpts;
-/// use foundry_common::evm::EvmArgs;
-/// # fn t(args: EvmArgs) {
-/// let figment = Config::figment_with_root(".").merge(args);
-/// let opts = figment.extract::<EvmOpts>().unwrap();
-/// # }
-/// ```
+/// CLI version of `EvmOpts`.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "EVM options", about = None, long_about = None)] // override doc
 pub struct EvmArgs {
@@ -144,7 +127,7 @@ pub struct EvmArgs {
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
 impl Provider for EvmArgs {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Evm Opts Provider")
+        Metadata::named("EvmArgs")
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {

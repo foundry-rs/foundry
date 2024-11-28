@@ -4,19 +4,17 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
-use foundry_config::{Chain, Config, GasLimit};
+use foundry_config::{Chain, Config, GasLimit, UnresolvedEnvVarError};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
-use serde::{Deserialize, Serialize};
 use url::Url;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// EVM specific configuration. Derived from [`Config`].
+#[derive(Clone, Debug, Default)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
-    #[serde(flatten)]
     pub env: Env,
 
     /// Fetch state over a remote instead of starting from empty state.
-    #[serde(rename = "eth_rpc_url")]
     pub fork_url: Option<String>,
 
     /// Pins the block number for the state fork.
@@ -69,6 +67,34 @@ pub struct EvmOpts {
 }
 
 impl EvmOpts {
+    /// Creates a new `EvmOpts` from a `Config`.
+    pub fn from_config(config: &Config) -> Result<EvmOpts, UnresolvedEnvVarError> {
+        let fork_url = config.get_rpc_url().transpose()?.map(Into::into);
+        Ok(Self {
+            env: Env::from_config(config),
+            fork_url,
+            fork_block_number: config.fork_block_number,
+            // TODO(dani)
+            // fork_retries: config.fork_retries,
+            // fork_retry_backoff: config.fork_retry_backoff,
+            // compute_units_per_second: config.compute_units_per_second,
+            fork_retries: None,
+            fork_retry_backoff: None,
+            compute_units_per_second: None,
+            no_rpc_rate_limit: config.no_rpc_rate_limit,
+            no_storage_caching: config.no_storage_caching,
+            initial_balance: config.initial_balance,
+            sender: config.sender,
+            ffi: config.ffi,
+            always_use_create_2_factory: config.always_use_create_2_factory,
+            verbosity: config.verbosity,
+            memory_limit: config.memory_limit,
+            isolate: config.isolate,
+            disable_block_gas_limit: config.disable_block_gas_limit,
+            alphanet: config.alphanet,
+        })
+    }
+
     /// Configures a new `revm::Env`
     ///
     /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
@@ -95,7 +121,7 @@ impl EvmOpts {
             &provider,
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),
-            self.env.chain_id,
+            self.env.chain_id(),
             self.fork_block_number,
             self.sender,
             self.disable_block_gas_limit,
@@ -115,7 +141,7 @@ impl EvmOpts {
     /// Returns the `revm::Env` configured with only local settings
     pub fn local_evm_env(&self) -> revm::primitives::Env {
         let mut cfg = CfgEnv::default();
-        cfg.chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
+        cfg.chain_id = self.env.chain_id().unwrap_or(foundry_common::DEV_CHAIN_ID);
         cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
         cfg.memory_limit = self.memory_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
@@ -169,16 +195,25 @@ impl EvmOpts {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).0
     }
 
-    /// Returns the configured chain id, which will be
-    ///   - the value of `chain_id` if set
-    ///   - mainnet if `fork_url` contains "mainnet"
-    ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
-    ///   - mainnet otherwise
-    pub async fn get_chain_id(&self) -> u64 {
-        if let Some(id) = self.env.chain_id {
-            return id;
+    /// Returns the configured chain.
+    ///
+    /// This will be:
+    /// - the value of `chain` if set
+    /// - mainnet if `fork_url` contains "mainnet"
+    /// - the chain if `fork_url` is set and the endpoints returned its chain ID successfully
+    /// - mainnet otherwise
+    pub async fn get_chain(&self) -> Chain {
+        if let Some(chain) = self.env.chain {
+            return chain;
         }
-        self.get_remote_chain_id().await.unwrap_or(Chain::mainnet()).id()
+        self.get_remote_chain().await.unwrap_or(Chain::mainnet())
+    }
+
+    /// Returns the configured chain ID.
+    ///
+    /// See [`get_chain`](Self::get_chain) for more details.
+    pub async fn get_chain_id(&self) -> u64 {
+        self.get_chain().await.id()
     }
 
     /// Returns the available compute units per second, which will be
@@ -196,8 +231,8 @@ impl EvmOpts {
     }
 
     /// Returns the chain ID from the RPC, if any.
-    pub async fn get_remote_chain_id(&self) -> Option<Chain> {
-        if let Some(ref url) = self.fork_url {
+    pub async fn get_remote_chain(&self) -> Option<Chain> {
+        if let Some(url) = &self.fork_url {
             trace!(?url, "retrieving chain via eth_chainId");
             let provider = ProviderBuilder::new(url.as_str())
                 .compute_units_per_second(self.get_compute_units_per_second())
@@ -222,19 +257,18 @@ impl EvmOpts {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Env {
     /// The block gas limit.
     pub gas_limit: GasLimit,
 
     /// The `CHAINID` opcode value.
-    pub chain_id: Option<u64>,
+    pub chain: Option<Chain>,
 
     /// the tx.gasprice value during EVM execution
     ///
     /// This is an Option, so we can determine in fork mode whether to use the config's gas price
     /// (if set by user) or the remote client's gas price.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gas_price: Option<u64>,
 
     /// the base fee in a block
@@ -259,10 +293,31 @@ pub struct Env {
     pub block_prevrandao: B256,
 
     /// the block.gaslimit value during EVM execution
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<GasLimit>,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
+}
+
+impl Env {
+    pub fn from_config(config: &Config) -> Self {
+        Self {
+            gas_limit: config.gas_limit,
+            chain: config.chain,
+            gas_price: config.gas_price,
+            block_base_fee_per_gas: config.block_base_fee_per_gas,
+            tx_origin: config.tx_origin,
+            block_coinbase: config.block_coinbase,
+            block_timestamp: config.block_timestamp,
+            block_number: config.block_number,
+            block_difficulty: config.block_difficulty,
+            block_prevrandao: config.block_prevrandao,
+            block_gas_limit: config.block_gas_limit,
+            code_size_limit: config.code_size_limit,
+        }
+    }
+
+    pub fn chain_id(&self) -> Option<u64> {
+        self.chain.map(|c| c.id())
+    }
 }

@@ -8,7 +8,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{handle_traces, init_progress, TraceResult},
+    utils::{handle_traces, init_progress, LoadConfig, TraceResult},
 };
 use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
@@ -16,13 +16,12 @@ use foundry_config::{
     figment::{
         self,
         value::{Dict, Map},
-        Figment, Metadata, Profile,
+        Metadata, Profile,
     },
-    Config,
+    impl_figment_convert, Config,
 };
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
-    opts::EvmOpts,
     utils::configure_tx_env,
 };
 
@@ -93,6 +92,8 @@ pub struct RunArgs {
     pub with_local_artifacts: bool,
 }
 
+impl_figment_convert!(RunArgs, self, rpc);
+
 impl RunArgs {
     /// Executes the transaction by replaying it
     ///
@@ -100,9 +101,7 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
-        let figment = Into::<Figment>::into(&self.rpc).merge(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::try_from(figment)?.sanitized();
+        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };

@@ -57,7 +57,7 @@ impl TracingExecutor {
 
         let fork = evm_opts.get_fork(config, env.clone());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.alphanet))
+        Ok((env, fork, evm_opts.get_remote_chain().await, evm_opts.alphanet))
     }
 }
 

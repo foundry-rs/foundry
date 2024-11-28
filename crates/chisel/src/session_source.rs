@@ -11,7 +11,7 @@ use foundry_compilers::{
     artifacts::{CompilerOutput, Settings, SolcInput, Source, Sources},
     compilers::solc::Solc,
 };
-use foundry_config::{Config, SolcReq};
+use foundry_config::{Config, SolcReq, UnresolvedEnvVarError};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -71,8 +71,6 @@ pub struct GeneratedOutput {
 pub struct SessionSourceConfig {
     /// Foundry configuration
     pub foundry_config: Config,
-    /// EVM Options
-    pub evm_opts: EvmOpts,
     /// Disable the default `Vm` import.
     pub no_vm: bool,
     #[serde(skip)]
@@ -85,6 +83,11 @@ pub struct SessionSourceConfig {
 }
 
 impl SessionSourceConfig {
+    /// Returns the [`EvmOpts`] for this config.
+    pub fn evm_opts(&self) -> Result<EvmOpts, UnresolvedEnvVarError> {
+        EvmOpts::from_config(&self.foundry_config)
+    }
+
     /// Returns the solc version to use
     ///
     /// Solc version precedence
