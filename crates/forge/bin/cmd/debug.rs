@@ -58,7 +58,7 @@ impl DebugArgs {
             sig: self.sig,
             gas_estimate_multiplier: 130,
             opts: self.opts,
-            evm_opts: self.evm_opts,
+            evm_args: self.evm_opts,
             debug: true,
             dump: self.dump,
             retry: RETRY_VERIFY_ON_CREATE,
