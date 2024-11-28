@@ -3,7 +3,7 @@ use foundry_common::compact_to_contract;
 use foundry_compilers::{
     artifacts::{
         sourcemap::{SourceElement, SourceMap},
-        Bytecode, ContractBytecodeSome, Libraries, Source,
+        Bytecode, Contract, ContractBytecodeSome, Libraries, Source,
     },
     multi::MultiCompilerLanguage,
     Artifact, Compiler, ProjectCompileOutput,
@@ -137,7 +137,7 @@ impl ContractSources {
         Ok(sources)
     }
 
-    pub fn insert<C: Compiler>(
+    pub fn insert<C: Compiler<CompilerContract = Contract>>(
         &mut self,
         output: &ProjectCompileOutput<C>,
         root: &Path,
