@@ -266,8 +266,8 @@ impl ProjectCompiler {
                     .as_ref()
                     .map(|abi| {
                         abi.functions().any(|f| {
-                            f.test_function_kind().is_known()
-                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
+                            f.test_function_kind().is_known() ||
+                                matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
                     })
                     .unwrap_or(false);
