@@ -223,7 +223,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             } else {
                 let data = data.strip_prefix("0x").unwrap_or(data.as_str());
                 let selector = &data[..8];
-                let err = SignaturesIdentifier::new(Config::foundry_cache_dir(), true)?
+                let err = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
                     .write()
                     .await
                     .identify_error(&hex::decode(selector)?)

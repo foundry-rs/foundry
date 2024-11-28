@@ -542,7 +542,7 @@ pub enum CastSubcommand {
     /// Decode custom error data.
     #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
     DecodeError {
-        /// The error signature. If none provided then tries to decode from local cache.
+        /// The error signature. If none provided then tries to decode from local cache or `https://api.openchain.xyz`.
         #[arg(long, visible_alias = "error-sig")]
         sig: Option<String>,
         /// The error data to decode.

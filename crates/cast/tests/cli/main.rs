@@ -1482,6 +1482,7 @@ casttest!(event_decode, |_prj, cmd| {
 "#]]);
 });
 
+// tests cast can decode traces with provided signature
 casttest!(error_decode_with_sig, |_prj, cmd| {
     cmd.args(["decode-error", "--sig", "AnotherValueTooHigh(uint256,address)", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"]).assert_success().stdout_eq(str![[r#"
 101
@@ -1494,6 +1495,16 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
   "101",
   "0x0000000000000000000000000000000000D0004F"
 ]
+
+"#]]);
+});
+
+// tests cast can decode traces with Openchain API
+casttest!(error_decode_with_openchain, |_prj, cmd| {
+    cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
+ValueTooHigh(uint256,uint256)
+101
+100
 
 "#]]);
 });

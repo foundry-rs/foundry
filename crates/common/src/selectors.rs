@@ -140,7 +140,7 @@ impl OpenChainClient {
             .ok_or_else(|| eyre::eyre!("No signature found"))
     }
 
-    /// Decodes the given function or event selectors using OpenChain
+    /// Decodes the given function, error or event selectors using OpenChain.
     pub async fn decode_selectors(
         &self,
         selector_type: SelectorType,
@@ -164,9 +164,8 @@ impl OpenChainClient {
         self.ensure_not_spurious()?;
 
         let expected_len = match selector_type {
-            SelectorType::Function => 10, // 0x + hex(4bytes)
-            SelectorType::Event => 66,    // 0x + hex(32bytes)
-            _ => eyre::bail!("Could decode only functions and events"),
+            SelectorType::Function | SelectorType::Error => 10, // 0x + hex(4bytes)
+            SelectorType::Event => 66,                          // 0x + hex(32bytes)
         };
         if let Some(s) = selectors.iter().find(|s| s.len() != expected_len) {
             eyre::bail!(
@@ -194,9 +193,8 @@ impl OpenChainClient {
         let url = format!(
             "{SELECTOR_LOOKUP_URL}?{ltype}={selectors_str}",
             ltype = match selector_type {
-                SelectorType::Function => "function",
+                SelectorType::Function | SelectorType::Error => "function",
                 SelectorType::Event => "event",
-                _ => eyre::bail!("Could decode only functions and events"),
             },
             selectors_str = selectors.join(",")
         );
@@ -214,9 +212,8 @@ impl OpenChainClient {
         }
 
         let decoded = match selector_type {
-            SelectorType::Function => api_response.result.function,
+            SelectorType::Function | SelectorType::Error => api_response.result.function,
             SelectorType::Event => api_response.result.event,
-            _ => eyre::bail!("Could decode only functions and events"),
         };
 
         Ok(selectors
