@@ -50,9 +50,6 @@ impl ScriptRunner {
             }
         }
 
-        // set CREATE2 deployer from EvmOpts.
-        self.executor.set_create2_deployer(self.evm_opts.create2_deployer);
-
         self.executor.set_nonce(self.evm_opts.sender, sender_nonce)?;
 
         // We max out their balance so that they can deploy and make calls.

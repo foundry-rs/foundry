@@ -239,12 +239,6 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_create2_deployer(&mut self, create2_deployer: Address) -> &mut Self {
-        self.inspector_mut().set_create2_deployer(create2_deployer);
-        self
-    }
-
-    #[inline]
     pub fn create2_deployer(&self) -> Address {
         self.inspector().create2_deployer()
     }
