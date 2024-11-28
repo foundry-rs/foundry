@@ -1,5 +1,8 @@
 pub use crate::ic::*;
-use crate::{backend::DatabaseExt, precompiles::ALPHANET_P256, InspectorExt};
+use crate::{
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ALPHANET_P256,
+    InspectorExt,
+};
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::AnyTxEnvelope;
@@ -211,6 +214,15 @@ pub fn create2_handler_register<I: InspectorExt>(
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
                         output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    memory_offset: 0..0,
+                })))
+            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 deployer bytecode".into(),
                         gas: Gas::new(gas_limit),
                     },
                     memory_offset: 0..0,
