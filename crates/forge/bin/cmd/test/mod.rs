@@ -12,7 +12,7 @@ use forge::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
-        render_trace_arena, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
+        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -56,7 +56,7 @@ use summary::TestSummaryReporter;
 
 use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
-use forge::result::TestKind;
+use forge::{result::TestKind, traces::render_trace_arena_inner};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -656,7 +656,7 @@ impl TestArgs {
                     // - 0..3: nothing
                     // - 3: only display traces for failed tests
                     // - 4: also display the setup trace for failed tests
-                    // - 5..: display all traces for all tests
+                    // - 5..: display all traces for all tests, including storage changes
                     let should_include = match kind {
                         TraceKind::Execution => {
                             (verbosity == 3 && result.status.is_failure()) || verbosity >= 4
@@ -669,7 +669,7 @@ impl TestArgs {
 
                     if should_include {
                         decode_trace_arena(arena, &decoder).await?;
-                        decoded_traces.push(render_trace_arena(arena));
+                        decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
 

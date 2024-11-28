@@ -4086,6 +4086,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "serde",
+ "serde_json",
  "solar-parse",
  "tempfile",
  "tokio",

@@ -61,6 +61,10 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
+    /// Broadcast the transaction.
+    #[arg(long)]
+    pub broadcast: bool,
+
     /// Verify contract after creation.
     #[arg(long)]
     verify: bool,
@@ -155,6 +159,10 @@ impl CreateArgs {
         } else {
             provider.get_chain_id().await?
         };
+
+        // Whether to broadcast the transaction or not
+        let dry_run = !self.broadcast;
+
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
@@ -167,6 +175,7 @@ impl CreateArgs {
                 sender,
                 config.transaction_timeout,
                 id,
+                dry_run,
             )
             .await
         } else {
@@ -185,6 +194,7 @@ impl CreateArgs {
                 deployer,
                 config.transaction_timeout,
                 id,
+                dry_run,
             )
             .await
         }
@@ -260,6 +270,7 @@ impl CreateArgs {
         deployer_address: Address,
         timeout: u64,
         id: ArtifactId,
+        dry_run: bool,
     ) -> Result<()> {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
@@ -339,6 +350,30 @@ impl CreateArgs {
             self.verify_preflight_check(constructor_args.clone(), chain, &id).await?;
         }
 
+        if dry_run {
+            if !shell::is_json() {
+                sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
+
+                sh_println!("Contract: {}", self.contract.name)?;
+                sh_println!(
+                    "Transaction: {}",
+                    serde_json::to_string_pretty(&deployer.tx.clone())?
+                )?;
+                sh_println!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
+
+                sh_warn!("To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more.")?;
+            } else {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            }
+
+            return Ok(());
+        }
+
         // Deploy the actual contract
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
@@ -349,7 +384,7 @@ impl CreateArgs {
                 "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
-            sh_println!("{output}")?;
+            sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
         } else {
             sh_println!("Deployer: {deployer_address}")?;
             sh_println!("Deployed to: {address}")?;

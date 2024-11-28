@@ -7,7 +7,7 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
     artifacts::Libraries, compilers::Compiler, Artifact, ArtifactId, ProjectCompileOutput,
 };
@@ -249,7 +249,8 @@ impl MultiContractRunner {
         let trace_mode = TraceMode::default()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
-            .with_verbosity(self.evm_opts.verbosity);
+            .with_verbosity(self.evm_opts.verbosity)
+            .with_state_changes(verbosity() > 4);
 
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {

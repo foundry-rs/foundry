@@ -10,7 +10,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -169,6 +169,7 @@ impl RunArgs {
             evm_version,
             self.debug,
             self.decode_internal,
+            shell::verbosity() > 4,
             alphanet,
         );
         let mut env =
@@ -176,7 +177,9 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            sh_println!("Executing previous transactions from the block.")?;
+            if !shell::is_json() {
+                sh_println!("Executing previous transactions from the block.")?;
+            }
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
