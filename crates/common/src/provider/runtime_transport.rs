@@ -170,7 +170,6 @@ impl RuntimeTransport {
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;
 
-            tracing::info!("Adding header: {}={}", key, val);
             headers.insert(
                 HeaderName::from_str(key.trim()).map_err(|_| make_err())?,
                 HeaderValue::from_str(val.trim()).map_err(|_| make_err())?,

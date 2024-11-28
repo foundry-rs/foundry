@@ -50,7 +50,7 @@ pub struct RpcOpts {
     pub rpc_timeout: Option<u64>,
 
     /// Specify custom headers for RPC requests.
-    #[arg(long, env = "ETH_RPC_HEADERS", value_delimiter(','), value_delimiter(' '))]
+    #[arg(long, env = "ETH_RPC_HEADERS", value_delimiter(','))]
     pub headers: Option<Vec<String>>,
 }
 

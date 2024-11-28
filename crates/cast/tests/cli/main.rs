@@ -2,8 +2,12 @@
 
 use alloy_chains::NamedChain;
 use alloy_network::TransactionResponse;
+use alloy_node_bindings::{utils::run_with_tempdir_sync, Reth};
 use alloy_primitives::{b256, B256};
-use alloy_rpc_types::{BlockNumberOrTag, Index};
+use alloy_rpc_types::{
+    engine::{Claims, JwtSecret},
+    BlockNumberOrTag, Index,
+};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file, forgetest_async,
@@ -1866,4 +1870,30 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+#[cfg(not(windows))]
+casttest!(test_rpc_headers, |_prj, cmd| {
+    run_with_tempdir_sync("temp", |path| {
+        let jwt_secret = "f79ae8046bc11c9927afe911db7143c51a806c4a537cc08e0d37140b0192f430";
+
+        let reth =
+            Reth::new().data_dir(path.join("data")).args(["--rpc.jwtsecret", jwt_secret]).spawn();
+
+        let endpoint = reth.endpoint();
+
+        let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+
+        let token = secret.encode(&Claims::with_current_timestamp()).unwrap();
+
+        cmd.args([
+            "rpc",
+            "eth_blockNumber",
+            "--rpc-url",
+            &endpoint,
+            "--headers",
+            &format!("Authorization:Bearer {token}"),
+        ])
+        .assert_success();
+    });
 });
