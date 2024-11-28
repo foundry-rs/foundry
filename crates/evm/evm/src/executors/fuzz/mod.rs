@@ -1,4 +1,4 @@
-use crate::executors::{Executor, RawCallResult};
+use crate::executors::{Executor, FuzzTestTimer, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{map::HashMap, Address, Bytes, Log, U256};
@@ -17,11 +17,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -102,15 +98,13 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
-        // Start a timer if timeout is set.
-        let start_time = start_timer(self.config.timeout);
+        // Start timer for this fuzz test.
+        let timer = FuzzTestTimer::new(self.config.timeout);
 
         let run_result = self.runner.clone().run(&strategy, |calldata| {
             // Check if the timeout has been reached.
-            if let Some((start_time, timeout)) = start_time {
-                if start_time.elapsed() > timeout {
-                    return Err(TestCaseError::fail(TEST_TIMEOUT));
-                }
+            if timer.is_timed_out() {
+                return Err(TestCaseError::fail(TEST_TIMEOUT));
             }
 
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
@@ -287,9 +281,4 @@ impl FuzzedExecutor {
             EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary)
         }
     }
-}
-
-/// Starts timer for fuzz test, if any timeout configured.
-pub(crate) fn start_timer(timeout: Option<u32>) -> Option<(Instant, Duration)> {
-    timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into())))
 }

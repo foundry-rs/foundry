@@ -50,7 +50,7 @@ pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
 
 mod shrink;
-use crate::executors::{fuzz::start_timer, EvmError};
+use crate::executors::{EvmError, FuzzTestTimer};
 pub use shrink::check_sequence;
 
 sol! {
@@ -333,8 +333,8 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures)?;
 
-        // Start a timer if timeout is set.
-        let start_time = start_timer(self.config.timeout);
+        // Start timer for this invariant test.
+        let timer = FuzzTestTimer::new(self.config.timeout);
 
         let _ = self.runner.run(&invariant_strategy, |first_input| {
             // Create current invariant run data.
@@ -352,14 +352,12 @@ impl<'a> InvariantExecutor<'a> {
 
             while current_run.depth < self.config.depth {
                 // Check if the timeout has been reached.
-                if let Some((start_time, timeout)) = start_time {
-                    if start_time.elapsed() > timeout {
-                        // Since we never record a revert here the test is still considered
-                        // successful even though it timed out. We *want*
-                        // this behavior for now, so that's ok, but
-                        // future developers should be aware of this.
-                        return Err(TestCaseError::fail(TEST_TIMEOUT));
-                    }
+                if timer.is_timed_out() {
+                    // Since we never record a revert here the test is still considered
+                    // successful even though it timed out. We *want*
+                    // this behavior for now, so that's ok, but
+                    // future developers should be aware of this.
+                    return Err(TestCaseError::fail(TEST_TIMEOUT));
                 }
 
                 let tx = current_run.inputs.last().ok_or_else(|| {
