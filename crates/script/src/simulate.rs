@@ -46,7 +46,7 @@ impl PreSimulationState {
     /// left empty.
     ///
     /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self, create2_deployer: Address) -> Result<FilledTransactionsState> {
+    pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
         let address_to_abi = self.build_address_to_abi_map();
 
         let mut transactions = self
@@ -67,7 +67,7 @@ impl PreSimulationState {
                     builder.set_call(
                         &address_to_abi,
                         &self.execution_artifacts.decoder,
-                        create2_deployer,
+                        self.script_config.evm_opts.create2_deployer,
                     )?;
                 } else {
                     builder.set_create(false, sender.create(nonce), &address_to_abi)?;
