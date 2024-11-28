@@ -1776,3 +1776,94 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+// tests cast can decode external libraries traces with project cached selectors
+forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ExternalLib",
+        r#"
+import "./CounterInExternalLib.sol";
+library ExternalLib {
+    function updateCounterInExternalLib(CounterInExternalLib.Info storage counterInfo, uint256 counter) public {
+        counterInfo.counter = counter + 1;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "CounterInExternalLib",
+        r#"
+import "./ExternalLib.sol";
+contract CounterInExternalLib {
+    struct Info {
+        uint256 counter;
+    }
+    Info info;
+    constructor() {
+        ExternalLib.updateCounterInExternalLib(info, 100);
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "CounterInExternalLibScript",
+        r#"
+import "forge-std/Script.sol";
+import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
+contract CounterInExternalLibScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        new CounterInExternalLib();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterInExternalLibScript",
+    ])
+    .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Cache project selectors.
+    cmd.forge_fuse().set_current_dir(prj.root());
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast with local artifacts can decode external lib signature.
+    cmd.cast_fuse().set_current_dir(prj.root());
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [37739] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    ├─ [22411] 0xfAb06527117d29EA121998AC4fAB9Fc88bF5f979::updateCounterInExternalLib(0, 100) [delegatecall]
+    │   └─ ← [Stop] 
+    └─ ← [Return] 62 bytes of code
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
