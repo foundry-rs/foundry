@@ -14,7 +14,7 @@ use forge::{
         identifier::SignaturesIdentifier,
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions,
 };
 use foundry_cli::{
     opts::{CoreBuildArgs, GlobalOpts},
@@ -34,7 +34,7 @@ use foundry_config::{
         Metadata, Profile, Provider,
     },
     filter::GlobMatcher,
-    get_available_profiles, Config,
+    Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -301,25 +301,20 @@ impl TestArgs {
 
         // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
-        let toml = config.get_config_path();
-        let profiles = get_available_profiles(toml)?;
 
         // Remove the snapshots directory if it exists.
         // This is to ensure that we don't have any stale snapshots.
         // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
         // required for comparison.
-        if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
+        if std::env::var_os("FORGE_SNAPSHOT_CHECK").is_none() {
             let snapshot_dir = project_root.join(&config.snapshots);
             if snapshot_dir.exists() {
                 let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
             }
         }
 
-        let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz.clone())
-            .invariant(config.invariant.clone())
-            .profiles(profiles)
-            .build(&output, project_root)?;
+        let config = Arc::new(config);
+        let test_options = TestOptions::new(&output, config.clone())?;
 
         let should_debug = self.debug.is_some();
         let should_draw = self.flamegraph || self.flamechart;
@@ -347,7 +342,6 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
-        let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -1067,9 +1061,9 @@ contract FooBarTest is DSTest {
             &prj.root().to_string_lossy(),
         ]);
         let outcome = args.run().await.unwrap();
-        let gas_report = outcome.gas_report.unwrap();
+        let gas_report = outcome.gas_report.as_ref().unwrap();
 
-        assert_eq!(gas_report.contracts.len(), 3);
+        assert_eq!(gas_report.contracts.len(), 3, "{}", outcome.summary(Default::default()));
         let call_cnts = gas_report
             .contracts
             .values()
