@@ -873,7 +873,8 @@ forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
         .load_private_keys(&[0])
         .await
         .add_create2_deployer(create2)
-        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .add_sig("BroadcastTestNoLinking", "deployCreate2(address)")
+        .arg(&create2.to_string())
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment(&[(0, 2)])
