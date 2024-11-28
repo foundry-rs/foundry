@@ -105,6 +105,7 @@ pub struct EvmArgs {
 
     /// The CREATE2 deployer address to use, this will override the one in the config.
     #[arg(long, value_name = "ADDRESS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub create2_deployer: Option<Address>,
 
     /// Sets the number of assumed available compute units per second for this provider
