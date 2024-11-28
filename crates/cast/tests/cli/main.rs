@@ -64,7 +64,7 @@ Display options:
           - 2 (-vv): Print logs for all tests.
           - 3 (-vvv): Print execution traces for failing tests.
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
-          - 5 (-vvvvv): Print execution and setup traces for all tests.
+          - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -1714,6 +1714,69 @@ Transaction successfully executed.
 "#]]);
 });
 
+// tests cast can decode traces when running with verbosity level > 4
+forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Send tx to change counter storage value.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setNumber(uint256)",
+            "111",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Assert cast with verbosity displays storage changes.
+    cmd.cast_fuse()
+        .args([
+            "run",
+            format!("{tx_hash}").as_str(),
+            "-vvvvv",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [22287] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    ├─  storage changes:
+    │   @ 0: 0 → 111
+    └─ ← [Stop] 
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 // tests cast can decode external libraries traces with project cached selectors
 forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -1723,7 +1786,6 @@ forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
         "ExternalLib",
         r#"
 import "./CounterInExternalLib.sol";
-
 library ExternalLib {
     function updateCounterInExternalLib(CounterInExternalLib.Info storage counterInfo, uint256 counter) public {
         counterInfo.counter = counter + 1;
@@ -1736,14 +1798,11 @@ library ExternalLib {
         "CounterInExternalLib",
         r#"
 import "./ExternalLib.sol";
-
 contract CounterInExternalLib {
     struct Info {
         uint256 counter;
     }
-
     Info info;
-
     constructor() {
         ExternalLib.updateCounterInExternalLib(info, 100);
     }
@@ -1756,7 +1815,6 @@ contract CounterInExternalLib {
         r#"
 import "forge-std/Script.sol";
 import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
-
 contract CounterInExternalLibScript is Script {
     function run() public {
         vm.startBroadcast();
@@ -1799,7 +1857,7 @@ contract CounterInExternalLibScript is Script {
 ...
 Traces:
   [37739] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-    ├─ [22411] 0x1Bc4A44b22E17b81A5cD2d1f2E8F0E2F3621c939::updateCounterInExternalLib(0, 100) [delegatecall]
+    ├─ [22411] 0xfAb06527117d29EA121998AC4fAB9Fc88bF5f979::updateCounterInExternalLib(0, 100) [delegatecall]
     │   └─ ← [Stop] 
     └─ ← [Return] 62 bytes of code
 
