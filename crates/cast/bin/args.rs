@@ -543,7 +543,7 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
     DecodeError {
         /// The error signature. If none provided then tries to decode from local cache.
-        #[arg(long = "sig", visible_alias = "error-sig")]
+        #[arg(long, visible_alias = "error-sig")]
         sig: Option<String>,
         /// The error data to decode.
         data: String,

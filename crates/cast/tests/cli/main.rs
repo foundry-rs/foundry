@@ -1488,6 +1488,14 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "101",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
 });
 
 // tests cast can decode traces when using local sig identifiers cache
