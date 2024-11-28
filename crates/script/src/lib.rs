@@ -198,10 +198,6 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    /// The CREATE2 deployer address to use, this will override the one in the config.
-    #[arg(long, value_name = "ADDRESS")]
-    pub create2_deployer: Option<Address>,
-
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
@@ -233,7 +229,7 @@ impl ScriptArgs {
             evm_opts.sender = sender;
         }
 
-        if let Some(create2_deployer) = self.create2_deployer {
+        if let Some(create2_deployer) = self.evm_opts.create2_deployer {
             evm_opts.create2_deployer = create2_deployer;
         }
 
