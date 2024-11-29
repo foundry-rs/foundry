@@ -90,9 +90,9 @@ impl CoverageReport {
     pub fn summary_by_file(&self) -> impl Iterator<Item = (PathBuf, CoverageSummary)> {
         let mut summaries = BTreeMap::new();
 
-        for (version, items) in self.items.iter() {
+        for (source_id, items) in self.items.iter() {
             for item in items {
-                let Some(path) = self.source_paths.get(&item.loc.source_id).cloned() else {
+                let Some(path) = self.source_paths.get(source_id).cloned() else {
                     continue;
                 };
                 *summaries.entry(path).or_default() += item;
@@ -106,9 +106,9 @@ impl CoverageReport {
     pub fn items_by_source(&self) -> impl Iterator<Item = (PathBuf, Vec<CoverageItem>)> {
         let mut items_by_source: BTreeMap<_, Vec<_>> = BTreeMap::new();
 
-        for (version, items) in self.items.iter() {
+        for (source_id, items) in self.items.iter() {
             for item in items {
-                let Some(path) = self.source_paths.get(&item.loc.source_id).cloned() else {
+                let Some(path) = self.source_paths.get(source_id).cloned() else {
                     continue;
                 };
                 items_by_source.entry(path).or_default().push(item.clone());
@@ -161,9 +161,9 @@ impl CoverageReport {
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
-        self.items.retain(|version, items| {
-            items.retain(|item| {
-                self.source_paths.get(&item.loc.source_id).map(|path| filter(path)).unwrap_or(false)
+        self.items.retain(|source_id, items| {
+            items.retain(|_item| {
+                self.source_paths.get(source_id).map(|path| filter(path)).unwrap_or(false)
             });
             !items.is_empty()
         });

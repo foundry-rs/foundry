@@ -161,7 +161,8 @@ impl CoverageArgs {
         let mut report = CoverageReport::default();
         // Collect source files.
         let project_paths = &project.paths;
-        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
+
+        let mut sources = SourceFiles::default();
         // Account cached and freshly compiled sources
         for (id, artifact) in output.artifact_ids() {
             // Filter out dependencies
@@ -169,7 +170,6 @@ impl CoverageArgs {
                 continue;
             }
 
-            let version = id.version;
             let build_id = id.build_id;
             let source_file = if let Some(source_file) = artifact.source_file() {
                 source_file
@@ -191,11 +191,7 @@ impl CoverageArgs {
                         .wrap_err("Could not read source code for analysis")?,
                 };
 
-                versioned_sources
-                    .entry(version.clone())
-                    .or_default()
-                    .sources
-                    .insert(identifier, source);
+                sources.sources.entry(identifier).or_insert(source);
             }
         }
 
@@ -210,40 +206,38 @@ impl CoverageArgs {
             .collect();
 
         // Add coverage items
-        for (version, sources) in &versioned_sources {
-            let source_analysis = SourceAnalyzer::new(sources).analyze()?;
+        let source_analysis = SourceAnalyzer::new(&sources).analyze()?;
 
-            // Build helper mapping used by `find_anchors`
-            let mut items_by_source_id = HashMap::<_, Vec<_>>::with_capacity_and_hasher(
-                source_analysis.items.len(),
-                Default::default(),
-            );
+        // Build helper mapping used by `find_anchors`
+        let mut items_by_source_id = HashMap::<_, Vec<_>>::with_capacity_and_hasher(
+            source_analysis.items.len(),
+            Default::default(),
+        );
 
-            for (item_id, item) in source_analysis.items.iter().enumerate() {
-                items_by_source_id.entry(item.loc.source_id.clone()).or_default().push(item_id);
-            }
-
-            let anchors = artifacts
-                .par_iter()
-                .filter(|artifact| sources.sources.contains_key(&artifact.contract_id.source_id))
-                .map(|artifact| {
-                    let creation_code_anchors = artifact.creation.find_anchors(
-                        &source_analysis,
-                        &items_by_source_id,
-                        &artifact.contract_id.source_id,
-                    );
-                    let deployed_code_anchors = artifact.deployed.find_anchors(
-                        &source_analysis,
-                        &items_by_source_id,
-                        &artifact.contract_id.source_id,
-                    );
-                    (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
-                })
-                .collect::<Vec<_>>();
-
-            report.add_anchors(anchors);
-            report.add_items(source_analysis.items);
+        for (item_id, item) in source_analysis.items.iter().enumerate() {
+            items_by_source_id.entry(item.loc.source_id.clone()).or_default().push(item_id);
         }
+
+        let anchors = artifacts
+            .par_iter()
+            .filter(|artifact| sources.sources.contains_key(&artifact.contract_id.source_id))
+            .map(|artifact| {
+                let creation_code_anchors = artifact.creation.find_anchors(
+                    &source_analysis,
+                    &items_by_source_id,
+                    &artifact.contract_id.source_id,
+                );
+                let deployed_code_anchors = artifact.deployed.find_anchors(
+                    &source_analysis,
+                    &items_by_source_id,
+                    &artifact.contract_id.source_id,
+                );
+                (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
+            })
+            .collect::<Vec<_>>();
+
+        report.add_anchors(anchors);
+        report.add_items(source_analysis.items);
 
         report.add_source_maps(artifacts.into_iter().map(|artifact| {
             (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
