@@ -1441,6 +1441,7 @@ casttest!(send_custom_error, async |prj, cmd| {
             "./src/SimpleStorage.sol:SimpleStorage",
             "--rpc-url",
             &endpoint,
+            "--broadcast",
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ])
@@ -1449,7 +1450,6 @@ casttest!(send_custom_error, async |prj, cmd| {
         .stdout_lossy();
 
     let address = output.split("Deployed to: ").nth(1).unwrap().split('\n').next().unwrap().trim();
-
     let contract_address = address.trim();
 
     // Call the function that always reverts
@@ -1465,14 +1465,17 @@ casttest!(send_custom_error, async |prj, cmd| {
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
-Reverted with custom error: 
+Error: Reverted with custom error: 
  Possible methods:
  - ValueTooHigh(uint256,uint256)
  ------------
  [000]: 0000000000000000000000000000000000000000000000000000000000000065
  [020]: 0000000000000000000000000000000000000000000000000000000000000064
-...
+
+
+Context:
+- server returned an error response: error code 3: execution reverted: custom error 0x7a0e1985: ed, data: "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"
+
 "#]]);
 });
 
