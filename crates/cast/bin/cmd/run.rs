@@ -107,11 +107,9 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::ProviderBuilder::new(
-            &config.get_rpc_url_or_localhost_http()?,
-        )
-        .compute_units_per_second_opt(compute_units_per_second)
-        .build()?;
+        let provider = foundry_cli::utils::get_provider_builder(&config)?
+            .compute_units_per_second_opt(compute_units_per_second)
+            .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider
