@@ -6,7 +6,7 @@ use alloy_primitives::{b256, B256};
 use alloy_rpc_types::{BlockNumberOrTag, Index};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
-    casttest, file, forgetest_async,
+    casttest, file, forgetest, forgetest_async,
     rpc::{
         next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
         next_rpc_endpoint, next_ws_rpc_endpoint,
@@ -1477,6 +1477,60 @@ casttest!(string_decode, |_prj, cmd| {
 casttest!(event_decode, |_prj, cmd| {
     cmd.args(["decode-event", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
 78
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+});
+
+// tests cast can decode traces with provided signature
+casttest!(error_decode_with_sig, |_prj, cmd| {
+    cmd.args(["decode-error", "--sig", "AnotherValueTooHigh(uint256,address)", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"]).assert_success().stdout_eq(str![[r#"
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "101",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
+});
+
+// tests cast can decode traces with Openchain API
+casttest!(error_decode_with_openchain, |_prj, cmd| {
+    cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
+ValueTooHigh(uint256,uint256)
+101
+100
+
+"#]]);
+});
+
+// tests cast can decode traces when using local sig identifiers cache
+forgetest!(error_decode_with_cache, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "LocalProjectContract",
+        r#"
+contract ContractWithCustomError {
+    error AnotherValueTooHigh(uint256, address);
+}
+   "#,
+    )
+    .unwrap();
+    // Store selectors in local cache.
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast can decode custom error with local cache.
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+AnotherValueTooHigh(uint256,address)
+101
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
