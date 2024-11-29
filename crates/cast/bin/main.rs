@@ -222,19 +222,19 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 get_error(err_sig.as_str())?
             } else {
                 let data = data.strip_prefix("0x").unwrap_or(data.as_str());
-                let selector = &data[..8];
-                let err = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
-                    .write()
-                    .await
-                    .identify_error(&hex::decode(selector)?)
-                    .await;
-                if err.is_none() {
+                let selector = data.get(..8).unwrap_or_default();
+                let identified_error =
+                    SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
+                        .write()
+                        .await
+                        .identify_error(&hex::decode(selector)?)
+                        .await;
+                if let Some(error) = identified_error {
+                    let _ = sh_println!("{}", error.signature());
+                    error
+                } else {
                     eyre::bail!("No matching error signature found for selector `{selector}`")
                 }
-
-                let error = err.unwrap();
-                let _ = sh_println!("{}", error.signature());
-                error
             };
             let decoded_error = error.decode_error(&hex::decode(data)?)?;
             print_tokens(&decoded_error.body);
