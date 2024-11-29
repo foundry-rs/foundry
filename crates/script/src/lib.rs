@@ -229,10 +229,6 @@ impl ScriptArgs {
             evm_opts.sender = sender;
         }
 
-        if let Some(create2_deployer) = self.evm_opts.create2_deployer {
-            evm_opts.create2_deployer = create2_deployer;
-        }
-
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets })
