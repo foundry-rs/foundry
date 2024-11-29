@@ -8,10 +8,13 @@ use crate::{
     verify::VerifierArgs,
 };
 use alloy_primitives::{hex, Address, Bytes, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Transaction};
+use alloy_provider::{
+    network::{AnyTxEnvelope, TransactionBuilder},
+    Provider,
+};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use clap::{Parser, ValueHint};
-use eyre::{OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
@@ -19,8 +22,8 @@ use foundry_cli::{
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_env};
-use revm_primitives::AccountInfo;
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
+use revm_primitives::{AccountInfo, TxKind};
 use std::path::PathBuf;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -35,11 +38,11 @@ pub struct VerifyBytecodeArgs {
     pub contract: ContractInfo,
 
     /// The block at which the bytecode should be verified.
-    #[clap(long, value_name = "BLOCK")]
+    #[arg(long, value_name = "BLOCK")]
     pub block: Option<BlockId>,
 
     /// The constructor args to generate the creation code.
-    #[clap(
+    #[arg(
         long,
         num_args(1..),
         conflicts_with_all = &["constructor_args_path", "encoded_constructor_args"],
@@ -65,14 +68,15 @@ pub struct VerifyBytecodeArgs {
     pub constructor_args_path: Option<PathBuf>,
 
     /// The rpc url to use for verification.
-    #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
+    #[arg(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    #[clap(flatten)]
+    /// Etherscan options.
+    #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
     /// Verifier options.
-    #[clap(flatten)]
+    #[command(flatten)]
     pub verifier: VerifierArgs,
 
     /// The project's root path.
@@ -83,7 +87,7 @@ pub struct VerifyBytecodeArgs {
     pub root: Option<PathBuf>,
 
     /// Ignore verification for creation or runtime bytecode.
-    #[clap(long, value_name = "BYTECODE_TYPE")]
+    #[arg(long, value_name = "BYTECODE_TYPE")]
     pub ignore: Option<BytecodeType>,
 }
 
@@ -96,6 +100,11 @@ impl figment::Provider for VerifyBytecodeArgs {
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
         let mut dict = self.etherscan.dict();
+
+        if let Some(api_key) = &self.verifier.verifier_api_key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
@@ -238,21 +247,22 @@ impl VerifyBytecodeArgs {
 
             // Setup genesis tx and env.
             let deployer = Address::with_last_byte(0x1);
-            let mut gen_tx = Transaction {
-                from: deployer,
-                to: None,
-                input: Bytes::from(local_bytecode_vec),
-                ..Default::default()
-            };
+            let mut gen_tx_req = TransactionRequest::default()
+                .with_from(deployer)
+                .with_input(Bytes::from(local_bytecode_vec))
+                .into_create();
 
             if let Some(ref block) = genesis_block {
                 configure_env_block(&mut env, block);
-                gen_tx.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
-                gen_tx.gas = block.header.gas_limit;
-                gen_tx.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
+                gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
+                gen_tx_req.gas = Some(block.header.gas_limit);
+                gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            configure_tx_env(&mut env, &gen_tx);
+            // configure_tx_rq_env(&mut env, &gen_tx);
+
+            configure_tx_req_env(&mut env, &gen_tx_req)
+                .wrap_err("Failed to configure tx request env")?;
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -262,8 +272,12 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address =
-                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), &gen_tx)?;
+            let fork_address = crate::utils::deploy_contract(
+                &mut executor,
+                &env,
+                config.evm_spec_id(),
+                gen_tx_req.to,
+            )?;
 
             // Compare runtime bytecode
             let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
@@ -302,7 +316,7 @@ impl VerifyBytecodeArgs {
         let creation_data = creation_data.unwrap();
         // Get transaction and receipt.
         trace!(creation_tx_hash = ?creation_data.transaction_hash);
-        let mut transaction = provider
+        let transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
             .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
@@ -322,12 +336,23 @@ impl VerifyBytecodeArgs {
             );
         };
 
+        let mut transaction: TransactionRequest = match transaction.inner.inner {
+            AnyTxEnvelope::Ethereum(tx) => tx.into(),
+            AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
+        };
+
         // Extract creation code from creation tx input.
         let maybe_creation_code =
             if receipt.to.is_none() && receipt.contract_address == Some(self.address) {
-                &transaction.input
+                match &transaction.input.input {
+                    Some(input) => &input[..],
+                    None => unreachable!("creation tx input is None"),
+                }
             } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-                &transaction.input[32..]
+                match &transaction.input.input {
+                    Some(input) => &input[32..],
+                    None => unreachable!("creation tx input is None"),
+                }
             } else {
                 eyre::bail!(
                     "Could not extract the creation code for contract at address {}",
@@ -428,35 +453,39 @@ impl VerifyBytecodeArgs {
 
             // Use `transaction.from` instead of `creation_data.contract_creator` to resolve
             // blockscout creation data discrepancy in case of CREATE2.
-            let prev_block_nonce =
-                provider.get_transaction_count(transaction.from).block_id(prev_block_id).await?;
-            transaction.nonce = prev_block_nonce;
+            let prev_block_nonce = provider
+                .get_transaction_count(transaction.from.unwrap())
+                .block_id(prev_block_id)
+                .await?;
+            transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
                 configure_env_block(&mut env, block)
             }
 
             // Replace the `input` with local creation code in the creation tx.
-            if let Some(to) = transaction.to {
+            if let Some(TxKind::Call(to)) = transaction.kind() {
                 if to == DEFAULT_CREATE2_DEPLOYER {
-                    let mut input = transaction.input[..32].to_vec(); // Salt
+                    let mut input = transaction.input.input.unwrap()[..32].to_vec(); // Salt
                     input.extend_from_slice(&local_bytecode_vec);
-                    transaction.input = Bytes::from(input);
+                    transaction.input = TransactionInput::both(Bytes::from(input));
 
                     // Deploy default CREATE2 deployer
                     executor.deploy_create2_deployer()?;
                 }
             } else {
-                transaction.input = Bytes::from(local_bytecode_vec);
+                transaction.input = TransactionInput::both(Bytes::from(local_bytecode_vec));
             }
 
-            configure_tx_env(&mut env, &transaction.inner);
+            // configure_req__env(&mut env, &transaction.inner);
+            configure_tx_req_env(&mut env, &transaction)
+                .wrap_err("Failed to configure tx request env")?;
 
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,
                 &env,
                 config.evm_spec_id(),
-                &transaction,
+                transaction.to,
             )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.

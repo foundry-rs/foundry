@@ -2,6 +2,7 @@ use foundry_common::TestFilter;
 use regex::Regex;
 use std::path::Path;
 
+#[derive(Clone, Debug)]
 pub struct Filter {
     test_regex: Regex,
     contract_regex: Regex,

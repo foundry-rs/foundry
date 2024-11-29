@@ -112,7 +112,7 @@ impl CommentWithMetadata {
                     // line has something
                     // check if the last comment after code was a postfix comment
                     if last_comment
-                        .map_or(false, |last| last.loc.end() > code_end && !last.is_prefix())
+                        .is_some_and(|last| last.loc.end() > code_end && !last.is_prefix())
                     {
                         // get the indent size of the next item of code
                         let next_indent_len = src[comment.loc().end()..]

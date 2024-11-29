@@ -66,7 +66,7 @@ async fn can_send_eip7702_tx() {
 
     let tx = tx.into_signed(signature);
     let mut encoded = Vec::new();
-    tx.tx().encode_with_signature(tx.signature(), &mut encoded, false);
+    tx.eip2718_encode(&mut encoded);
 
     let receipt =
         provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();

@@ -58,6 +58,17 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     let doc = get_docstring(attrs);
     let (signature, selector, declaration, description) = func_docstring(&doc);
 
+    let mut params = declaration;
+    if let Some(ret) = params.find(" returns ") {
+        params = &params[..ret];
+    }
+    if params.contains(" memory ") {
+        emit_warning!(
+            name.span(),
+            "parameter data locations must be `calldata` instead of `memory`"
+        );
+    }
+
     let (visibility, mutability) = parse_function_attrs(declaration, name.span())?;
     let visibility = Ident::new(visibility, Span::call_site());
     let mutability = Ident::new(mutability, Span::call_site());

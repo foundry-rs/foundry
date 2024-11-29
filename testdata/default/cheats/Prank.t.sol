@@ -85,8 +85,122 @@ contract NestedPranker {
     }
 }
 
+contract ImplementationTest {
+    uint256 public num;
+    address public sender;
+
+    function assertCorrectCaller(address expectedSender) public {
+        require(msg.sender == expectedSender);
+    }
+
+    function assertCorrectOrigin(address expectedOrigin) public {
+        require(tx.origin == expectedOrigin);
+    }
+
+    function setNum(uint256 _num) public {
+        num = _num;
+    }
+}
+
+contract ProxyTest {
+    uint256 public num;
+    address public sender;
+}
+
 contract PrankTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testPrankDelegateCallPrank2() public {
+        ProxyTest proxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+        vm.prank(address(proxy), true);
+
+        // Assert correct `msg.sender`
+        (bool success,) =
+            address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", address(proxy)));
+        require(success, "prank2: delegate call failed assertCorrectCaller");
+
+        // Assert storage updates
+        uint256 num = 42;
+        vm.prank(address(proxy), true);
+        (bool successTwo,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", num));
+        require(successTwo, "prank2: delegate call failed setNum");
+        require(proxy.num() == num, "prank2: proxy's storage was not set correctly");
+        vm.stopPrank();
+    }
+
+    function testPrankDelegateCallStartPrank2() public {
+        ProxyTest proxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+        vm.startPrank(address(proxy), true);
+
+        // Assert correct `msg.sender`
+        (bool success,) =
+            address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", address(proxy)));
+        require(success, "startPrank2: delegate call failed assertCorrectCaller");
+
+        // Assert storage updates
+        uint256 num = 42;
+        (bool successTwo,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", num));
+        require(successTwo, "startPrank2: delegate call failed setNum");
+        require(proxy.num() == num, "startPrank2: proxy's storage was not set correctly");
+        vm.stopPrank();
+    }
+
+    function testPrankDelegateCallPrank3(address origin) public {
+        ProxyTest proxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+        vm.prank(address(proxy), origin, true);
+
+        // Assert correct `msg.sender`
+        (bool success,) =
+            address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", address(proxy)));
+        require(success, "prank3: delegate call failed assertCorrectCaller");
+
+        // Assert correct `tx.origin`
+        vm.prank(address(proxy), origin, true);
+        (bool successTwo,) = address(impl).delegatecall(abi.encodeWithSignature("assertCorrectOrigin(address)", origin));
+        require(successTwo, "prank3: delegate call failed assertCorrectOrigin");
+
+        // Assert storage updates
+        uint256 num = 42;
+        vm.prank(address(proxy), address(origin), true);
+        (bool successThree,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", num));
+        require(successThree, "prank3: delegate call failed setNum");
+        require(proxy.num() == num, "prank3: proxy's storage was not set correctly");
+        vm.stopPrank();
+    }
+
+    function testPrankDelegateCallStartPrank3(address origin) public {
+        ProxyTest proxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+        vm.startPrank(address(proxy), origin, true);
+
+        // Assert correct `msg.sender`
+        (bool success,) =
+            address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", address(proxy)));
+        require(success, "startPrank3: delegate call failed assertCorrectCaller");
+
+        // Assert correct `tx.origin`
+        (bool successTwo,) = address(impl).delegatecall(abi.encodeWithSignature("assertCorrectOrigin(address)", origin));
+        require(successTwo, "startPrank3: delegate call failed assertCorrectOrigin");
+
+        // Assert storage updates
+        uint256 num = 42;
+        (bool successThree,) = address(impl).delegatecall(abi.encodeWithSignature("setNum(uint256)", num));
+        require(successThree, "startPrank3: delegate call failed setNum");
+        require(proxy.num() == num, "startPrank3: proxy's storage was not set correctly");
+        vm.stopPrank();
+    }
+
+    function testFailPrankDelegateCallToEOA() public {
+        uint256 privateKey = uint256(keccak256(abi.encodePacked("alice")));
+        address alice = vm.addr(privateKey);
+        ImplementationTest impl = new ImplementationTest();
+        vm.prank(alice, true);
+        // Should fail when EOA pranked with delegatecall.
+        address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
+    }
 
     function testPrankSender(address sender) public {
         // Perform the prank

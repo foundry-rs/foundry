@@ -27,7 +27,7 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
 use foundry_cli::{
-    opts::{CoreBuildArgs, ShellOpts},
+    opts::{CoreBuildArgs, GlobalOpts},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -73,11 +73,15 @@ mod transaction;
 mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_args);
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
+    // Include global options for users of this struct.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
@@ -206,22 +210,19 @@ pub struct ScriptArgs {
     pub wallets: MultiWalletOpts,
 
     #[command(flatten)]
-    pub evm_opts: EvmArgs,
+    pub evm_args: EvmArgs,
 
     #[command(flatten)]
     pub verifier: forge_verify::VerifierArgs,
 
     #[command(flatten)]
     pub retry: RetryArgs,
-
-    #[clap(flatten)]
-    pub shell: ShellOpts,
 }
 
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
-            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_args.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -283,7 +284,10 @@ impl ScriptArgs {
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                if !shell::is_json() {
+                    sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                }
+
                 return Ok(());
             }
 
@@ -297,7 +301,9 @@ impl ScriptArgs {
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
-            sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            if !shell::is_json() {
+                sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            }
             return Ok(());
         }
 
@@ -405,7 +411,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = match self.evm_opts.env.code_size_limit {
+        let max_size = match self.evm_args.env.code_size_limit {
             Some(size) => size,
             None => CONTRACT_MAX_SIZE,
         };
@@ -717,7 +723,7 @@ mod tests {
             "--code-size-limit",
             "50000",
         ]);
-        assert_eq!(args.evm_opts.env.code_size_limit, Some(50000));
+        assert_eq!(args.evm_args.env.code_size_limit, Some(50000));
     }
 
     #[test]

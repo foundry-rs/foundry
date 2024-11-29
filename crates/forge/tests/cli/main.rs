@@ -17,6 +17,8 @@ mod create;
 mod debug;
 mod doc;
 mod eip712;
+mod geiger;
+mod inline_config;
 mod multi_script;
 mod script;
 mod soldeer;

@@ -1,11 +1,6 @@
 //! Regression tests for previous issues.
 
-use std::sync::Arc;
-
-use crate::{
-    config::*,
-    test_helpers::{ForgeTestData, TEST_DATA_DEFAULT},
-};
+use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{address, b256, Address, U256};
@@ -19,6 +14,7 @@ use foundry_evm::{
     traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},
 };
 use foundry_test_utils::Filter;
+use std::sync::Arc;
 
 /// Creates a test that runs `testdata/repros/Issue{issue}.t.sol`.
 macro_rules! test_repro {
@@ -33,7 +29,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.run().await;
+                repro_config($issue_number, $should_fail, $sender.into()).await.run().await;
             }
         }
     };
@@ -42,7 +38,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                let mut $res = repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.test();
+                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test();
                 $e
             }
         }
@@ -52,7 +48,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                let mut $config = repro_config($issue_number, false, None, &*TEST_DATA_DEFAULT).await;
+                let mut $config = repro_config($issue_number, false, None).await;
                 $e
                 $config.run().await;
             }
@@ -60,23 +56,19 @@ macro_rules! test_repro {
     };
 }
 
-async fn repro_config(
-    issue: usize,
-    should_fail: bool,
-    sender: Option<Address>,
-    test_data: &ForgeTestData,
-) -> TestConfig {
+async fn repro_config(issue: usize, should_fail: bool, sender: Option<Address>) -> TestConfig {
     foundry_test_utils::init_tracing();
     let filter = Filter::path(&format!(".*repros/Issue{issue}.t.sol"));
 
-    let mut config = test_data.config.clone();
-    config.fs_permissions =
-        FsPermissions::new(vec![PathPermission::read("./fixtures"), PathPermission::read("out")]);
-    if let Some(sender) = sender {
-        config.sender = sender;
-    }
-
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![
+            PathPermission::read("./fixtures"),
+            PathPermission::read("out"),
+        ]);
+        if let Some(sender) = sender {
+            config.sender = sender;
+        }
+    });
     TestConfig::with_filter(runner, filter).set_should_fail(should_fail)
 }
 
@@ -377,13 +369,10 @@ test_repro!(8383, false, None, |res| {
     let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
     assert_eq!(test.status, TestStatus::Success);
     match test.kind {
-        TestKind::Unit { gas } => assert_eq!(gas, 3103),
+        TestKind::Unit { gas } => assert_eq!(gas, 3101),
         _ => panic!("not a unit test kind"),
     }
 });
-
-// https://github.com/foundry-rs/foundry/issues/1543
-test_repro!(1543);
 
 // https://github.com/foundry-rs/foundry/issues/6643
 test_repro!(6643);

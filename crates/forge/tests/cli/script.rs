@@ -1,11 +1,12 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     rpc,
+    snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     ScriptOutcome, ScriptTester,
 };
@@ -230,7 +231,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 226 bytes of code
+    │   └─ ← [Return] 221 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
@@ -242,10 +243,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [45299] → new GasWaster@[..]
-    └─ ← [Return] 226 bytes of code
+  [44291] → new GasWaster@[..]
+    └─ ← [Return] 221 bytes of code
 
-  [226] GasWaster::wasteGas(200000 [2e5])
+  [224] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop] 
 
 
@@ -337,7 +338,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 226 bytes of code
+    │   └─ ← [Return] 221 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
@@ -349,10 +350,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [45299] → new GasWaster@[..]
-    └─ ← [Return] 226 bytes of code
+  [44291] → new GasWaster@[..]
+    └─ ← [Return] 221 bytes of code
 
-  [226] GasWaster::wasteGas(200000 [2e5])
+  [224] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop] 
 
 
@@ -522,7 +523,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new HashChecker@[..]
-    │   └─ ← [Return] 378 bytes of code
+    │   └─ ← [Return] 368 bytes of code
     └─ ← [Stop] 
 
 
@@ -1821,6 +1822,83 @@ Warning: Script contains a transaction to 0x000000000000000000000000000000000000
 "#]]);
 });
 
+// Asserts that the script runs with expected non-output using `--quiet` flag
+forgetest_async!(adheres_to_quiet_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external returns (bool success) {
+        vm.startBroadcast();
+        (success, ) = address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--broadcast",
+        "--unlocked",
+        "--non-interactive",
+        "--quiet",
+    ])
+    .assert_empty_stdout();
+});
+
+// Asserts that the script runs with expected non-output using `--quiet` flag
+forgetest_async!(adheres_to_json_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external returns (bool success) {
+        vm.startBroadcast();
+        (success, ) = address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--broadcast",
+        "--unlocked",
+        "--non-interactive",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"0x6080604052600c805462ff00ff191662010001179055348015601f575f5ffd5b506101568061002d5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063c040622614610038578063f8ccbf4714610054575b5f5ffd5b610040610067565b604051901515815260200160405180910390f35b600c546100409062010000900460ff1681565b5f7f885cb69240a935d632d79c317109709ecfa91a80626ff3989d68f67f5b1dd12d5f1c6001600160a01b0316637fb5297f6040518163ffffffff1660e01b81526004015f604051808303815f87803b1580156100c2575f5ffd5b505af11580156100d4573d5f5f3e3d5ffd5b50506040515f925090508181818181805af19150503d805f8114610113576040519150601f19603f3d011682016040523d82523d5f602084013e610118565b606091505b50909291505056fea264697066735822122060ba6332e526de9b6bc731fb4682b44e42845196324ec33068982984d700cdd964736f6c634300081b0033","output":"0x608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063c040622614610038578063f8ccbf4714610054575b5f5ffd5b610040610067565b604051901515815260200160405180910390f35b600c546100409062010000900460ff1681565b5f7f885cb69240a935d632d79c317109709ecfa91a80626ff3989d68f67f5b1dd12d5f1c6001600160a01b0316637fb5297f6040518163ffffffff1660e01b81526004015f604051808303815f87803b1580156100c2575f5ffd5b505af11580156100d4573d5f5f3e3d5ffd5b50506040515f925090508181818181805af19150503d805f8114610113576040519150601f19603f3d011682016040523d82523d5f602084013e610118565b606091505b50909291505056fea264697066735822122060ba6332e526de9b6bc731fb4682b44e42845196324ec33068982984d700cdd964736f6c634300081b0033","gas_used":90639,"gas_limit":1073682810,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":3214,"gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":0,"gas_limit":1056940983,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":0,"gas_limit":1056940820,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":24278,"labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"chain":31337,"estimated_gas_price":"2.000000001","estimated_total_gas_used":29005,"estimated_amount_required":"0.000058010000029005"}
+{"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":21000,"gas_price":1000000001}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
+
+"#]].is_jsonlines());
+});
+
 // https://github.com/foundry-rs/foundry/pull/7742
 forgetest_async!(unlocked_no_sender, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -2039,8 +2117,7 @@ forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/8993>
 forgetest_async!(test_broadcast_raw_create2_deployer, |prj, cmd| {
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+    let (api, handle) = spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
 
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
@@ -2051,7 +2128,7 @@ import "forge-std/Script.sol";
 contract SimpleScript is Script {
     function run() external {
         // send funds to create2 factory deployer
-        vm.broadcast();
+        vm.startBroadcast();
         payable(0x3fAB184622Dc19b6109349B94811493BF2a45362).transfer(10000000 gwei);
         // deploy create2 factory
         vm.broadcastRawTransaction(
@@ -2070,6 +2147,7 @@ contract SimpleScript is Script {
         "--rpc-url",
         &handle.http_endpoint(),
         "--broadcast",
+        "--slow",
         "SimpleScript",
     ]);
 
@@ -2104,6 +2182,12 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]);
+
+    assert!(!api
+        .get_code(address!("4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+        .await
+        .unwrap()
+        .is_empty());
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {
@@ -2219,15 +2303,15 @@ contract SimpleScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [104553] SimpleScript::run()
+  [103771] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 119 bytes of code
-    ├─ [13367] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [146] A::getValue() [staticcall]
+    ├─ [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    │   └─ ← [Return] 116 bytes of code
+    ├─ [13162] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [145] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
-    │   └─ ← [Return] 63 bytes of code
+    │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop] 
 
 
@@ -2237,13 +2321,13 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    └─ ← [Return] 119 bytes of code
+  [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 116 bytes of code
 
-  [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [146] A::getValue() [staticcall]
+  [15662] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [145] A::getValue() [staticcall]
     │   └─ ← [Return] 100
-    └─ ← [Return] 63 bytes of code
+    └─ ← [Return] 62 bytes of code
 ...
 "#]]);
 });

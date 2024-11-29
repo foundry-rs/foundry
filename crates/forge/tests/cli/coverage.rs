@@ -1413,3 +1413,37 @@ contract AContractTest is DSTest {
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/9322>
+// Test coverage with `--ir-minimum` for solidity < 0.8.5.
+forgetest!(test_ir_minimum_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+pragma solidity 0.8.4;
+
+contract AContract {
+    function isContract(address account) internal view returns (bool) {
+        bytes32 codehash;
+        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+        assembly {
+            codehash := extcodehash(account)
+        }
+        return (codehash != accountHash && codehash != 0x0);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert coverage doesn't fail with `Error: Unknown key "inliner"`.
+    cmd.arg("coverage").arg("--ir-minimum").assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines     | % Statements | % Branches    | % Funcs     |
+|-------------------|-------------|--------------|---------------|-------------|
+| src/AContract.sol | 0.00% (0/4) | 0.00% (0/4)  | 100.00% (0/0) | 0.00% (0/1) |
+| Total             | 0.00% (0/4) | 0.00% (0/4)  | 100.00% (0/0) | 0.00% (0/1) |
+
+"#]]);
+});

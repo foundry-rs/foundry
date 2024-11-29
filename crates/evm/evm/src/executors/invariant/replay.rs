@@ -48,16 +48,10 @@ pub fn replay_run(
             tx.call_details.calldata.clone(),
             U256::ZERO,
         )?;
+
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-
-        if let Some(new_coverage) = call_result.coverage {
-            if let Some(old_coverage) = coverage {
-                *coverage = Some(std::mem::take(old_coverage).merged(new_coverage));
-            } else {
-                *coverage = Some(new_coverage);
-            }
-        }
+        HitMaps::merge_opt(coverage, call_result.coverage);
 
         // Identify newly generated contracts, if they exist.
         ided_contracts

@@ -11,7 +11,7 @@ use foundry_compilers::{
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{cmd::OutputAssert, str};
+use snapbox::{assert_data_eq, cmd::OutputAssert, str, IntoData};
 use std::{
     env,
     ffi::OsStr,
@@ -883,7 +883,7 @@ impl TestCommand {
         let assert = OutputAssert::new(self.execute());
         if self.redact_output {
             return assert.with_assert(test_assert());
-        };
+        }
         assert
     }
 
@@ -891,6 +891,15 @@ impl TestCommand {
     #[track_caller]
     pub fn assert_success(&mut self) -> OutputAssert {
         self.assert().success()
+    }
+
+    /// Runs the command and asserts that it resulted in success, with expected JSON data.
+    #[track_caller]
+    pub fn assert_json_stdout(&mut self, expected: impl IntoData) {
+        let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
+        let stdout = self.assert_success().get_output().stdout.clone();
+        let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
+        assert_data_eq!(actual, expected);
     }
 
     /// Runs the command and asserts that it **failed** nothing was printed to stdout.
@@ -903,6 +912,12 @@ impl TestCommand {
     #[track_caller]
     pub fn assert_failure(&mut self) -> OutputAssert {
         self.assert().failure()
+    }
+
+    /// Runs the command and asserts that the exit code is `expected`.
+    #[track_caller]
+    pub fn assert_code(&mut self, expected: i32) -> OutputAssert {
+        self.assert().code(expected)
     }
 
     /// Runs the command and asserts that it **failed** nothing was printed to stderr.

@@ -17,7 +17,7 @@ pub struct WarningsProvider<P> {
     old_warnings: Result<Vec<Warning>, Error>,
 }
 
-impl<P> WarningsProvider<P> {
+impl<P: Provider> WarningsProvider<P> {
     const WARNINGS_KEY: &'static str = "__warnings";
 
     /// Creates a new warnings provider.
@@ -41,9 +41,7 @@ impl<P> WarningsProvider<P> {
         };
         Self::new(provider, figment.profile().clone(), old_warnings)
     }
-}
 
-impl<P: Provider> WarningsProvider<P> {
     /// Collects all warnings.
     pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
         let data = self.provider.data().unwrap_or_default();
@@ -103,12 +101,10 @@ impl<P: Provider> Provider for WarningsProvider<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let warnings = self.collect_warnings()?;
         Ok(Map::from([(
             self.profile.clone(),
-            Dict::from([(
-                Self::WARNINGS_KEY.to_string(),
-                Value::serialize(self.collect_warnings()?)?,
-            )]),
+            Dict::from([(Self::WARNINGS_KEY.to_string(), Value::serialize(warnings)?)]),
         )]))
     }
 
@@ -138,8 +134,9 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        if let Some(fallback) = self.provider.data()?.get(&self.fallback) {
-            let mut inner = self.provider.data()?.remove(&self.profile).unwrap_or_default();
+        let data = self.provider.data()?;
+        if let Some(fallback) = data.get(&self.fallback) {
+            let mut inner = data.get(&self.profile).cloned().unwrap_or_default();
             for (k, v) in fallback.iter() {
                 if !inner.contains_key(k) {
                     inner.insert(k.to_owned(), v.clone());
@@ -147,7 +144,7 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
             }
             Ok(self.profile.collect(inner))
         } else {
-            self.provider.data()
+            Ok(data)
         }
     }
 

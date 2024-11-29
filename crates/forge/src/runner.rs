@@ -24,7 +24,7 @@ use foundry_evm::{
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
         },
-        CallResult, EvmError, ExecutionErr, Executor, ITest, RawCallResult,
+        CallResult, EvmError, Executor, ITest, RawCallResult,
     },
     fuzz::{
         fixture_name,
@@ -88,53 +88,51 @@ impl ContractRunner<'_> {
         self.executor.set_balance(self.sender, U256::MAX)?;
         self.executor.set_balance(CALLER, U256::MAX)?;
 
-        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
+        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools.
         self.executor.set_nonce(self.sender, 1)?;
 
-        // Deploy libraries
+        // Deploy libraries.
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
-        let mut logs = Vec::new();
-        let mut traces = Vec::with_capacity(self.libs_to_deploy.len());
+        let mut result = TestSetup::default();
         for code in self.libs_to_deploy.iter() {
-            match self.executor.deploy(
+            let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
                 U256::ZERO,
                 Some(self.revert_decoder),
-            ) {
-                Ok(d) => {
-                    logs.extend(d.raw.logs);
-                    traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
-                }
-                Err(e) => {
-                    return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
-                }
+            );
+            let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+            result.extend(raw, TraceKind::Deployment);
+            if reason.is_some() {
+                result.reason = reason;
+                return Ok(result);
             }
         }
 
         let address = self.sender.create(self.executor.get_nonce(self.sender)?);
+        result.address = address;
 
         // Set the contracts initial balance before deployment, so it is available during
         // construction
         self.executor.set_balance(address, self.initial_balance)?;
 
         // Deploy the test contract
-        match self.executor.deploy(
+        let deploy_result = self.executor.deploy(
             self.sender,
             self.contract.bytecode.clone(),
             U256::ZERO,
             Some(self.revert_decoder),
-        ) {
-            Ok(d) => {
-                logs.extend(d.raw.logs);
-                traces.extend(d.raw.traces.map(|traces| (TraceKind::Deployment, traces)));
-                d.address
-            }
-            Err(e) => {
-                return Ok(TestSetup::from_evm_error_with(e, logs, traces, Default::default()))
-            }
-        };
+        );
+        if let Ok(dr) = &deploy_result {
+            debug_assert_eq!(dr.address, address);
+        }
+        let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
+        result.extend(raw, TraceKind::Deployment);
+        if reason.is_some() {
+            result.reason = reason;
+            return Ok(result);
+        }
 
         // Reset `self.sender`s, `CALLER`s and `LIBRARY_DEPLOYER`'s balance to the initial balance.
         self.executor.set_balance(self.sender, self.initial_balance)?;
@@ -144,51 +142,15 @@ impl ContractRunner<'_> {
         self.executor.deploy_create2_deployer()?;
 
         // Optionally call the `setUp` function
-        let result = if call_setup {
+        if call_setup {
             trace!("calling setUp");
             let res = self.executor.setup(None, address, Some(self.revert_decoder));
-            let (setup_logs, setup_traces, labeled_addresses, reason, coverage) = match res {
-                Ok(RawCallResult { traces, labels, logs, coverage, .. }) => {
-                    trace!(%address, "successfully called setUp");
-                    (logs, traces, labels, None, coverage)
-                }
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr {
-                        raw: RawCallResult { traces, labels, logs, coverage, .. },
-                        reason,
-                    } = *err;
-                    (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
-                }
-                Err(err) => (
-                    Vec::new(),
-                    None,
-                    HashMap::default(),
-                    Some(format!("setup failed: {err}")),
-                    None,
-                ),
-            };
-            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
-            logs.extend(setup_logs);
+            let (raw, reason) = RawCallResult::from_evm_result(res)?;
+            result.extend(raw, TraceKind::Setup);
+            result.reason = reason;
+        }
 
-            TestSetup {
-                address,
-                logs,
-                traces,
-                labeled_addresses,
-                reason,
-                coverage,
-                fuzz_fixtures: self.fuzz_fixtures(address),
-            }
-        } else {
-            TestSetup::success(
-                address,
-                logs,
-                traces,
-                Default::default(),
-                None,
-                self.fuzz_fixtures(address),
-            )
-        };
+        result.fuzz_fixtures = self.fuzz_fixtures(address);
 
         Ok(result)
     }
@@ -296,7 +258,7 @@ impl ContractRunner<'_> {
                 warnings,
             )
         }
-        let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
+        let call_after_invariant = after_invariant_fns.first().is_some_and(|after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
             if !match_sig {
                 warnings.push(format!(
@@ -379,24 +341,26 @@ impl ContractRunner<'_> {
                         self.run_unit_test(func, should_fail, setup)
                     }
                     TestFunctionKind::FuzzTest { should_fail } => {
-                        let runner = test_options.fuzz_runner(self.name, &func.name);
-                        let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-
-                        self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                        match test_options.fuzz_runner(self.name, &func.name) {
+                            Ok((fuzz_config, runner)) => {
+                                self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config)
+                            }
+                            Err(err) => TestResult::fail(err.to_string()),
+                        }
                     }
                     TestFunctionKind::InvariantTest => {
-                        let runner = test_options.invariant_runner(self.name, &func.name);
-                        let invariant_config = test_options.invariant_config(self.name, &func.name);
-
-                        self.run_invariant_test(
-                            runner,
-                            setup,
-                            invariant_config.clone(),
-                            func,
-                            call_after_invariant,
-                            &known_contracts,
-                            identified_contracts.as_ref().unwrap(),
-                        )
+                        match test_options.invariant_runner(self.name, &func.name) {
+                            Ok((invariant_config, runner)) => self.run_invariant_test(
+                                runner,
+                                setup,
+                                invariant_config,
+                                func,
+                                call_after_invariant,
+                                &known_contracts,
+                                identified_contracts.as_ref().unwrap(),
+                            ),
+                            Err(err) => TestResult::fail(err.to_string()),
+                        }
                     }
                     _ => unreachable!(),
                 };
@@ -704,11 +668,13 @@ impl ContractRunner<'_> {
                 // Apply before test configured calldata.
                 match executor.to_mut().transact_raw(self.sender, address, calldata, U256::ZERO) {
                     Ok(call_result) => {
+                        let reverted = call_result.reverted;
+
                         // Merge tx result traces in unit test result.
-                        test_result.merge_call_result(&call_result);
+                        test_result.extend(call_result);
 
                         // To continue unit test execution the call should not revert.
-                        if call_result.reverted {
+                        if reverted {
                             return Err(test_result.single_fail(None))
                         }
                     }

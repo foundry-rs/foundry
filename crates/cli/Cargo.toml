@@ -37,7 +37,9 @@ dotenvy = "0.15"
 eyre.workspace = true
 futures.workspace = true
 indicatif = "0.17"
+rayon.workspace = true
 regex = { workspace = true, default-features = false }
+serde_json.workspace = true
 serde.workspace = true
 strsim = "0.11"
 strum = { workspace = true, features = ["derive"] }
@@ -45,7 +47,6 @@ tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
 yansi.workspace = true
-serde_json.workspace = true
 
 tracing-tracy = { version = "0.11", optional = true }
 

@@ -7,10 +7,11 @@ use crate::{
     utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
     InspectorExt,
 };
+use alloy_consensus::Transaction as TransactionTrait;
 use alloy_genesis::GenesisAccount;
+use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction, TransactionRequest};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
@@ -839,7 +840,7 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, Block<WithOtherFields<Transaction>>)> {
+    ) -> eyre::Result<(u64, AnyRpcBlock)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
@@ -850,13 +851,11 @@ impl Backend {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block.inner))
+            Ok((fork_block, block))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block.header.number;
-
-            let block = block.inner;
 
             Ok((number, block))
         }
@@ -871,7 +870,7 @@ impl Backend {
         env: Env,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<Option<Transaction>> {
+    ) -> eyre::Result<Option<Transaction<AnyTxEnvelope>>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -885,17 +884,17 @@ impl Backend {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
             if is_known_system_sender(tx.from) ||
-                tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
             {
-                trace!(tx=?tx.hash, "skipping system transaction");
+                trace!(tx=?tx.tx_hash(), "skipping system transaction");
                 continue;
             }
 
-            if tx.hash == tx_hash {
+            if tx.tx_hash() == tx_hash {
                 // found the target transaction
                 return Ok(Some(tx.inner))
             }
-            trace!(tx=?tx.hash, "committing transaction");
+            trace!(tx=?tx.tx_hash(), "committing transaction");
 
             commit_transaction(
                 &tx.inner,
@@ -1914,9 +1913,9 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
+fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.miner;
+    env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
@@ -1930,7 +1929,7 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction(
-    tx: &Transaction,
+    tx: &Transaction<AnyTxEnvelope>,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
@@ -1940,7 +1939,7 @@ fn commit_transaction(
 ) -> eyre::Result<()> {
     // TODO: Remove after https://github.com/foundry-rs/foundry/pull/9131
     // if the tx has the blob_versioned_hashes field, we assume it's a Cancun block
-    if tx.blob_versioned_hashes.is_some() {
+    if tx.blob_versioned_hashes().is_some() {
         env.handler_cfg.spec_id = SpecId::CANCUN;
     }
 
@@ -1972,7 +1971,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        if !persistent_accounts.map_or(false, |accounts| accounts.contains(addr)) {
+        if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in acc.storage.iter_mut() {
                 val.present_value = db.storage(*addr, *key)?;
