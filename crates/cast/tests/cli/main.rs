@@ -3,9 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{b256, B256};
-use alloy_rpc_types::{
-    BlockNumberOrTag, Index,
-};
+use alloy_rpc_types::{BlockNumberOrTag, Index};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file, forgetest_async,
