@@ -176,8 +176,10 @@ impl SendTxArgs {
                     if let Some(RpcError::ErrorResp(error_payload)) =
                         report.downcast_ref::<RpcError<TransportErrorKind>>()
                     {
-                        // 1. Return if it's not a custom error
-                        if !error_payload.message.contains("execution reverted: custom error") {
+                        // 1. Return if it's not a revert / custom error
+                        if error_payload.code != 3 ||
+                            !error_payload.message.ends_with("execution reverted")
+                        {
                             return Err(report);
                         }
                         // 2. Extract the error data from the ErrorPayload
