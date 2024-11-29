@@ -113,8 +113,8 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     }
 
     if let Some(mut rpc_headers) = config.eth_rpc_headers.clone() {
-        if rpc_headers.iter().find(|h| h.starts_with("User-Agent:")).is_none() {
-            rpc_headers.push(format!("User-Agent:{}", DEFAULT_USER_AGENT));
+        if !rpc_headers.iter().any(|h| h.starts_with("User-Agent:")) {
+            rpc_headers.push(format!("User-Agent:{DEFAULT_USER_AGENT}"));
         }
 
         builder = builder.headers(rpc_headers);
