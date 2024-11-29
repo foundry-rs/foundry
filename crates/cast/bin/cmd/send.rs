@@ -176,10 +176,8 @@ impl SendTxArgs {
                     if let Some(RpcError::ErrorResp(error_payload)) =
                         report.downcast_ref::<RpcError<TransportErrorKind>>()
                     {
-                        // 1. Return if it's not a revert / custom error
-                        if error_payload.code != 3 ||
-                            !error_payload.message.ends_with("execution reverted")
-                        {
+                        // 1. Return if it's not a revert
+                        if error_payload.code != 3 {
                             return Err(report);
                         }
                         // 2. Extract the error data from the ErrorPayload
@@ -198,6 +196,11 @@ impl SendTxArgs {
                             }
                         };
                         let error_data_string = error_data.as_str().unwrap_or_default();
+
+                        // Check if it's a revert string (has an Error(string) signature)
+                        if error_data_string.starts_with("0x08c379a0") {
+                            return Err(report);
+                        }
 
                         let pretty_calldata = match pretty_calldata(error_data_string, false).await
                         {
