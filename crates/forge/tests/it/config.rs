@@ -31,8 +31,8 @@ impl TestConfig {
         Self { runner, should_fail: false, filter }
     }
 
-    pub fn evm_spec(mut self, spec: SpecId) -> Self {
-        self.runner.evm_spec = spec;
+    pub fn spec_id(mut self, spec: SpecId) -> Self {
+        self.runner.spec_id = spec;
         self
     }
 

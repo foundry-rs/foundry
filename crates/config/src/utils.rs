@@ -259,7 +259,7 @@ impl FromStr for Numeric {
 
 /// Returns the [SpecId] derived from [EvmVersion]
 #[inline]
-pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
+pub fn evm_spec_id(evm_version: EvmVersion, alphanet: bool) -> SpecId {
     if alphanet {
         return SpecId::OSAKA;
     }

@@ -35,7 +35,7 @@ impl TracingExecutor {
             // tracing will be enabled only for the targeted transaction
             executor: ExecutorBuilder::new()
                 .inspectors(|stack| stack.trace_mode(trace_mode).alphanet(alphanet))
-                .spec(evm_spec_id(&version.unwrap_or_default(), alphanet))
+                .spec_id(evm_spec_id(version.unwrap_or_default(), alphanet))
                 .build(env, db),
         }
     }

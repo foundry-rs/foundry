@@ -85,9 +85,8 @@ impl EvmOpts {
     /// And the block that was used to configure the environment.
     pub async fn fork_evm_env(
         &self,
-        fork_url: impl AsRef<str>,
+        fork_url: &str,
     ) -> eyre::Result<(revm::primitives::Env, AnyRpcBlock)> {
-        let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
             .build()?;

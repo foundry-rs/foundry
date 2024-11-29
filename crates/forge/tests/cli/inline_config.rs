@@ -147,14 +147,14 @@ forgetest!(invalid_value, |prj, cmd| {
 Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
-[FAIL: invalid type: found sequence, expected u32 for key "default.runs.fuzz" in inline config] test(bool) ([GAS])
+[FAIL: invalid type: found sequence, expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/inline.sol:Inline
-[FAIL: invalid type: found sequence, expected u32 for key "default.runs.fuzz" in inline config] test(bool) ([GAS])
+[FAIL: invalid type: found sequence, expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -179,16 +179,86 @@ forgetest!(invalid_value_2, |prj, cmd| {
 Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
-[FAIL: invalid type: found string "2", expected u32 for key "default.runs.fuzz" in inline config] test(bool) ([GAS])
+[FAIL: invalid type: found string "2", expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/inline.sol:Inline
-[FAIL: invalid type: found string "2", expected u32 for key "default.runs.fuzz" in inline config] test(bool) ([GAS])
+[FAIL: invalid type: found string "2", expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+forgetest_init!(evm_version, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "inline.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract Dummy {
+            function getBlobBaseFee() public returns (uint256) {
+                return block.blobbasefee;
+            }
+        }
+
+        contract FunctionConfig is Test {
+            Dummy dummy;
+
+            function setUp() public {
+                dummy = new Dummy();
+            }
+
+            /// forge-config: default.evm_version = "shanghai"
+            function test_old() public {
+                vm.expectRevert();
+                dummy.getBlobBaseFee();
+            }
+
+            function test_new() public {
+                dummy.getBlobBaseFee();
+            }
+        }
+
+        /// forge-config: default.evm_version = "shanghai"
+        contract ContractConfig is Test {
+            Dummy dummy;
+
+            function setUp() public {
+                dummy = new Dummy();
+            }
+
+            function test_old() public {
+                vm.expectRevert();
+                dummy.getBlobBaseFee();
+            }
+
+            /// forge-config: default.evm_version = "cancun"
+            function test_new() public {
+                dummy.getBlobBaseFee();
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("test").arg("--evm-version=cancun").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/inline.sol:FunctionConfig
+[PASS] test_new() ([GAS])
+[PASS] test_old() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 tests for test/inline.sol:ContractConfig
+[PASS] test_new() ([GAS])
+[PASS] test_old() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 });

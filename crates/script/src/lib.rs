@@ -613,7 +613,7 @@ impl ScriptConfig {
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .alphanet(self.evm_opts.alphanet)
             })
-            .spec(self.config.evm_spec_id())
+            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 

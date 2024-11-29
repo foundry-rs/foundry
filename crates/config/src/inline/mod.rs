@@ -4,6 +4,7 @@ use figment::{
     value::{Dict, Map, Value},
     Figment, Profile, Provider,
 };
+use foundry_compilers::ProjectCompileOutput;
 use itertools::Itertools;
 
 mod natspec;
@@ -53,6 +54,20 @@ impl InlineConfig {
         Self::default()
     }
 
+    /// Tries to create a new instance by detecting inline configurations from the project compile
+    /// output.
+    pub fn new_parsed(output: &ProjectCompileOutput, config: &Config) -> eyre::Result<Self> {
+        let natspecs: Vec<NatSpec> = NatSpec::parse(output, &config.root);
+        let profiles = &config.profiles;
+        let mut inline = Self::new();
+        for natspec in &natspecs {
+            inline.insert(natspec)?;
+            // Validate after parsing as TOML.
+            natspec.validate_profiles(profiles)?;
+        }
+        Ok(inline)
+    }
+
     /// Inserts a new [`NatSpec`] into the [`InlineConfig`].
     pub fn insert(&mut self, natspec: &NatSpec) -> Result<(), InlineConfigError> {
         let map = if let Some(function) = &natspec.function {
@@ -92,13 +107,14 @@ impl InlineConfig {
         Figment::from(base).merge(self.provide(contract, function))
     }
 
-    /// Returns `true` if a configuration is present at the given contract and function level.
-    pub fn contains(&self, contract: &str, function: &str) -> bool {
-        // Order swapped to avoid allocation in `get_function` since order doesn't matter here.
-        self.get_contract(contract)
-            .filter(|map| !map.is_empty())
-            .or_else(|| self.get_function(contract, function))
-            .is_some_and(|map| !map.is_empty())
+    /// Returns `true` if a configuration is present at the given contract level.
+    pub fn contains_contract(&self, contract: &str) -> bool {
+        self.get_contract(contract).is_some_and(|map| !map.is_empty())
+    }
+
+    /// Returns `true` if a configuration is present at the function level.
+    pub fn contains_function(&self, contract: &str, function: &str) -> bool {
+        self.get_function(contract, function).is_some_and(|map| !map.is_empty())
     }
 
     fn get_contract(&self, contract: &str) -> Option<&DataMap> {

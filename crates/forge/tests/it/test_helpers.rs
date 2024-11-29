@@ -2,9 +2,7 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{
-    revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
-};
+use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
     utils::RuntimeOrHandle,
@@ -175,9 +173,7 @@ impl ForgeTestData {
     pub fn base_runner(&self) -> MultiContractRunnerBuilder {
         init_tracing();
         let config = self.config.clone();
-        let mut runner = MultiContractRunnerBuilder::new(config.clone())
-            .sender(self.config.sender)
-            .with_test_options(TestOptions::new_unparsed(config));
+        let mut runner = MultiContractRunnerBuilder::new(config).sender(self.config.sender);
         if self.profile.is_paris() {
             runner = runner.evm_spec(SpecId::MERGE);
         }
@@ -214,7 +210,6 @@ impl ForgeTestData {
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)
-            .with_test_options(TestOptions::new(&self.output, config.clone()).unwrap())
             .build(root, &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
