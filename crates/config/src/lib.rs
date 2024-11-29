@@ -253,6 +253,15 @@ pub struct Config {
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
     pub eth_rpc_timeout: Option<u64>,
+    /// Headers that should be used for any rpc calls
+    ///
+    /// # Example
+    ///
+    /// rpc_headers = ["x-custom-header:value", "x-another-header:another-value"]
+    ///
+    /// You can also the ETH_RPC_HEADERS env variable like so:
+    /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
+    pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -2347,6 +2356,7 @@ impl Default for Config {
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
+            eth_rpc_headers: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],

@@ -109,6 +109,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
+        eth_rpc_headers: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
