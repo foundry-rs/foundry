@@ -225,7 +225,7 @@ impl CoverageReporter for BytecodeReporter {
                 let source_path = source_id.and_then(|_i| {
                     report
                         .source_paths
-                        .get(&(contract_id.version.clone(), contract_id.source_id.clone()))
+                        .get(&contract_id.source_id)
                 });
 
                 let code = format!("{code:?}");

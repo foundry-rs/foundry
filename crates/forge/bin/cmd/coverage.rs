@@ -179,7 +179,7 @@ impl CoverageArgs {
             };
 
             let identifier = SourceIdentifier::new(source_file.id as usize, build_id.clone());
-            report.add_source(version.clone(), identifier.clone(), id.source.clone());
+            report.add_source(identifier.clone(), id.source.clone());
 
             if let Some(ast) = source_file.ast {
                 let file = project_paths.root.join(id.source);
@@ -204,7 +204,7 @@ impl CoverageArgs {
             .artifact_ids()
             .par_bridge()
             .filter_map(|(id, artifact)| {
-                let source_id = report.get_source_id(id.version.clone(), id.source.clone())?;
+                let source_id = report.get_source_id(id.source.clone())?;
                 ArtifactData::new(&id, source_id, artifact)
             })
             .collect();
@@ -306,9 +306,7 @@ impl CoverageArgs {
         });
 
         for (artifact_id, map, is_deployed_code) in data {
-            if let Some(source_id) =
-                report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
-            {
+            if let Some(source_id) = report.get_source_id(artifact_id.source.clone()) {
                 report.add_hit_map(
                     &ContractId {
                         version: artifact_id.version.clone(),

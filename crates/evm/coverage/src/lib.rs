@@ -37,9 +37,9 @@ pub use inspector::CoverageCollector;
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of source IDs to the source path.
-    pub source_paths: HashMap<(Version, SourceIdentifier), PathBuf>,
+    pub source_paths: HashMap<SourceIdentifier, PathBuf>,
     /// A map of source paths to source IDs.
-    pub source_paths_to_ids: HashMap<(Version, PathBuf), SourceIdentifier>,
+    pub source_paths_to_ids: HashMap<PathBuf, SourceIdentifier>,
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
@@ -52,14 +52,14 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, version: Version, source_id: SourceIdentifier, path: PathBuf) {
-        self.source_paths.insert((version.clone(), source_id.clone()), path.clone());
-        self.source_paths_to_ids.insert((version, path), source_id);
+    pub fn add_source(&mut self, source_id: SourceIdentifier, path: PathBuf) {
+        self.source_paths.insert(source_id.clone(), path.clone());
+        self.source_paths_to_ids.insert(path, source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<SourceIdentifier> {
-        self.source_paths_to_ids.get(&(version, path)).cloned()
+    pub fn get_source_id(&self, path: PathBuf) -> Option<SourceIdentifier> {
+        self.source_paths_to_ids.get(&path).cloned()
     }
 
     /// Add the source maps.
@@ -89,9 +89,7 @@ impl CoverageReport {
 
         for (version, items) in self.items.iter() {
             for item in items {
-                let Some(path) =
-                    self.source_paths.get(&(version.clone(), item.loc.source_id.clone())).cloned()
-                else {
+                let Some(path) = self.source_paths.get(&item.loc.source_id).cloned() else {
                     continue;
                 };
                 *summaries.entry(path).or_default() += item;
@@ -107,9 +105,7 @@ impl CoverageReport {
 
         for (version, items) in self.items.iter() {
             for item in items {
-                let Some(path) =
-                    self.source_paths.get(&(version.clone(), item.loc.source_id.clone())).cloned()
-                else {
+                let Some(path) = self.source_paths.get(&item.loc.source_id).cloned() else {
                     continue;
                 };
                 items_by_source.entry(path).or_default().push(item.clone());
@@ -160,10 +156,7 @@ impl CoverageReport {
     pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
         self.items.retain(|version, items| {
             items.retain(|item| {
-                self.source_paths
-                    .get(&(version.clone(), item.loc.source_id.clone()))
-                    .map(|path| filter(path))
-                    .unwrap_or(false)
+                self.source_paths.get(&item.loc.source_id).map(|path| filter(path)).unwrap_or(false)
             });
             !items.is_empty()
         });
