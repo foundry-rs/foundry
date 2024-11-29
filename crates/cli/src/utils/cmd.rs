@@ -159,27 +159,24 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches!(
-            chain,
-            NamedChain::Acala |
-                NamedChain::AcalaMandalaTestnet |
-                NamedChain::AcalaTestnet |
-                NamedChain::Arbitrum |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::Etherlink |
-                NamedChain::EtherlinkTestnet |
-                NamedChain::Karura |
-                NamedChain::KaruraTestnet |
-                NamedChain::Mantle |
-                NamedChain::MantleSepolia |
-                NamedChain::MantleTestnet |
-                NamedChain::Moonbase |
-                NamedChain::Moonbeam |
-                NamedChain::MoonbeamDev |
-                NamedChain::Moonriver
-        );
+        return chain.is_arbitrum() ||
+            matches!(
+                chain,
+                NamedChain::Acala |
+                    NamedChain::AcalaMandalaTestnet |
+                    NamedChain::AcalaTestnet |
+                    NamedChain::Etherlink |
+                    NamedChain::EtherlinkTestnet |
+                    NamedChain::Karura |
+                    NamedChain::KaruraTestnet |
+                    NamedChain::Mantle |
+                    NamedChain::MantleSepolia |
+                    NamedChain::MantleTestnet |
+                    NamedChain::Moonbase |
+                    NamedChain::Moonbeam |
+                    NamedChain::MoonbeamDev |
+                    NamedChain::Moonriver
+            );
     }
     false
 }
@@ -187,13 +184,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return !matches!(
-            chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
-        );
+        return !chain.is_arbitrum();
     }
     true
 }
