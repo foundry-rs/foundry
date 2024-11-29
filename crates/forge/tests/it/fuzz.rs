@@ -82,11 +82,12 @@ async fn test_successful_fuzz_cases() {
 #[ignore]
 async fn test_fuzz_collection() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options.invariant.depth = 100;
-    runner.test_options.invariant.runs = 1000;
-    runner.test_options.fuzz.runs = 1000;
-    runner.test_options.fuzz.seed = Some(U256::from(6u32));
+    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.invariant.depth = 100;
+        config.invariant.runs = 1000;
+        config.fuzz.runs = 1000;
+        config.fuzz.seed = Some(U256::from(6u32));
+    });
     let results = runner.test_collect(&filter);
 
     assert_multiple(
@@ -111,11 +112,14 @@ async fn test_fuzz_collection() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_persist_fuzz_failure() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzFailurePersist.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options.fuzz.runs = 1000;
 
-    macro_rules! get_failure_result {
-        () => {
+    macro_rules! run_fail {
+        () => { run_fail!(|config| {}) };
+        (|$config:ident| $e:expr) => {{
+            let mut runner = TEST_DATA_DEFAULT.runner_with(|$config| {
+                $config.fuzz.runs = 1000;
+                $e
+            });
             runner
                 .test_collect(&filter)
                 .get("default/fuzz/FuzzFailurePersist.t.sol:FuzzFailurePersistTest")
@@ -125,11 +129,11 @@ async fn test_persist_fuzz_failure() {
                 .unwrap()
                 .counterexample
                 .clone()
-        };
+        }};
     }
 
     // record initial counterexample calldata
-    let initial_counterexample = get_failure_result!();
+    let initial_counterexample = run_fail!();
     let initial_calldata = match initial_counterexample {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),
@@ -137,7 +141,7 @@ async fn test_persist_fuzz_failure() {
 
     // run several times and compare counterexamples calldata
     for i in 0..10 {
-        let new_calldata = match get_failure_result!() {
+        let new_calldata = match run_fail!() {
             Some(CounterExample::Single(counterexample)) => counterexample.calldata,
             _ => Bytes::new(),
         };
@@ -146,8 +150,9 @@ async fn test_persist_fuzz_failure() {
     }
 
     // write new failure in different file
-    runner.test_options.fuzz.failure_persist_file = Some("failure1".to_string());
-    let new_calldata = match get_failure_result!() {
+    let new_calldata = match run_fail!(|config| {
+        config.fuzz.failure_persist_file = Some("failure1".to_string());
+    }) {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),
     };
@@ -233,5 +238,40 @@ contract InlineMaxRejectsTest is Test {
 ...
 [FAIL: `vm.assume` rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
 ...
+"#]]);
+});
+
+// Tests that test timeout config is properly applied.
+// If test doesn't timeout after one second, then test will fail with `rejected too many inputs`.
+forgetest_init!(test_fuzz_timeout, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzTimeoutTest is Test {
+    /// forge-config: default.fuzz.max-test-rejects = 10000
+    /// forge-config: default.fuzz.timeout = 1
+    function test_fuzz_bound(uint256 a) public pure {
+        vm.assume(a == 0);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:FuzzTimeoutTest
+[PASS] test_fuzz_bound(uint256) (runs: [..], [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
