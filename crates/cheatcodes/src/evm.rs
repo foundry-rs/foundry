@@ -723,7 +723,7 @@ impl Cheatcode for getStateDiffCall {
                     let initial_value = slot_changes.1.first().unwrap().0;
                     let current_value = slot_changes.1.last().unwrap().1;
                     diffs.push_str(
-                        &format!("@ {}: {} -> {}\n", slot_changes.0, initial_value, current_value)
+                        &format!("@ {}: {} → {}\n", slot_changes.0, initial_value, current_value)
                             .to_string(),
                     );
                 }
