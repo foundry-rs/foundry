@@ -3,6 +3,7 @@ pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
+import "../logs/console.sol";
 
 /// @notice Helper contract with a construction that makes a call to itself then
 ///         optionally reverts if zero-length data is passed
@@ -261,6 +262,11 @@ contract RecordAccountAccessesTest is DSTest {
         two.write(bytes32(uint256(5678)), bytes32(uint256(123469)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(1234)));
 
+        string memory diffs = cheats.getStateDiff();
+        assertEq(
+            "0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9:\n@ 1235: 0x0000000000000000000000000000000000000000000000000000000000000000 -> 0x000000000000000000000000000000000000000000000000000000000000162e\n0xc7183455a4C133Ae270771860664b6B7ec320bB1:\n@ 5678: 0x0000000000000000000000000000000000000000000000000000000000000000 -> 0x00000000000000000000000000000000000000000000000000000000000004d2\n",
+            diffs
+        );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 4, "incorrect length");
 
@@ -332,6 +338,7 @@ contract RecordAccountAccessesTest is DSTest {
         // contract calls to self in constructor
         SelfCaller caller = new SelfCaller{value: 2 ether}("hello2 world2");
 
+        assertEq("", cheats.getStateDiff());
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 6);
         assertEq(
@@ -451,6 +458,7 @@ contract RecordAccountAccessesTest is DSTest {
         uint256 initBalance = address(this).balance;
         cheats.startStateDiffRecording();
         try this.revertingCall{value: 1 ether}(address(1234), "") {} catch {}
+        assertEq("", cheats.getStateDiff());
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 2);
         assertEq(
@@ -768,6 +776,11 @@ contract RecordAccountAccessesTest is DSTest {
     function testNestedStorage() public {
         cheats.startStateDiffRecording();
         nestedStorer.run();
+        cheats.label(address(nestedStorer), "NestedStorer");
+        assertEq(
+            "NestedStorer:\n@ 31391530734884398925509096751136955997235046655136458338700630915422204365175: 0x0000000000000000000000000000000000000000000000000000000000000000 -> 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 86546418208203448386783321347074308435724792809315873744194221534962779865098: 0x0000000000000000000000000000000000000000000000000000000000000000 -> 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 89735575844917174604881245405098157398514761457822262993733937076486162048205: 0x0000000000000000000000000000000000000000000000000000000000000000 -> 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 99655811014363889343382125167956395016210879868288374279890486979400290732814: 0x0000000000000000000000000000000000000000000000000000000000000000 -> 0x0000000000000000000000000000000000000000000000000000000000000001\n",
+            cheats.getStateDiff()
+        );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect account access length");
 

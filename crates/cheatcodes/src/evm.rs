@@ -683,6 +683,56 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
+/// State diffs to be displayed.
+/// (changed account -> (change slot -> vec of (initial value, current value) tuples))
+type StateDiffs = BTreeMap<Address, BTreeMap<U256, Vec<(B256, B256)>>>;
+
+impl Cheatcode for getStateDiffCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+
+        let mut diffs = String::new();
+        let address_label =
+            |addr: &Address| state.labels.get(addr).cloned().unwrap_or_else(|| addr.to_string());
+
+        let mut changes_map: StateDiffs = BTreeMap::default();
+        if let Some(records) = &state.recorded_account_diffs_stack {
+            records
+                .iter()
+                .flatten()
+                .filter(|account_access| !account_access.storageAccesses.is_empty())
+                .for_each(|account_access| {
+                    for storage_access in &account_access.storageAccesses {
+                        if storage_access.isWrite && !storage_access.reverted {
+                            changes_map
+                                .entry(storage_access.account)
+                                .or_default()
+                                .entry(storage_access.slot.into())
+                                .or_default()
+                                .push((storage_access.previousValue, storage_access.newValue));
+                        }
+                    }
+                });
+
+            for change in changes_map {
+                // Print changed account.
+                diffs.push_str(&format!("{}:\n", &address_label(&change.0)).to_string());
+                for slot_changes in change.1 {
+                    // For each slot we print the initial value from first storage change recorded
+                    // and the new value from last storage change recorded.
+                    let initial_value = slot_changes.1.first().unwrap().0;
+                    let current_value = slot_changes.1.last().unwrap().1;
+                    diffs.push_str(
+                        &format!("@ {}: {} -> {}\n", slot_changes.0, initial_value, current_value)
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        Ok(diffs.abi_encode())
+    }
+}
+
 impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
