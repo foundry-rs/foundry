@@ -302,7 +302,13 @@ impl CoverageArgs {
         for (artifact_id, map, is_deployed_code) in data {
             if let Some(source_id) = report.get_source_id(artifact_id.source.clone()) {
                 report.add_hit_map(
-                    &ContractId { source_id, contract_name: artifact_id.name.as_str().into() },
+                    &ContractId {
+                        source_id: SourceIdentifier::new(
+                            source_id.source_id,
+                            artifact_id.build_id.clone(),
+                        ),
+                        contract_name: artifact_id.name.as_str().into(),
+                    },
                     map,
                     is_deployed_code,
                 )?;
