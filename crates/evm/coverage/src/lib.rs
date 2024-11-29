@@ -47,6 +47,8 @@ pub struct CoverageReport {
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
+    /// Anchor Item ID by source ID
+    pub item_ids_by_source_id: HashMap<SourceIdentifier, Vec<usize>>,
 }
 
 impl CoverageReport {
@@ -141,7 +143,11 @@ impl CoverageReport {
                 if let Some(&hits) = hit_map.hits.get(&anchor.instruction) {
                     self.items
                         .get_mut(&contract_id.source_id)
-                        .and_then(|items| items.get_mut(anchor.item_id))
+                        .and_then(|items| {
+                            let scaled_item_id = anchor.item_id % items.len();
+
+                            items.get_mut(scaled_item_id)
+                        })
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits;
                 }
