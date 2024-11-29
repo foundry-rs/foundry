@@ -178,7 +178,7 @@ impl CoverageReporter for DebugReporter {
                         "  - Refers to item: {}",
                         report
                             .items
-                            .get(&contract_id.version)
+                            .get(&contract_id.source_id)
                             .and_then(|items| items.get(anchor.item_id))
                             .map_or("None".to_owned(), |item| item.to_string())
                     );

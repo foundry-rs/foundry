@@ -225,7 +225,7 @@ impl CoverageArgs {
 
             let anchors = artifacts
                 .par_iter()
-                .filter(|artifact| artifact.contract_id.version == *version)
+                .filter(|artifact| sources.sources.contains_key(&artifact.contract_id.source_id))
                 .map(|artifact| {
                     let creation_code_anchors = artifact.creation.find_anchors(
                         &source_analysis,
@@ -242,7 +242,7 @@ impl CoverageArgs {
                 .collect::<Vec<_>>();
 
             report.add_anchors(anchors);
-            report.add_items(version.clone(), source_analysis.items);
+            report.add_items(source_analysis.items);
         }
 
         report.add_source_maps(artifacts.into_iter().map(|artifact| {
@@ -308,11 +308,7 @@ impl CoverageArgs {
         for (artifact_id, map, is_deployed_code) in data {
             if let Some(source_id) = report.get_source_id(artifact_id.source.clone()) {
                 report.add_hit_map(
-                    &ContractId {
-                        version: artifact_id.version.clone(),
-                        source_id,
-                        contract_name: artifact_id.name.as_str().into(),
-                    },
+                    &ContractId { source_id, contract_name: artifact_id.name.as_str().into() },
                     map,
                     is_deployed_code,
                 )?;
@@ -398,11 +394,7 @@ impl ArtifactData {
         artifact: &impl Artifact,
     ) -> Option<Self> {
         Some(Self {
-            contract_id: ContractId {
-                version: id.version.clone(),
-                source_id,
-                contract_name: id.name.as_str().into(),
-            },
+            contract_id: ContractId { source_id, contract_name: id.name.as_str().into() },
             creation: BytecodeData::new(
                 artifact.get_source_map()?.ok()?,
                 artifact

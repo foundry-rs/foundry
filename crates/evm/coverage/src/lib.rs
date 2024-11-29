@@ -15,7 +15,6 @@ use alloy_primitives::{map::HashMap, Bytes, B256};
 use analysis::SourceIdentifier;
 use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
-use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt::Display,
@@ -41,7 +40,7 @@ pub struct CoverageReport {
     /// A map of source paths to source IDs.
     pub source_paths_to_ids: HashMap<PathBuf, SourceIdentifier>,
     /// All coverage items for the codebase, keyed by the compiler version.
-    pub items: HashMap<Version, Vec<CoverageItem>>,
+    pub items: HashMap<SourceIdentifier, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
     /// All the bytecode hits for the codebase.
@@ -71,8 +70,10 @@ impl CoverageReport {
     }
 
     /// Add coverage items to this report.
-    pub fn add_items(&mut self, version: Version, items: impl IntoIterator<Item = CoverageItem>) {
-        self.items.entry(version).or_default().extend(items);
+    pub fn add_items(&mut self, items: impl IntoIterator<Item = CoverageItem>) {
+        for item in items.into_iter() {
+            self.items.entry(item.loc.source_id.clone()).or_default().push(item);
+        }
     }
 
     /// Add anchors to this report.
@@ -139,7 +140,7 @@ impl CoverageReport {
             for anchor in anchors {
                 if let Some(&hits) = hit_map.hits.get(&anchor.instruction) {
                     self.items
-                        .get_mut(&contract_id.version)
+                        .get_mut(&contract_id.source_id)
                         .and_then(|items| items.get_mut(anchor.item_id))
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits;
@@ -252,18 +253,13 @@ impl HitMap {
 /// A unique identifier for a contract
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
-    pub version: Version,
     pub source_id: SourceIdentifier,
     pub contract_name: Arc<str>,
 }
 
 impl Display for ContractId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Contract \"{}\" (solc {}, source ID {})",
-            self.contract_name, self.version, self.source_id
-        )
+        write!(f, "Contract \"{}\" source ID {}", self.contract_name, self.source_id)
     }
 }
 
