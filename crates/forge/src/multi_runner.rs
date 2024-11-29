@@ -291,27 +291,40 @@ pub struct TestRunnerConfig {
 impl TestRunnerConfig {
     /// Reconfigures all fields using the given `config`.
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
-        self.config = config;
-        self.reconfigure();
-    }
+        debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-    /// Reconfigures all fields using `self.config`.
-    pub fn reconfigure(&mut self) {
+        // Only update if changed.
+        macro_rules! update {
+            ($f:expr, |$config:ident| $get:expr) => {
+                if $f != {
+                    let $config = &*self.config;
+                    $get
+                } {
+                    let $config = &*config;
+                    $f = $get;
+                }
+            };
+        }
+
         // TODO: self.evm_opts
         // TODO: self.env
-        self.spec_id = self.config.evm_spec_id();
-        self.sender = self.config.sender;
+        update!(self.spec_id, |config| config.evm_spec_id());
+        update!(self.sender, |config| config.sender);
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
         // self.isolation = N/A;
-        self.alphanet = self.config.alphanet;
+        update!(self.alphanet, |config| config.alphanet);
+
+        self.config = config;
     }
 
     /// Configures the given executor with this configuration.
     pub fn configure_executor(&self, executor: &mut Executor) {
+        // TODO: See above
+
         let inspector = executor.inspector_mut();
-        inspector.set_env(&self.env);
+        // inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
             cheatcodes.config =
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
@@ -321,9 +334,9 @@ impl TestRunnerConfig {
         inspector.enable_isolation(self.isolation);
         inspector.alphanet(self.alphanet);
 
-        executor.env_mut().clone_from(&self.env);
+        // executor.env_mut().clone_from(&self.env);
         executor.set_spec_id(self.spec_id);
-        executor.set_gas_limit(self.evm_opts.gas_limit());
+        // executor.set_gas_limit(self.evm_opts.gas_limit());
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
 
