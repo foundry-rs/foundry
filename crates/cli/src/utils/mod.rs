@@ -39,8 +39,6 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
 
-const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
-
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
     /// Returns true if the [`Path`] ends with `.t.sol`
