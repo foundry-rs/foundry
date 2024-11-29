@@ -19,7 +19,10 @@ pub fn find_anchors(
     let mut seen = HashSet::with_hasher(DefaultHashBuilder::default());
     source_map
         .iter()
-        .filter_map(|_element| items_by_source_id.get(source_id))
+        .filter_map(|element| {
+            items_by_source_id
+                .get(&SourceIdentifier::new(element.index()? as usize, source_id.build_id.clone()))
+        })
         .flatten()
         .filter_map(|&item_id| {
             if !seen.insert(item_id) {
