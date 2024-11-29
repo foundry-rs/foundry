@@ -1474,15 +1474,35 @@ casttest!(string_decode, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(event_decode, |_prj, cmd| {
-    cmd.args(["decode-event", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
+// tests cast can decode event with provided signature
+casttest!(event_decode_with_sig, |_prj, cmd| {
+    cmd.args(["decode-event", "--sig", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
 78
 0x0000000000000000000000000000000000D0004F
 
 "#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "78",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
 });
 
-// tests cast can decode traces with provided signature
+// tests cast can decode event with Openchain API
+casttest!(event_decode_with_openchain, |prj, cmd| {
+    prj.clear_cache();
+    cmd.args(["decode-event", "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"]).assert_success().stdout_eq(str![[r#"
+BaseCurrencySet(address,uint256)
+0x000000000000000000000000000000000000004e
+15187004358734 [1.518e13]
+
+"#]]);
+});
+
+// tests cast can decode error with provided signature
 casttest!(error_decode_with_sig, |_prj, cmd| {
     cmd.args(["decode-error", "--sig", "AnotherValueTooHigh(uint256,address)", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"]).assert_success().stdout_eq(str![[r#"
 101
@@ -1499,8 +1519,9 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 "#]]);
 });
 
-// tests cast can decode traces with Openchain API
-casttest!(error_decode_with_openchain, |_prj, cmd| {
+// tests cast can decode error with Openchain API
+casttest!(error_decode_with_openchain, |prj, cmd| {
+    prj.clear_cache();
     cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
 ValueTooHigh(uint256,uint256)
 101
@@ -1509,14 +1530,16 @@ ValueTooHigh(uint256,uint256)
 "#]]);
 });
 
-// tests cast can decode traces when using local sig identifiers cache
-forgetest!(error_decode_with_cache, |prj, cmd| {
+// tests cast can decode error and event when using local sig identifiers cache
+forgetest!(error_event_decode_with_cache, |prj, cmd| {
+    prj.clear_cache();
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "LocalProjectContract",
         r#"
 contract ContractWithCustomError {
     error AnotherValueTooHigh(uint256, address);
+    event MyUniqueEventWithinLocalProject(uint256 a, address b);
 }
    "#,
     )
@@ -1532,6 +1555,16 @@ contract ContractWithCustomError {
 AnotherValueTooHigh(uint256,address)
 101
 0x0000000000000000000000000000000000D0004F
+
+"#]]);
+    // Assert cast can decode event with local cache.
+    cmd.cast_fuse()
+        .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueEventWithinLocalProject(uint256,address)
+78
+0x00000000000000000000000000000DD00000004e
 
 "#]]);
 });

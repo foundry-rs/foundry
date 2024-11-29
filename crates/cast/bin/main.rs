@@ -213,8 +213,29 @@ async fn main_args(args: CastArgs) -> Result<()> {
             print_tokens(&tokens);
         }
         CastSubcommand::DecodeEvent { sig, data } => {
-            let event = get_event(sig.as_str())?;
-            let decoded_event = event.decode_log_parts(None, &hex::decode(data)?, false)?;
+            let decoded_event = if let Some(event_sig) = sig {
+                get_event(event_sig.as_str())?.decode_log_parts(None, &hex::decode(data)?, false)?
+            } else {
+                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let selector = data.get(..64).unwrap_or_default();
+                let identified_event =
+                    SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
+                        .write()
+                        .await
+                        .identify_event(&hex::decode(selector)?)
+                        .await;
+                if let Some(event) = identified_event {
+                    let _ = sh_println!("{}", event.signature());
+                    let data = data.get(64..).unwrap_or_default();
+                    get_event(event.signature().as_str())?.decode_log_parts(
+                        None,
+                        &hex::decode(data)?,
+                        false,
+                    )?
+                } else {
+                    eyre::bail!("No matching event signature found for selector `{selector}`")
+                }
+            };
             print_tokens(&decoded_event.body);
         }
         CastSubcommand::DecodeError { sig, data } => {
