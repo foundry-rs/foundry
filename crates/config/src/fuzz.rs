@@ -28,6 +28,8 @@ pub struct FuzzConfig {
     pub failure_persist_file: Option<String>,
     /// show `console.log` in fuzz test, defaults to `false`
     pub show_logs: bool,
+    /// Optional timeout (in seconds) for each property test
+    pub timeout: Option<u32>,
 }
 
 impl Default for FuzzConfig {
@@ -41,6 +43,7 @@ impl Default for FuzzConfig {
             failure_persist_dir: None,
             failure_persist_file: None,
             show_logs: false,
+            timeout: None,
         }
     }
 }

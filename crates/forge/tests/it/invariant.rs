@@ -949,3 +949,53 @@ Ran 2 tests for test/SelectorMetricsTest.t.sol:CounterTest
 ...
 "#]]);
 });
+
+// Tests that invariant exists with success after configured timeout.
+forgetest_init!(should_apply_configured_timeout, |prj, cmd| {
+    // Add initial test that breaks invariant.
+    prj.add_test(
+        "TimeoutTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract TimeoutHandler is Test {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract TimeoutTest is Test {
+    TimeoutHandler handler;
+
+    function setUp() public {
+        handler = new TimeoutHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 10000
+    /// forge-config: default.invariant.depth = 20000
+    /// forge-config: default.invariant.timeout = 1
+    function invariant_counter_timeout() public view {
+        // Invariant will fail if more than 10000 increments.
+        // Make sure test timeouts after one second and remaining runs are canceled.
+        require(handler.count() < 10000);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_counter_timeout"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
+[PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
