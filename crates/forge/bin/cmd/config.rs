@@ -5,7 +5,7 @@ use foundry_cli::utils::LoadConfig;
 use foundry_common::{evm::EvmArgs, shell};
 use foundry_config::fix::fix_tomls;
 
-foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
+foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_args);
 
 /// CLI arguments for `forge config`.
 #[derive(Clone, Debug, Parser)]
@@ -23,7 +23,7 @@ pub struct ConfigArgs {
     opts: BuildArgs,
 
     #[command(flatten)]
-    evm_opts: EvmArgs,
+    evm_args: EvmArgs,
 }
 
 impl ConfigArgs {
