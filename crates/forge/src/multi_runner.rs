@@ -296,7 +296,7 @@ impl TestRunnerConfig {
         // Only update if changed.
         macro_rules! update {
             ($f:expr, |$config:ident| $get:expr) => {
-                if $f != {
+                if $f == {
                     let $config = &*self.config;
                     $get
                 } {
