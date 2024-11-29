@@ -746,18 +746,6 @@ impl<'a> FunctionRunner<'a> {
     fn prepare_test(&mut self, func: &Function) -> Result<(), ()> {
         let address = self.setup.address;
 
-        if self.inline_config.contains_function(self.cr.name, &func.name) {
-            let config = match self.cr.inline_config(Some(func)) {
-                Ok(config) => config,
-                Err(err) => {
-                    self.result.single_fail(Some(err.to_string()));
-                    return Err(());
-                }
-            };
-            self.tcfg.to_mut().reconfigure_with(Arc::new(config));
-            self.tcfg.configure_executor(self.executor.to_mut());
-        }
-
         // Apply before test configured functions (if any).
         if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
             1
