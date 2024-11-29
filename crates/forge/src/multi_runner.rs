@@ -293,28 +293,15 @@ impl TestRunnerConfig {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        // Only update if changed.
-        macro_rules! update {
-            ($f:expr, |$config:ident| $get:expr) => {
-                if $f == {
-                    let $config = &*self.config;
-                    $get
-                } {
-                    let $config = &*config;
-                    $f = $get;
-                }
-            };
-        }
-
         // TODO: self.evm_opts
         // TODO: self.env
-        update!(self.spec_id, |config| config.evm_spec_id());
-        update!(self.sender, |config| config.sender);
+        self.spec_id = config.evm_spec_id();
+        self.sender = config.sender;
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
         // self.isolation = N/A;
-        update!(self.alphanet, |config| config.alphanet);
+        self.alphanet = config.alphanet;
 
         self.config = config;
     }
