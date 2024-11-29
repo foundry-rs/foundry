@@ -39,8 +39,6 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
 
-const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
-
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
     /// Returns true if the [`Path`] ends with `.t.sol`
@@ -112,11 +110,7 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.timeout(Duration::from_secs(rpc_timeout));
     }
 
-    if let Some(mut rpc_headers) = config.eth_rpc_headers.clone() {
-        if !rpc_headers.iter().any(|h| h.starts_with("User-Agent:")) {
-            rpc_headers.push(format!("User-Agent:{DEFAULT_USER_AGENT}"));
-        }
-
+    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
         builder = builder.headers(rpc_headers);
     }
 
