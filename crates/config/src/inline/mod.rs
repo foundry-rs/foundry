@@ -113,6 +113,8 @@ impl InlineConfig {
     }
 
     /// Returns `true` if a configuration is present at the function level.
+    ///
+    /// Does not include contract-level configurations.
     pub fn contains_function(&self, contract: &str, function: &str) -> bool {
         self.get_function(contract, function).is_some_and(|map| !map.is_empty())
     }
