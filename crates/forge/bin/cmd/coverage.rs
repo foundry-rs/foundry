@@ -23,6 +23,7 @@ use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use semver::Version;
 use std::{
+    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -290,19 +291,15 @@ impl CoverageArgs {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
-                    if let Some(report_file) = self.report_file {
-                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
-                            .report(&report)
-                    } else {
-                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                            .report(&report)
-                    }
+                    let path =
+                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    let mut file = io::BufWriter::new(fs::create_file(path)?);
+                    LcovReporter::new(&mut file).report(&report)
                 }
                 CoverageReportKind::Bytecode => {
                     let destdir = root.join("bytecode-coverage");
                     fs::create_dir_all(&destdir)?;
-                    BytecodeReporter::new(root.clone(), destdir).report(&report)?;
-                    Ok(())
+                    BytecodeReporter::new(root.clone(), destdir).report(&report)
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;

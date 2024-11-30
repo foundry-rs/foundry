@@ -19,7 +19,7 @@ pub struct ContractVisitor<'a> {
     /// The current branch ID
     branch_id: usize,
     /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
-    last_line: usize,
+    last_line: u32,
 
     /// Coverage items
     pub items: Vec<CoverageItem>,
@@ -47,23 +47,20 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn visit_function_definition(&mut self, node: &Node) -> eyre::Result<()> {
-        let name: String =
-            node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
+        let Some(body) = &node.body else { return Ok(()) };
 
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
 
-        match &node.body {
-            Some(body) => {
-                // Do not add coverage item for constructors without statements.
-                if kind == "constructor" && !has_statements(body) {
-                    return Ok(())
-                }
-                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
-                self.visit_block(body)
-            }
-            _ => Ok(()),
+        let name: String =
+            node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
+
+        // Do not add coverage item for constructors without statements.
+        if kind == "constructor" && !has_statements(body) {
+            return Ok(())
         }
+        self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
+        self.visit_block(body)
     }
 
     fn visit_modifier_or_yul_fn_definition(&mut self, node: &Node) -> eyre::Result<()> {
@@ -456,28 +453,32 @@ impl<'a> ContractVisitor<'a> {
         let item = CoverageItem { kind, loc: self.source_location_for(src), hits: 0 };
         // Push a line item if we haven't already
         if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
-            self.last_line < item.loc.line
+            self.last_line < item.loc.lines.start
         {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
                 loc: item.loc.clone(),
                 hits: 0,
             });
-            self.last_line = item.loc.line;
+            self.last_line = item.loc.lines.start;
         }
 
         self.items.push(item);
     }
 
     fn source_location_for(&self, loc: &ast::LowFidelitySourceLocation) -> SourceLocation {
-        let loc_start =
-            self.source.char_indices().map(|(i, _)| i).nth(loc.start).unwrap_or_default();
+        let bytes_start = loc.start as u32;
+        let bytes_end = (loc.start + loc.length.unwrap_or(0)) as u32;
+        let bytes = bytes_start..bytes_end;
+
+        let start_line = self.source[..bytes.start as usize].lines().count() as u32;
+        let n_lines = self.source[bytes.start as usize..bytes.end as usize].lines().count() as u32;
+        let lines = start_line..start_line + n_lines;
         SourceLocation {
             source_id: self.source_id,
             contract_name: self.contract_name.clone(),
-            start: loc.start as u32,
-            length: loc.length.map(|x| x as u32),
-            line: self.source[..loc_start].lines().count(),
+            bytes,
+            lines,
         }
     }
 }
