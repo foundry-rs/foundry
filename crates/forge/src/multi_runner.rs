@@ -320,6 +320,7 @@ impl TestRunnerConfig {
         inspector.collect_coverage(self.coverage);
         inspector.enable_isolation(self.isolation);
         inspector.alphanet(self.alphanet);
+        // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
         executor.set_spec_id(self.spec_id);
@@ -349,6 +350,7 @@ impl TestRunnerConfig {
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
                     .alphanet(self.alphanet)
+                    .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())

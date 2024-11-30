@@ -533,9 +533,20 @@ pub enum CastSubcommand {
     /// Decode event data.
     #[command(visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {
-        /// The event signature.
-        sig: String,
+        /// The event signature. If none provided then tries to decode from local cache or `https://api.openchain.xyz`.
+        #[arg(long, visible_alias = "event-sig")]
+        sig: Option<String>,
         /// The event data to decode.
+        data: String,
+    },
+
+    /// Decode custom error data.
+    #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
+    DecodeError {
+        /// The error signature. If none provided then tries to decode from local cache or `https://api.openchain.xyz`.
+        #[arg(long, visible_alias = "error-sig")]
+        sig: Option<String>,
+        /// The error data to decode.
         data: String,
     },
 

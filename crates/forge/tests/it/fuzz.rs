@@ -240,3 +240,38 @@ contract InlineMaxRejectsTest is Test {
 ...
 "#]]);
 });
+
+// Tests that test timeout config is properly applied.
+// If test doesn't timeout after one second, then test will fail with `rejected too many inputs`.
+forgetest_init!(test_fuzz_timeout, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FuzzTimeoutTest is Test {
+    /// forge-config: default.fuzz.max-test-rejects = 10000
+    /// forge-config: default.fuzz.timeout = 1
+    function test_fuzz_bound(uint256 a) public pure {
+        vm.assume(a == 0);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:FuzzTimeoutTest
+[PASS] test_fuzz_bound(uint256) (runs: [..], [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});

@@ -253,6 +253,15 @@ pub struct Config {
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
     pub eth_rpc_timeout: Option<u64>,
+    /// Headers that should be used for any rpc calls
+    ///
+    /// # Example
+    ///
+    /// rpc_headers = ["x-custom-header:value", "x-another-header:another-value"]
+    ///
+    /// You can also the ETH_RPC_HEADERS env variable like so:
+    /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
+    pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -445,6 +454,9 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
+    /// The CREATE2 deployer address to use.
+    pub create2_deployer: Address,
+
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
 
@@ -557,6 +569,10 @@ impl Config {
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+
+    /// Default create2 deployer
+    pub const DEFAULT_CREATE2_DEPLOYER: Address =
+        address!("4e59b44847b379578588920ca78fbf26c0b4956c");
 
     /// Docker image with eof-enabled solc binary
     pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
@@ -2347,6 +2363,7 @@ impl Default for Config {
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
+            eth_rpc_headers: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
@@ -2380,6 +2397,7 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
+            create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],
             dependencies: Default::default(),
             soldeer: Default::default(),

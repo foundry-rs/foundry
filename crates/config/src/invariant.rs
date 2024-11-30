@@ -30,6 +30,8 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
+    /// Optional timeout (in seconds) for each invariant test.
+    pub timeout: Option<u32>,
 }
 
 impl Default for InvariantConfig {
@@ -45,6 +47,7 @@ impl Default for InvariantConfig {
             gas_report_samples: 256,
             failure_persist_dir: None,
             show_metrics: false,
+            timeout: None,
         }
     }
 }
@@ -63,6 +66,7 @@ impl InvariantConfig {
             gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
             show_metrics: false,
+            timeout: None,
         }
     }
 

@@ -119,6 +119,7 @@ impl ForgeTestProfile {
             failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
             failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,
+            timeout: None,
         };
         config.invariant = InvariantConfig {
             runs: 256,
@@ -143,6 +144,7 @@ impl ForgeTestProfile {
                     .into_path(),
             ),
             show_metrics: false,
+            timeout: None,
         };
 
         config.sanitized()

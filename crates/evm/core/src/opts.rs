@@ -1,5 +1,5 @@
 use super::fork::environment;
-use crate::fork::CreateFork;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
@@ -9,7 +9,7 @@ use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
     #[serde(flatten)]
@@ -66,6 +66,34 @@ pub struct EvmOpts {
 
     /// whether to enable Alphanet features.
     pub alphanet: bool,
+
+    /// The CREATE2 deployer's address.
+    pub create2_deployer: Address,
+}
+
+impl Default for EvmOpts {
+    fn default() -> Self {
+        Self {
+            env: Env::default(),
+            fork_url: None,
+            fork_block_number: None,
+            fork_retries: None,
+            fork_retry_backoff: None,
+            compute_units_per_second: None,
+            no_rpc_rate_limit: false,
+            no_storage_caching: false,
+            initial_balance: U256::default(),
+            sender: Address::default(),
+            ffi: false,
+            always_use_create_2_factory: false,
+            verbosity: 0,
+            memory_limit: 0,
+            isolate: false,
+            disable_block_gas_limit: false,
+            alphanet: false,
+            create2_deployer: DEFAULT_CREATE2_DEPLOYER,
+        }
+    }
 }
 
 impl EvmOpts {
