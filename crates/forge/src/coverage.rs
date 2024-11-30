@@ -94,7 +94,7 @@ impl<'a> LcovReporter<'a> {
 
 impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
-        for (path, items) in report.items_by_source() {
+        for (path, items) in report.items_by_file() {
             let summary = CoverageSummary::from_items(items.iter().copied());
 
             writeln!(self.out, "TN:")?;
@@ -152,7 +152,7 @@ pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
-        for (path, items) in report.items_by_source() {
+        for (path, items) in report.items_by_file() {
             sh_println!("Uncovered for {}:", path.display())?;
             items.iter().for_each(|item| {
                 if item.hits == 0 {

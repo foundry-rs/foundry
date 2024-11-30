@@ -82,35 +82,29 @@ impl CoverageReport {
         self.anchors.extend(anchors);
     }
 
-    /// Get coverage summaries by source file path.
-    pub fn summary_by_file(&self) -> impl Iterator<Item = (PathBuf, CoverageSummary)> {
-        let mut summaries = BTreeMap::<PathBuf, CoverageSummary>::new();
-
-        for (version, items) in self.items.iter() {
-            for item in items {
-                let Some(path) =
-                    self.source_paths.get(&(version.clone(), item.loc.source_id)).cloned()
-                else {
-                    continue;
-                };
-                summaries.entry(path).or_default().add_item(item);
-            }
-        }
-
-        summaries.into_iter()
+    /// Returns an iterator over coverage summaries by source file path.
+    pub fn summary_by_file(&self) -> impl Iterator<Item = (&Path, CoverageSummary)> {
+        self.by_file(|summary: &mut CoverageSummary, item| summary.add_item(item))
     }
 
-    /// Get coverage items by source file path.
-    pub fn items_by_source(&self) -> impl Iterator<Item = (&Path, Vec<&CoverageItem>)> {
-        let mut items_by_source: BTreeMap<&Path, Vec<&CoverageItem>> = BTreeMap::new();
-        for (version, items) in self.items.iter() {
+    /// Returns an iterator over coverage items by source file path.
+    pub fn items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<&CoverageItem>)> {
+        self.by_file(|list: &mut Vec<_>, item| list.push(item))
+    }
+
+    fn by_file<'a, T: Default>(
+        &'a self,
+        mut f: impl FnMut(&mut T, &'a CoverageItem),
+    ) -> impl Iterator<Item = (&'a Path, T)> {
+        let mut by_file: BTreeMap<&Path, T> = BTreeMap::new();
+        for (version, items) in &self.items {
             for item in items {
                 let key = (version.clone(), item.loc.source_id);
                 let Some(path) = self.source_paths.get(&key) else { continue };
-                items_by_source.entry(path).or_default().push(item);
+                f(by_file.entry(path).or_default(), item);
             }
         }
-        items_by_source.into_iter()
+        by_file.into_iter()
     }
 
     /// Processes data from a [`HitMap`] and sets hit counts for coverage items in this coverage
