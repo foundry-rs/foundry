@@ -1,7 +1,10 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
-use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
+use foundry_compilers::artifacts::{
+    ast::{self, Ast, Node, NodeType},
+    Source,
+};
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -557,7 +560,7 @@ impl<'a> SourceAnalyzer<'a> {
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?;
 
-                    let mut visitor = ContractVisitor::new(source_id, source, &name);
+                    let mut visitor = ContractVisitor::new(source_id, &source.content, &name);
                     visitor.visit_contract(node)?;
                     let mut items = visitor.items;
 
@@ -591,7 +594,7 @@ pub struct SourceFiles<'a> {
 #[derive(Debug)]
 pub struct SourceFile<'a> {
     /// The source code.
-    pub source: String,
+    pub source: Source,
     /// The AST of the source code.
     pub ast: &'a Ast,
 }

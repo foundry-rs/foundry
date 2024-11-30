@@ -364,6 +364,11 @@ impl SourceLocation {
     pub fn len(&self) -> u32 {
         self.bytes.len() as u32
     }
+
+    /// Returns true if the byte range is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Coverage summary for a source file.

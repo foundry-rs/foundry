@@ -16,7 +16,9 @@ use forge::{
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
+    artifacts::{
+        sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
+    },
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
@@ -154,7 +156,7 @@ impl CoverageArgs {
 
                 let source = SourceFile {
                     ast,
-                    source: fs::read_to_string(&file)
+                    source: Source::read(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 };
                 versioned_sources
