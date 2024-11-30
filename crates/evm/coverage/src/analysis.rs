@@ -454,10 +454,10 @@ impl<'a> ContractVisitor<'a> {
     /// collection (plus additional coverage line if item is a statement).
     fn push_item_kind(&mut self, kind: CoverageItemKind, src: &ast::LowFidelitySourceLocation) {
         let item = CoverageItem { kind, loc: self.source_location_for(src), hits: 0 };
-        // Push a line item if we haven't already
-        if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
-            self.last_line < item.loc.lines.start
-        {
+
+        // Push a line item if we haven't already.
+        debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
+        if self.last_line < item.loc.lines.start {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
                 loc: item.loc.clone(),
