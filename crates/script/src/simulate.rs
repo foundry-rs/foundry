@@ -64,7 +64,11 @@ impl PreSimulationState {
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
                 if let Some(TxKind::Call(_)) = to {
-                    builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;
+                    builder.set_call(
+                        &address_to_abi,
+                        &self.execution_artifacts.decoder,
+                        self.script_config.evm_opts.create2_deployer,
+                    )?;
                 } else {
                     builder.set_create(false, sender.create(nonce), &address_to_abi)?;
                 }
