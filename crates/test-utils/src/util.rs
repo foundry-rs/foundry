@@ -902,7 +902,7 @@ impl TestCommand {
         assert_data_eq!(actual, expected);
     }
 
-    /// Runs the command and asserts that it **failed** nothing was printed to stdout.
+    /// Runs the command and asserts that it **succeeded** nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
         self.assert_success().stdout_eq(Data::new());
