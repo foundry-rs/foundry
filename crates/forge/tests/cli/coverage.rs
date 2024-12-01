@@ -1,18 +1,30 @@
-use foundry_test_utils::{assert_data_eq, str};
+use foundry_test_utils::{snapbox::IntoData, TestCommand};
 
-forgetest!(basic_coverage, |_prj, cmd| {
-    cmd.args(["coverage"]);
-    cmd.assert_success();
-});
+forgetest_init!(basic_coverage, |prj, cmd| {
+    cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
 
-forgetest!(report_file_coverage, |prj, cmd| {
-    cmd.arg("coverage").args([
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        prj.root().join("lcov.info").to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Wrote LCOV report.
+| File                 | % Lines       | % Statements  | % Branches    | % Funcs       |
+|----------------------|---------------|---------------|---------------|---------------|
+| script/Counter.s.sol | 0.00% (0/5)   | 0.00% (0/3)   | 100.00% (0/0) | 0.00% (0/2)   |
+| src/Counter.sol      | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total                | 44.44% (4/9)  | 40.00% (2/5)  | 100.00% (0/0) | 50.00% (2/4)  |
+
+"#
+    ]]);
+    assert!(prj.root().join("lcov.info").exists(), "lcov.info was not created");
 });
 
 forgetest!(test_setup_coverage, |prj, cmd| {
@@ -58,7 +70,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 100% coverage (init function coverage called in setUp is accounted).
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").arg("--summary").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -151,20 +163,16 @@ contract BContractTest is DSTest {
     .unwrap();
 
     // Assert AContract is not included in report.
-    cmd.arg("coverage")
-        .args([
-            "--no-match-coverage".to_string(),
-            "AContract".to_string(), // Filter out `AContract`
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("coverage").arg("--no-match-coverage=AContract").assert_success().stdout_eq(str![[
+        r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/BContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 | Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 
-"#]]);
+"#
+    ]]);
 });
 
 forgetest!(test_assert_coverage, |prj, cmd| {
@@ -363,19 +371,9 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    let lcov_info = prj.root().join("lcov.info");
-    cmd.arg("coverage").args([
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        lcov_info.to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
-    assert!(lcov_info.exists());
-
     // We want to make sure DA:8,1 is added only once so line hit is not doubled.
-    assert_data_eq!(
-        std::fs::read_to_string(lcov_info).unwrap(),
+    assert_lcov(
+        cmd.arg("coverage"),
         str![[r#"
 TN:
 SF:src/AContract.sol
@@ -391,7 +389,7 @@ BRF:0
 BRH:0
 end_of_record
 
-"#]]
+"#]],
     );
 });
 
@@ -712,8 +710,7 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    // Assert 100% coverage and only 9 lines reported (comments, type conversions and struct
-    // constructor calls are not included).
+    // Assert 100% coverage.
     cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines         | % Statements  | % Branches    | % Funcs       |
@@ -1406,8 +1403,32 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    // Assert both constructor and receive functions coverage reported.
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    // Assert both constructor and receive functions coverage reported and appear in LCOV.
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:7,1
+FN:7,9,AContract.constructor
+FNDA:1,AContract.constructor
+DA:8,1
+DA:11,1
+FN:11,13,AContract.receive
+FNDA:1,AContract.receive
+DA:12,1
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1450,3 +1471,8 @@ contract AContract {
 
 "#]]);
 });
+
+#[track_caller]
+fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data);
+}
