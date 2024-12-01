@@ -6,18 +6,18 @@ use alloy_consensus::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
         TxEip7702,
     },
-    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559,
-    TxEip2930, TxEnvelope, TxLegacy, TxReceipt,
+    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
+    TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
-use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
+use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
 use alloy_primitives::{
     Address, Bloom, Bytes, Log, PrimitiveSignature, TxHash, TxKind, B256, U256, U64,
 };
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, AnyTransactionReceipt,
-    ConversionError, Transaction as RpcTransaction, TransactionReceipt,
+    request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, ConversionError,
+    Transaction as RpcTransaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;

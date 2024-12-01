@@ -7,7 +7,8 @@ use alloy_provider::{
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
 };
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
+use alloy_network::AnyTransactionReceipt;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
