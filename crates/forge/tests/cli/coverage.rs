@@ -70,7 +70,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 100% coverage (init function coverage called in setUp is accounted).
-    cmd.arg("coverage").arg("--summary").assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -243,7 +243,7 @@ contract AContractTest is DSTest {
     );
 
     // Assert 100% coverage (assert properly covered).
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -319,7 +319,7 @@ contract AContractTest is DSTest {
 "#]]);
 
     // Assert 100% branch coverage.
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -625,7 +625,7 @@ contract FooTest is DSTest {
 "#]]);
 
     // Assert 100% coverage.
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements    | % Branches      | % Funcs       |
 |-------------|-----------------|-----------------|-----------------|---------------|
@@ -696,7 +696,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 100% coverage.
-    cmd.arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines         | % Statements  | % Branches    | % Funcs       |
 |-------------------|-----------------|---------------|---------------|---------------|
@@ -805,7 +805,7 @@ contract FooTest is DSTest {
 "#]]);
 
     // Assert 100% branch coverage (including clauses without body).
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements    | % Branches    | % Funcs       |
 |-------------|-----------------|-----------------|---------------|---------------|
@@ -908,7 +908,7 @@ contract FooTest is DSTest {
     )
     .unwrap();
 
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements    | % Branches    | % Funcs       |
 |-------------|-----------------|-----------------|---------------|---------------|
@@ -998,7 +998,7 @@ contract FooTest is DSTest {
     )
     .unwrap();
 
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements  | % Branches    | % Funcs       |
 |-------------|-----------------|---------------|---------------|---------------|
@@ -1076,7 +1076,7 @@ contract AContractTest is DSTest {
 "#]]);
 
     // Assert 100% coverage (true/false branches properly covered).
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1160,7 +1160,7 @@ contract AContractTest is DSTest {
 "#]]);
 
     // Assert 100% coverage (true/false branches properly covered).
-    cmd.forge_fuse().arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1229,7 +1229,7 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines         | % Statements  | % Branches    | % Funcs       |
 |-------------------|-----------------|---------------|---------------|---------------|
@@ -1279,7 +1279,7 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1322,7 +1322,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert there's only one function (`increment`) reported.
-    cmd.arg("coverage").args(["--summary"]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
