@@ -1,6 +1,11 @@
-use foundry_test_utils::{snapbox::IntoData, TestCommand};
+use foundry_common::fs;
+use foundry_test_utils::{
+    snapbox::{Data, IntoData},
+    TestCommand, TestProject,
+};
+use std::path::Path;
 
-forgetest_init!(basic_coverage, |prj, cmd| {
+fn basic_coverage_base(prj: TestProject, mut cmd: TestCommand) {
     cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -24,7 +29,63 @@ Wrote LCOV report.
 
 "#
     ]]);
-    assert!(prj.root().join("lcov.info").exists(), "lcov.info was not created");
+
+    let lcov = prj.root().join("lcov.info");
+    assert!(lcov.exists(), "lcov.info was not created");
+    assert_data_eq!(Data::read_from(&lcov, None), str![[r#"
+TN:
+SF:script/Counter.s.sol
+DA:10,0
+FN:10,10,CounterScript.setUp
+FNDA:0,CounterScript.setUp
+DA:12,0
+FN:12,18,CounterScript.run
+FNDA:0,CounterScript.run
+DA:13,0
+DA:15,0
+DA:17,0
+FNF:2
+FNH:0
+LF:5
+LH:0
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/Counter.sol
+DA:7,258
+FN:7,9,Counter.setNumber
+FNDA:258,Counter.setNumber
+DA:8,258
+DA:11,1
+FN:11,13,Counter.increment
+FNDA:1,Counter.increment
+DA:12,1
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]]);
+}
+
+forgetest_init!(basic_coverage, |prj, cmd| {
+    basic_coverage_base(prj, cmd);
+});
+
+forgetest_init!(basic_coverage_crlf, |prj, cmd| {
+    // Manually replace `\n` with `\r\n` in the source file.
+    let make_crlf = |path: &Path| {
+        fs::write(path, fs::read_to_string(path).unwrap().replace('\n', "\r\n")).unwrap()
+    };
+    make_crlf(&prj.paths().sources.join("Counter.sol"));
+    make_crlf(&prj.paths().scripts.join("Counter.s.sol"));
+
+    // Should have identical stdout and lcov output.
+    basic_coverage_base(prj, cmd);
 });
 
 forgetest!(test_setup_coverage, |prj, cmd| {
