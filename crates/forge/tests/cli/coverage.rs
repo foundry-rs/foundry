@@ -32,7 +32,9 @@ Wrote LCOV report.
 
     let lcov = prj.root().join("lcov.info");
     assert!(lcov.exists(), "lcov.info was not created");
-    assert_data_eq!(Data::read_from(&lcov, None), str![[r#"
+    assert_data_eq!(
+        Data::read_from(&lcov, None),
+        str![[r#"
 TN:
 SF:script/Counter.s.sol
 DA:10,0
@@ -69,7 +71,8 @@ BRF:0
 BRH:0
 end_of_record
 
-"#]]);
+"#]]
+    );
 }
 
 forgetest_init!(basic_coverage, |prj, cmd| {
