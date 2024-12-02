@@ -5675,16 +5675,16 @@
       "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
-        "declaration": "function getStateDiff() external view returns (string memory diff);",
+        "declaration": "function getStateDiff(bool json) external view returns (string memory diff);",
         "visibility": "external",
         "mutability": "view",
-        "signature": "getStateDiff()",
-        "selector": "0x80df01cc",
+        "signature": "getStateDiff(bool)",
+        "selector": "0x935efbe7",
         "selectorBytes": [
-          128,
-          223,
-          1,
-          204
+          147,
+          94,
+          251,
+          231
         ]
       },
       "group": "evm",
