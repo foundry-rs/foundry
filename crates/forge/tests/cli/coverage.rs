@@ -5,7 +5,7 @@ use foundry_test_utils::{
 };
 use std::path::Path;
 
-fn basic_coverage_base(prj: TestProject, mut cmd: TestCommand) {
+fn basic_base(prj: TestProject, mut cmd: TestCommand) {
     cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -75,11 +75,11 @@ end_of_record
     );
 }
 
-forgetest_init!(basic_coverage, |prj, cmd| {
-    basic_coverage_base(prj, cmd);
+forgetest_init!(basic, |prj, cmd| {
+    basic_base(prj, cmd);
 });
 
-forgetest_init!(basic_coverage_crlf, |prj, cmd| {
+forgetest_init!(basic_crlf, |prj, cmd| {
     // Manually replace `\n` with `\r\n` in the source file.
     let make_crlf = |path: &Path| {
         fs::write(path, fs::read_to_string(path).unwrap().replace('\n', "\r\n")).unwrap()
@@ -88,10 +88,10 @@ forgetest_init!(basic_coverage_crlf, |prj, cmd| {
     make_crlf(&prj.paths().scripts.join("Counter.s.sol"));
 
     // Should have identical stdout and lcov output.
-    basic_coverage_base(prj, cmd);
+    basic_base(prj, cmd);
 });
 
-forgetest!(test_setup_coverage, |prj, cmd| {
+forgetest!(setup, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -144,7 +144,7 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_no_match_coverage, |prj, cmd| {
+forgetest!(no_match, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -239,7 +239,7 @@ contract BContractTest is DSTest {
     ]]);
 });
 
-forgetest!(test_assert_coverage, |prj, cmd| {
+forgetest!(assert, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -317,7 +317,7 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_require_coverage, |prj, cmd| {
+forgetest!(require, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -393,7 +393,7 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_line_hit_not_doubled, |prj, cmd| {
+forgetest!(line_hit_not_doubled, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -447,7 +447,7 @@ end_of_record
     );
 });
 
-forgetest!(test_branch_coverage, |prj, cmd| {
+forgetest!(branch, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -699,7 +699,7 @@ contract FooTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_function_call_coverage, |prj, cmd| {
+forgetest!(function_call, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -770,7 +770,7 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_try_catch_coverage, |prj, cmd| {
+forgetest!(try_catch, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -879,7 +879,7 @@ contract FooTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_yul_coverage, |prj, cmd| {
+forgetest!(yul, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -982,7 +982,7 @@ contract FooTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_misc_coverage, |prj, cmd| {
+forgetest!(misc, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "Foo.sol",
@@ -1073,7 +1073,7 @@ contract FooTest is DSTest {
 });
 
 // https://github.com/foundry-rs/foundry/issues/8605
-forgetest!(test_single_statement_coverage, |prj, cmd| {
+forgetest!(single_statement, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1151,7 +1151,7 @@ contract AContractTest is DSTest {
 });
 
 // https://github.com/foundry-rs/foundry/issues/8604
-forgetest!(test_branch_with_calldata_reads, |prj, cmd| {
+forgetest!(branch_with_calldata_reads, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1234,7 +1234,7 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_identical_bytecodes, |prj, cmd| {
+forgetest!(identical_bytecodes, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1303,7 +1303,7 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_constructors_coverage, |prj, cmd| {
+forgetest!(constructors, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1353,15 +1353,19 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
-// <https://github.com/foundry-rs/foundry/issues/9270>
-// Test that constructor with no statements is not counted in functions coverage.
-forgetest!(test_ignore_empty_constructors_coverage, |prj, cmd| {
+// https://github.com/foundry-rs/foundry/issues/9270, https://github.com/foundry-rs/foundry/issues/9444
+// Test that special functions with no statements are not counted.
+// TODO: We should support this, but for now just ignore them.
+// See TODO in `visit_function_definition`: https://github.com/foundry-rs/foundry/issues/9458
+forgetest!(empty_functions, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
         r#"
 contract AContract {
     constructor() {}
+
+    receive() external payable {}
 
     function increment() public {}
 }
@@ -1379,14 +1383,35 @@ contract AContractTest is DSTest {
     function test_constructors() public {
         AContract a = new AContract();
         a.increment();
+        (bool success,) = address(a).call{value: 1}("");
+        require(success);
     }
 }
     "#,
     )
     .unwrap();
 
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:9,1
+FN:9,9,AContract.increment
+FNDA:1,AContract.increment
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+
     // Assert there's only one function (`increment`) reported.
-    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1397,7 +1422,7 @@ contract AContractTest is DSTest {
 });
 
 // Test coverage for `receive` functions.
-forgetest!(test_receive_coverage, |prj, cmd| {
+forgetest!(receive, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1469,9 +1494,9 @@ end_of_record
 "#]]);
 });
 
-// <https://github.com/foundry-rs/foundry/issues/9322>
+// https://github.com/foundry-rs/foundry/issues/9322
 // Test coverage with `--ir-minimum` for solidity < 0.8.5.
-forgetest!(test_ir_minimum_coverage, |prj, cmd| {
+forgetest!(ir_minimum_early, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
