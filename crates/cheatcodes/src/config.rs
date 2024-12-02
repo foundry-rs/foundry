@@ -68,7 +68,7 @@ impl CheatsConfig {
         running_contract: Option<String>,
         running_version: Option<Version>,
     ) -> Self {
-        let mut allowed_paths = vec![config.root.0.clone()];
+        let mut allowed_paths = vec![config.root.clone()];
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
 
@@ -88,8 +88,8 @@ impl CheatsConfig {
             rpc_endpoints,
             paths: config.project_paths(),
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
-            root: config.root.0.clone(),
-            broadcast: config.root.0.clone().join(&config.broadcast),
+            root: config.root.clone(),
+            broadcast: config.root.clone().join(&config.broadcast),
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
@@ -239,7 +239,7 @@ mod tests {
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
-            &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
+            &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
             None,
             None,

@@ -168,6 +168,14 @@ pub struct Config {
     /// See `profile`.
     #[serde(skip)]
     pub profiles: Vec<Profile>,
+
+    /// The root path where the config detection started from, [`Config::with_root`].
+    // We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
+    // representation, but will be deserialized from the `Figment` so that forge commands can
+    // override it.
+    #[serde(default = "root_default", skip_serializing)]
+    pub root: PathBuf,
+
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
     /// path of the test dir
@@ -466,13 +474,6 @@ pub struct Config {
     /// Soldeer custom configs
     pub soldeer: Option<SoldeerConfig>,
 
-    /// The root path where the config detection started from, [`Config::with_root`].
-    // We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
-    // representation, but will be deserialized from the `Figment` so that forge commands can
-    // override it.
-    #[serde(default, skip_serializing)]
-    pub root: RootPath,
-
     /// Whether failed assertions should revert.
     ///
     /// Note that this only applies to native (cheatcode) assertions, invoked on Vm contract.
@@ -679,7 +680,7 @@ impl Config {
             return Figment::from(self);
         }
 
-        let root = self.root.0.as_path();
+        let root = self.root.as_path();
         let profile = Self::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
 
@@ -760,7 +761,7 @@ impl Config {
     /// This joins all relative paths with the current root and attempts to make them canonic
     #[must_use]
     pub fn canonic(self) -> Self {
-        let root = self.root.0.clone();
+        let root = self.root.clone();
         self.canonic_at(root)
     }
 
@@ -1006,7 +1007,7 @@ impl Config {
             .set_no_artifacts(no_artifacts);
 
         if !self.skip.is_empty() {
-            let filter = SkipBuildFilters::new(self.skip.clone(), self.root.0.clone());
+            let filter = SkipBuildFilters::new(self.skip.clone(), self.root.clone());
             builder = builder.sparse_output(filter);
         }
 
@@ -1057,7 +1058,7 @@ impl Config {
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if self.eof {
             let (tx, rx) = mpsc::channel();
-            let root = self.root.0.clone();
+            let root = self.root.clone();
             std::thread::spawn(move || {
                 tx.send(
                     Solc::new_with_args(
@@ -1167,7 +1168,7 @@ impl Config {
             .artifacts(&self.out)
             .libs(self.libs.iter())
             .remappings(self.get_all_remappings())
-            .allowed_path(&self.root.0)
+            .allowed_path(&self.root)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
             .include_paths(&self.include_paths);
@@ -1176,7 +1177,7 @@ impl Config {
             builder = builder.build_infos(build_info_path);
         }
 
-        builder.build_with_root(&self.root.0)
+        builder.build_with_root(&self.root)
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].
@@ -1428,7 +1429,7 @@ impl Config {
 
     /// Returns the remapping for the project's _test_ directory, but only if it exists
     pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.0.join(&self.test).exists() {
+        if self.root.join(&self.test).exists() {
             get_dir_remapping(&self.test)
         } else {
             None
@@ -1437,7 +1438,7 @@ impl Config {
 
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.0.join(&self.script).exists() {
+        if self.root.join(&self.script).exists() {
             get_dir_remapping(&self.script)
         } else {
             None
@@ -1615,7 +1616,7 @@ impl Config {
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Self {
-            root: paths.root.into(),
+            root: paths.root,
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
@@ -1707,7 +1708,7 @@ impl Config {
     pub fn update_libs(&self) -> eyre::Result<()> {
         self.update(|doc| {
             let profile = self.profile.as_str().as_str();
-            let root = &self.root.0;
+            let root = &self.root;
             let libs: toml_edit::Value = self
                 .libs
                 .iter()
@@ -1764,7 +1765,7 @@ impl Config {
 
     /// Returns the path to the `foundry.toml` of this `Config`.
     pub fn get_config_path(&self) -> PathBuf {
-        self.root.0.join(Self::FILE_NAME)
+        self.root.join(Self::FILE_NAME)
     }
 
     /// Returns the selected profile.
@@ -2211,43 +2212,6 @@ pub(crate) mod from_opt_glob {
     }
 }
 
-/// A helper wrapper around the root path used during Config detection
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct RootPath(pub PathBuf);
-
-impl Default for RootPath {
-    fn default() -> Self {
-        ".".into()
-    }
-}
-
-impl<P: Into<PathBuf>> From<P> for RootPath {
-    fn from(p: P) -> Self {
-        Self(p.into())
-    }
-}
-
-impl AsRef<Path> for RootPath {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for RootPath {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for RootPath {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 /// Parses a config profile
 ///
 /// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
@@ -2299,7 +2263,7 @@ impl Default for Config {
             profiles: vec![Self::DEFAULT_PROFILE],
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             isolate: cfg!(feature = "isolate-by-default"),
-            root: Default::default(),
+            root: root_default(),
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),
@@ -3066,6 +3030,10 @@ pub(crate) mod from_str_lowercase {
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
     foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
+}
+
+fn root_default() -> PathBuf {
+    ".".into()
 }
 
 #[cfg(test)]

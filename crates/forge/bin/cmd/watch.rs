@@ -268,7 +268,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         args.watch.run_all;
 
     let last_test_files = Mutex::new(HashSet::<String>::default());
-    let project_root = config.root.0.to_string_lossy().into_owned();
+    let project_root = config.root.to_string_lossy().into_owned();
     let config = args.watch.watchexec_config_with_override(
         || [&config.test, &config.src],
         move |events, command| {
