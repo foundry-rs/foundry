@@ -11,15 +11,15 @@ pub struct CoverageCollector {
 impl<DB: Database> Inspector<DB> for CoverageCollector {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut EvmContext<DB>) {
         self.maps
-            .entry(get_contract_hash(interpreter))
+            .entry(*get_contract_hash(interpreter))
             .or_insert_with(|| HitMap::new(interpreter.contract.bytecode.original_bytes()));
     }
 
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, _context: &mut EvmContext<DB>) {
-        self.maps
-            .entry(get_contract_hash(interpreter))
-            .and_modify(|map| map.hit(interpreter.program_counter()));
+        if let Some(map) = self.maps.get_mut(get_contract_hash(interpreter)) {
+            map.hit(interpreter.program_counter());
+        }
     }
 }
 
@@ -33,10 +33,10 @@ impl CoverageCollector {
 /// Helper function for extracting contract hash used to record coverage hit map.
 /// If contract hash available in interpreter contract is zero (contract not yet created but going
 /// to be created in current tx) then it hash is calculated from contract bytecode.
-fn get_contract_hash(interpreter: &mut Interpreter) -> B256 {
+fn get_contract_hash(interpreter: &mut Interpreter) -> &B256 {
     let hash = interpreter.contract.hash.as_mut().expect("coverage does not support EOF");
     if *hash == B256::ZERO {
         *hash = interpreter.contract.bytecode.hash_slow();
     }
-    *hash
+    hash
 }
