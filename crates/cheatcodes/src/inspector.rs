@@ -1448,7 +1448,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             .sum()
                     };
 
-                    tracing::info!("expected {} logs, found {count}", expected.count);
                     if count != expected.count {
                         Some((expected, count))
                     } else {
