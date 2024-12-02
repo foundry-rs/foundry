@@ -4173,6 +4173,7 @@ dependencies = [
  "regex",
  "serde_json",
  "snapbox",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -310,9 +310,10 @@ impl CoverageArgs {
     }
 }
 
-// TODO: HTML
-#[derive(Clone, Debug, ValueEnum)]
+/// Coverage reports to generate.
+#[derive(Clone, Debug, Default, ValueEnum)]
 pub enum CoverageReportKind {
+    #[default]
     Summary,
     Lcov,
     Debug,

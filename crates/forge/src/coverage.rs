@@ -102,12 +102,13 @@ impl CoverageReporter for LcovReporter<'_> {
 
             for item in items {
                 let line = item.loc.lines.start;
-                let line_end = item.loc.lines.end - 1;
+                // `lines` is half-open, so we need to subtract 1 to get the last included line.
+                let end_line = item.loc.lines.end - 1;
                 let hits = item.hits;
                 match item.kind {
                     CoverageItemKind::Function { ref name } => {
                         let name = format!("{}.{name}", item.loc.contract_name);
-                        writeln!(self.out, "FN:{line},{line_end},{name}")?;
+                        writeln!(self.out, "FN:{line},{end_line},{name}")?;
                         writeln!(self.out, "FNDA:{hits},{name}")?;
                     }
                     CoverageItemKind::Line => {
