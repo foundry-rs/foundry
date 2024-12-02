@@ -9,15 +9,16 @@ use foundry_compilers::{
     Project,
 };
 use foundry_config::{
-    figment,
     figment::{
+        self,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
+    get_available_profiles,
     providers::remappings::Remappings,
-    Config,
+    Config, RootPath,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -144,6 +145,10 @@ pub struct CoreBuildArgs {
     #[command(flatten)]
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
+
+    /// Profile to use for compiling the project.
+    #[arg(long)]
+    pub profile: Option<Profile>,
 }
 
 impl CoreBuildArgs {
@@ -192,6 +197,25 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
             skip.extend(figment.extract_inner::<Vec<String>>("skip").unwrap_or_default());
             figment = figment.merge(("skip", skip));
         };
+
+        if let Some(profile) = &args.profile {
+            let root = figment.extract_inner::<RootPath>("root").unwrap_or_default();
+
+            let config_path = root.0.join(Config::FILE_NAME);
+
+            let available_profiles = get_available_profiles(&config_path).unwrap_or_default();
+
+            if !available_profiles.contains(&profile.to_string()) {
+                let _ = sh_warn!(
+                    "Profile `{}` not found in available profiles `{:?}`. Using {} profile",
+                    profile,
+                    available_profiles,
+                    figment.profile(),
+                );
+            } else {
+                figment = figment.select(profile.clone());
+            }
+        }
 
         figment
     }
@@ -286,6 +310,12 @@ impl Provider for CoreBuildArgs {
             dict.insert("eof".to_string(), true.into());
         }
 
-        Ok(Map::from([(Config::selected_profile(), dict)]))
+        let profile = if let Some(profile) = &self.profile {
+            profile.clone()
+        } else {
+            Config::selected_profile()
+        };
+
+        Ok(Map::from([(profile, dict)]))
     }
 }
