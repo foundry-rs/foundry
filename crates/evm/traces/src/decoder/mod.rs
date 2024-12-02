@@ -689,10 +689,13 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
     let mut unindexed = 0;
     let mut inputs = vec![];
     for input in event.inputs.iter() {
-        if input.indexed {
+        // Prevent panic of event `Transfer(from, to)` decoded with a signature
+        // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
+        // sure the event inputs is not higher than decoded indexed / un-indexed values.
+        if input.indexed && indexed < decoded.indexed.len() {
             inputs.push(decoded.indexed[indexed].clone());
             indexed += 1;
-        } else {
+        } else if unindexed < decoded.body.len() {
             inputs.push(decoded.body[unindexed].clone());
             unindexed += 1;
         }

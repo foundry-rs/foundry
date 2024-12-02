@@ -23,6 +23,7 @@ use foundry_config::{
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
+    traces::{InternalTraceMode, TraceMode},
     utils::configure_tx_env,
 };
 
@@ -87,6 +88,10 @@ pub struct RunArgs {
     /// Enables Alphanet features.
     #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 impl RunArgs {
@@ -103,11 +108,9 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::ProviderBuilder::new(
-            &config.get_rpc_url_or_localhost_http()?,
-        )
-        .compute_units_per_second_opt(compute_units_per_second)
-        .build()?;
+        let provider = foundry_cli::utils::get_provider_builder(&config)?
+            .compute_units_per_second_opt(compute_units_per_second)
+            .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider
@@ -134,6 +137,7 @@ impl RunArgs {
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
+        let create2_deployer = evm_opts.create2_deployer;
         let (mut env, fork, chain, alphanet) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
@@ -159,20 +163,30 @@ impl RunArgs {
             }
         }
 
+        let trace_mode = TraceMode::Call
+            .with_debug(self.debug)
+            .with_decode_internal(if self.decode_internal {
+                InternalTraceMode::Full
+            } else {
+                InternalTraceMode::None
+            })
+            .with_state_changes(shell::verbosity() > 4);
         let mut executor = TracingExecutor::new(
             env.clone(),
             fork,
             evm_version,
-            self.debug,
-            self.decode_internal,
+            trace_mode,
             alphanet,
+            create2_deployer,
         );
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            sh_println!("Executing previous transactions from the block.")?;
+            if !shell::is_json() {
+                sh_println!("Executing previous transactions from the block.")?;
+            }
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
@@ -251,9 +265,9 @@ impl RunArgs {
             &config,
             chain,
             self.label,
+            self.with_local_artifacts,
             self.debug,
             self.decode_internal,
-            shell::verbosity() > 0,
         )
         .await?;
 

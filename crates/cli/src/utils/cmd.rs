@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{fs, TestFunctionExt};
+use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -14,11 +14,10 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        debug::DebugTraceIdentifier,
+        debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
-        Traces,
+        identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
+        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{
@@ -160,27 +159,24 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches!(
-            chain,
-            NamedChain::Acala |
-                NamedChain::AcalaMandalaTestnet |
-                NamedChain::AcalaTestnet |
-                NamedChain::Arbitrum |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::Etherlink |
-                NamedChain::EtherlinkTestnet |
-                NamedChain::Karura |
-                NamedChain::KaruraTestnet |
-                NamedChain::Mantle |
-                NamedChain::MantleSepolia |
-                NamedChain::MantleTestnet |
-                NamedChain::Moonbase |
-                NamedChain::Moonbeam |
-                NamedChain::MoonbeamDev |
-                NamedChain::Moonriver
-        );
+        return chain.is_arbitrum() ||
+            matches!(
+                chain,
+                NamedChain::Acala |
+                    NamedChain::AcalaMandalaTestnet |
+                    NamedChain::AcalaTestnet |
+                    NamedChain::Etherlink |
+                    NamedChain::EtherlinkTestnet |
+                    NamedChain::Karura |
+                    NamedChain::KaruraTestnet |
+                    NamedChain::Mantle |
+                    NamedChain::MantleSepolia |
+                    NamedChain::MantleTestnet |
+                    NamedChain::Moonbase |
+                    NamedChain::Moonbeam |
+                    NamedChain::MoonbeamDev |
+                    NamedChain::Moonriver
+            );
     }
     false
 }
@@ -188,13 +184,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return !matches!(
-            chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
-        );
+        return !chain.is_arbitrum();
     }
     true
 }
@@ -383,10 +373,25 @@ pub async fn handle_traces(
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
+    with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
-    verbose: bool,
 ) -> Result<()> {
+    let (known_contracts, mut sources) = if with_local_artifacts {
+        let _ = sh_println!("Compiling project to generate artifacts");
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new();
+        let output = compiler.compile(&project)?;
+        (
+            Some(ContractsByArtifact::new(
+                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+            )),
+            ContractSources::from_project_output(&output, project.root(), None)?,
+        )
+    } else {
+        (None, ContractSources::default())
+    };
+
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
@@ -398,45 +403,44 @@ pub async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
-    let mut decoder = CallTraceDecoderBuilder::new()
+
+    let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::new(
             Config::foundry_cache_dir(),
             config.offline,
-        )?)
-        .build();
-
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    if let Some(etherscan_identifier) = &mut etherscan_identifier {
-        for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-            decoder.identify(trace, etherscan_identifier);
-        }
+        )?);
+    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
+    if let Some(contracts) = &known_contracts {
+        builder = builder.with_known_contracts(contracts);
+        identifier = identifier.with_local(contracts);
     }
 
-    if decode_internal {
-        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
+    let mut decoder = builder.build();
+
+    for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    if decode_internal || debug {
+        if let Some(ref etherscan_identifier) = identifier.etherscan {
+            sources.merge(etherscan_identifier.get_compiled_contracts().await?);
+        }
+
+        if debug {
+            let mut debugger = Debugger::builder()
+                .traces(result.traces.expect("missing traces"))
+                .decoder(&decoder)
+                .sources(sources)
+                .build();
+            debugger.try_run_tui()?;
+            return Ok(())
+        }
+
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    if debug {
-        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
-        let mut debugger = Debugger::builder()
-            .traces(result.traces.expect("missing traces"))
-            .decoder(&decoder)
-            .sources(sources)
-            .build();
-        debugger.try_run_tui()?;
-    } else {
-        print_traces(&mut result, &decoder, verbose).await?;
-    }
+    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 4).await?;
 
     Ok(())
 }
@@ -445,22 +449,64 @@ pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
     verbose: bool,
+    state_changes: bool,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    sh_println!("Traces:")?;
+    if !shell::is_json() {
+        sh_println!("Traces:")?;
+    }
+
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        sh_println!("{}", render_trace_arena_with_bytecodes(arena, verbose))?;
+        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
-    sh_println!()?;
 
+    if shell::is_json() {
+        return Ok(());
+    }
+
+    sh_println!()?;
     if result.success {
         sh_println!("{}", "Transaction successfully executed.".green())?;
     } else {
         sh_err!("Transaction failed.")?;
     }
-
     sh_println!("Gas used: {}", result.gas_used)?;
+
+    Ok(())
+}
+
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let path = cache_path.join("signatures");
+    let mut cached_signatures = CachedSignatures::load(cache_path);
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+            for error in abi.errors() {
+                cached_signatures.errors.insert(error.selector().to_string(), error.signature());
+            }
+            // External libraries doesn't have functions included in abi, but `methodIdentifiers`.
+            if let Some(method_identifiers) = &artifact.method_identifiers {
+                method_identifiers.iter().for_each(|(signature, selector)| {
+                    cached_signatures
+                        .functions
+                        .entry(format!("0x{selector}"))
+                        .or_insert(signature.to_string());
+                });
+            }
+        }
+    });
+
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }

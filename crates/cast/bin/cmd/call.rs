@@ -8,7 +8,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -18,7 +18,11 @@ use foundry_config::{
     },
     Config,
 };
-use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
+use foundry_evm::{
+    executors::TracingExecutor,
+    opts::EvmOpts,
+    traces::{InternalTraceMode, TraceMode},
+};
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -81,6 +85,10 @@ pub struct CallArgs {
 
     #[command(flatten)]
     eth: EthereumOpts,
+
+    /// Use current project artifacts for trace decoding.
+    #[arg(long, visible_alias = "la")]
+    pub with_local_artifacts: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -127,6 +135,7 @@ impl CallArgs {
             decode_internal,
             labels,
             data,
+            with_local_artifacts,
             ..
         } = self;
 
@@ -170,6 +179,7 @@ impl CallArgs {
                 config.fork_block_number = Some(block_number);
             }
 
+            let create2_deployer = evm_opts.create2_deployer;
             let (mut env, fork, chain, alphanet) =
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
@@ -177,8 +187,22 @@ impl CallArgs {
             env.cfg.disable_block_gas_limit = true;
             env.block.gas_limit = U256::MAX;
 
-            let mut executor =
-                TracingExecutor::new(env, fork, evm_version, debug, decode_internal, alphanet);
+            let trace_mode = TraceMode::Call
+                .with_debug(debug)
+                .with_decode_internal(if decode_internal {
+                    InternalTraceMode::Full
+                } else {
+                    InternalTraceMode::None
+                })
+                .with_state_changes(shell::verbosity() > 4);
+            let mut executor = TracingExecutor::new(
+                env,
+                fork,
+                evm_version,
+                trace_mode,
+                alphanet,
+                create2_deployer,
+            );
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
@@ -195,7 +219,16 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(trace, &config, chain, labels, debug, decode_internal, false).await?;
+            handle_traces(
+                trace,
+                &config,
+                chain,
+                labels,
+                with_local_artifacts,
+                debug,
+                decode_internal,
+            )
+            .await?;
 
             return Ok(());
         }

@@ -2665,3 +2665,37 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 "#]]);
 });
+
+// Tests that test traces display state changes when running with verbosity.
+forgetest_init!(should_show_state_changes, |prj, cmd| {
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [87464] CounterTest::setUp()
+    ├─ [47297] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 236 bytes of code
+    ├─ [2387] Counter::setNumber(0)
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+
+  [31293] CounterTest::test_Increment()
+    ├─ [22337] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop] 
+    ├─ [281] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 1) [staticcall]
+    │   └─ ← [Return] 
+    ├─  storage changes:
+    │   @ 0: 0 → 1
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});

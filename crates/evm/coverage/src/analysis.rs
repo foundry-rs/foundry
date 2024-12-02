@@ -2,7 +2,10 @@ use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use alloy_primitives::map::HashMap;
 use core::fmt;
 use foundry_common::TestFunctionExt;
-use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
+use foundry_compilers::artifacts::{
+    ast::{self, Ast, Node, NodeType},
+    Source,
+};
 use rayon::prelude::*;
 use std::{borrow::Cow, sync::Arc};
 
@@ -20,7 +23,7 @@ pub struct ContractVisitor<'a> {
     /// The current branch ID
     branch_id: usize,
     /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
-    last_line: usize,
+    last_line: u32,
 
     /// Coverage items
     pub items: Vec<CoverageItem>,
@@ -48,23 +51,24 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn visit_function_definition(&mut self, node: &Node) -> eyre::Result<()> {
+        let Some(body) = &node.body else { return Ok(()) };
+
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
-
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
 
-        match &node.body {
-            Some(body) => {
-                // Do not add coverage item for constructors without statements.
-                if kind == "constructor" && !has_statements(body) {
-                    return Ok(())
-                }
-                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
-                self.visit_block(body)
-            }
-            _ => Ok(()),
+        // Do not add coverage item for constructors without statements.
+        if kind == "constructor" && !has_statements(body) {
+            return Ok(())
         }
+
+        // `fallback`, `receive`, and `constructor` functions have an empty `name`.
+        // Use the `kind` itself as the name.
+        let name = if name.is_empty() { kind } else { name };
+
+        self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
+        self.visit_block(body)
     }
 
     fn visit_modifier_or_yul_fn_definition(&mut self, node: &Node) -> eyre::Result<()> {
@@ -455,30 +459,34 @@ impl<'a> ContractVisitor<'a> {
     /// collection (plus additional coverage line if item is a statement).
     fn push_item_kind(&mut self, kind: CoverageItemKind, src: &ast::LowFidelitySourceLocation) {
         let item = CoverageItem { kind, loc: self.source_location_for(src), hits: 0 };
-        // Push a line item if we haven't already
-        if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
-            self.last_line < item.loc.line
-        {
+
+        // Push a line item if we haven't already.
+        debug_assert!(!matches!(item.kind, CoverageItemKind::Line));
+        if self.last_line < item.loc.lines.start {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
                 loc: item.loc.clone(),
                 hits: 0,
             });
-            self.last_line = item.loc.line;
+            self.last_line = item.loc.lines.start;
         }
 
         self.items.push(item);
     }
 
     fn source_location_for(&self, loc: &ast::LowFidelitySourceLocation) -> SourceLocation {
-        let loc_start =
-            self.source.char_indices().map(|(i, _)| i).nth(loc.start).unwrap_or_default();
+        let bytes_start = loc.start as u32;
+        let bytes_end = (loc.start + loc.length.unwrap_or(0)) as u32;
+        let bytes = bytes_start..bytes_end;
+
+        let start_line = self.source[..bytes.start as usize].lines().count() as u32;
+        let n_lines = self.source[bytes.start as usize..bytes.end as usize].lines().count() as u32;
+        let lines = start_line..start_line + n_lines;
         SourceLocation {
             source_id: self.source_id.clone(),
             contract_name: self.contract_name.clone(),
-            start: loc.start as u32,
-            length: loc.length.map(|x| x as u32),
-            line: self.source[..loc_start].lines().count(),
+            bytes,
+            lines,
         }
     }
 }
@@ -495,10 +503,7 @@ fn has_statements(node: &Node) -> bool {
         NodeType::TryStatement |
         NodeType::VariableDeclarationStatement |
         NodeType::WhileStatement => true,
-        _ => {
-            let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
-            !statements.is_empty()
-        }
+        _ => node.attribute::<Vec<Node>>("statements").is_some_and(|s| !s.is_empty()),
     }
 }
 
@@ -557,7 +562,7 @@ impl<'a> SourceAnalyzer<'a> {
                         .attribute("name")
                         .ok_or_else(|| eyre::eyre!("Contract has no name"))?;
 
-                    let mut visitor = ContractVisitor::new(source_id.clone(), source, &name);
+                    let mut visitor = ContractVisitor::new(source_id.clone(), &source.content, &name);
                     visitor.visit_contract(node)?;
                     let mut items = visitor.items;
 
@@ -615,7 +620,7 @@ impl SourceIdentifier {
 #[derive(Debug)]
 pub struct SourceFile<'a> {
     /// The source code.
-    pub source: String,
+    pub source: Source,
     /// The AST of the source code.
     pub ast: Cow<'a, Ast>,
 }

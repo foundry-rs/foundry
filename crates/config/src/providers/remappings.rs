@@ -112,7 +112,7 @@ pub struct RemappingsProvider<'a> {
     pub lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
     /// `Remapping::find_many` into a relative one.
-    pub root: &'a PathBuf,
+    pub root: &'a Path,
     /// This contains either:
     ///   - previously set remappings
     ///   - a `MissingField` error, which means previous provider didn't set the "remappings" field

@@ -2,12 +2,13 @@
 
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_eips::eip7702::SignedAuthorization;
+use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
 };
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -177,6 +178,10 @@ impl TransactionMaybeSigned {
     ) -> core::result::Result<Self, alloy_primitives::SignatureError> {
         let from = tx.recover_signer()?;
         Ok(Self::Signed { tx, from })
+    }
+
+    pub fn is_unsigned(&self) -> bool {
+        matches!(self, Self::Unsigned(_))
     }
 
     pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {

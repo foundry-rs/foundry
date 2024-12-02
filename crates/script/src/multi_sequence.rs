@@ -2,7 +2,7 @@ use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{
     now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
 };
-use foundry_common::fs;
+use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -146,8 +146,19 @@ impl MultiChainSequence {
         }
 
         if !silent {
-            sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
-            sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
+            if shell::is_json() {
+                sh_println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "success",
+                        "transactions": self.path.display().to_string(),
+                        "sensitive": self.sensitive_path.display().to_string(),
+                    })
+                )?;
+            } else {
+                sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
+                sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
+            }
         }
 
         Ok(())

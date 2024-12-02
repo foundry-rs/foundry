@@ -51,7 +51,7 @@ impl SummaryReporter {
 impl CoverageReporter for SummaryReporter {
     fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
-            self.total += &summary;
+            self.total.merge(&summary);
             self.add_row(path.display(), summary);
         }
 
@@ -78,66 +78,69 @@ fn format_cell(hits: usize, total: usize) -> Cell {
     cell
 }
 
+/// Writes the coverage report in [LCOV]'s [tracefile format].
+///
+/// [LCOV]: https://github.com/linux-test-project/lcov
+/// [tracefile format]: https://man.archlinux.org/man/geninfo.1.en#TRACEFILE_FORMAT
 pub struct LcovReporter<'a> {
-    /// Destination buffer
-    destination: &'a mut (dyn Write + 'a),
+    out: &'a mut (dyn Write + 'a),
 }
 
 impl<'a> LcovReporter<'a> {
-    pub fn new(destination: &'a mut (dyn Write + 'a)) -> Self {
-        Self { destination }
+    /// Create a new LCOV reporter.
+    pub fn new(out: &'a mut (dyn Write + 'a)) -> Self {
+        Self { out }
     }
 }
 
 impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
-        for (file, items) in report.items_by_source() {
-            let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
-                summary += item;
-                summary
-            });
+        for (path, items) in report.items_by_file() {
+            let summary = CoverageSummary::from_items(items.iter().copied());
 
-            writeln!(self.destination, "TN:")?;
-            writeln!(self.destination, "SF:{}", file.display())?;
+            writeln!(self.out, "TN:")?;
+            writeln!(self.out, "SF:{}", path.display())?;
 
             for item in items {
-                let line = item.loc.line;
+                let line = item.loc.lines.start;
+                // `lines` is half-open, so we need to subtract 1 to get the last included line.
+                let end_line = item.loc.lines.end - 1;
                 let hits = item.hits;
                 match item.kind {
-                    CoverageItemKind::Function { name } => {
+                    CoverageItemKind::Function { ref name } => {
                         let name = format!("{}.{name}", item.loc.contract_name);
-                        writeln!(self.destination, "FN:{line},{name}")?;
-                        writeln!(self.destination, "FNDA:{hits},{name}")?;
+                        writeln!(self.out, "FN:{line},{end_line},{name}")?;
+                        writeln!(self.out, "FNDA:{hits},{name}")?;
                     }
                     CoverageItemKind::Line => {
-                        writeln!(self.destination, "DA:{line},{hits}")?;
+                        writeln!(self.out, "DA:{line},{hits}")?;
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         writeln!(
-                            self.destination,
+                            self.out,
                             "BRDA:{line},{branch_id},{path_id},{}",
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
                     // Statements are not in the LCOV format.
                     // We don't add them in order to avoid doubling line hits.
-                    _ => {}
+                    CoverageItemKind::Statement { .. } => {}
                 }
             }
 
             // Function summary
-            writeln!(self.destination, "FNF:{}", summary.function_count)?;
-            writeln!(self.destination, "FNH:{}", summary.function_hits)?;
+            writeln!(self.out, "FNF:{}", summary.function_count)?;
+            writeln!(self.out, "FNH:{}", summary.function_hits)?;
 
             // Line summary
-            writeln!(self.destination, "LF:{}", summary.line_count)?;
-            writeln!(self.destination, "LH:{}", summary.line_hits)?;
+            writeln!(self.out, "LF:{}", summary.line_count)?;
+            writeln!(self.out, "LH:{}", summary.line_hits)?;
 
             // Branch summary
-            writeln!(self.destination, "BRF:{}", summary.branch_count)?;
-            writeln!(self.destination, "BRH:{}", summary.branch_hits)?;
+            writeln!(self.out, "BRF:{}", summary.branch_count)?;
+            writeln!(self.out, "BRH:{}", summary.branch_hits)?;
 
-            writeln!(self.destination, "end_of_record")?;
+            writeln!(self.out, "end_of_record")?;
         }
 
         sh_println!("Wrote LCOV report.")?;
@@ -151,7 +154,7 @@ pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
-        for (path, items) in report.items_by_source() {
+        for (path, items) in report.items_by_file() {
             sh_println!("Uncovered for {}:", path.display())?;
             items.iter().for_each(|item| {
                 if item.hits == 0 {
