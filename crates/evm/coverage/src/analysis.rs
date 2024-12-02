@@ -52,16 +52,20 @@ impl<'a> ContractVisitor<'a> {
     fn visit_function_definition(&mut self, node: &Node) -> eyre::Result<()> {
         let Some(body) = &node.body else { return Ok(()) };
 
-        let kind: String =
-            node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
-
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
+        let kind: String =
+            node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
 
         // Do not add coverage item for constructors without statements.
         if kind == "constructor" && !has_statements(body) {
             return Ok(())
         }
+
+        // `fallback`, `receive`, and `constructor` functions have an empty `name`.
+        // Use the `kind` itself as the name.
+        let name = if name.is_empty() { kind } else { name };
+
         self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
         self.visit_block(body)
     }
@@ -498,10 +502,7 @@ fn has_statements(node: &Node) -> bool {
         NodeType::TryStatement |
         NodeType::VariableDeclarationStatement |
         NodeType::WhileStatement => true,
-        _ => {
-            let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
-            !statements.is_empty()
-        }
+        _ => node.attribute::<Vec<Node>>("statements").is_some_and(|s| !s.is_empty()),
     }
 }
 

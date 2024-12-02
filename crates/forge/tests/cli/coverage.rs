@@ -1,18 +1,94 @@
-use foundry_test_utils::{assert_data_eq, str};
+use foundry_common::fs;
+use foundry_test_utils::{
+    snapbox::{Data, IntoData},
+    TestCommand, TestProject,
+};
+use std::path::Path;
 
-forgetest!(basic_coverage, |_prj, cmd| {
-    cmd.args(["coverage"]);
-    cmd.assert_success();
+fn basic_coverage_base(prj: TestProject, mut cmd: TestCommand) {
+    cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Wrote LCOV report.
+| File                 | % Lines       | % Statements  | % Branches    | % Funcs       |
+|----------------------|---------------|---------------|---------------|---------------|
+| script/Counter.s.sol | 0.00% (0/5)   | 0.00% (0/3)   | 100.00% (0/0) | 0.00% (0/2)   |
+| src/Counter.sol      | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total                | 44.44% (4/9)  | 40.00% (2/5)  | 100.00% (0/0) | 50.00% (2/4)  |
+
+"#
+    ]]);
+
+    let lcov = prj.root().join("lcov.info");
+    assert!(lcov.exists(), "lcov.info was not created");
+    assert_data_eq!(
+        Data::read_from(&lcov, None),
+        str![[r#"
+TN:
+SF:script/Counter.s.sol
+DA:10,0
+FN:10,10,CounterScript.setUp
+FNDA:0,CounterScript.setUp
+DA:12,0
+FN:12,18,CounterScript.run
+FNDA:0,CounterScript.run
+DA:13,0
+DA:15,0
+DA:17,0
+FNF:2
+FNH:0
+LF:5
+LH:0
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/Counter.sol
+DA:7,258
+FN:7,9,Counter.setNumber
+FNDA:258,Counter.setNumber
+DA:8,258
+DA:11,1
+FN:11,13,Counter.increment
+FNDA:1,Counter.increment
+DA:12,1
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]]
+    );
+}
+
+forgetest_init!(basic_coverage, |prj, cmd| {
+    basic_coverage_base(prj, cmd);
 });
 
-forgetest!(report_file_coverage, |prj, cmd| {
-    cmd.arg("coverage").args([
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        prj.root().join("lcov.info").to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
+forgetest_init!(basic_coverage_crlf, |prj, cmd| {
+    // Manually replace `\n` with `\r\n` in the source file.
+    let make_crlf = |path: &Path| {
+        fs::write(path, fs::read_to_string(path).unwrap().replace('\n', "\r\n")).unwrap()
+    };
+    make_crlf(&prj.paths().sources.join("Counter.sol"));
+    make_crlf(&prj.paths().scripts.join("Counter.s.sol"));
+
+    // Should have identical stdout and lcov output.
+    basic_coverage_base(prj, cmd);
 });
 
 forgetest!(test_setup_coverage, |prj, cmd| {
@@ -58,7 +134,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 100% coverage (init function coverage called in setUp is accounted).
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -151,20 +227,16 @@ contract BContractTest is DSTest {
     .unwrap();
 
     // Assert AContract is not included in report.
-    cmd.arg("coverage")
-        .args([
-            "--no-match-coverage".to_string(),
-            "AContract".to_string(), // Filter out `AContract`
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("coverage").arg("--no-match-coverage=AContract").assert_success().stdout_eq(str![[
+        r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/BContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 | Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 
-"#]]);
+"#
+    ]]);
 });
 
 forgetest!(test_assert_coverage, |prj, cmd| {
@@ -211,43 +283,38 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 50% branch coverage for assert failure.
-    cmd.arg("coverage")
-        .args(["--mt".to_string(), "testAssertRevertBranch".to_string()])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("coverage").args(["--mt", "testAssertRevertBranch"]).assert_success().stdout_eq(str![
+        [r#"
 ...
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 |-------------------|--------------|--------------|--------------|---------------|
 | src/AContract.sol | 66.67% (2/3) | 50.00% (1/2) | 50.00% (1/2) | 100.00% (1/1) |
 | Total             | 66.67% (2/3) | 50.00% (1/2) | 50.00% (1/2) | 100.00% (1/1) |
 
-"#]]);
+"#]
+    ]);
 
     // Assert 50% branch coverage for proper assert.
-    cmd.forge_fuse()
-        .arg("coverage")
-        .args(["--mt".to_string(), "testAssertBranch".to_string()])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").args(["--mt", "testAssertBranch"]).assert_success().stdout_eq(
+        str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches   | % Funcs       |
 |-------------------|---------------|---------------|--------------|---------------|
 | src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 50.00% (1/2) | 100.00% (1/1) |
 | Total             | 100.00% (3/3) | 100.00% (2/2) | 50.00% (1/2) | 100.00% (1/1) |
 
-"#]]);
+"#]],
+    );
 
     // Assert 100% coverage (assert properly covered).
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (3/3) | 100.00% (2/2) | 100.00% (2/2) | 100.00% (1/1) |
 | Total             | 100.00% (3/3) | 100.00% (2/2) | 100.00% (2/2) | 100.00% (1/1) |
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_require_coverage, |prj, cmd| {
@@ -292,10 +359,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 50% branch coverage if only revert tested.
-    cmd.arg("coverage")
-        .args(["--mt".to_string(), "testRequireRevert".to_string()])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("coverage").args(["--mt", "testRequireRevert"]).assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches   | % Funcs       |
 |-------------------|---------------|---------------|--------------|---------------|
@@ -307,7 +371,7 @@ contract AContractTest is DSTest {
     // Assert 50% branch coverage if only happy path tested.
     cmd.forge_fuse()
         .arg("coverage")
-        .args(["--mt".to_string(), "testRequireNoRevert".to_string()])
+        .args(["--mt", "testRequireNoRevert"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -319,16 +383,14 @@ contract AContractTest is DSTest {
 "#]]);
 
     // Assert 100% branch coverage.
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (2/2) | 100.00% (1/1) | 100.00% (2/2) | 100.00% (1/1) |
 | Total             | 100.00% (2/2) | 100.00% (1/1) | 100.00% (2/2) | 100.00% (1/1) |
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_line_hit_not_doubled, |prj, cmd| {
@@ -363,19 +425,9 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    let lcov_info = prj.root().join("lcov.info");
-    cmd.arg("coverage").args([
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        lcov_info.to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
-    assert!(lcov_info.exists());
-
     // We want to make sure DA:8,1 is added only once so line hit is not doubled.
-    assert_data_eq!(
-        std::fs::read_to_string(lcov_info).unwrap(),
+    assert_lcov(
+        cmd.arg("coverage"),
         str![[r#"
 TN:
 SF:src/AContract.sol
@@ -391,7 +443,7 @@ BRF:0
 BRH:0
 end_of_record
 
-"#]]
+"#]],
     );
 });
 
@@ -611,10 +663,7 @@ contract FooTest is DSTest {
 
     // Assert no coverage for single path branch. 2 branches (parent and child) not covered.
     cmd.arg("coverage")
-        .args([
-            "--nmt".to_string(),
-            "test_single_path_child_branch|test_single_path_parent_branch".to_string(),
-        ])
+        .args(["--nmt", "test_single_path_child_branch|test_single_path_parent_branch"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -628,7 +677,7 @@ contract FooTest is DSTest {
     // Assert no coverage for single path child branch. 1 branch (child) not covered.
     cmd.forge_fuse()
         .arg("coverage")
-        .args(["--nmt".to_string(), "test_single_path_child_branch".to_string()])
+        .args(["--nmt", "test_single_path_child_branch"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -640,16 +689,14 @@ contract FooTest is DSTest {
 "#]]);
 
     // Assert 100% coverage.
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements    | % Branches      | % Funcs       |
 |-------------|-----------------|-----------------|-----------------|---------------|
 | src/Foo.sol | 100.00% (36/36) | 100.00% (30/30) | 100.00% (16/16) | 100.00% (9/9) |
 | Total       | 100.00% (36/36) | 100.00% (30/30) | 100.00% (16/16) | 100.00% (9/9) |
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_function_call_coverage, |prj, cmd| {
@@ -712,9 +759,8 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    // Assert 100% coverage and only 9 lines reported (comments, type conversions and struct
-    // constructor calls are not included).
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    // Assert 100% coverage.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines         | % Statements  | % Branches    | % Funcs       |
 |-------------------|-----------------|---------------|---------------|---------------|
@@ -813,28 +859,24 @@ contract FooTest is DSTest {
     .unwrap();
 
     // Assert coverage not 100% for happy paths only.
-    cmd.arg("coverage").args(["--mt".to_string(), "happy".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.arg("coverage").args(["--mt", "happy"]).assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines        | % Statements   | % Branches   | % Funcs       |
 |-------------|----------------|----------------|--------------|---------------|
 | src/Foo.sol | 75.00% (15/20) | 66.67% (14/21) | 83.33% (5/6) | 100.00% (5/5) |
 | Total       | 75.00% (15/20) | 66.67% (14/21) | 83.33% (5/6) | 100.00% (5/5) |
 
-"#]],
-    );
+"#]]);
 
     // Assert 100% branch coverage (including clauses without body).
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements    | % Branches    | % Funcs       |
 |-------------|-----------------|-----------------|---------------|---------------|
 | src/Foo.sol | 100.00% (20/20) | 100.00% (21/21) | 100.00% (6/6) | 100.00% (5/5) |
 | Total       | 100.00% (20/20) | 100.00% (21/21) | 100.00% (6/6) | 100.00% (5/5) |
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_yul_coverage, |prj, cmd| {
@@ -930,16 +972,14 @@ contract FooTest is DSTest {
     )
     .unwrap();
 
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements    | % Branches    | % Funcs       |
 |-------------|-----------------|-----------------|---------------|---------------|
 | src/Foo.sol | 100.00% (30/30) | 100.00% (40/40) | 100.00% (1/1) | 100.00% (7/7) |
 | Total       | 100.00% (30/30) | 100.00% (40/40) | 100.00% (1/1) | 100.00% (7/7) |
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_misc_coverage, |prj, cmd| {
@@ -1022,16 +1062,14 @@ contract FooTest is DSTest {
     )
     .unwrap();
 
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File        | % Lines         | % Statements  | % Branches    | % Funcs       |
 |-------------|-----------------|---------------|---------------|---------------|
 | src/Foo.sol | 100.00% (12/12) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (4/4) |
 | Total       | 100.00% (12/12) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (4/4) |
 
-"#]],
-    );
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/issues/8605
@@ -1078,10 +1116,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 50% coverage for true branches.
-    cmd.arg("coverage")
-        .args(["--mt".to_string(), "testTrueCoverage".to_string()])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 |-------------------|--------------|--------------|--------------|---------------|
@@ -1093,7 +1128,7 @@ contract AContractTest is DSTest {
     // Assert 50% coverage for false branches.
     cmd.forge_fuse()
         .arg("coverage")
-        .args(["--mt".to_string(), "testFalseCoverage".to_string()])
+        .args(["--mt", "testFalseCoverage"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -1105,16 +1140,14 @@ contract AContractTest is DSTest {
 "#]]);
 
     // Assert 100% coverage (true/false branches properly covered).
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (5/5) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
 | Total             | 100.00% (5/5) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
 
-"#]],
-    );
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/issues/8604
@@ -1167,10 +1200,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert 50% coverage for true branches.
-    cmd.arg("coverage")
-        .args(["--mt".to_string(), "testTrueCoverage".to_string()])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines      | % Statements | % Branches   | % Funcs       |
 |-------------------|--------------|--------------|--------------|---------------|
@@ -1182,7 +1212,7 @@ contract AContractTest is DSTest {
     // Assert 50% coverage for false branches.
     cmd.forge_fuse()
         .arg("coverage")
-        .args(["--mt".to_string(), "testFalseCoverage".to_string()])
+        .args(["--mt", "testFalseCoverage"])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -1194,16 +1224,14 @@ contract AContractTest is DSTest {
 "#]]);
 
     // Assert 100% coverage (true/false branches properly covered).
-    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (5/5) | 100.00% (5/5) | 100.00% (2/2) | 100.00% (1/1) |
 | Total             | 100.00% (5/5) | 100.00% (5/5) | 100.00% (2/2) | 100.00% (1/1) |
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest!(test_identical_bytecodes, |prj, cmd| {
@@ -1265,7 +1293,7 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines         | % Statements  | % Branches    | % Funcs       |
 |-------------------|-----------------|---------------|---------------|---------------|
@@ -1315,7 +1343,7 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1358,7 +1386,7 @@ contract AContractTest is DSTest {
     .unwrap();
 
     // Assert there's only one function (`increment`) reported.
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1406,8 +1434,32 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    // Assert both constructor and receive functions coverage reported.
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    // Assert both constructor and receive functions coverage reported and appear in LCOV.
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/AContract.sol
+DA:7,1
+FN:7,9,AContract.constructor
+FNDA:1,AContract.constructor
+DA:8,1
+DA:11,1
+FN:11,13,AContract.receive
+FNDA:1,AContract.receive
+DA:12,1
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
@@ -1450,3 +1502,8 @@ contract AContract {
 
 "#]]);
 });
+
+#[track_caller]
+fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data);
+}
