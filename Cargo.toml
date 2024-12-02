@@ -208,17 +208,17 @@ alloy-transport-ws = { version = "0.7.0", default-features = false }
 alloy-node-bindings = { version = "0.7.0", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "0.8.11"
-alloy-json-abi = "0.8.11"
-alloy-primitives = { version = "0.8.11", features = [
+alloy-dyn-abi = "0.8.14"
+alloy-json-abi = "0.8.14"
+alloy-primitives = { version = "0.8.14", features = [
     "getrandom",
     "rand",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "0.8.11"
-alloy-sol-macro-input = "0.8.11"
-alloy-sol-types = "0.8.11"
-syn-solidity = "0.8.11"
+alloy-sol-macro-expander = "0.8.14"
+alloy-sol-macro-input = "0.8.14"
+alloy-sol-types = "0.8.14"
+syn-solidity = "0.8.14"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
