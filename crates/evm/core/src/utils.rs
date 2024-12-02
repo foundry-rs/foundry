@@ -46,10 +46,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
 
                 return;
             }
-            NamedChain::Arbitrum |
-            NamedChain::ArbitrumGoerli |
-            NamedChain::ArbitrumNova |
-            NamedChain::ArbitrumTestnet => {
+            c if c.is_arbitrum() => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block

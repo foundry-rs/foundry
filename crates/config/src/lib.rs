@@ -1125,7 +1125,7 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(&self.evm_version, self.alphanet)
+        evm_spec_id(self.evm_version, self.alphanet)
     }
 
     /// Returns whether the compiler version should be auto-detected

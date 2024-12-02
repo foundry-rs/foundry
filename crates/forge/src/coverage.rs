@@ -212,7 +212,7 @@ impl CoverageReporter for BytecodeReporter {
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
-            let ops = disassemble_bytes(hits.bytecode.to_vec())?;
+            let ops = disassemble_bytes(hits.bytecode().to_vec())?;
             let mut formatted = String::new();
 
             let source_elements =
@@ -220,8 +220,7 @@ impl CoverageReporter for BytecodeReporter {
 
             for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
                 let hits = hits
-                    .hits
-                    .get(&(code.offset as usize))
+                    .get(code.offset as usize)
                     .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();

@@ -1,5 +1,5 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
-use alloy_rpc_types::AnyTransactionReceipt;
+use alloy_network::AnyTransactionReceipt;
 use eyre::{bail, Result};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
