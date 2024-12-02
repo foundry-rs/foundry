@@ -2049,7 +2049,7 @@ impl Config {
         let provider = toml_provider.strict_select(profiles);
 
         // apply any key fixes
-        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+        let provider = &BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {

@@ -8,35 +8,35 @@ use foundry_compilers::ProjectPathsConfig;
 use inflector::Inflector;
 use std::path::{Path, PathBuf};
 
-pub(crate) trait ProviderExt: Provider {
+pub(crate) trait ProviderExt: Provider + Sized {
     fn rename(
-        &self,
+        self,
         from: impl Into<Profile>,
         to: impl Into<Profile>,
-    ) -> RenameProfileProvider<&Self> {
+    ) -> RenameProfileProvider<Self> {
         RenameProfileProvider::new(self, from, to)
     }
 
     fn wrap(
-        &self,
+        self,
         wrapping_key: impl Into<Profile>,
         profile: impl Into<Profile>,
-    ) -> WrapProfileProvider<&Self> {
+    ) -> WrapProfileProvider<Self> {
         WrapProfileProvider::new(self, wrapping_key, profile)
     }
 
     fn strict_select(
-        &self,
+        self,
         profiles: impl IntoIterator<Item = impl Into<Profile>>,
-    ) -> OptionalStrictProfileProvider<&Self> {
+    ) -> OptionalStrictProfileProvider<Self> {
         OptionalStrictProfileProvider::new(self, profiles)
     }
 
     fn fallback(
-        &self,
+        self,
         profile: impl Into<Profile>,
         fallback: impl Into<Profile>,
-    ) -> FallbackProfileProvider<&Self> {
+    ) -> FallbackProfileProvider<Self> {
         FallbackProfileProvider::new(self, profile, fallback)
     }
 }
