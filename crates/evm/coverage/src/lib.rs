@@ -15,6 +15,7 @@ use alloy_primitives::{map::HashMap, Bytes, B256};
 use analysis::SourceIdentifier;
 use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
+use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt::Display,
@@ -38,7 +39,7 @@ pub struct CoverageReport {
     /// A map of source IDs to the source path.
     pub source_paths: HashMap<SourceIdentifier, PathBuf>,
     /// A map of source paths to source IDs.
-    pub source_paths_to_ids: HashMap<PathBuf, SourceIdentifier>,
+    pub source_paths_to_ids: HashMap<(Version, PathBuf), SourceIdentifier>,
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<SourceIdentifier, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
@@ -53,14 +54,14 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, source_id: SourceIdentifier, path: PathBuf) {
+    pub fn add_source(&mut self, version: Version, source_id: SourceIdentifier, path: PathBuf) {
         self.source_paths.insert(source_id.clone(), path.clone());
-        self.source_paths_to_ids.insert(path, source_id);
+        self.source_paths_to_ids.insert((version, path), source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, path: PathBuf) -> Option<SourceIdentifier> {
-        self.source_paths_to_ids.get(&path).cloned()
+    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<SourceIdentifier> {
+        self.source_paths_to_ids.get(&(version, path)).cloned()
     }
 
     /// Add the source maps.

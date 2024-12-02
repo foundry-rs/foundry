@@ -4022,6 +4022,7 @@ dependencies = [
  "foundry-evm-core",
  "rayon",
  "revm",
+ "semver 1.0.23",
  "tracing",
 ]
 

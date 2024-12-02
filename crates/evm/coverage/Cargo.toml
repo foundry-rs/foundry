@@ -23,3 +23,4 @@ eyre.workspace = true
 revm.workspace = true
 tracing.workspace = true
 rayon.workspace = true
+semver.workspace = true
