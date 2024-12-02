@@ -12,6 +12,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use alloy_primitives::{map::HashMap, Bytes, B256};
+use analysis::SourceIdentifier;
 use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
@@ -36,29 +37,31 @@ pub use inspector::CoverageCollector;
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
     /// A map of source IDs to the source path.
-    pub source_paths: HashMap<(Version, usize), PathBuf>,
+    pub source_paths: HashMap<SourceIdentifier, PathBuf>,
     /// A map of source paths to source IDs.
-    pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
+    pub source_paths_to_ids: HashMap<(Version, PathBuf), SourceIdentifier>,
     /// All coverage items for the codebase, keyed by the compiler version.
-    pub items: HashMap<Version, Vec<CoverageItem>>,
+    pub items: HashMap<SourceIdentifier, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
     /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
+    /// Anchor Item ID by source ID
+    pub item_ids_by_source_id: HashMap<SourceIdentifier, Vec<usize>>,
 }
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, version: Version, source_id: usize, path: PathBuf) {
-        self.source_paths.insert((version.clone(), source_id), path.clone());
+    pub fn add_source(&mut self, version: Version, source_id: SourceIdentifier, path: PathBuf) {
+        self.source_paths.insert(source_id.clone(), path.clone());
         self.source_paths_to_ids.insert((version, path), source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<usize> {
-        self.source_paths_to_ids.get(&(version, path)).copied()
+    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<SourceIdentifier> {
+        self.source_paths_to_ids.get(&(version, path)).cloned()
     }
 
     /// Add the source maps.
@@ -70,8 +73,10 @@ impl CoverageReport {
     }
 
     /// Add coverage items to this report.
-    pub fn add_items(&mut self, version: Version, items: impl IntoIterator<Item = CoverageItem>) {
-        self.items.entry(version).or_default().extend(items);
+    pub fn add_items(&mut self, items: impl IntoIterator<Item = CoverageItem>) {
+        for item in items.into_iter() {
+            self.items.entry(item.loc.source_id.clone()).or_default().push(item);
+        }
     }
 
     /// Add anchors to this report.
@@ -97,10 +102,9 @@ impl CoverageReport {
         mut f: impl FnMut(&mut T, &'a CoverageItem),
     ) -> impl Iterator<Item = (&'a Path, T)> {
         let mut by_file: BTreeMap<&Path, T> = BTreeMap::new();
-        for (version, items) in &self.items {
+        for (key, items) in &self.items {
             for item in items {
-                let key = (version.clone(), item.loc.source_id);
-                let Some(path) = self.source_paths.get(&key) else { continue };
+                let Some(path) = self.source_paths.get(key) else { continue };
                 f(by_file.entry(path).or_default(), item);
             }
         }
@@ -131,8 +135,12 @@ impl CoverageReport {
             for anchor in anchors {
                 if let Some(&hits) = hit_map.hits.get(&anchor.instruction) {
                     self.items
-                        .get_mut(&contract_id.version)
-                        .and_then(|items| items.get_mut(anchor.item_id))
+                        .get_mut(&contract_id.source_id)
+                        .and_then(|items| {
+                            let scaled_item_id = anchor.item_id % items.len();
+
+                            items.get_mut(scaled_item_id)
+                        })
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits;
                 }
@@ -146,12 +154,9 @@ impl CoverageReport {
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
-        self.items.retain(|version, items| {
-            items.retain(|item| {
-                self.source_paths
-                    .get(&(version.clone(), item.loc.source_id))
-                    .map(|path| filter(path))
-                    .unwrap_or(false)
+        self.items.retain(|source_id, items| {
+            items.retain(|_item| {
+                self.source_paths.get(source_id).map(|path| filter(path)).unwrap_or(false)
             });
             !items.is_empty()
         });
@@ -247,18 +252,13 @@ impl HitMap {
 /// A unique identifier for a contract
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
-    pub version: Version,
-    pub source_id: usize,
+    pub source_id: SourceIdentifier,
     pub contract_name: Arc<str>,
 }
 
 impl Display for ContractId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Contract \"{}\" (solc {}, source ID {})",
-            self.contract_name, self.version, self.source_id
-        )
+        write!(f, "Contract \"{}\" source ID {}", self.contract_name, self.source_id)
     }
 }
 
@@ -338,7 +338,7 @@ impl Display for CoverageItem {
 #[derive(Clone, Debug)]
 pub struct SourceLocation {
     /// The source ID.
-    pub source_id: usize,
+    pub source_id: SourceIdentifier,
     /// The contract this source range is in.
     pub contract_name: Arc<str>,
     /// Byte range.

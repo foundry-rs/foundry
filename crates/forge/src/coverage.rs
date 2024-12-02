@@ -1,6 +1,7 @@
 //! Coverage reports.
 
 use alloy_primitives::map::HashMap;
+use analysis::SourceIdentifier;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
@@ -181,7 +182,7 @@ impl CoverageReporter for DebugReporter {
                         "  - Refers to item: {}",
                         report
                             .items
-                            .get(&contract_id.version)
+                            .get(&contract_id.source_id)
                             .and_then(|items| items.get(anchor.item_id))
                             .map_or("None".to_owned(), |item| item.to_string())
                     );
@@ -226,7 +227,10 @@ impl CoverageReporter for BytecodeReporter {
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id.and_then(|i| {
-                    report.source_paths.get(&(contract_id.version.clone(), i as usize))
+                    report.source_paths.get(&SourceIdentifier::new(
+                        i as usize,
+                        contract_id.source_id.build_id.clone(),
+                    ))
                 });
 
                 let code = format!("{code:?}");

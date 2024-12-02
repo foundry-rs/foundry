@@ -1503,6 +1503,300 @@ contract AContract {
 "#]]);
 });
 
+forgetest!(test_coverage_caching, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // forge build
+    cmd.arg("build").assert_success();
+
+    // forge coverage
+    // Assert 100% coverage (init function coverage called in setUp is accounted).
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]],
+    );
+
+    // forge build - Should not compile the contracts again.
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(
+        r#"No files changed, compilation skipped
+"#,
+    );
+
+    // forge coverage - Should not compile the contracts again.
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"No files changed, compilation skipped
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]],
+    );
+});
+
+forgetest!(test_coverage_multi_solc_versions, |prj, cmd| {
+    prj.insert_ds_test();
+
+    let counter = r#"
+        pragma solidity 0.8.13;
+        contract Counter {
+            uint256 public number;
+
+            function setNumber(uint256 newNumber) public {
+                number = newNumber;
+            }
+
+            function increment() public {
+                number++;
+            }
+        }
+    "#;
+    let counter2 = r#"
+        pragma solidity 0.8.27;
+        contract Counter2 {
+            uint256 public number;
+
+            function setNumber(uint256 newNumber) public {
+                number = newNumber;
+            }
+
+            function increment() public {
+                number++;
+            }
+        }
+    "#;
+
+    let counter_test = r#"
+        pragma solidity ^0.8.13;
+        import "./test.sol";
+        import {Counter} from "./Counter.sol";
+
+        contract CounterTest is DSTest {
+            Counter public counter;
+
+            function setUp() public {
+                counter = new Counter();
+                counter.setNumber(0);
+            }
+
+            function test_Increment() public {
+                counter.increment();
+                assertEq(counter.number(), 1);
+            }
+
+            function testFuzz_SetNumber(uint256 x) public {
+                counter.setNumber(x);
+                assertEq(counter.number(), x);
+            }
+        }
+    "#;
+
+    let counter2_test = r#"
+        pragma solidity ^0.8.13;
+        import "./test.sol";
+        import {Counter2} from "./Counter2.sol";
+
+        contract Counter2Test is DSTest {
+            Counter2 public counter;
+
+            function setUp() public {
+                counter = new Counter2();
+                counter.setNumber(0);
+            }
+
+            function test_Increment() public {
+                counter.increment();
+                assertEq(counter.number(), 1);
+            }
+
+            function testFuzz_SetNumber(uint256 x) public {
+                counter.setNumber(x);
+                assertEq(counter.number(), x);
+            }
+        }
+    "#;
+
+    prj.add_source("Counter.sol", counter).unwrap();
+    prj.add_source("Counter2.sol", counter2).unwrap();
+    prj.add_source("CounterTest.sol", counter_test).unwrap();
+    prj.add_source("Counter2Test.sol", counter2_test).unwrap();
+
+    // no-cache
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+[SOLC_VERSION] [ELAPSED]
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Counter.sol  | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter2.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total            | 100.00% (4/4) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#
+    ]]);
+
+    // cache
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"No files changed, compilation skipped
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Counter.sol  | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter2.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total            | 100.00% (4/4) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#]],
+    );
+
+    // Replace solc version in Counter2.sol
+    let counter2 = counter2.replace("0.8.27", "0.8.25");
+
+    prj.add_source("Counter2.sol", &counter2).unwrap();
+
+    // Should recompile Counter2.sol
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Counter.sol  | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| src/Counter2.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total            | 100.00% (4/4) | 100.00% (4/4) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#]],
+    );
+});
+
+// checks that `clean` also works with the "out" value set in Config
+// this test verifies that the coverage is preserved across compiler runs that may result in files
+// with different source_id's
+forgetest!(coverage_cache_across_compiler_runs, |prj, cmd| {
+    prj.add_source(
+        "A",
+        r#"
+contract A {
+    function f() public pure returns (uint) {
+        return 1;
+    }
+}"#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "B",
+        r#"
+contract B {
+    function f() public pure returns (uint) {
+        return 1;
+    }
+}"#,
+    )
+    .unwrap();
+
+    let a_test = prj
+        .add_test(
+            "A.t.sol",
+            r#"
+import {A} from "../src/A.sol";
+
+contract ATest {
+    function test() public {
+        A a = new A();
+        a.f();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    prj.add_test(
+        "B.t.sol",
+        r#"
+    import {B} from "../src/B.sol";
+    
+    contract BTest {
+        function test() public {
+            B a = new B();
+            a.f();
+        }
+    }
+        "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+| File      | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-----------|---------------|---------------|---------------|---------------|
+| src/A.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| src/B.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| Total     | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+
+    prj.add_test("A.t.sol", &format!("{} ", std::fs::read_to_string(a_test).unwrap())).unwrap();
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+| File      | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-----------|---------------|---------------|---------------|---------------|
+| src/A.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| src/B.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| Total     | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+});
 #[track_caller]
 fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
     cmd.args(["--report=lcov", "--report-file"]).assert_file(data);
