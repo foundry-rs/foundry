@@ -934,8 +934,7 @@ totalDifficulty      {}
 blobGasUsed          {}
 excessBlobGas        {}
 requestsHash         {}
-targetBlobsPerBlock  {}
-",
+targetBlobsPerBlock  {}",
         base_fee_per_gas.pretty(),
         difficulty.pretty(),
         extra_data.pretty(),
