@@ -22,6 +22,7 @@ use std::{collections::BTreeMap, path::Path};
 
 mod record_debug_step;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
+use serde::Serialize;
 
 mod fork;
 pub(crate) mod mapping;
@@ -74,6 +75,29 @@ pub struct DealRecord {
     pub old_balance: U256,
     /// Balance after deal was applied
     pub new_balance: U256,
+}
+
+/// Recorded state diffs, for each changed address.
+type StateDiffs = BTreeMap<Address, AccountStateDiffs>;
+
+/// Account state diff info.
+#[derive(Serialize)]
+struct AccountStateDiffs {
+    /// Address label, if any set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    /// State changes, per slot.
+    changes: BTreeMap<String, SlotStateDiff>,
+}
+
+/// Storage slot diff info.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SlotStateDiff {
+    /// Initial storage value.
+    previous_value: B256,
+    /// Current storage value.
+    new_value: B256,
 }
 
 impl Cheatcode for addrCall {
@@ -693,65 +717,23 @@ impl Cheatcode for getStateDiffCall {
         }
 
         let mut diffs = String::new();
-        for (address, recorded_changes) in state_diffs {
+        for (address, state_diffs) in state_diffs {
             // Print changed account.
-            diffs.push_str(&format!("{address}:\n"));
-            for (slot, (initial_value, current_value)) in recorded_changes {
-                diffs.push_str(&format!("@ {slot}: {initial_value} → {current_value}\n"));
+            if let Some(label) = state_diffs.label {
+                diffs.push_str(&format!("{address} ({label}):\n"));
+            } else {
+                diffs.push_str(&format!("{address}:\n"));
+            }
+            for (slot, slot_changes) in state_diffs.changes {
+                diffs.push_str(&format!(
+                    "@ {slot}: {} → {}\n",
+                    slot_changes.previous_value, slot_changes.new_value
+                ));
             }
         }
 
         Ok(diffs.abi_encode())
     }
-}
-
-/// Returns state diffs to be displayed.
-/// (changed account or label -> (changed slot -> (initial value, current value))
-fn get_recorded_state_diffs(
-    state: &mut Cheatcodes,
-) -> BTreeMap<String, BTreeMap<String, (B256, B256)>> {
-    let address_label =
-        |addr: &Address| state.labels.get(addr).cloned().unwrap_or_else(|| addr.to_string());
-
-    let mut state_diffs = BTreeMap::default();
-    if let Some(records) = &state.recorded_account_diffs_stack {
-        let mut recorded_changes: BTreeMap<Address, BTreeMap<U256, Vec<(B256, B256)>>> =
-            BTreeMap::default();
-        records
-            .iter()
-            .flatten()
-            .filter(|account_access| !account_access.storageAccesses.is_empty())
-            .for_each(|account_access| {
-                for storage_access in &account_access.storageAccesses {
-                    // Retain only records with storage accesses writes that didn't revert.
-                    if storage_access.isWrite && !storage_access.reverted {
-                        recorded_changes
-                            .entry(storage_access.account)
-                            .or_default()
-                            .entry(storage_access.slot.into())
-                            .or_default()
-                            .push((storage_access.previousValue, storage_access.newValue));
-                    }
-                }
-            });
-
-        for (address, recorded_changes) in recorded_changes {
-            let mut slot_changes: BTreeMap<String, (B256, B256)> = BTreeMap::default();
-            for (slot, recorded_slot_changes) in recorded_changes {
-                // For each slot we retain the initial value from first record and the new value
-                // from last record.
-                slot_changes.insert(
-                    slot.to_string(),
-                    (
-                        recorded_slot_changes.first().unwrap().0,
-                        recorded_slot_changes.last().unwrap().1,
-                    ),
-                );
-            }
-            state_diffs.insert(address_label(&address), slot_changes);
-        }
-    }
-    state_diffs
 }
 
 impl Cheatcode for broadcastRawTransactionCall {
@@ -1114,4 +1096,50 @@ fn genesis_account(account: &Account) -> GenesisAccount {
         ),
         private_key: None,
     }
+}
+
+/// Helper function to returns state diffs recorded for each changed account.
+fn get_recorded_state_diffs(state: &mut Cheatcodes) -> StateDiffs {
+    let mut state_diffs: StateDiffs = BTreeMap::default();
+    if let Some(records) = &state.recorded_account_diffs_stack {
+        let mut recorded_changes: BTreeMap<Address, BTreeMap<U256, Vec<(B256, B256)>>> =
+            BTreeMap::default();
+        records
+            .iter()
+            .flatten()
+            .filter(|account_access| !account_access.storageAccesses.is_empty())
+            .for_each(|account_access| {
+                for storage_access in &account_access.storageAccesses {
+                    // Retain only records with storage accesses writes that didn't revert.
+                    if storage_access.isWrite && !storage_access.reverted {
+                        recorded_changes
+                            .entry(storage_access.account)
+                            .or_default()
+                            .entry(storage_access.slot.into())
+                            .or_default()
+                            .push((storage_access.previousValue, storage_access.newValue));
+                    }
+                }
+            });
+
+        for (address, recorded_changes) in recorded_changes {
+            let mut changes = BTreeMap::default();
+            for (slot, recorded_slot_changes) in recorded_changes {
+                // For each slot we retain the initial value from first state change and the new
+                // value from last state change.
+                changes.insert(
+                    slot.to_string(),
+                    SlotStateDiff {
+                        previous_value: recorded_slot_changes.first().unwrap().0,
+                        new_value: recorded_slot_changes.last().unwrap().1,
+                    },
+                );
+            }
+            state_diffs.insert(
+                address,
+                AccountStateDiffs { label: state.labels.get(&address).cloned(), changes },
+            );
+        }
+    }
+    state_diffs
 }
