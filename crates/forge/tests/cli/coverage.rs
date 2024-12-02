@@ -32,8 +32,52 @@ Wrote LCOV report.
 
     let lcov = prj.root().join("lcov.info");
     assert!(lcov.exists(), "lcov.info was not created");
-    assert_data_eq!(
-        Data::read_from(&lcov, None),
+    let default_lcov = str![[r#"
+TN:
+SF:script/Counter.s.sol
+DA:10,0
+FN:10,CounterScript.setUp
+FNDA:0,CounterScript.setUp
+DA:12,0
+FN:12,CounterScript.run
+FNDA:0,CounterScript.run
+DA:13,0
+DA:15,0
+DA:17,0
+FNF:2
+FNH:0
+LF:5
+LH:0
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/Counter.sol
+DA:7,258
+FN:7,Counter.setNumber
+FNDA:258,Counter.setNumber
+DA:8,258
+DA:11,1
+FN:11,Counter.increment
+FNDA:1,Counter.increment
+DA:12,1
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]];
+    assert_data_eq!(Data::read_from(&lcov, None), default_lcov.clone());
+    assert_lcov(
+        cmd.forge_fuse().args(["coverage", "--report=lcov", "--lcov-version=1"]),
+        default_lcov,
+    );
+
+    assert_lcov(
+        cmd.forge_fuse().args(["coverage", "--report=lcov", "--lcov-version=2"]),
         str![[r#"
 TN:
 SF:script/Counter.s.sol
@@ -71,7 +115,49 @@ BRF:0
 BRH:0
 end_of_record
 
-"#]]
+"#]],
+    );
+
+    assert_lcov(
+        cmd.forge_fuse().args(["coverage", "--report=lcov", "--lcov-version=2.2"]),
+        str![[r#"
+TN:
+SF:script/Counter.s.sol
+DA:10,0
+FNL:0,10,10
+FNA:0,0,CounterScript.setUp
+DA:12,0
+FNL:1,12,18
+FNA:1,0,CounterScript.run
+DA:13,0
+DA:15,0
+DA:17,0
+FNF:2
+FNH:0
+LF:5
+LH:0
+BRF:0
+BRH:0
+end_of_record
+TN:
+SF:src/Counter.sol
+DA:7,258
+FNL:2,7,9
+FNA:2,258,Counter.setNumber
+DA:8,258
+DA:11,1
+FNL:3,11,13
+FNA:3,1,Counter.increment
+DA:12,1
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
     );
 }
 
@@ -432,7 +518,7 @@ contract AContractTest is DSTest {
 TN:
 SF:src/AContract.sol
 DA:7,1
-FN:7,9,AContract.foo
+FN:7,AContract.foo
 FNDA:1,AContract.foo
 DA:8,1
 FNF:1
@@ -1397,7 +1483,7 @@ contract AContractTest is DSTest {
 TN:
 SF:src/AContract.sol
 DA:9,1
-FN:9,9,AContract.increment
+FN:9,AContract.increment
 FNDA:1,AContract.increment
 FNF:1
 FNH:1
@@ -1466,11 +1552,11 @@ contract AContractTest is DSTest {
 TN:
 SF:src/AContract.sol
 DA:7,1
-FN:7,9,AContract.constructor
+FN:7,AContract.constructor
 FNDA:1,AContract.constructor
 DA:8,1
 DA:11,1
-FN:11,13,AContract.receive
+FN:11,AContract.receive
 FNDA:1,AContract.receive
 DA:12,1
 FNF:2
@@ -1530,5 +1616,5 @@ contract AContract {
 
 #[track_caller]
 fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
-    cmd.args(["--report=lcov", "--report-file"]).assert_file(data);
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
 }
