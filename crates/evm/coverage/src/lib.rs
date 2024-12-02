@@ -104,7 +104,7 @@ impl CoverageReport {
         let mut by_file: BTreeMap<&Path, T> = BTreeMap::new();
         for (key, items) in &self.items {
             for item in items {
-                let Some(path) = self.source_paths.get(&key) else { continue };
+                let Some(path) = self.source_paths.get(key) else { continue };
                 f(by_file.entry(path).or_default(), item);
             }
         }
