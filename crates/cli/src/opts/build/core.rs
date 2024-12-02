@@ -16,8 +16,7 @@ use foundry_config::{
         Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    providers::remappings::Remappings,
-    Config,
+    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;
