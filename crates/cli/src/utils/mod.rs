@@ -110,6 +110,10 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.timeout(Duration::from_secs(rpc_timeout));
     }
 
+    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
+        builder = builder.headers(rpc_headers);
+    }
+
     Ok(builder)
 }
 
@@ -283,7 +287,7 @@ impl<'a> Git<'a> {
 
     #[inline]
     pub fn from_config(config: &'a Config) -> Self {
-        Self::new(config.root.0.as_path())
+        Self::new(config.root.as_path())
     }
 
     pub fn root_of(relative_to: &Path) -> Result<PathBuf> {

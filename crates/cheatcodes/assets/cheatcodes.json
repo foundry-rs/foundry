@@ -3111,7 +3111,7 @@
       "func": {
         "id": "attachDelegation",
         "description": "Designate the next call as an EIP-7702 transaction",
-        "declaration": "function attachDelegation(SignedDelegation memory signedDelegation) external;",
+        "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address))",
@@ -4615,7 +4615,7 @@
       "func": {
         "id": "eth_getLogs",
         "description": "Gets all the logs according to specified filter.",
-        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] memory topics) external returns (EthGetLogs[] memory logs);",
+        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external returns (EthGetLogs[] memory logs);",
         "visibility": "external",
         "mutability": "",
         "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
@@ -5435,7 +5435,7 @@
       "func": {
         "id": "getBroadcast",
         "description": "Returns the most recent broadcast for the given contract on `chainId` matching `txType`.\nFor example:\nThe most recent deployment can be fetched by passing `txType` as `CREATE` or `CREATE2`.\nThe most recent call can be fetched by passing `txType` as `CALL`.",
-        "declaration": "function getBroadcast(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);",
+        "declaration": "function getBroadcast(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getBroadcast(string,uint64,uint8)",
@@ -5455,7 +5455,7 @@
       "func": {
         "id": "getBroadcasts_0",
         "description": "Returns all broadcasts for the given contract on `chainId` with the specified `txType`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
-        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);",
+        "declaration": "function getBroadcasts(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getBroadcasts(string,uint64,uint8)",
@@ -5475,7 +5475,7 @@
       "func": {
         "id": "getBroadcasts_1",
         "description": "Returns all broadcasts for the given contract on `chainId`.\nSorted such that the most recent broadcast is the first element, and the oldest is the last. i.e descending order of BroadcastTxSummary.blockNumber.",
-        "declaration": "function getBroadcasts(string memory contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);",
+        "declaration": "function getBroadcasts(string calldata contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getBroadcasts(string,uint64)",
@@ -5535,7 +5535,7 @@
       "func": {
         "id": "getDeployment_0",
         "description": "Returns the most recent deployment for the current `chainId`.",
-        "declaration": "function getDeployment(string memory contractName) external view returns (address deployedAddress);",
+        "declaration": "function getDeployment(string calldata contractName) external view returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getDeployment(string)",
@@ -5555,7 +5555,7 @@
       "func": {
         "id": "getDeployment_1",
         "description": "Returns the most recent deployment for the given contract on `chainId`",
-        "declaration": "function getDeployment(string memory contractName, uint64 chainId) external view returns (address deployedAddress);",
+        "declaration": "function getDeployment(string calldata contractName, uint64 chainId) external view returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getDeployment(string,uint64)",
@@ -5575,7 +5575,7 @@
       "func": {
         "id": "getDeployments",
         "description": "Returns all deployments for the given contract on `chainId`\nSorted in descending order of deployment time i.e descending order of BroadcastTxSummary.blockNumber.\nThe most recent deployment is the first element, and the oldest is the last.",
-        "declaration": "function getDeployments(string memory contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);",
+        "declaration": "function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getDeployments(string,uint64)",
@@ -8701,7 +8701,7 @@
       "func": {
         "id": "serializeJsonType_0",
         "description": "See `serializeJson`.",
-        "declaration": "function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);",
+        "declaration": "function serializeJsonType(string calldata typeDescription, bytes calldata value) external pure returns (string memory json);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "serializeJsonType(string,bytes)",
@@ -8721,7 +8721,7 @@
       "func": {
         "id": "serializeJsonType_1",
         "description": "See `serializeJson`.",
-        "declaration": "function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);",
+        "declaration": "function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes calldata value) external returns (string memory json);",
         "visibility": "external",
         "mutability": "",
         "signature": "serializeJsonType(string,string,string,bytes)",

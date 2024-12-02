@@ -1640,6 +1640,10 @@ impl InspectorExt for Cheatcodes {
             false
         }
     }
+
+    fn create2_deployer(&self) -> Address {
+        self.config.evm_opts.create2_deployer
+    }
 }
 
 impl Cheatcodes {

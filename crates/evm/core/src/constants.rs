@@ -37,6 +37,9 @@ pub const MAGIC_ASSUME: &[u8] = b"FOUNDRY::ASSUME";
 /// Magic return value returned by the `skip` cheatcode. Optionally appended with a reason.
 pub const MAGIC_SKIP: &[u8] = b"FOUNDRY::SKIP";
 
+/// Test timeout return value.
+pub const TEST_TIMEOUT: &str = "FOUNDRY::TEST_TIMEOUT";
+
 /// The address that deploys the default CREATE2 deployer contract.
 pub const DEFAULT_CREATE2_DEPLOYER_DEPLOYER: Address =
     address!("3fAB184622Dc19b6109349B94811493BF2a45362");
@@ -46,6 +49,11 @@ pub const DEFAULT_CREATE2_DEPLOYER: Address = address!("4e59b44847b379578588920c
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
 /// The runtime code of the default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE: &[u8] = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3");
+/// The hash of the default CREATE2 deployer code.
+///
+/// This is calculated as `keccak256([`DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE`])`.
+pub const DEFAULT_CREATE2_DEPLOYER_CODEHASH: B256 =
+    b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
 
 #[cfg(test)]
 mod tests {

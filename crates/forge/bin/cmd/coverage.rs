@@ -16,13 +16,16 @@ use forge::{
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage},
+    artifacts::{
+        sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
+    },
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use semver::Version;
 use std::{
+    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -153,7 +156,7 @@ impl CoverageArgs {
 
                 let source = SourceFile {
                     ast,
-                    source: fs::read_to_string(&file)
+                    source: Source::read(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 };
                 versioned_sources
@@ -230,11 +233,7 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_test_options(TestOptions {
-                fuzz: config.fuzz.clone(),
-                invariant: config.invariant.clone(),
-                ..Default::default()
-            })
+            .with_test_options(TestOptions::new(output, config.clone())?)
             .set_coverage(true)
             .build(&root, output, env, evm_opts)?;
 
@@ -294,19 +293,15 @@ impl CoverageArgs {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
-                    if let Some(report_file) = self.report_file {
-                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
-                            .report(&report)
-                    } else {
-                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                            .report(&report)
-                    }
+                    let path =
+                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    let mut file = io::BufWriter::new(fs::create_file(path)?);
+                    LcovReporter::new(&mut file).report(&report)
                 }
                 CoverageReportKind::Bytecode => {
                     let destdir = root.join("bytecode-coverage");
                     fs::create_dir_all(&destdir)?;
-                    BytecodeReporter::new(root.clone(), destdir).report(&report)?;
-                    Ok(())
+                    BytecodeReporter::new(root.clone(), destdir).report(&report)
                 }
                 CoverageReportKind::Debug => DebugReporter.report(&report),
             }?;
@@ -315,9 +310,10 @@ impl CoverageArgs {
     }
 }
 
-// TODO: HTML
-#[derive(Clone, Debug, ValueEnum)]
+/// Coverage reports to generate.
+#[derive(Clone, Debug, Default, ValueEnum)]
 pub enum CoverageReportKind {
+    #[default]
     Summary,
     Lcov,
     Debug,
