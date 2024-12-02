@@ -696,9 +696,12 @@ pub(crate) fn handle_expect_emit(
                 event_to_fill_or_check.checks,
             );
 
-            log_count_map.insert(&log.data);
+            if log_count_map.satisfies_checks(&log.data) {
+                log_count_map.insert(&log.data);
 
-            entry.insert(log_count_map);
+                // Entry is only inserted if it satisfies the checks.
+                entry.insert(log_count_map);
+            }
         }
     }
 
@@ -744,10 +747,30 @@ pub(crate) fn handle_expect_emit(
             }
             false
         } else {
+            let satifies =
+                count_map
+                    .values()
+                    .filter_map(|log_map| {
+                        if log_map.satisfies_checks(&log.data) {
+                            Some(log_map)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+            tracing::info!("Satisfies len: {:#?}", satifies.len());
+            // Print the satisfies logs with the keys
+            for (key, value) in count_map.iter() {
+                tracing::info!("Key: {:#?}", key);
+                tracing::info!("Value: {:#?}", value);
+            }
+
             let log_count_map =
                 count_map.values().find(|log_map| log_map.satisfies_checks(&log.data));
+
             if let Some(map) = log_count_map {
                 let count = map.count(&log.data);
+                tracing::info!("Count: {}", count);
                 if count >= expected_count {
                     return true
                 }
@@ -800,9 +823,11 @@ impl LogCountMap {
         }
 
         if !self.satisfies_checks(log) {
+            tracing::info!("Ignoring log: {:#?}", log);
             return false
         }
 
+        tracing::info!("Inserting log: {:#?}", log);
         self.map.entry(log.clone()).and_modify(|c| *c += 1).or_insert(1);
 
         true
