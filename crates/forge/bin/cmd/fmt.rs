@@ -48,7 +48,7 @@ impl FmtArgs {
         let config = self.try_load_config_emit_warnings()?;
 
         // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.root.0, config.fmt.ignore.iter())?
+        let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
             .iter()
             .flat_map(foundry_common::fs::canonicalize_path)
             .collect::<Vec<_>>();
@@ -96,9 +96,7 @@ impl FmtArgs {
 
         let format = |source: String, path: Option<&Path>| -> Result<_> {
             let name = match path {
-                Some(path) => {
-                    path.strip_prefix(&config.root.0).unwrap_or(path).display().to_string()
-                }
+                Some(path) => path.strip_prefix(&config.root).unwrap_or(path).display().to_string(),
                 None => "stdin".to_string(),
             };
 

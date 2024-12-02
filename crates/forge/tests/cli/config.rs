@@ -31,7 +31,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         profile: Config::DEFAULT_PROFILE,
         // `profiles` is not serialized.
         profiles: vec![],
-        root: Default::default(),
+        root: ".".into(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
