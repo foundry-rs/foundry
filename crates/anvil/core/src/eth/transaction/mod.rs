@@ -1109,7 +1109,7 @@ pub struct TransactionInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct DepositReceipt<T = alloy_primitives::Log> {
+pub struct DepositReceipt<T = Receipt<alloy_primitives::Log>> {
     #[serde(flatten)]
     pub inner: ReceiptWithBloom<T>,
     #[serde(default, with = "alloy_serde::quantity::opt")]
@@ -1136,7 +1136,7 @@ impl DepositReceipt {
     /// Encodes the receipt data.
     fn encode_fields(&self, out: &mut dyn BufMut) {
         self.receipt_rlp_header().encode(out);
-        self.inner.receipt.status.encode(out);
+        self.inner.status().encode(out);
         self.inner.receipt.cumulative_gas_used.encode(out);
         self.inner.logs_bloom.encode(out);
         self.inner.receipt.logs.encode(out);
@@ -1161,7 +1161,7 @@ impl DepositReceipt {
         let status = Decodable::decode(b)?;
         let cumulative_gas_used = Decodable::decode(b)?;
         let logs_bloom = Decodable::decode(b)?;
-        let logs = Decodable::decode(b)?;
+        let logs: Vec<Log> = Decodable::decode(b)?;
         let deposit_nonce = remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
         let deposit_nonce_version =
             remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
@@ -1207,7 +1207,7 @@ impl alloy_rlp::Decodable for DepositReceipt {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum TypedReceipt<T = alloy_primitives::Log> {
+pub enum TypedReceipt<T = Receipt<alloy_primitives::Log>> {
     #[serde(rename = "0x0", alias = "0x00")]
     Legacy(ReceiptWithBloom<T>),
     #[serde(rename = "0x1", alias = "0x01")]
@@ -1248,8 +1248,8 @@ impl<T> From<TypedReceipt<T>> for ReceiptWithBloom<T> {
     }
 }
 
-impl From<TypedReceipt<alloy_rpc_types::Log>> for OtsReceipt {
-    fn from(value: TypedReceipt<alloy_rpc_types::Log>) -> Self {
+impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
+    fn from(value: TypedReceipt<Receipt<alloy_rpc_types::Log>>) -> Self {
         let r#type = match value {
             TypedReceipt::Legacy(_) => 0x00,
             TypedReceipt::EIP2930(_) => 0x01,
@@ -1258,7 +1258,7 @@ impl From<TypedReceipt<alloy_rpc_types::Log>> for OtsReceipt {
             TypedReceipt::EIP7702(_) => 0x04,
             TypedReceipt::Deposit(_) => 0x7E,
         } as u8;
-        let receipt = ReceiptWithBloom::<alloy_rpc_types::Log>::from(value);
+        let receipt = ReceiptWithBloom::<Receipt<alloy_rpc_types::Log>>::from(value);
         let status = receipt.status();
         let cumulative_gas_used = receipt.cumulative_gas_used() as u64;
         let logs = receipt.logs().to_vec();
@@ -1282,7 +1282,7 @@ impl TypedReceipt {
     }
 }
 
-impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<alloy_rpc_types::Log> {
+impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<Receipt<alloy_rpc_types::Log>> {
     fn from(value: ReceiptEnvelope<alloy_rpc_types::Log>) -> Self {
         match value {
             ReceiptEnvelope::Legacy(r) => Self::Legacy(r),
@@ -1439,7 +1439,7 @@ impl Decodable2718 for TypedReceipt {
     }
 }
 
-pub type ReceiptResponse = TransactionReceipt<TypedReceipt<alloy_rpc_types::Log>>;
+pub type ReceiptResponse = TransactionReceipt<TypedReceipt<Receipt<alloy_rpc_types::Log>>>;
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
     let WithOtherFields {

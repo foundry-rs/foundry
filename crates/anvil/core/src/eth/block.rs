@@ -158,6 +158,7 @@ mod tests {
             parent_beacon_block_root: Default::default(),
             base_fee_per_gas: None,
             requests_hash: None,
+            target_blobs_per_block: None,
         };
 
         let encoded = alloy_rlp::encode(&header);
@@ -199,6 +200,7 @@ mod tests {
             nonce: B64::ZERO,
             base_fee_per_gas: None,
             requests_hash: None,
+            target_blobs_per_block: None,
         };
 
         header.encode(&mut data);
@@ -232,6 +234,7 @@ mod tests {
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
             requests_hash: None,
+            target_blobs_per_block: None,
         };
         let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
@@ -264,6 +267,7 @@ mod tests {
             excess_blob_gas: None,
             parent_beacon_block_root: None,
             requests_hash: None,
+            target_blobs_per_block: None,
         };
         assert_eq!(header.hash_slow(), expected_hash);
     }
