@@ -260,6 +260,7 @@ impl MultiContractRunner {
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
                     .alphanet(self.alphanet)
+                    .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec(self.evm_spec)
             .gas_limit(self.evm_opts.gas_limit())
