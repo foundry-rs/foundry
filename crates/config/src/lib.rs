@@ -108,7 +108,7 @@ mod invariant;
 pub use invariant::InvariantConfig;
 
 mod inline;
-pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
+pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
 pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
@@ -163,6 +163,11 @@ pub struct Config {
     /// set to the extracting Figment's selected `Profile`.
     #[serde(skip)]
     pub profile: Profile,
+    /// The list of all profiles defined in the config.
+    ///
+    /// See `profile`.
+    #[serde(skip)]
+    pub profiles: Vec<Profile>,
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
     /// path of the test dir
@@ -248,6 +253,15 @@ pub struct Config {
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
     pub eth_rpc_timeout: Option<u64>,
+    /// Headers that should be used for any rpc calls
+    ///
+    /// # Example
+    ///
+    /// rpc_headers = ["x-custom-header:value", "x-another-header:another-value"]
+    ///
+    /// You can also the ETH_RPC_HEADERS env variable like so:
+    /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
+    pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -440,6 +454,9 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
+    /// The CREATE2 deployer address to use.
+    pub create2_deployer: Address,
+
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
 
@@ -481,7 +498,7 @@ pub struct Config {
     /// Use EOF-enabled solc for compilation.
     pub eof: bool,
 
-    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
+    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
 
@@ -516,7 +533,7 @@ pub const DEPRECATIONS: &[(&str, &str)] = &[("cancun", "evm_version = Cancun")];
 
 impl Config {
     /// The default profile: "default"
-    pub const DEFAULT_PROFILE: Profile = Profile::const_new("default");
+    pub const DEFAULT_PROFILE: Profile = Profile::Default;
 
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
@@ -553,6 +570,10 @@ impl Config {
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
 
+    /// Default create2 deployer
+    pub const DEFAULT_CREATE2_DEPLOYER: Address =
+        address!("4e59b44847b379578588920ca78fbf26c0b4956c");
+
     /// Docker image with eof-enabled solc binary
     pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
 
@@ -569,7 +590,7 @@ impl Config {
     /// See [`figment`](Self::figment) for more details.
     #[track_caller]
     pub fn load_with_providers(providers: FigmentProviders) -> Self {
-        Self::default().to_figment(providers).extract().unwrap()
+        Self::from_provider(Self::default().to_figment(providers))
     }
 
     /// Returns the current `Config`
@@ -620,19 +641,47 @@ impl Config {
     /// let config = Config::try_from(figment);
     /// ```
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
-        let figment = Figment::from(provider);
+        Self::try_from_figment(Figment::from(provider))
+    }
+
+    fn try_from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
+
+        // The `"profile"` profile contains all the profiles as keys.
+        let mut add_profile = |profile: &Profile| {
+            if !config.profiles.contains(profile) {
+                config.profiles.push(profile.clone());
+            }
+        };
+        let figment = figment.select(Self::PROFILE_SECTION);
+        if let Ok(data) = figment.data() {
+            if let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION)) {
+                for profile in profiles.keys() {
+                    add_profile(&Profile::new(profile));
+                }
+            }
+        }
+        add_profile(&Self::DEFAULT_PROFILE);
+        add_profile(&config.profile);
+
         Ok(config)
     }
 
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
     ///
-    /// This will merge various providers, such as env,toml,remappings into the figment.
-    pub fn to_figment(self, providers: FigmentProviders) -> Figment {
-        let mut c = self;
+    /// This will merge various providers, such as env,toml,remappings into the figment if
+    /// requested.
+    pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
+
+        if providers.is_none() {
+            return Figment::from(self);
+        }
+
+        let root = self.root.0.as_path();
         let profile = Self::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.root.0));
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
 
         // merge global foundry.toml file
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
@@ -645,7 +694,7 @@ impl Config {
         // merge local foundry.toml file
         figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.root.0.join(Self::FILE_NAME)).cached(),
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), root.join(Self::FILE_NAME)).cached(),
             profile.clone(),
         );
 
@@ -692,17 +741,17 @@ impl Config {
                 lib_paths: figment
                     .extract_inner::<Vec<PathBuf>>("libs")
                     .map(Cow::Owned)
-                    .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
-                root: &c.root.0,
+                    .unwrap_or_else(|_| Cow::Borrowed(&self.libs)),
+                root,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
             };
             figment = figment.merge(remappings);
         }
 
         // normalize defaults
-        figment = c.normalize_defaults(figment);
+        figment = self.normalize_defaults(figment);
 
-        Figment::from(c).merge(figment).select(profile)
+        Figment::from(self).merge(figment).select(profile)
     }
 
     /// The config supports relative paths and tracks the root path separately see
@@ -1722,6 +1771,19 @@ impl Config {
     ///
     /// If the `FOUNDRY_PROFILE` env variable is not set, this returns the `DEFAULT_PROFILE`.
     pub fn selected_profile() -> Profile {
+        // Can't cache in tests because the env var can change.
+        #[cfg(test)]
+        {
+            Self::force_selected_profile()
+        }
+        #[cfg(not(test))]
+        {
+            static CACHE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
+            CACHE.get_or_init(Self::force_selected_profile).clone()
+        }
+    }
+
+    fn force_selected_profile() -> Profile {
         Profile::from_env_or("FOUNDRY_PROFILE", Self::DEFAULT_PROFILE)
     }
 
@@ -2017,19 +2079,20 @@ impl Config {
     /// This normalizes the default `evm_version` if a `solc` was provided in the config.
     ///
     /// See also <https://github.com/foundry-rs/foundry/issues/7014>
-    fn normalize_defaults(&mut self, figment: Figment) -> Figment {
+    fn normalize_defaults(&self, mut figment: Figment) -> Figment {
+        // TODO: add a warning if evm_version is provided but incompatible
+        if figment.contains("evm_version") {
+            return figment;
+        }
+
+        // Normalize `evm_version` based on the provided solc version.
         if let Ok(solc) = figment.extract_inner::<SolcReq>("solc") {
-            // check if evm_version is set
-            // TODO: add a warning if evm_version is provided but incompatible
-            if figment.find_value("evm_version").is_err() {
-                if let Some(version) = solc
-                    .try_version()
-                    .ok()
-                    .and_then(|version| self.evm_version.normalize_version_solc(&version))
-                {
-                    // normalize evm_version based on the provided solc version
-                    self.evm_version = version;
-                }
+            if let Some(version) = solc
+                .try_version()
+                .ok()
+                .and_then(|version| self.evm_version.normalize_version_solc(&version))
+            {
+                figment = figment.merge(("evm_version", version));
             }
         }
 
@@ -2039,35 +2102,52 @@ impl Config {
 
 impl From<Config> for Figment {
     fn from(c: Config) -> Self {
+        (&c).into()
+    }
+}
+impl From<&Config> for Figment {
+    fn from(c: &Config) -> Self {
         c.to_figment(FigmentProviders::All)
     }
 }
 
-/// Determines what providers should be used when loading the [Figment] for a [Config]
+/// Determines what providers should be used when loading the [`Figment`] for a [`Config`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FigmentProviders {
-    /// Include all providers
+    /// Include all providers.
     #[default]
     All,
-    /// Only include necessary providers that are useful for cast commands
+    /// Only include necessary providers that are useful for cast commands.
     ///
-    /// This will exclude more expensive providers such as remappings
+    /// This will exclude more expensive providers such as remappings.
     Cast,
-    /// Only include necessary providers that are useful for anvil
+    /// Only include necessary providers that are useful for anvil.
     ///
-    /// This will exclude more expensive providers such as remappings
+    /// This will exclude more expensive providers such as remappings.
     Anvil,
+    /// Don't include any providers.
+    None,
 }
 
 impl FigmentProviders {
-    /// Returns true if all providers should be included
+    /// Returns true if all providers should be included.
     pub const fn is_all(&self) -> bool {
         matches!(self, Self::All)
     }
 
-    /// Returns true if this is the cast preset
+    /// Returns true if this is the cast preset.
     pub const fn is_cast(&self) -> bool {
         matches!(self, Self::Cast)
+    }
+
+    /// Returns true if this is the anvil preset.
+    pub const fn is_anvil(&self) -> bool {
+        matches!(self, Self::Anvil)
+    }
+
+    /// Returns true if no providers should be included.
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Self::None)
     }
 }
 
@@ -2154,6 +2234,20 @@ impl AsRef<Path> for RootPath {
     }
 }
 
+impl std::ops::Deref for RootPath {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for RootPath {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// Parses a config profile
 ///
 /// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
@@ -2202,11 +2296,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             profile: Self::DEFAULT_PROFILE,
+            profiles: vec![Self::DEFAULT_PROFILE],
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            #[cfg(not(feature = "isolate-by-default"))]
-            isolate: false,
-            #[cfg(feature = "isolate-by-default")]
-            isolate: true,
+            isolate: cfg!(feature = "isolate-by-default"),
             root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -2271,6 +2363,7 @@ impl Default for Config {
             eth_rpc_url: None,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
+            eth_rpc_headers: None,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
@@ -2304,6 +2397,7 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
+            create2_deployer: Self::DEFAULT_CREATE2_DEPLOYER,
             skip: vec![],
             dependencies: Default::default(),
             soldeer: Default::default(),
@@ -2322,11 +2416,12 @@ impl Default for Config {
     }
 }
 
-/// Wrapper for the config's `gas_limit` value necessary because toml-rs can't handle larger number because integers are stored signed: <https://github.com/alexcrichton/toml-rs/issues/256>
+/// Wrapper for the config's `gas_limit` value necessary because toml-rs can't handle larger number
+/// because integers are stored signed: <https://github.com/alexcrichton/toml-rs/issues/256>
 ///
 /// Due to this limitation this type will be serialized/deserialized as String if it's larger than
 /// `i64`
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct GasLimit(#[serde(deserialize_with = "crate::deserialize_u64_or_max")] pub u64);
 
 impl From<u64> for GasLimit {
@@ -3052,9 +3147,39 @@ mod tests {
     #[test]
     fn test_figment_is_default() {
         figment::Jail::expect_with(|_| {
-            let mut default: Config = Config::figment().extract().unwrap();
-            default.profile = Config::default().profile;
-            assert_eq!(default, Config::default());
+            let mut default: Config = Config::figment().extract()?;
+            let default2 = Config::default();
+            default.profile = default2.profile.clone();
+            default.profiles = default2.profiles.clone();
+            assert_eq!(default, default2);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn figment_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [foo.baz]
+                libs = ['node_modules', 'lib']
+
+                [profile.default]
+                libs = ['node_modules', 'lib']
+
+                [profile.ci]
+                libs = ['node_modules', 'lib']
+
+                [profile.local]
+                libs = ['node_modules', 'lib']
+            ",
+            )?;
+
+            let config = crate::Config::load();
+            let expected: &[figment::Profile] = &["ci".into(), "default".into(), "local".into()];
+            assert_eq!(config.profiles, expected);
+
             Ok(())
         });
     }
@@ -3163,7 +3288,6 @@ mod tests {
 
             jail.set_env("FOUNDRY_PROFILE", "custom");
             let config = Config::load();
-
             assert_eq!(config.src, PathBuf::from("customsrc"));
             assert_eq!(config.test, PathBuf::from("defaulttest"));
             assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);

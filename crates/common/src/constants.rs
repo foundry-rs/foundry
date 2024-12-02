@@ -40,6 +40,9 @@ pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("deaddeaddeaddeaddeaddeadd
 /// Transaction identifier of System transaction types
 pub const SYSTEM_TRANSACTION_TYPE: u8 = 126;
 
+/// Default user agent set as the header for requests that don't specify one.
+pub const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
+
 /// Returns whether the sender is a known L2 system sender that is the first tx in every block.
 ///
 /// Transactions from these senders usually don't have a any fee information.

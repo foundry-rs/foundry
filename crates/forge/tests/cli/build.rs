@@ -140,6 +140,11 @@ Compiler run successful!
 
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
+    prj.write_config(Config {
+        solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27))),
+        ..Default::default()
+    });
+
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![
         r#"
 ...
@@ -154,12 +159,12 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
         str![[r#"
 {
   "Counter": {
-    "runtime_size": 247,
-    "init_size": 277,
-    "runtime_margin": 24329,
-    "init_margin": 48875
+    "runtime_size": 236,
+    "init_size": 263,
+    "runtime_margin": 24340,
+    "init_margin": 48889
   }
-} 
+}
 "#]]
         .is_json(),
     );

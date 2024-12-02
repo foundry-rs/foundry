@@ -341,24 +341,26 @@ impl ContractRunner<'_> {
                         self.run_unit_test(func, should_fail, setup)
                     }
                     TestFunctionKind::FuzzTest { should_fail } => {
-                        let runner = test_options.fuzz_runner(self.name, &func.name);
-                        let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-
-                        self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                        match test_options.fuzz_runner(self.name, &func.name) {
+                            Ok((fuzz_config, runner)) => {
+                                self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config)
+                            }
+                            Err(err) => TestResult::fail(err.to_string()),
+                        }
                     }
                     TestFunctionKind::InvariantTest => {
-                        let runner = test_options.invariant_runner(self.name, &func.name);
-                        let invariant_config = test_options.invariant_config(self.name, &func.name);
-
-                        self.run_invariant_test(
-                            runner,
-                            setup,
-                            invariant_config.clone(),
-                            func,
-                            call_after_invariant,
-                            &known_contracts,
-                            identified_contracts.as_ref().unwrap(),
-                        )
+                        match test_options.invariant_runner(self.name, &func.name) {
+                            Ok((invariant_config, runner)) => self.run_invariant_test(
+                                runner,
+                                setup,
+                                invariant_config,
+                                func,
+                                call_after_invariant,
+                                &known_contracts,
+                                identified_contracts.as_ref().unwrap(),
+                            ),
+                            Err(err) => TestResult::fail(err.to_string()),
+                        }
                     }
                     _ => unreachable!(),
                 };
