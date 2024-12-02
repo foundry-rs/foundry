@@ -57,9 +57,10 @@ impl<'a> ContractVisitor<'a> {
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
 
-        // Do not add coverage item for constructors without statements.
-        if kind == "constructor" && !has_statements(body) {
-            return Ok(())
+        // TODO: We currently can only detect empty bodies in normal functions, not any of the other
+        // kinds: https://github.com/foundry-rs/foundry/issues/9458
+        if kind != "function" && !has_statements(body) {
+            return Ok(());
         }
 
         // `fallback`, `receive`, and `constructor` functions have an empty `name`.
