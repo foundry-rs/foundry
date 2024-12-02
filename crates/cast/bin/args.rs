@@ -512,8 +512,8 @@ pub enum CastSubcommand {
     ///
     /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
     /// string
-    #[command(visible_aliases = &["--calldata-decode", "cdd"])]
-    CalldataDecode {
+    #[command(visible_aliases = &["calldata-decode", "--calldata-decode", "cdd"])]
+    DecodeCalldata {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
 
@@ -524,9 +524,29 @@ pub enum CastSubcommand {
     /// Decode ABI-encoded string.
     ///
     /// Similar to `calldata-decode --input`, but the function argument is a `string`
-    #[command(visible_aliases = &["--string-decode", "sd"])]
-    StringDecode {
+    #[command(visible_aliases = &["string-decode", "--string-decode", "sd"])]
+    DecodeString {
         /// The ABI-encoded string.
+        data: String,
+    },
+
+    /// Decode event data.
+    #[command(visible_aliases = &["event-decode", "--event-decode", "ed"])]
+    DecodeEvent {
+        /// The event signature. If none provided then tries to decode from local cache or `https://api.openchain.xyz`.
+        #[arg(long, visible_alias = "event-sig")]
+        sig: Option<String>,
+        /// The event data to decode.
+        data: String,
+    },
+
+    /// Decode custom error data.
+    #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
+    DecodeError {
+        /// The error signature. If none provided then tries to decode from local cache or `https://api.openchain.xyz`.
+        #[arg(long, visible_alias = "error-sig")]
+        sig: Option<String>,
+        /// The error data to decode.
         data: String,
     },
 
@@ -535,8 +555,8 @@ pub enum CastSubcommand {
     /// Defaults to decoding output data. To decode input data pass --input.
     ///
     /// When passing `--input`, function selector must NOT be prefixed in `calldata` string
-    #[command(name = "abi-decode", visible_aliases = &["ad", "--abi-decode"])]
-    AbiDecode {
+    #[command(name = "decode-abi", visible_aliases = &["abi-decode", "--abi-decode", "ad"])]
+    DecodeAbi {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
 

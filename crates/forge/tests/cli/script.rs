@@ -6,6 +6,7 @@ use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     rpc,
+    snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     ScriptOutcome, ScriptTester,
 };
@@ -852,6 +853,70 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
         .await
         // Running again results in error, since we're repeating the salt passed to CREATE2
         .run(ScriptOutcome::ScriptFailed);
+});
+
+forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    // Prepare CREATE2 Deployer
+    api.anvil_set_code(
+        create2,
+        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+    )
+    .await
+    .unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2(address)")
+        .arg(&create2.to_string())
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2)])
+        .await;
+});
+
+forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    // Prepare CREATE2 Deployer
+    api.anvil_set_code(
+        create2,
+        Bytes::from_static(&hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef")),
+    )
+    .await
+    .unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .simulate(ScriptOutcome::ScriptFailed)
+        .broadcast(ScriptOutcome::ScriptFailed);
+});
+
+forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .simulate(ScriptOutcome::ScriptFailed)
+        .broadcast(ScriptOutcome::ScriptFailed);
 });
 
 forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
@@ -1821,6 +1886,83 @@ Warning: Script contains a transaction to 0x000000000000000000000000000000000000
 "#]]);
 });
 
+// Asserts that the script runs with expected non-output using `--quiet` flag
+forgetest_async!(adheres_to_quiet_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external returns (bool success) {
+        vm.startBroadcast();
+        (success, ) = address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--broadcast",
+        "--unlocked",
+        "--non-interactive",
+        "--quiet",
+    ])
+    .assert_empty_stdout();
+});
+
+// Asserts that the script runs with expected non-output using `--quiet` flag
+forgetest_async!(adheres_to_json_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external returns (bool success) {
+        vm.startBroadcast();
+        (success, ) = address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--broadcast",
+        "--unlocked",
+        "--non-interactive",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"0x6080604052600c805462ff00ff191662010001179055348015601f575f5ffd5b506101568061002d5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063c040622614610038578063f8ccbf4714610054575b5f5ffd5b610040610067565b604051901515815260200160405180910390f35b600c546100409062010000900460ff1681565b5f7f885cb69240a935d632d79c317109709ecfa91a80626ff3989d68f67f5b1dd12d5f1c6001600160a01b0316637fb5297f6040518163ffffffff1660e01b81526004015f604051808303815f87803b1580156100c2575f5ffd5b505af11580156100d4573d5f5f3e3d5ffd5b50506040515f925090508181818181805af19150503d805f8114610113576040519150601f19603f3d011682016040523d82523d5f602084013e610118565b606091505b50909291505056fea264697066735822122060ba6332e526de9b6bc731fb4682b44e42845196324ec33068982984d700cdd964736f6c634300081b0033","output":"0x608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063c040622614610038578063f8ccbf4714610054575b5f5ffd5b610040610067565b604051901515815260200160405180910390f35b600c546100409062010000900460ff1681565b5f7f885cb69240a935d632d79c317109709ecfa91a80626ff3989d68f67f5b1dd12d5f1c6001600160a01b0316637fb5297f6040518163ffffffff1660e01b81526004015f604051808303815f87803b1580156100c2575f5ffd5b505af11580156100d4573d5f5f3e3d5ffd5b50506040515f925090508181818181805af19150503d805f8114610113576040519150601f19603f3d011682016040523d82523d5f602084013e610118565b606091505b50909291505056fea264697066735822122060ba6332e526de9b6bc731fb4682b44e42845196324ec33068982984d700cdd964736f6c634300081b0033","gas_used":90639,"gas_limit":1073682810,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":3214,"gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":0,"gas_limit":1056940983,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":0,"gas_limit":1056940820,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":24278,"labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"chain":31337,"estimated_gas_price":"2.000000001","estimated_total_gas_used":29005,"estimated_amount_required":"0.000058010000029005"}
+{"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":21000,"gas_price":1000000001}
+{"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
+
+"#]].is_jsonlines());
+});
+
 // https://github.com/foundry-rs/foundry/pull/7742
 forgetest_async!(unlocked_no_sender, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -1924,7 +2066,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: missing CREATE2 deployer
+Error: script failed: missing CREATE2 deployer: 0x4e59b44847b379578588920cA78FbF26c0B4956C
 
 "#]]);
 });

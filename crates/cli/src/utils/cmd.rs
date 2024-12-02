@@ -17,8 +17,7 @@ use foundry_evm::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
         identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
-        Traces,
+        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{
@@ -160,27 +159,24 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches!(
-            chain,
-            NamedChain::Acala |
-                NamedChain::AcalaMandalaTestnet |
-                NamedChain::AcalaTestnet |
-                NamedChain::Arbitrum |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::Etherlink |
-                NamedChain::EtherlinkTestnet |
-                NamedChain::Karura |
-                NamedChain::KaruraTestnet |
-                NamedChain::Mantle |
-                NamedChain::MantleSepolia |
-                NamedChain::MantleTestnet |
-                NamedChain::Moonbase |
-                NamedChain::Moonbeam |
-                NamedChain::MoonbeamDev |
-                NamedChain::Moonriver
-        );
+        return chain.is_arbitrum() ||
+            matches!(
+                chain,
+                NamedChain::Acala |
+                    NamedChain::AcalaMandalaTestnet |
+                    NamedChain::AcalaTestnet |
+                    NamedChain::Etherlink |
+                    NamedChain::EtherlinkTestnet |
+                    NamedChain::Karura |
+                    NamedChain::KaruraTestnet |
+                    NamedChain::Mantle |
+                    NamedChain::MantleSepolia |
+                    NamedChain::MantleTestnet |
+                    NamedChain::Moonbase |
+                    NamedChain::Moonbeam |
+                    NamedChain::MoonbeamDev |
+                    NamedChain::Moonriver
+            );
     }
     false
 }
@@ -188,13 +184,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return !matches!(
-            chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
-        );
+        return !chain.is_arbitrum();
     }
     true
 }
@@ -450,7 +440,7 @@ pub async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    print_traces(&mut result, &decoder, shell::verbosity() > 0).await?;
+    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 4).await?;
 
     Ok(())
 }
@@ -459,23 +449,31 @@ pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
     verbose: bool,
+    state_changes: bool,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    sh_println!("Traces:")?;
+    if !shell::is_json() {
+        sh_println!("Traces:")?;
+    }
+
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        sh_println!("{}", render_trace_arena_with_bytecodes(arena, verbose))?;
+        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
-    sh_println!()?;
 
+    if shell::is_json() {
+        return Ok(());
+    }
+
+    sh_println!()?;
     if result.success {
         sh_println!("{}", "Transaction successfully executed.".green())?;
     } else {
         sh_err!("Transaction failed.")?;
     }
-
     sh_println!("Gas used: {}", result.gas_used)?;
+
     Ok(())
 }
 
@@ -493,6 +491,18 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf
                 cached_signatures
                     .events
                     .insert(event.selector().to_string(), event.full_signature());
+            }
+            for error in abi.errors() {
+                cached_signatures.errors.insert(error.selector().to_string(), error.signature());
+            }
+            // External libraries doesn't have functions included in abi, but `methodIdentifiers`.
+            if let Some(method_identifiers) = &artifact.method_identifiers {
+                method_identifiers.iter().for_each(|(signature, selector)| {
+                    cached_signatures
+                        .functions
+                        .entry(format!("0x{selector}"))
+                        .or_insert(signature.to_string());
+                });
             }
         }
     });

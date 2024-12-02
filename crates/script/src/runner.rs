@@ -7,7 +7,7 @@ use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_config::Config;
 use foundry_evm::{
-    constants::{CALLER, DEFAULT_CREATE2_DEPLOYER},
+    constants::CALLER,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
@@ -83,9 +83,9 @@ impl ScriptRunner {
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
+                let create2_deployer = self.executor.create2_deployer();
                 for library in libraries {
-                    let address =
-                        DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, library.as_ref());
+                    let address = create2_deployer.create2_from_code(salt, library.as_ref());
                     // Skip if already deployed
                     if !self.executor.is_empty_code(address)? {
                         continue;
@@ -95,7 +95,7 @@ impl ScriptRunner {
                         .executor
                         .transact_raw(
                             self.evm_opts.sender,
-                            DEFAULT_CREATE2_DEPLOYER,
+                            create2_deployer,
                             calldata.clone().into(),
                             U256::from(0),
                         )
@@ -111,7 +111,7 @@ impl ScriptRunner {
                             from: Some(self.evm_opts.sender),
                             input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
-                            to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
+                            to: Some(TxKind::Call(create2_deployer)),
                             ..Default::default()
                         }
                         .into(),

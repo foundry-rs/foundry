@@ -1,4 +1,4 @@
-use crate::executors::{Executor, RawCallResult};
+use crate::executors::{Executor, FuzzTestTimer, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{map::HashMap, Address, Bytes, Log, U256};
@@ -6,7 +6,7 @@ use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    constants::MAGIC_ASSUME,
+    constants::{MAGIC_ASSUME, TEST_TIMEOUT},
     decode::{RevertDecoder, SkipReason},
 };
 use foundry_evm_coverage::HitMaps;
@@ -98,7 +98,15 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
+        // Start timer for this fuzz test.
+        let timer = FuzzTestTimer::new(self.config.timeout);
+
         let run_result = self.runner.clone().run(&strategy, |calldata| {
+            // Check if the timeout has been reached.
+            if timer.is_timed_out() {
+                return Err(TestCaseError::fail(TEST_TIMEOUT));
+            }
+
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             // If running with progress then increment current run.
@@ -193,17 +201,21 @@ impl FuzzedExecutor {
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-
-                let args = if let Some(data) = calldata.get(4..) {
-                    func.abi_decode_input(data, false).unwrap_or_default()
+                if reason == TEST_TIMEOUT {
+                    // If the reason is a timeout, we consider the fuzz test successful.
+                    result.success = true;
                 } else {
-                    vec![]
-                };
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                    let args = if let Some(data) = calldata.get(4..) {
+                        func.abi_decode_input(data, false).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
 
-                result.counterexample = Some(CounterExample::Single(
-                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                ));
+                    result.counterexample = Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                    ));
+                }
             }
         }
 
