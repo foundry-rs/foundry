@@ -47,7 +47,7 @@ impl Cheatcode for parseJsonUintCall {
 impl Cheatcode for parseJsonUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
@@ -61,7 +61,7 @@ impl Cheatcode for parseJsonIntCall {
 impl Cheatcode for parseJsonIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
@@ -75,7 +75,7 @@ impl Cheatcode for parseJsonBoolCall {
 impl Cheatcode for parseJsonBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
@@ -89,7 +89,7 @@ impl Cheatcode for parseJsonAddressCall {
 impl Cheatcode for parseJsonAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
@@ -103,7 +103,7 @@ impl Cheatcode for parseJsonStringCall {
 impl Cheatcode for parseJsonStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
@@ -117,7 +117,7 @@ impl Cheatcode for parseJsonBytesCall {
 impl Cheatcode for parseJsonBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
@@ -131,7 +131,7 @@ impl Cheatcode for parseJsonBytes32Call {
 impl Cheatcode for parseJsonBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 
@@ -153,7 +153,7 @@ impl Cheatcode for parseJsonTypeArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
         let ty = resolve_type(typeDescription)?;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
+        parse_json_array_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
 
@@ -384,6 +384,13 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
     parse_json_as(value, ty).map(|v| v.abi_encode())
 }
 
+pub(super) fn parse_json_array_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, path)?;
+
+    parse_json_array(&values, ty).map(|v| v.abi_encode())
+}
+
 /// Parses given [serde_json::Value] as a [DynSolValue].
 pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
     let to_string = |v: &Value| {
@@ -393,14 +400,14 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
     };
 
     match (value, ty) {
-        (Value::Array(array), ty) => parse_json_array(array, ty),
+        (Value::Array(array), ty) => parse_json_array(&array.iter().collect::<Vec<_>>(), ty),
         (Value::Object(object), ty) => parse_json_map(object, ty),
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
         _ => string::parse_value(&to_string(value), ty),
     }
 }
 
-pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSolValue> {
+pub(super) fn parse_json_array(array: &[&Value], ty: &DynSolType) -> Result<DynSolValue> {
     match ty {
         DynSolType::Tuple(types) => {
             ensure!(array.len() == types.len(), "array length mismatch");
