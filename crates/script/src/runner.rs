@@ -1,12 +1,13 @@
 use super::ScriptResult;
 use crate::build::ScriptPredeployLibraries;
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_config::Config;
 use foundry_evm::{
-    constants::{CALLER, DEFAULT_CREATE2_DEPLOYER},
+    constants::CALLER,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
@@ -82,9 +83,9 @@ impl ScriptRunner {
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
+                let create2_deployer = self.executor.create2_deployer();
                 for library in libraries {
-                    let address =
-                        DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, library.as_ref());
+                    let address = create2_deployer.create2_from_code(salt, library.as_ref());
                     // Skip if already deployed
                     if !self.executor.is_empty_code(address)? {
                         continue;
@@ -94,7 +95,7 @@ impl ScriptRunner {
                         .executor
                         .transact_raw(
                             self.evm_opts.sender,
-                            DEFAULT_CREATE2_DEPLOYER,
+                            create2_deployer,
                             calldata.clone().into(),
                             U256::from(0),
                         )
@@ -110,7 +111,7 @@ impl ScriptRunner {
                             from: Some(self.evm_opts.sender),
                             input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
-                            to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
+                            to: Some(TxKind::Call(create2_deployer)),
                             ..Default::default()
                         }
                         .into(),
@@ -223,7 +224,7 @@ impl ScriptRunner {
 
     /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> Result<ScriptResult> {
-        self.call(self.evm_opts.sender, address, calldata, U256::ZERO, false)
+        self.call(self.evm_opts.sender, address, calldata, U256::ZERO, None, false)
     }
 
     /// Runs a broadcastable transaction locally and persists its state.
@@ -233,9 +234,17 @@ impl ScriptRunner {
         to: Option<Address>,
         calldata: Option<Bytes>,
         value: Option<U256>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
     ) -> Result<ScriptResult> {
         if let Some(to) = to {
-            self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::ZERO), true)
+            self.call(
+                from,
+                to,
+                calldata.unwrap_or_default(),
+                value.unwrap_or(U256::ZERO),
+                authorization_list,
+                true,
+            )
         } else if to.is_none() {
             let res = self.executor.deploy(
                 from,
@@ -282,9 +291,20 @@ impl ScriptRunner {
         to: Address,
         calldata: Bytes,
         value: U256,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         commit: bool,
     ) -> Result<ScriptResult> {
-        let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
+        let mut res = if let Some(authorization_list) = authorization_list {
+            self.executor.call_raw_with_authorization(
+                from,
+                to,
+                calldata.clone(),
+                value,
+                authorization_list,
+            )?
+        } else {
+            self.executor.call_raw(from, to, calldata.clone(), value)?
+        };
         let mut gas_used = res.gas_used;
 
         // We should only need to calculate realistic gas costs when preparing to broadcast

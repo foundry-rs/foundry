@@ -24,6 +24,7 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
+    InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -31,11 +32,14 @@ use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
     primitives::{
-        BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TxEnv, TxKind,
+        AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,
+        ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
     },
 };
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -237,6 +241,11 @@ impl Executor {
         self
     }
 
+    #[inline]
+    pub fn create2_deployer(&self) -> Address {
+        self.inspector().create2_deployer()
+    }
+
     /// Deploys a contract and commits the new state to the underlying database.
     ///
     /// Executes a CREATE transaction with the contract `code` and persistent database state
@@ -375,6 +384,21 @@ impl Executor {
         value: U256,
     ) -> eyre::Result<RawCallResult> {
         let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.call_with_env(env)
+    }
+
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization list.
+    pub fn call_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, to.into(), calldata, value);
+        env.tx.authorization_list = Some(AuthorizationList::Signed(authorization_list));
         self.call_with_env(env)
     }
 
@@ -713,6 +737,12 @@ impl std::ops::DerefMut for DeployResult {
     }
 }
 
+impl From<DeployResult> for RawCallResult {
+    fn from(d: DeployResult) -> Self {
+        d.raw
+    }
+}
+
 /// The result of a raw call.
 #[derive(Debug)]
 pub struct RawCallResult {
@@ -780,6 +810,23 @@ impl Default for RawCallResult {
 }
 
 impl RawCallResult {
+    /// Unpacks an EVM result.
+    pub fn from_evm_result(r: Result<Self, EvmError>) -> eyre::Result<(Self, Option<String>)> {
+        match r {
+            Ok(r) => Ok((r, None)),
+            Err(EvmError::Execution(e)) => Ok((e.raw, Some(e.reason))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Unpacks an execution result.
+    pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
+        match r {
+            Ok(r) => (r, None),
+            Err(e) => (e.raw, Some(e.reason)),
+        }
+    }
+
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
         if let Some(reason) = SkipReason::decode(&self.result) {
@@ -913,4 +960,21 @@ fn convert_executed_result(
         out,
         chisel_state,
     })
+}
+
+/// Timer for a fuzz test.
+pub struct FuzzTestTimer {
+    /// Inner fuzz test timer - (test start time, test duration).
+    inner: Option<(Instant, Duration)>,
+}
+
+impl FuzzTestTimer {
+    pub fn new(timeout: Option<u32>) -> Self {
+        Self { inner: timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into()))) }
+    }
+
+    /// Whether the current fuzz test timed out and should be stopped.
+    pub fn is_timed_out(&self) -> bool {
+        self.inner.is_some_and(|(start, duration)| start.elapsed() > duration)
+    }
 }

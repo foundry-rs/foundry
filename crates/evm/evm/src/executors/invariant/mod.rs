@@ -10,6 +10,7 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+        TEST_TIMEOUT,
     },
     precompiles::PRECOMPILES,
 };
@@ -49,7 +50,7 @@ pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
 
 mod shrink;
-use crate::executors::EvmError;
+use crate::executors::{EvmError, FuzzTestTimer};
 pub use shrink::check_sequence;
 
 sol! {
@@ -204,10 +205,7 @@ impl InvariantTest {
 
     /// Merge current collected coverage with the new coverage from last fuzzed call.
     pub fn merge_coverage(&self, new_coverage: Option<HitMaps>) {
-        match &mut self.execution_data.borrow_mut().coverage {
-            Some(prev) => prev.merge(new_coverage.unwrap()),
-            opt => *opt = new_coverage,
-        }
+        HitMaps::merge_opt(&mut self.execution_data.borrow_mut().coverage, new_coverage);
     }
 
     /// Update metrics for a fuzzed selector, extracted from tx details.
@@ -335,6 +333,9 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures)?;
 
+        // Start timer for this invariant test.
+        let timer = FuzzTestTimer::new(self.config.timeout);
+
         let _ = self.runner.run(&invariant_strategy, |first_input| {
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -350,6 +351,15 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             while current_run.depth < self.config.depth {
+                // Check if the timeout has been reached.
+                if timer.is_timed_out() {
+                    // Since we never record a revert here the test is still considered
+                    // successful even though it timed out. We *want*
+                    // this behavior for now, so that's ok, but
+                    // future developers should be aware of this.
+                    return Err(TestCaseError::fail(TEST_TIMEOUT));
+                }
+
                 let tx = current_run.inputs.last().ok_or_else(|| {
                     TestCaseError::fail("No input generated to call fuzzed target.")
                 })?;

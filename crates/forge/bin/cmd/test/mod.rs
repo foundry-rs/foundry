@@ -12,12 +12,12 @@ use forge::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
-        render_trace_arena, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
+        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions,
 };
 use foundry_cli::{
-    opts::{CoreBuildArgs, ShellOpts},
+    opts::{CoreBuildArgs, GlobalOpts},
     utils::{self, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
@@ -34,7 +34,7 @@ use foundry_config::{
         Metadata, Profile, Provider,
     },
     filter::GlobMatcher,
-    get_available_profiles, Config,
+    Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -56,15 +56,19 @@ use summary::TestSummaryReporter;
 
 use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
-use forge::result::TestKind;
+use forge::{result::TestKind, traces::render_trace_arena_inner};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_args);
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
+    // Include global options for users of this struct.
+    #[command(flatten)]
+    pub global: GlobalOpts,
+
     /// The contract file you want to test, it's a shortcut for --match-path.
     #[arg(value_hint = ValueHint::FilePath)]
     pub path: Option<GlobMatcher>,
@@ -141,14 +145,13 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// Timeout for each fuzz run in seconds.
+    #[arg(long, env = "FOUNDRY_FUZZ_TIMEOUT", value_name = "TIMEOUT")]
+    pub fuzz_timeout: Option<u64>,
+
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
-
-    /// Max concurrent threads to use.
-    /// Default value is the number of available CPUs.
-    #[arg(long, short = 'j', visible_alias = "jobs")]
-    pub threads: Option<usize>,
 
     /// Show test execution progress.
     #[arg(long)]
@@ -163,7 +166,7 @@ pub struct TestArgs {
     pub rerun: bool,
 
     #[command(flatten)]
-    evm_opts: EvmArgs,
+    evm_args: EvmArgs,
 
     #[command(flatten)]
     opts: CoreBuildArgs,
@@ -178,9 +181,6 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
-
-    #[command(flatten)]
-    shell: ShellOpts,
 }
 
 impl TestArgs {
@@ -275,13 +275,6 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
-        // Set number of max threads to execute tests.
-        // If not specified then the number of threads determined by rayon will be used.
-        if let Some(test_threads) = config.threads {
-            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
-            rayon::ThreadPoolBuilder::new().num_threads(test_threads).build_global()?;
-        }
-
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -291,15 +284,14 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
-        // Set up the project.
-        let mut project = config.project()?;
-
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
-            project = config.project()?;
         }
+
+        // Set up the project.
+        let project = config.project()?;
 
         let mut filter = self.filter(&config);
         trace!(target: "forge::test", ?filter, "using filter");
@@ -313,25 +305,20 @@ impl TestArgs {
 
         // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
-        let toml = config.get_config_path();
-        let profiles = get_available_profiles(toml)?;
 
         // Remove the snapshots directory if it exists.
         // This is to ensure that we don't have any stale snapshots.
         // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
         // required for comparison.
-        if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
+        if std::env::var_os("FORGE_SNAPSHOT_CHECK").is_none() {
             let snapshot_dir = project_root.join(&config.snapshots);
             if snapshot_dir.exists() {
                 let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
             }
         }
 
-        let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.fuzz.clone())
-            .invariant(config.invariant.clone())
-            .profiles(profiles)
-            .build(&output, project_root)?;
+        let config = Arc::new(config);
+        let test_options = TestOptions::new(&output, config.clone())?;
 
         let should_debug = self.debug.is_some();
         let should_draw = self.flamegraph || self.flamechart;
@@ -359,7 +346,6 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
-        let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -664,7 +650,7 @@ impl TestArgs {
                     // - 0..3: nothing
                     // - 3: only display traces for failed tests
                     // - 4: also display the setup trace for failed tests
-                    // - 5..: display all traces for all tests
+                    // - 5..: display all traces for all tests, including storage changes
                     let should_include = match kind {
                         TraceKind::Execution => {
                             (verbosity == 3 && result.status.is_failure()) || verbosity >= 4
@@ -677,7 +663,7 @@ impl TestArgs {
 
                     if should_include {
                         decode_trace_arena(arena, &decoder).await?;
-                        decoded_traces.push(render_trace_arena(arena));
+                        decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
 
@@ -882,6 +868,9 @@ impl Provider for TestArgs {
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
+        if let Some(fuzz_timeout) = self.fuzz_timeout {
+            fuzz_dict.insert("timeout".to_string(), fuzz_timeout.into());
+        }
         if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
             fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
@@ -895,10 +884,6 @@ impl Provider for TestArgs {
 
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
-        }
-
-        if let Some(threads) = self.threads {
-            dict.insert("threads".to_string(), threads.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -1023,7 +1008,7 @@ mod tests {
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
             let args = TestArgs::parse_from(["foundry-cli", arg]);
-            assert_eq!(args.evm_opts.env.chain, Some(expected));
+            assert_eq!(args.evm_args.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
             assert_eq!(evm_opts.env.chain_id, Some(expected.id()));
@@ -1083,9 +1068,9 @@ contract FooBarTest is DSTest {
             &prj.root().to_string_lossy(),
         ]);
         let outcome = args.run().await.unwrap();
-        let gas_report = outcome.gas_report.unwrap();
+        let gas_report = outcome.gas_report.as_ref().unwrap();
 
-        assert_eq!(gas_report.contracts.len(), 3);
+        assert_eq!(gas_report.contracts.len(), 3, "{}", outcome.summary(Default::default()));
         let call_cnts = gas_report
             .contracts
             .values()

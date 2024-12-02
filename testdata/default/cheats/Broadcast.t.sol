@@ -219,6 +219,32 @@ contract BroadcastTestNoLinking is DSTest {
         vm.stopBroadcast();
     }
 
+    function deployCreate2(address deployer) public {
+        vm.startBroadcast();
+        bytes32 salt = bytes32(uint256(1338));
+        NoLink test_c2 = new NoLink{salt: salt}();
+        assert(test_c2.view_me() == 1337);
+
+        address expectedAddress = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            bytes1(0xff),
+                            deployer,
+                            salt,
+                            keccak256(abi.encodePacked(type(NoLink).creationCode, abi.encode()))
+                        )
+                    )
+                )
+            )
+        );
+        require(address(test_c2) == expectedAddress, "Create2 address mismatch");
+
+        NoLink test2 = new NoLink();
+        vm.stopBroadcast();
+    }
+
     function errorStaticCall() public {
         vm.broadcast();
         NoLink test11 = new NoLink();

@@ -18,7 +18,6 @@ pub mod proof;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
-pub mod utils;
 pub mod wallet;
 
 #[cfg(feature = "serde")]

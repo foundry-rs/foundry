@@ -36,11 +36,12 @@ eyre.workspace = true
 futures.workspace = true
 itertools.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
-solang-parser.workspace = true
+solar-parse.workspace = true
 revm.workspace = true
 
 [dev-dependencies]

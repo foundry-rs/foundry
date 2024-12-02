@@ -22,7 +22,7 @@ revm = { workspace = true, default-features = false, features = [
     "c-kzg",
 ] }
 
-alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde", "rlp"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace"] }
 alloy-serde.workspace = true
 alloy-rlp.workspace = true
@@ -30,8 +30,8 @@ alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-trie.workspace = true
-op-alloy-consensus.workspace = true
-
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-network.workspace = true
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes.workspace = true

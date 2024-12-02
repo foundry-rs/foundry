@@ -115,7 +115,7 @@ no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
 no_match_coverage = "Baz"
-# Number of threads to use. Not set or zero specifies the number of logical cores.
+# Number of threads to use. Specifying 0 defaults to the number of logical cores.
 threads = 0
 # whether to show test execution progress
 show_progress = true

@@ -27,9 +27,9 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
         filter = filter.exclude_contracts("(LastCallGasDefaultTest|MockFunctionTest|WithSeed)");
     }
 
-    let mut config = test_data.config.clone();
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
-    let runner = test_data.runner_with_config(config);
+    let runner = test_data.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
+    });
 
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -38,9 +38,9 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
 async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
     let filter = Filter::new(".*", ".*(Isolated)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
 
-    let mut config = test_data.config.clone();
-    config.isolate = true;
-    let runner = test_data.runner_with_config(config);
+    let runner = test_data.runner_with(|config| {
+        config.isolate = true;
+    });
 
     TestConfig::with_filter(runner, filter).run().await;
 }
@@ -49,9 +49,9 @@ async fn test_cheats_local_isolated(test_data: &ForgeTestData) {
 async fn test_cheats_local_with_seed(test_data: &ForgeTestData) {
     let filter = Filter::new(".*", ".*(WithSeed)", &format!(".*cheats{RE_PATH_SEPARATOR}*"));
 
-    let mut config = test_data.config.clone();
-    config.fuzz.seed = Some(U256::from(100));
-    let runner = test_data.runner_with_config(config);
+    let runner = test_data.runner_with(|config| {
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     TestConfig::with_filter(runner, filter).run().await;
 }

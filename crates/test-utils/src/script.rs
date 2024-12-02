@@ -171,6 +171,10 @@ impl ScriptTester {
         self.args(&["--tc", contract_name, "--sig", sig])
     }
 
+    pub fn add_create2_deployer(&mut self, create2_deployer: Address) -> &mut Self {
+        self.args(&["--create2-deployer", create2_deployer.to_string().as_str()])
+    }
+
     /// Adds the `--unlocked` flag
     pub fn unlocked(&mut self) -> &mut Self {
         self.arg("--unlocked")

@@ -103,6 +103,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub always_use_create_2_factory: bool,
 
+    /// The CREATE2 deployer address to use, this will override the one in the config.
+    #[arg(long, value_name = "ADDRESS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create2_deployer: Option<Address>,
+
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
@@ -196,11 +201,6 @@ impl Provider for EvmArgs {
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
-    /// The block gas limit.
-    #[arg(long, value_name = "GAS_LIMIT")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gas_limit: Option<u64>,
-
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
     #[arg(long, value_name = "CODE_SIZE")]
@@ -253,7 +253,7 @@ pub struct EnvArgs {
     pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
-    #[arg(long, value_name = "GAS_LIMIT")]
+    #[arg(long, visible_alias = "gas-limit", value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 

@@ -1,4 +1,5 @@
 use alloy_primitives::map::HashMap;
+use eyre::Result;
 use revm::interpreter::{
     opcode::{PUSH0, PUSH1, PUSH32},
     OpCode,
@@ -100,7 +101,7 @@ pub struct Instruction<'a> {
 }
 
 /// Decodes raw opcode bytes into [`Instruction`]s.
-pub fn decode_instructions(code: &[u8]) -> Vec<Instruction<'_>> {
+pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction<'_>>> {
     let mut pc = 0;
     let mut steps = Vec::new();
 
@@ -108,10 +109,14 @@ pub fn decode_instructions(code: &[u8]) -> Vec<Instruction<'_>> {
         let op = OpCode::new(code[pc]);
         let immediate_size = op.map(|op| immediate_size(op, &code[pc + 1..])).unwrap_or(0) as usize;
 
+        if pc + 1 + immediate_size > code.len() {
+            eyre::bail!("incomplete sequence of bytecode");
+        }
+
         steps.push(Instruction { op, pc, immediate: &code[pc + 1..pc + 1 + immediate_size] });
 
         pc += 1 + immediate_size;
     }
 
-    steps
+    Ok(steps)
 }
