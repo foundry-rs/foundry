@@ -92,12 +92,11 @@ struct AccountStateDiffs {
 
 /// Storage slot diff info.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct SlotStateDiff {
     /// Initial storage value.
-    previous_value: B256,
+    original: B256,
     /// Current storage value.
-    new_value: B256,
+    dirty: B256,
 }
 
 impl Cheatcode for addrCall {
@@ -727,7 +726,7 @@ impl Cheatcode for getStateDiffCall {
             for (slot, slot_changes) in state_diffs.changes {
                 diffs.push_str(&format!(
                     "@ {slot}: {} → {}\n",
-                    slot_changes.previous_value, slot_changes.new_value
+                    slot_changes.original, slot_changes.dirty
                 ));
             }
         }
@@ -1130,8 +1129,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> StateDiffs {
                 changes.insert(
                     slot.to_string(),
                     SlotStateDiff {
-                        previous_value: recorded_slot_changes.first().unwrap().0,
-                        new_value: recorded_slot_changes.last().unwrap().1,
+                        original: recorded_slot_changes.first().unwrap().0,
+                        dirty: recorded_slot_changes.last().unwrap().1,
                     },
                 );
             }
