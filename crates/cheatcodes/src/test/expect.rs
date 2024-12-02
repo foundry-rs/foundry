@@ -747,30 +747,11 @@ pub(crate) fn handle_expect_emit(
             }
             false
         } else {
-            let satifies =
-                count_map
-                    .values()
-                    .filter_map(|log_map| {
-                        if log_map.satisfies_checks(&log.data) {
-                            Some(log_map)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-            tracing::info!("Satisfies len: {:#?}", satifies.len());
-            // Print the satisfies logs with the keys
-            for (key, value) in count_map.iter() {
-                tracing::info!("Key: {:#?}", key);
-                tracing::info!("Value: {:#?}", value);
-            }
-
             let log_count_map =
                 count_map.values().find(|log_map| log_map.satisfies_checks(&log.data));
 
             if let Some(map) = log_count_map {
                 let count = map.count(&log.data);
-                tracing::info!("Count: {}", count);
                 if count >= expected_count {
                     return true
                 }
