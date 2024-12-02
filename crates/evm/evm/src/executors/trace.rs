@@ -32,7 +32,7 @@ impl TracingExecutor {
                         .alphanet(alphanet)
                         .create2_deployer(create2_deployer)
                 })
-                .spec(evm_spec_id(&version.unwrap_or_default(), alphanet))
+                .spec_id(evm_spec_id(version.unwrap_or_default(), alphanet))
                 .build(env, db),
         }
     }

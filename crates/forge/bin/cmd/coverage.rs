@@ -11,7 +11,7 @@ use forge::{
     },
     opts::EvmOpts,
     utils::IcPcMap,
-    MultiContractRunnerBuilder, TestOptions,
+    MultiContractRunnerBuilder,
 };
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
@@ -233,7 +233,6 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_test_options(TestOptions::new(output, config.clone())?)
             .set_coverage(true)
             .build(&root, output, env, evm_opts)?;
 

@@ -439,7 +439,7 @@ pub struct Cheatcodes {
     /// Scripting based transactions
     pub broadcastable_transactions: BroadcastableTransactions,
 
-    /// Additional, user configurable context this Inspector has access to when inspecting a call
+    /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
     /// Test-scoped context holding data that needs to be reset every test run
@@ -540,7 +540,7 @@ impl Cheatcodes {
 
     /// Returns the configured wallets if available, else creates a new instance.
     pub fn wallets(&mut self) -> &Wallets {
-        self.wallets.get_or_insert(Wallets::new(MultiWallet::default(), None))
+        self.wallets.get_or_insert_with(|| Wallets::new(MultiWallet::default(), None))
     }
 
     /// Sets the unlocked wallets.

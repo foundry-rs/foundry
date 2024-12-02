@@ -618,7 +618,7 @@ impl ScriptConfig {
                     .alphanet(self.evm_opts.alphanet)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec(self.config.evm_spec_id())
+            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 
