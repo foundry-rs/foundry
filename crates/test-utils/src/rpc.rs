@@ -192,13 +192,12 @@ fn env_archive_urls(is_ws: bool) -> &'static [String] {
 
     fn get(is_ws: bool) -> Vec<String> {
         let env = if is_ws { ENV_WS_ARCHIVE_ENDPOINTS } else { ENV_HTTP_ARCHIVE_ENDPOINTS };
-        env::var(env)
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string)
-            .collect()
+        let env = env::var(env).unwrap_or_default();
+        let env = env.trim();
+        if env.is_empty() {
+            return vec![];
+        }
+        env.split(',').map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string).collect()
     }
 
     if is_ws {
