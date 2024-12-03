@@ -23,7 +23,7 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
-use semver::Version;
+use semver::{Version, VersionReq};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -41,6 +41,17 @@ pub struct CoverageArgs {
     /// This flag can be used multiple times.
     #[arg(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
+
+    /// The version of the LCOV "tracefile" format to use.
+    ///
+    /// Format: `MAJOR[.MINOR]`.
+    ///
+    /// Main differences:
+    /// - `1.x`: The original v1 format.
+    /// - `2.0`: Adds support for "line end" numbers for functions.
+    /// - `2.2`: Changes the format of functions.
+    #[arg(long, default_value = "1", value_parser = parse_lcov_version)]
+    lcov_version: Version,
 
     /// Enable viaIR with minimum optimization
     ///
@@ -295,7 +306,7 @@ impl CoverageArgs {
                     let path =
                         root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
                     let mut file = io::BufWriter::new(fs::create_file(path)?);
-                    LcovReporter::new(&mut file).report(&report)
+                    LcovReporter::new(&mut file, self.lcov_version.clone()).report(&report)
                 }
                 CoverageReportKind::Bytecode => {
                     let destdir = root.join("bytecode-coverage");
@@ -402,5 +413,33 @@ impl BytecodeData {
             &source_analysis.items,
             items_by_source_id,
         )
+    }
+}
+
+fn parse_lcov_version(s: &str) -> Result<Version, String> {
+    let vr = VersionReq::parse(&format!("={s}")).map_err(|e| e.to_string())?;
+    let [c] = &vr.comparators[..] else {
+        return Err("invalid version".to_string());
+    };
+    if c.op != semver::Op::Exact {
+        return Err("invalid version".to_string());
+    }
+    if !c.pre.is_empty() {
+        return Err("pre-releases are not supported".to_string());
+    }
+    Ok(Version::new(c.major, c.minor.unwrap_or(0), c.patch.unwrap_or(0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lcov_version() {
+        assert_eq!(parse_lcov_version("0").unwrap(), Version::new(0, 0, 0));
+        assert_eq!(parse_lcov_version("1").unwrap(), Version::new(1, 0, 0));
+        assert_eq!(parse_lcov_version("1.0").unwrap(), Version::new(1, 0, 0));
+        assert_eq!(parse_lcov_version("1.1").unwrap(), Version::new(1, 1, 0));
+        assert_eq!(parse_lcov_version("1.11").unwrap(), Version::new(1, 11, 0));
     }
 }

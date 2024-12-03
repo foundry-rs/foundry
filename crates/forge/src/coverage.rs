@@ -4,6 +4,7 @@ use alloy_primitives::map::HashMap;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
+use semver::Version;
 use std::{
     collections::hash_map,
     io::Write,
@@ -83,17 +84,19 @@ fn format_cell(hits: usize, total: usize) -> Cell {
 /// [tracefile format]: https://man.archlinux.org/man/geninfo.1.en#TRACEFILE_FORMAT
 pub struct LcovReporter<'a> {
     out: &'a mut (dyn Write + 'a),
+    version: Version,
 }
 
 impl<'a> LcovReporter<'a> {
     /// Create a new LCOV reporter.
-    pub fn new(out: &'a mut (dyn Write + 'a)) -> Self {
-        Self { out }
+    pub fn new(out: &'a mut (dyn Write + 'a), version: Version) -> Self {
+        Self { out, version }
     }
 }
 
 impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
+        let mut fn_index = 0usize;
         for (path, items) in report.items_by_file() {
             let summary = CoverageSummary::from_items(items.iter().copied());
 
@@ -108,8 +111,19 @@ impl CoverageReporter for LcovReporter<'_> {
                 match item.kind {
                     CoverageItemKind::Function { ref name } => {
                         let name = format!("{}.{name}", item.loc.contract_name);
-                        writeln!(self.out, "FN:{line},{end_line},{name}")?;
-                        writeln!(self.out, "FNDA:{hits},{name}")?;
+                        if self.version >= Version::new(2, 2, 0) {
+                            // v2.2 changed the FN format.
+                            writeln!(self.out, "FNL:{fn_index},{line},{end_line}")?;
+                            writeln!(self.out, "FNA:{fn_index},{hits},{name}")?;
+                            fn_index += 1;
+                        } else if self.version >= Version::new(2, 0, 0) {
+                            // v2.0 added end_line to FN.
+                            writeln!(self.out, "FN:{line},{end_line},{name}")?;
+                            writeln!(self.out, "FNDA:{hits},{name}")?;
+                        } else {
+                            writeln!(self.out, "FN:{line},{name}")?;
+                            writeln!(self.out, "FNDA:{hits},{name}")?;
+                        }
                     }
                     CoverageItemKind::Line => {
                         writeln!(self.out, "DA:{line},{hits}")?;
