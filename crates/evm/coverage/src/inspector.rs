@@ -6,12 +6,16 @@ use std::ptr::NonNull;
 /// Inspector implementation for collecting coverage information.
 #[derive(Clone, Debug)]
 pub struct CoverageCollector {
+    // NOTE: `current_map` is always a valid reference into `maps`.
+    // It is accessed only through `get_or_insert_map` which guarantees that it's valid.
+    // Both of these fields are unsafe to access directly outside of `*insert_map`.
     current_map: NonNull<HitMap>,
     current_hash: B256,
+
     maps: HitMaps,
 }
 
-// SAFETY: `current_map` is always valid and points into an allocation managed by self.
+// SAFETY: See comments on `current_map`.
 unsafe impl Send for CoverageCollector {}
 unsafe impl Sync for CoverageCollector {}
 
@@ -44,12 +48,17 @@ impl CoverageCollector {
         self.maps
     }
 
+    /// Gets the hit map for the current contract, or inserts a new one if it doesn't exist.
+    ///
+    /// The map is stored in `current_map` and returned as a mutable reference.
+    /// See comments on `current_map` for more details.
     #[inline]
     fn get_or_insert_map(&mut self, interpreter: &mut Interpreter) -> &mut HitMap {
         let hash = get_or_insert_contract_hash(interpreter);
         if self.current_hash != *hash {
             self.insert_map(interpreter);
         }
+        // SAFETY: See comments on `current_map`.
         unsafe { self.current_map.as_mut() }
     }
 
@@ -58,6 +67,7 @@ impl CoverageCollector {
     fn insert_map(&mut self, interpreter: &Interpreter) {
         let Some(hash) = interpreter.contract.hash else { eof_panic() };
         self.current_hash = hash;
+        // Converts the mutable reference to a `NonNull` pointer.
         self.current_map = self
             .maps
             .entry(hash)
