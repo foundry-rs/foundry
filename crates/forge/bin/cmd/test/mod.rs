@@ -50,13 +50,10 @@ use yansi::Paint;
 
 mod filter;
 mod summary;
-
-use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::TestSummaryReport;
-
-use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
 use forge::{result::TestKind, traces::render_trace_arena_inner};
+use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
+use summary::{InvariantMetricsReport, TestSummaryReport};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_args);
@@ -604,14 +601,15 @@ impl TestArgs {
             for (name, result) in tests {
                 if !silent {
                     sh_println!("{}", result.short_result(name))?;
+                }
 
-                    // Display invariant metrics if invariant kind.
-                    if let TestKind::Invariant { runs: _, calls: _, reverts: _, metrics } =
-                        &result.kind
-                    {
-                        print_invariant_metrics(metrics);
-                    }
+                // Display invariant metrics if invariant kind.
+                if let TestKind::Invariant { metrics, .. } = &result.kind {
+                    let report = InvariantMetricsReport::new(metrics.clone());
+                    sh_println!("{}", report)?;
+                }
 
+                if !silent {
                     // We only display logs at level 2 and above
                     if verbosity >= 2 {
                         // We only decode logs from Hardhat and DS-style console events

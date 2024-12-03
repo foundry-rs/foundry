@@ -5,13 +5,14 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{presets::ASCII_MARKDOWN, *};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Table};
 use foundry_common::{
     calc,
     reports::{report_kind, ReportKind},
     TestFunctionExt,
 };
 use foundry_evm::traces::CallKind;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
@@ -157,6 +158,10 @@ impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
             ReportKind::Markdown => {
+                if !self.contracts.is_empty() {
+                    writeln!(f, "\nGas Reports:\n")?;
+                }
+
                 for (name, contract) in &self.contracts {
                     if contract.functions.is_empty() {
                         trace!(name, "gas report contract without functions");
@@ -217,24 +222,51 @@ impl GasReport {
     // Helper function to format the Markdown table output
     fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
-        table.set_header([Cell::new(format!("{name} contract"))
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.set_header(vec![Cell::new(format!("{name} Contract"))
+            .set_alignment(CellAlignment::Center)
             .add_attribute(Attribute::Bold)
             .fg(Color::Green)]);
 
-        table.add_row([
-            Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
+        table.add_row(vec![
+            Cell::new("Deployment Cost")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Deployment Size")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
         ]);
-        table.add_row([contract.gas.to_string(), contract.size.to_string()]);
+        table.add_row(vec![
+            Cell::new(contract.gas.to_string()).set_alignment(CellAlignment::Center),
+            Cell::new(contract.size.to_string()).set_alignment(CellAlignment::Center),
+        ]);
 
-        table.add_row([
-            Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
-            Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
-            Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
-            Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
-            Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
-            Cell::new("# calls").add_attribute(Attribute::Bold),
+        table.add_row(vec![
+            Cell::new("Function Name")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Magenta),
+            Cell::new("Min")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Green),
+            Cell::new("Avg")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Yellow),
+            Cell::new("Median")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Yellow),
+            Cell::new("Max")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Red),
+            Cell::new("# Calls")
+                .set_alignment(CellAlignment::Center)
+                .add_attribute(Attribute::Bold),
         ]);
 
         contract.functions.iter().for_each(|(fname, sigs)| {
@@ -243,13 +275,23 @@ impl GasReport {
                 let display_name =
                     if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
 
-                table.add_row([
-                    Cell::new(display_name).add_attribute(Attribute::Bold),
-                    Cell::new(gas_info.min.to_string()).fg(Color::Green),
-                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
-                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
-                    Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                    Cell::new(gas_info.calls.to_string()),
+                table.add_row(vec![
+                    Cell::new(display_name)
+                        .set_alignment(CellAlignment::Left)
+                        .add_attribute(Attribute::Bold),
+                    Cell::new(gas_info.min.to_string())
+                        .set_alignment(CellAlignment::Center)
+                        .fg(Color::Green),
+                    Cell::new(gas_info.mean.to_string())
+                        .set_alignment(CellAlignment::Center)
+                        .fg(Color::Yellow),
+                    Cell::new(gas_info.median.to_string())
+                        .set_alignment(CellAlignment::Center)
+                        .fg(Color::Yellow),
+                    Cell::new(gas_info.max.to_string())
+                        .set_alignment(CellAlignment::Center)
+                        .fg(Color::Red),
+                    Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Center),
                 ]);
             })
         });
