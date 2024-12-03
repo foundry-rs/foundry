@@ -195,8 +195,9 @@ fn env_archive_urls(is_ws: bool) -> &'static [String] {
         env::var(env)
             .unwrap_or_default()
             .split(',')
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
             .collect()
     }
 
