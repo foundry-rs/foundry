@@ -1473,3 +1473,42 @@ async fn test_reset_dev_account_nonce() {
 
     assert!(receipt.status());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_get_account() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let init_block = provider.get_block_number().await.unwrap();
+    let alice_bal = provider.get_balance(alice).await.unwrap();
+    let alice_nonce = provider.get_transaction_count(alice).await.unwrap();
+    let alice_acc_init = provider.get_account(alice).await.unwrap();
+
+    assert_eq!(alice_acc_init.balance, alice_bal);
+    assert_eq!(alice_acc_init.nonce, alice_nonce);
+
+    let tx = TransactionRequest::default().from(alice).to(bob).value(U256::from(142));
+
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+    assert_eq!(init_block + 1, receipt.block_number.unwrap());
+
+    let alice_acc = provider.get_account(alice).await.unwrap();
+
+    assert_eq!(
+        alice_acc.balance,
+        alice_bal - (U256::from(142) + U256::from(receipt.gas_used * receipt.effective_gas_price)),
+    );
+    assert_eq!(alice_acc.nonce, alice_nonce + 1);
+
+    let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
+
+    assert_eq!(alice_acc_init, alice_acc_prev_block);
+}

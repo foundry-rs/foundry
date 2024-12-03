@@ -3013,11 +3013,8 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
 }
 
 pub fn is_arbitrum(chain_id: u64) -> bool {
-    matches!(
-        NamedChain::try_from(chain_id),
-        Ok(NamedChain::Arbitrum |
-            NamedChain::ArbitrumTestnet |
-            NamedChain::ArbitrumGoerli |
-            NamedChain::ArbitrumNova)
-    )
+    if let Ok(chain) = NamedChain::try_from(chain_id) {
+        return chain.is_arbitrum()
+    }
+    false
 }

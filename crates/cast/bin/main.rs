@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_dyn_abi::{DynSolValue, EventExt};
+use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -11,7 +11,7 @@ use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
 use foundry_common::{
-    abi::get_event,
+    abi::{get_error, get_event},
     ens::{namehash, ProviderEnsExt},
     fmt::{format_tokens, format_tokens_raw, format_uint_exp},
     fs,
@@ -30,6 +30,7 @@ pub mod cmd;
 pub mod tx;
 
 use args::{Cast as CastArgs, CastSubcommand, ToBaseArgs};
+use cast::traces::identifier::SignaturesIdentifier;
 
 #[macro_use]
 extern crate foundry_common;
@@ -212,9 +213,52 @@ async fn main_args(args: CastArgs) -> Result<()> {
             print_tokens(&tokens);
         }
         CastSubcommand::DecodeEvent { sig, data } => {
-            let event = get_event(sig.as_str())?;
-            let decoded_event = event.decode_log_parts(None, &hex::decode(data)?, false)?;
+            let decoded_event = if let Some(event_sig) = sig {
+                get_event(event_sig.as_str())?.decode_log_parts(None, &hex::decode(data)?, false)?
+            } else {
+                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let selector = data.get(..64).unwrap_or_default();
+                let identified_event =
+                    SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
+                        .write()
+                        .await
+                        .identify_event(&hex::decode(selector)?)
+                        .await;
+                if let Some(event) = identified_event {
+                    let _ = sh_println!("{}", event.signature());
+                    let data = data.get(64..).unwrap_or_default();
+                    get_event(event.signature().as_str())?.decode_log_parts(
+                        None,
+                        &hex::decode(data)?,
+                        false,
+                    )?
+                } else {
+                    eyre::bail!("No matching event signature found for selector `{selector}`")
+                }
+            };
             print_tokens(&decoded_event.body);
+        }
+        CastSubcommand::DecodeError { sig, data } => {
+            let error = if let Some(err_sig) = sig {
+                get_error(err_sig.as_str())?
+            } else {
+                let data = data.strip_prefix("0x").unwrap_or(data.as_str());
+                let selector = data.get(..8).unwrap_or_default();
+                let identified_error =
+                    SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
+                        .write()
+                        .await
+                        .identify_error(&hex::decode(selector)?)
+                        .await;
+                if let Some(error) = identified_error {
+                    let _ = sh_println!("{}", error.signature());
+                    error
+                } else {
+                    eyre::bail!("No matching error signature found for selector `{selector}`")
+                }
+            };
+            let decoded_error = error.decode_error(&hex::decode(data)?)?;
+            print_tokens(&decoded_error.body);
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
@@ -336,14 +380,16 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
-            let address: Address = stdin::unwrap_line(address)?.parse()?;
+            let address = stdin::unwrap_line(address)?;
             let computed = Cast::new(provider).compute_address(address, nonce).await?;
             sh_println!("Computed Address: {}", computed.to_checksum(None))?
         }
         CastSubcommand::Disassemble { bytecode } => {
+            let bytecode = stdin::unwrap_line(bytecode)?;
             sh_println!("{}", SimpleCast::disassemble(&hex::decode(bytecode)?)?)?
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
+            let bytecode = stdin::unwrap_line(bytecode)?;
             let functions = SimpleCast::extract_functions(&bytecode)?;
             let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
             let max_mutability_len = functions.iter().map(|r| r.2.len()).max().unwrap_or(0);

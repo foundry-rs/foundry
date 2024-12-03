@@ -6,7 +6,7 @@ use alloy_primitives::{b256, B256};
 use alloy_rpc_types::{BlockNumberOrTag, Index};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
-    casttest, file, forgetest_async,
+    casttest, file, forgetest, forgetest_async,
     rpc::{
         next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
         next_rpc_endpoint, next_ws_rpc_endpoint,
@@ -104,6 +104,7 @@ totalDifficulty      [..]
 blobGasUsed          [..]
 excessBlobGas        [..]
 requestsHash         [..]
+targetBlobsPerBlock  [..]
 transactions:        [
 ...
 ]
@@ -1474,10 +1475,97 @@ casttest!(string_decode, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(event_decode, |_prj, cmd| {
-    cmd.args(["decode-event", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
+// tests cast can decode event with provided signature
+casttest!(event_decode_with_sig, |_prj, cmd| {
+    cmd.args(["decode-event", "--sig", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
 78
 0x0000000000000000000000000000000000D0004F
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "78",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
+});
+
+// tests cast can decode event with Openchain API
+casttest!(event_decode_with_openchain, |prj, cmd| {
+    prj.clear_cache();
+    cmd.args(["decode-event", "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"]).assert_success().stdout_eq(str![[r#"
+BaseCurrencySet(address,uint256)
+0x000000000000000000000000000000000000004e
+15187004358734 [1.518e13]
+
+"#]]);
+});
+
+// tests cast can decode error with provided signature
+casttest!(error_decode_with_sig, |_prj, cmd| {
+    cmd.args(["decode-error", "--sig", "AnotherValueTooHigh(uint256,address)", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"]).assert_success().stdout_eq(str![[r#"
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "101",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
+});
+
+// tests cast can decode error with Openchain API
+casttest!(error_decode_with_openchain, |prj, cmd| {
+    prj.clear_cache();
+    cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
+ValueTooHigh(uint256,uint256)
+101
+100
+
+"#]]);
+});
+
+// tests cast can decode error and event when using local sig identifiers cache
+forgetest!(error_event_decode_with_cache, |prj, cmd| {
+    prj.clear_cache();
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "LocalProjectContract",
+        r#"
+contract ContractWithCustomError {
+    error AnotherValueTooHigh(uint256, address);
+    event MyUniqueEventWithinLocalProject(uint256 a, address b);
+}
+   "#,
+    )
+    .unwrap();
+    // Store selectors in local cache.
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast can decode custom error with local cache.
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+AnotherValueTooHigh(uint256,address)
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+    // Assert cast can decode event with local cache.
+    cmd.cast_fuse()
+        .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueEventWithinLocalProject(uint256,address)
+78
+0x00000000000000000000000000000DD00000004e
 
 "#]]);
 });
@@ -1769,6 +1857,97 @@ Traces:
     ├─  storage changes:
     │   @ 0: 0 → 111
     └─ ← [Stop] 
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// tests cast can decode external libraries traces with project cached selectors
+forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ExternalLib",
+        r#"
+import "./CounterInExternalLib.sol";
+library ExternalLib {
+    function updateCounterInExternalLib(CounterInExternalLib.Info storage counterInfo, uint256 counter) public {
+        counterInfo.counter = counter + 1;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "CounterInExternalLib",
+        r#"
+import "./ExternalLib.sol";
+contract CounterInExternalLib {
+    struct Info {
+        uint256 counter;
+    }
+    Info info;
+    constructor() {
+        ExternalLib.updateCounterInExternalLib(info, 100);
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "CounterInExternalLibScript",
+        r#"
+import "forge-std/Script.sol";
+import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
+contract CounterInExternalLibScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        new CounterInExternalLib();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterInExternalLibScript",
+    ])
+    .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Cache project selectors.
+    cmd.forge_fuse().set_current_dir(prj.root());
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast with local artifacts can decode external lib signature.
+    cmd.cast_fuse().set_current_dir(prj.root());
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [37739] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    ├─ [22411] 0xfAb06527117d29EA121998AC4fAB9Fc88bF5f979::updateCounterInExternalLib(0, 100) [delegatecall]
+    │   └─ ← [Stop] 
+    └─ ← [Return] 62 bytes of code
 
 
 Transaction successfully executed.
