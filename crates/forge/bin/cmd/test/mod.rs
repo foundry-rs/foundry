@@ -52,7 +52,7 @@ mod filter;
 mod summary;
 
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::TestSummaryReporter;
+use summary::TestSummaryReport;
 
 use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
@@ -468,7 +468,7 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json();
+        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -496,7 +496,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && shell::is_json() {
+        if !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter);
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
@@ -794,14 +794,13 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !silent && !outcome.results.is_empty() {
+        if !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
+        }
 
-            if self.summary {
-                let mut summary_table = TestSummaryReporter::new(self.detailed);
-                sh_println!("\n\nTest Summary:")?;
-                summary_table.print_summary(&outcome);
-            }
+        if self.summary && !outcome.results.is_empty() {
+            let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+            sh_println!("{}", &summary_report)?;
         }
 
         // Reattach the task.
