@@ -473,7 +473,7 @@ contract Contract {
     )
     .unwrap();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
         "Contract.t.sol",
@@ -545,7 +545,7 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
 forgetest_init!(fork_traces, |prj, cmd| {
     prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
         "Contract.t.sol",
@@ -699,7 +699,7 @@ contract TransientTest is Test {
 forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
     prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
         "Contract.t.sol",
