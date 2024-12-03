@@ -386,7 +386,11 @@ interface Vm {
 
     /// Returns state diffs from current `vm.startStateDiffRecording` session.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getStateDiff(bool json) external view returns (string memory diff);
+    function getStateDiff() external view returns (string memory diff);
+
+    /// Returns state diffs from current `vm.startStateDiffRecording` session, in json format.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStateDiffJson() external view returns (string memory diff);
 
     // -------- Recording Map Writes --------
 

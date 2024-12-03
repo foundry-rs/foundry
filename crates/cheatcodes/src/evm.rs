@@ -92,11 +92,12 @@ struct AccountStateDiffs {
 
 /// Storage slot diff info.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SlotStateDiff {
     /// Initial storage value.
-    original: B256,
+    previous_value: B256,
     /// Current storage value.
-    dirty: B256,
+    new_value: B256,
 }
 
 impl Cheatcode for addrCall {
@@ -708,14 +709,8 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 
 impl Cheatcode for getStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { json } = self;
-
-        let state_diffs = get_recorded_state_diffs(state);
-        if *json {
-            return Ok(serde_json::to_string(&state_diffs)?.abi_encode())
-        }
-
         let mut diffs = String::new();
+        let state_diffs = get_recorded_state_diffs(state);
         for (address, state_diffs) in state_diffs {
             // Print changed account.
             if let Some(label) = state_diffs.label {
@@ -726,12 +721,19 @@ impl Cheatcode for getStateDiffCall {
             for (slot, slot_changes) in state_diffs.changes {
                 diffs.push_str(&format!(
                     "@ {slot}: {} → {}\n",
-                    slot_changes.original, slot_changes.dirty
+                    slot_changes.previous_value, slot_changes.new_value
                 ));
             }
         }
 
         Ok(diffs.abi_encode())
+    }
+}
+
+impl Cheatcode for getStateDiffJsonCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let state_diffs = get_recorded_state_diffs(state);
+        Ok(serde_json::to_string(&state_diffs)?.abi_encode())
     }
 }
 
@@ -1129,8 +1131,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> StateDiffs {
                 changes.insert(
                     slot.to_string(),
                     SlotStateDiff {
-                        original: recorded_slot_changes.first().unwrap().0,
-                        dirty: recorded_slot_changes.last().unwrap().1,
+                        previous_value: recorded_slot_changes.first().unwrap().0,
+                        new_value: recorded_slot_changes.last().unwrap().1,
                     },
                 );
             }
