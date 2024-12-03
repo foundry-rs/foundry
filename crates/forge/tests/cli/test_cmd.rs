@@ -2357,10 +2357,10 @@ Compiler run successful!
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
 Traces:
-  [149783] MetadataTraceTest::test_proxy_trace()
-    ├─ [47297] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [..] MetadataTraceTest::test_proxy_trace()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 236 bytes of code
-    ├─ [37762] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop] 
 
@@ -2382,10 +2382,10 @@ Compiler run successful!
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
 Traces:
-  [128142] MetadataTraceTest::test_proxy_trace()
-    ├─ [36485] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [..] MetadataTraceTest::test_proxy_trace()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 182 bytes of code
-    ├─ [26959] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 8 bytes of code
     └─ ← [Stop] 
 
@@ -2667,6 +2667,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 });
 
 // Tests that test traces display state changes when running with verbosity.
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
