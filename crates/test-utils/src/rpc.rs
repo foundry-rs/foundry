@@ -137,11 +137,23 @@ pub fn next_ws_archive_rpc_url() -> String {
 
 /// Returns a URL that has access to archive state.
 ///
-/// Uses both environment variables (comma separated urls) and default keys.
+/// Uses either environment variables (comma separated urls) or default keys.
 fn next_archive_url(is_ws: bool) -> String {
-    let url = next(archive_urls(is_ws)).clone();
+    let urls = archive_urls(is_ws);
+    let url = if env_archive_urls(is_ws).is_empty() {
+        next(urls)
+    } else {
+        urls.choose_weighted(&mut rand::thread_rng(), |url| {
+            if url.contains("reth") {
+                2usize
+            } else {
+                1usize
+            }
+        })
+        .unwrap()
+    };
     eprintln!("--- next_archive_url(is_ws={is_ws}) = {url} ---");
-    url
+    url.clone()
 }
 
 fn archive_urls(is_ws: bool) -> &'static [String] {
