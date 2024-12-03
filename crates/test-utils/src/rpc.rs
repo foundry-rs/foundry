@@ -139,7 +139,9 @@ pub fn next_ws_archive_rpc_url() -> String {
 ///
 /// Uses both environment variables (comma separated urls) and default keys.
 fn next_archive_url(is_ws: bool) -> String {
-    next(archive_urls(is_ws)).clone()
+    let url = next(archive_urls(is_ws)).clone();
+    eprintln!("--- next_archive_url(is_ws={is_ws}) = {url} ---");
+    url
 }
 
 fn archive_urls(is_ws: bool) -> &'static [String] {
@@ -147,8 +149,14 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
     static HTTP: LazyLock<Vec<String>> = LazyLock::new(|| get(false));
 
     fn get(is_ws: bool) -> Vec<String> {
+        let env_urls = env_archive_urls(is_ws);
+        if !env_urls.is_empty() {
+            let mut urls = env_urls.to_vec();
+            urls.shuffle(&mut rand::thread_rng());
+            return urls;
+        }
+
         let mut urls = Vec::new();
-        urls.extend(env_archive_urls(is_ws).iter().cloned());
         for &key in ALCHEMY_KEYS.iter() {
             if is_ws {
                 urls.push(format!("wss://eth-mainnet.g.alchemy.com/v2/{key}"));
@@ -156,7 +164,6 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
                 urls.push(format!("https://eth-mainnet.g.alchemy.com/v2/{key}"));
             }
         }
-        urls.shuffle(&mut rand::thread_rng());
         urls
     }
 
@@ -194,7 +201,9 @@ pub fn next_etherscan_api_key(chain: NamedChain) -> String {
         Optimism => &ETHERSCAN_OPTIMISM_KEYS,
         _ => &ETHERSCAN_MAINNET_KEYS,
     };
-    next(keys).to_string()
+    let key = next(keys).to_string();
+    eprintln!("--- next_etherscan_api_key(chain={chain:?}) = {key} ---");
+    key
 }
 
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
@@ -238,12 +247,14 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
     };
     let full = if prefix.is_empty() { network.to_string() } else { format!("{prefix}-{network}") };
 
-    match (is_ws, is_infura) {
+    let url = match (is_ws, is_infura) {
         (false, true) => format!("https://{full}.infura.io/v3/{key}"),
         (true, true) => format!("wss://{full}.infura.io/ws/v3/{key}"),
         (false, false) => format!("https://{full}.g.alchemy.com/v2/{key}"),
         (true, false) => format!("wss://{full}.g.alchemy.com/v2/{key}"),
-    }
+    };
+    eprintln!("--- next_url(is_ws={is_ws}, chain={chain:?}) = {url} ---");
+    url
 }
 
 #[cfg(test)]
