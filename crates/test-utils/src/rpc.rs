@@ -142,7 +142,8 @@ fn next_archive_endpoint(is_ws: bool) -> String {
 
     let rpc_env_vars = env::var(env_urls).unwrap_or_default();
     if !rpc_env_vars.is_empty() {
-        let urls = rpc_env_vars.split(',').collect::<Vec<&str>>();
+        let mut urls = rpc_env_vars.split(',').collect::<Vec<&str>>();
+        urls.shuffle(&mut rand::thread_rng());
         next(&urls).to_string()
     } else if is_ws {
         format!("wss://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
