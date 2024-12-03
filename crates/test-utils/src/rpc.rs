@@ -139,7 +139,7 @@ pub fn next_ws_archive_rpc_url() -> String {
 ///
 /// Uses both environment variables (comma separated urls) and default keys.
 fn next_archive_url(is_ws: bool) -> String {
-    next(&archive_urls(is_ws)).clone()
+    next(archive_urls(is_ws)).clone()
 }
 
 fn archive_urls(is_ws: bool) -> &'static [String] {
