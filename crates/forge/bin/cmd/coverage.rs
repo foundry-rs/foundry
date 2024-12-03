@@ -294,7 +294,7 @@ impl CoverageArgs {
         let file_pattern = filter.args().coverage_pattern_inverse.as_ref();
         let file_root = &filter.paths().root;
         report.filter_out_ignored_sources(|path: &Path| {
-            file_pattern.map_or(true, |re| {
+            file_pattern.is_none_or(|re| {
                 !re.is_match(&path.strip_prefix(file_root).unwrap_or(path).to_string_lossy())
             })
         });

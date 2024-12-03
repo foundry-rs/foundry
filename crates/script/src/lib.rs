@@ -278,7 +278,7 @@ impl ScriptArgs {
                 .execution_result
                 .transactions
                 .as_ref()
-                .map_or(true, |txs| txs.is_empty())
+                .is_none_or(|txs| txs.is_empty())
             {
                 return Ok(());
             }
