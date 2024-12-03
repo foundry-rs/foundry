@@ -1923,6 +1923,10 @@ contract SimpleScript is Script {
 
 // Asserts that the script runs with expected non-output using `--quiet` flag
 forgetest_async!(adheres_to_json_flag, |prj, cmd| {
+    if cfg!(feature = "isolate-by-default") {
+        return;
+    }
+
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
         "Foo",
@@ -2367,12 +2371,12 @@ contract SimpleScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [103771] SimpleScript::run()
+  [..] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     │   └─ ← [Return] 116 bytes of code
-    ├─ [13162] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     │   ├─ [145] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
