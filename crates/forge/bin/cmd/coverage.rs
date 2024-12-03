@@ -48,10 +48,9 @@ pub struct CoverageArgs {
     ///
     /// Main differences:
     /// - `1.x`: The original v1 format.
-    /// - `2.0`: Adds support for "line end" numbers for functions. LCOV 2.1 and onwards may emit
-    ///   an error if this option is not provided.
+    /// - `2.0`: Adds support for "line end" numbers for functions.
     /// - `2.2`: Changes the format of functions.
-    #[arg(long, default_value = "1.16", value_parser = parse_lcov_version)]
+    #[arg(long, default_value = "1", value_parser = parse_lcov_version)]
     lcov_version: Version,
 
     /// Enable viaIR with minimum optimization
