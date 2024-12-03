@@ -1,7 +1,5 @@
 use crate::cmd::test::TestOutcome;
-use comfy_table::{
-    modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, CellAlignment, Color, Row, Table,
-};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use foundry_common::reports::{report_kind, ReportKind};
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
@@ -71,35 +69,17 @@ impl TestSummaryReport {
     // Helper function to format the Markdown table output.
     fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_preset(ASCII_MARKDOWN);
+
         let mut row = Row::from(vec![
-            Cell::new("Test Suite")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold),
-            Cell::new("Passed")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Green),
-            Cell::new("Failed")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Red),
-            Cell::new("Skipped")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Yellow),
+            Cell::new("Test Suite").fg(Color::Magenta),
+            Cell::new("Passed").fg(Color::Green),
+            Cell::new("Failed").fg(Color::Red),
+            Cell::new("Skipped").fg(Color::Yellow),
         ]);
         if *is_detailed {
-            row.add_cell(
-                Cell::new("File Path")
-                    .set_alignment(CellAlignment::Center)
-                    .add_attribute(Attribute::Bold),
-            );
-            row.add_cell(
-                Cell::new("Duration")
-                    .set_alignment(CellAlignment::Center)
-                    .add_attribute(Attribute::Bold),
-            );
+            row.add_cell(Cell::new("File Path").fg(Color::Cyan));
+            row.add_cell(Cell::new("Duration").fg(Color::Cyan));
         }
         table.set_header(row);
 
@@ -109,13 +89,13 @@ impl TestSummaryReport {
             let (suite_path, suite_name) = contract.split_once(':').unwrap();
 
             let passed = suite.successes().count();
-            let mut passed_cell = Cell::new(passed).set_alignment(CellAlignment::Center);
+            let mut passed_cell = Cell::new(passed);
 
             let failed = suite.failures().count();
-            let mut failed_cell = Cell::new(failed).set_alignment(CellAlignment::Center);
+            let mut failed_cell = Cell::new(failed);
 
             let skipped = suite.skips().count();
-            let mut skipped_cell = Cell::new(skipped).set_alignment(CellAlignment::Center);
+            let mut skipped_cell = Cell::new(skipped);
 
             row.add_cell(Cell::new(suite_name));
 
@@ -199,26 +179,14 @@ impl InvariantMetricsReport {
     // Helper function to format the Markdown table output.
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_preset(ASCII_MARKDOWN);
+
         table.set_header(vec![
-            Cell::new("Contract")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold),
-            Cell::new("Selector")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold),
-            Cell::new("Calls")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Green),
-            Cell::new("Reverts")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Red),
-            Cell::new("Discards")
-                .set_alignment(CellAlignment::Center)
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Yellow),
+            Cell::new("Contract").fg(Color::Magenta),
+            Cell::new("Selector").fg(Color::Cyan),
+            Cell::new("Calls").fg(Color::Green),
+            Cell::new("Reverts").fg(Color::Red),
+            Cell::new("Discards").fg(Color::Yellow),
         ]);
 
         for name in self.test_metrics.keys().sorted() {
@@ -226,21 +194,27 @@ impl InvariantMetricsReport {
                 name.split_once(':').and_then(|(_, contract)| contract.split_once('.'))
             {
                 let mut row = Row::new();
-                row.add_cell(Cell::new(contract).set_alignment(CellAlignment::Left));
-                row.add_cell(Cell::new(selector).set_alignment(CellAlignment::Left));
+                row.add_cell(Cell::new(contract));
+                row.add_cell(Cell::new(selector));
 
                 if let Some(metrics) = self.test_metrics.get(name) {
-                    let calls_cell = Cell::new(metrics.calls)
-                        .set_alignment(CellAlignment::Center)
-                        .fg(if metrics.calls > 0 { Color::Green } else { Color::White });
+                    let calls_cell = Cell::new(metrics.calls).fg(if metrics.calls > 0 {
+                        Color::Green
+                    } else {
+                        Color::White
+                    });
 
-                    let reverts_cell = Cell::new(metrics.reverts)
-                        .set_alignment(CellAlignment::Center)
-                        .fg(if metrics.reverts > 0 { Color::Red } else { Color::White });
+                    let reverts_cell = Cell::new(metrics.reverts).fg(if metrics.reverts > 0 {
+                        Color::Red
+                    } else {
+                        Color::White
+                    });
 
-                    let discards_cell = Cell::new(metrics.discards)
-                        .set_alignment(CellAlignment::Center)
-                        .fg(if metrics.discards > 0 { Color::Yellow } else { Color::White });
+                    let discards_cell = Cell::new(metrics.discards).fg(if metrics.discards > 0 {
+                        Color::Yellow
+                    } else {
+                        Color::White
+                    });
 
                     row.add_cell(calls_cell);
                     row.add_cell(reverts_cell);

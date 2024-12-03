@@ -30,7 +30,13 @@ impl Default for SummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
-        table.set_header(["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
+        table.set_header(vec![
+            Cell::new("File").fg(Color::Magenta),
+            Cell::new("% Lines").fg(Color::Cyan),
+            Cell::new("% Statements").fg(Color::Cyan),
+            Cell::new("% Branches").fg(Color::Cyan),
+            Cell::new("% Funcs").fg(Color::Cyan),
+        ]);
 
         Self { table, total: CoverageSummary::default() }
     }
@@ -55,8 +61,11 @@ impl CoverageReporter for SummaryReporter {
             self.add_row(path.display(), summary);
         }
 
+        // Add a spacer row before the total.
+        self.table.add_row(vec![Cell::new("")]);
+
         self.add_row("Total", self.total.clone());
-        sh_println!("{}", self.table)?;
+        sh_println!("\n{}\n", self.table)?;
         Ok(())
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     term::SpinnerReporter,
     TestFunctionExt,
 };
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -333,8 +333,7 @@ impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
             ReportKind::Markdown => {
-                let table = self.format_table_output();
-                writeln!(f, "{table}")?;
+                writeln!(f, "\n{}", self.format_table_output())?;
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", self.format_json_output())?;
@@ -370,12 +369,13 @@ impl SizeReport {
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
         table.load_preset(ASCII_MARKDOWN);
-        table.set_header([
-            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Runtime Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Initcode Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Runtime Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Initcode Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+
+        table.set_header(vec![
+            Cell::new("Contract").fg(Color::Magenta),
+            Cell::new("Runtime Size (B)").fg(Color::Cyan),
+            Cell::new("Initcode Size (B)").fg(Color::Cyan),
+            Cell::new("Runtime Margin (B)").fg(Color::Cyan),
+            Cell::new("Initcode Margin (B)").fg(Color::Cyan),
         ]);
 
         // Filters out dev contracts (Test or Script)
@@ -402,19 +402,11 @@ impl SizeReport {
 
             let locale = &Locale::en;
             table.add_row([
-                Cell::new(name).fg(Color::Blue),
-                Cell::new(contract.runtime_size.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(runtime_color),
-                Cell::new(contract.init_size.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(init_color),
-                Cell::new(runtime_margin.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(runtime_color),
-                Cell::new(init_margin.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(init_color),
+                Cell::new(name),
+                Cell::new(contract.runtime_size.to_formatted_string(locale)).fg(runtime_color),
+                Cell::new(contract.init_size.to_formatted_string(locale)).fg(init_color),
+                Cell::new(runtime_margin.to_formatted_string(locale)).fg(runtime_color),
+                Cell::new(init_margin.to_formatted_string(locale)).fg(init_color),
             ]);
         }
 

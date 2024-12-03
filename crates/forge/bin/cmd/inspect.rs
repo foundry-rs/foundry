@@ -1,10 +1,10 @@
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
-use comfy_table::{presets::ASCII_MARKDOWN, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
 use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof};
+use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof, shell};
 use foundry_compilers::{
     artifacts::{
         output_selection::{
@@ -111,7 +111,7 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), pretty)?;
+                print_storage_layout(artifact.storage_layout.as_ref())?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -176,32 +176,40 @@ impl InspectArgs {
     }
 }
 
-pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool) -> Result<()> {
+pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
         eyre::bail!("Could not get storage layout");
     };
 
-    if !pretty {
+    if shell::is_json() {
         return print_json(&storage_layout)
     }
 
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
-    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+
+    table.set_header(vec![
+        Cell::new("Contract").fg(Color::Magenta),
+        Cell::new("Name").fg(Color::Cyan),
+        Cell::new("Type").fg(Color::Cyan),
+        Cell::new("Slot").fg(Color::Cyan),
+        Cell::new("Offset").fg(Color::Cyan),
+        Cell::new("Bytes").fg(Color::Cyan),
+    ]);
 
     for slot in &storage_layout.storage {
         let storage_type = storage_layout.types.get(&slot.storage_type);
         table.add_row([
+            slot.contract.as_str(),
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
             storage_type.map_or("?", |t| &t.number_of_bytes),
-            &slot.contract,
         ]);
     }
 
-    sh_println!("{table}")?;
+    sh_println!("\n{table}\n")?;
     Ok(())
 }
 
