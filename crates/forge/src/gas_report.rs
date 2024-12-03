@@ -5,7 +5,7 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
 use foundry_common::{
     calc,
     reports::{report_kind, ReportKind},

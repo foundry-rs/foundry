@@ -1,5 +1,5 @@
 use crate::cmd::test::TestOutcome;
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Row, Table};
 use foundry_common::reports::{report_kind, ReportKind};
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;

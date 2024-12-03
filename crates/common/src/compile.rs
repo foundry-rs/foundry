@@ -6,7 +6,7 @@ use crate::{
     term::SpinnerReporter,
     TestFunctionExt,
 };
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Table};
+use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
