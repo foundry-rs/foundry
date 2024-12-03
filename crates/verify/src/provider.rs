@@ -172,7 +172,7 @@ impl VerificationProviderType {
     pub fn client(&self, key: &Option<String>) -> Result<Box<dyn VerificationProvider>> {
         match self {
             Self::Etherscan => {
-                if key.as_ref().map_or(true, |key| key.is_empty()) {
+                if key.as_ref().is_none_or(|key| key.is_empty()) {
                     eyre::bail!("ETHERSCAN_API_KEY must be set")
                 }
                 Ok(Box::<EtherscanVerificationProvider>::default())

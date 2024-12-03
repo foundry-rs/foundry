@@ -902,12 +902,11 @@ where {
                     *calldata == call.input[..calldata.len()] &&
                     // The value matches, if provided
                     expected
-                        .value
-                        .map_or(true, |value| Some(value) == call.transfer_value()) &&
+                        .value.is_none_or(|value| Some(value) == call.transfer_value()) &&
                     // The gas matches, if provided
-                    expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                    expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
-                    expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
+                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit)
                 {
                     *actual_count += 1;
                 }
@@ -925,7 +924,7 @@ where {
                     .iter_mut()
                     .find(|(mock, _)| {
                         call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.map_or(true, |value| Some(value) == call.transfer_value())
+                            mock.value.is_none_or(|value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v),
             } {
