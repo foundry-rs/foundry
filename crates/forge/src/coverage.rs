@@ -1,5 +1,3 @@
-//! Coverage reports.
-
 use alloy_primitives::map::HashMap;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
