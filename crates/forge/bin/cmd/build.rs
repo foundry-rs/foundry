@@ -137,7 +137,7 @@ impl BuildArgs {
         // directories as well as the `foundry.toml` configuration file.
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            let foundry_toml: PathBuf = config.root.0.join(Config::FILE_NAME);
+            let foundry_toml: PathBuf = config.root.join(Config::FILE_NAME);
             [config.src, config.test, config.script, foundry_toml]
         })
     }

@@ -14,7 +14,7 @@ use forge::{
         identifier::SignaturesIdentifier,
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use foundry_cli::{
     opts::{CoreBuildArgs, GlobalOpts},
@@ -317,9 +317,6 @@ impl TestArgs {
             }
         }
 
-        let config = Arc::new(config);
-        let test_options = TestOptions::new(&output, config.clone())?;
-
         let should_debug = self.debug.is_some();
         let should_draw = self.flamegraph || self.flamechart;
 
@@ -346,6 +343,7 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
+        let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -353,7 +351,6 @@ impl TestArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
             .alphanet(evm_opts.alphanet)
             .build(project_root, &output, env, evm_opts)?;
@@ -559,7 +556,7 @@ impl TestArgs {
 
         if self.decode_internal.is_some() {
             let sources =
-                ContractSources::from_project_output(output, &config.root.0, Some(&libraries))?;
+                ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
         }
         let mut decoder = builder.build();

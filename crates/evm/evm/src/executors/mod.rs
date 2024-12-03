@@ -24,6 +24,7 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
+    InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -85,9 +86,7 @@ pub struct Executor {
     env: EnvWithHandlerCfg,
     /// The Revm inspector stack.
     inspector: InspectorStack,
-    /// The gas limit for calls and deployments. This is different from the gas limit imposed by
-    /// the passed in environment, as those limits are used by the EVM for certain opcodes like
-    /// `gaslimit`.
+    /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
@@ -165,6 +164,36 @@ impl Executor {
         self.env.spec_id()
     }
 
+    /// Sets the EVM spec ID.
+    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+        self.env.handler_cfg.spec_id = spec_id;
+    }
+
+    /// Returns the gas limit for calls and deployments.
+    ///
+    /// This is different from the gas limit imposed by the passed in environment, as those limits
+    /// are used by the EVM for certain opcodes like `gaslimit`.
+    pub fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+
+    /// Sets the gas limit for calls and deployments.
+    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.gas_limit = gas_limit;
+    }
+
+    /// Returns whether `failed()` should be called on the test contract to determine if the test
+    /// failed.
+    pub fn legacy_assertions(&self) -> bool {
+        self.legacy_assertions
+    }
+
+    /// Sets whether `failed()` should be called on the test contract to determine if the test
+    /// failed.
+    pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
+        self.legacy_assertions = legacy_assertions;
+    }
+
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
@@ -235,9 +264,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
-        self.gas_limit = gas_limit;
-        self
+    pub fn create2_deployer(&self) -> Address {
+        self.inspector().create2_deployer()
     }
 
     /// Deploys a contract and commits the new state to the underlying database.

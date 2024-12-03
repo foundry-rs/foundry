@@ -5,7 +5,7 @@ use crate::{
     },
     revm::primitives::AccountInfo,
 };
-use alloy_primitives::{Address, B256, U256, U64};
+use alloy_primitives::{map::HashMap, Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
     backend::{
@@ -14,7 +14,7 @@ use foundry_evm::{
     fork::database::ForkDbStateSnapshot,
     revm::{primitives::BlockEnv, Database},
 };
-use revm::DatabaseRef;
+use revm::{db::DbAccount, DatabaseRef};
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 
@@ -92,6 +92,10 @@ impl MaybeFullDatabase for ForkedDatabase {
         self
     }
 
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.database().accounts)
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -125,6 +129,10 @@ impl MaybeFullDatabase for ForkedDatabase {
 impl MaybeFullDatabase for ForkDbStateSnapshot {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
+    }
+
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.local.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {

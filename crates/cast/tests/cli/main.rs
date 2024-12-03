@@ -104,6 +104,7 @@ totalDifficulty      [..]
 blobGasUsed          [..]
 excessBlobGas        [..]
 requestsHash         [..]
+targetBlobsPerBlock  [..]
 transactions:        [
 ...
 ]

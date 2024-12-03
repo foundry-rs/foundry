@@ -1,6 +1,6 @@
 use crate::transaction::TransactionWithMetadata;
+use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{hex, map::HashMap, TxHash};
-use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;

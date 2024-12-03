@@ -68,7 +68,7 @@ pub struct DocArgs {
 impl DocArgs {
     pub async fn run(self) -> Result<()> {
         let config = self.config()?;
-        let root = &config.root.0;
+        let root = &config.root;
         let project = config.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
         let _output = compiler.compile(&project)?;

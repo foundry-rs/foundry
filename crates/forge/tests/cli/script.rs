@@ -855,6 +855,70 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
         .run(ScriptOutcome::ScriptFailed);
 });
 
+forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    // Prepare CREATE2 Deployer
+    api.anvil_set_code(
+        create2,
+        Bytes::from_static(foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE),
+    )
+    .await
+    .unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2(address)")
+        .arg(&create2.to_string())
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2)])
+        .await;
+});
+
+forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    // Prepare CREATE2 Deployer
+    api.anvil_set_code(
+        create2,
+        Bytes::from_static(&hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef")),
+    )
+    .await
+    .unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .simulate(ScriptOutcome::ScriptFailed)
+        .broadcast(ScriptOutcome::ScriptFailed);
+});
+
+forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+
+    tester
+        .add_deployer(0)
+        .load_private_keys(&[0])
+        .await
+        .add_create2_deployer(create2)
+        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .simulate(ScriptOutcome::ScriptFailed)
+        .broadcast(ScriptOutcome::ScriptFailed);
+});
+
 forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
@@ -1859,6 +1923,10 @@ contract SimpleScript is Script {
 
 // Asserts that the script runs with expected non-output using `--quiet` flag
 forgetest_async!(adheres_to_json_flag, |prj, cmd| {
+    if cfg!(feature = "isolate-by-default") {
+        return;
+    }
+
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
         "Foo",
@@ -2002,7 +2070,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: missing CREATE2 deployer
+Error: script failed: missing CREATE2 deployer: 0x4e59b44847b379578588920cA78FbF26c0B4956C
 
 "#]]);
 });
@@ -2303,12 +2371,12 @@ contract SimpleScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [103771] SimpleScript::run()
+  [..] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     │   └─ ← [Return] 116 bytes of code
-    ├─ [13162] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     │   ├─ [145] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code

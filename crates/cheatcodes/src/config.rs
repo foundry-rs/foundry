@@ -68,9 +68,9 @@ impl CheatsConfig {
         running_contract: Option<String>,
         running_version: Option<Version>,
     ) -> Self {
-        let mut allowed_paths = vec![config.root.0.clone()];
-        allowed_paths.extend(config.libs.clone());
-        allowed_paths.extend(config.allow_paths.clone());
+        let mut allowed_paths = vec![config.root.clone()];
+        allowed_paths.extend(config.libs.iter().cloned());
+        allowed_paths.extend(config.allow_paths.iter().cloned());
 
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -88,8 +88,8 @@ impl CheatsConfig {
             rpc_endpoints,
             paths: config.project_paths(),
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
-            root: config.root.0.clone(),
-            broadcast: config.root.0.clone().join(&config.broadcast),
+            root: config.root.clone(),
+            broadcast: config.root.clone().join(&config.broadcast),
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
@@ -99,6 +99,17 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
         }
+    }
+
+    /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
+    pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
+        Self::new(
+            config,
+            evm_opts,
+            self.available_artifacts.clone(),
+            self.running_contract.clone(),
+            self.running_version.clone(),
+        )
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -239,7 +250,7 @@ mod tests {
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
-            &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
+            &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
             None,
             None,

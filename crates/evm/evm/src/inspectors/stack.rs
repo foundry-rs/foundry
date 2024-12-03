@@ -59,6 +59,8 @@ pub struct InspectorStackBuilder {
     pub alphanet: bool,
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
+    /// The CREATE2 deployer address.
+    pub create2_deployer: Address,
 }
 
 impl InspectorStackBuilder {
@@ -156,6 +158,12 @@ impl InspectorStackBuilder {
         self
     }
 
+    #[inline]
+    pub fn create2_deployer(mut self, create2_deployer: Address) -> Self {
+        self.create2_deployer = create2_deployer;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -171,6 +179,7 @@ impl InspectorStackBuilder {
             enable_isolation,
             alphanet,
             wallets,
+            create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -197,6 +206,7 @@ impl InspectorStackBuilder {
 
         stack.enable_isolation(enable_isolation);
         stack.alphanet(alphanet);
+        stack.set_create2_deployer(create2_deployer);
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -282,6 +292,7 @@ pub struct InspectorStackInner {
     pub tracer: Option<TracingInspector>,
     pub enable_isolation: bool,
     pub alphanet: bool,
+    pub create2_deployer: Address,
 
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -398,6 +409,12 @@ impl InspectorStack {
         self.alphanet = yes;
     }
 
+    /// Set the CREATE2 deployer address.
+    #[inline]
+    pub fn set_create2_deployer(&mut self, deployer: Address) {
+        self.create2_deployer = deployer;
+    }
+
     /// Set whether to enable the log collector.
     #[inline]
     pub fn collect_logs(&mut self, yes: bool) {
@@ -453,7 +470,7 @@ impl InspectorStack {
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
             traces,
-            coverage: coverage.map(|coverage| coverage.maps),
+            coverage: coverage.map(|coverage| coverage.finish()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
@@ -1022,6 +1039,10 @@ impl InspectorExt for InspectorStackRefMut<'_> {
     fn is_alphanet(&self) -> bool {
         self.inner.alphanet
     }
+
+    fn create2_deployer(&self) -> Address {
+        self.inner.create2_deployer
+    }
 }
 
 impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
@@ -1123,6 +1144,10 @@ impl InspectorExt for InspectorStack {
 
     fn is_alphanet(&self) -> bool {
         self.alphanet
+    }
+
+    fn create2_deployer(&self) -> Address {
+        self.create2_deployer
     }
 }
 
