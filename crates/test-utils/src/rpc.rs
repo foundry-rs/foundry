@@ -161,9 +161,9 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
     }
 
     if is_ws {
-        &*WS
+        &WS
     } else {
-        &*HTTP
+        &HTTP
     }
 }
 
@@ -177,9 +177,9 @@ fn env_archive_urls(is_ws: bool) -> &'static [String] {
     }
 
     if is_ws {
-        &*WS
+        &WS
     } else {
-        &*HTTP
+        &HTTP
     }
 }
 
