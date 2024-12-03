@@ -174,6 +174,7 @@ impl HitMaps {
 
     /// Merges two `HitMaps`.
     pub fn merge(&mut self, other: Self) {
+        self.reserve(other.len());
         for (code_hash, other) in other.0 {
             self.entry(code_hash).and_modify(|e| e.merge(&other)).or_insert(other);
         }
@@ -211,35 +212,59 @@ pub struct HitMap {
 
 impl HitMap {
     /// Create a new hitmap with the given bytecode.
+    #[inline]
     pub fn new(bytecode: Bytes) -> Self {
-        Self { bytecode, hits: Default::default() }
+        Self { bytecode, hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
     }
 
     /// Returns the bytecode.
+    #[inline]
     pub fn bytecode(&self) -> &Bytes {
         &self.bytecode
     }
 
     /// Returns the number of hits for the given program counter.
+    #[inline]
     pub fn get(&self, pc: usize) -> Option<NonZeroU32> {
         NonZeroU32::new(self.hits.get(&Self::cvt_pc(pc)).copied().unwrap_or(0))
     }
 
     /// Increase the hit counter by 1 for the given program counter.
+    #[inline]
     pub fn hit(&mut self, pc: usize) {
         self.hits(pc, 1)
     }
 
     /// Increase the hit counter by `hits` for the given program counter.
+    #[inline]
     pub fn hits(&mut self, pc: usize, hits: u32) {
         *self.hits.entry(Self::cvt_pc(pc)).or_default() += hits;
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
     pub fn merge(&mut self, other: &Self) {
-        for (&pc, &hits) in &other.hits {
-            self.hits(pc as usize, hits);
+        self.hits.reserve(other.len());
+        for (pc, hits) in other.iter() {
+            self.hits(pc, hits);
         }
+    }
+
+    /// Returns an iterator over all the program counters and their hit counts.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        self.hits.iter().map(|(&pc, &hits)| (pc as usize, hits))
+    }
+
+    /// Returns the number of program counters hit in the hitmap.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.hits.len()
+    }
+
+    /// Returns `true` if the hitmap is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.hits.is_empty()
     }
 
     #[inline]
