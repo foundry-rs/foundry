@@ -839,6 +839,17 @@ pub(crate) fn handle_expect_revert(
                 return Ok(success_return())
             }
 
+            if let Some(expected_reverter) = expected_revert.reverter {
+                if expected_reverter == expected_revert.reverted_by.unwrap_or_default() {
+                    return Err(fmt_err!(
+                        "expected 0 reverts from address: {}, but got one",
+                        expected_reverter
+                    ))
+                }
+
+                return Ok(success_return())
+            }
+
             bail!(msg);
         }
         _ => {

@@ -771,11 +771,6 @@ where {
                             self.expected_revert = Some(expected_revert.clone());
                         }
 
-                        // tracing::info!(
-                        //     "create::end:: expected count {}, actual count {}",
-                        //     expected_revert.count,
-                        //     expected_revert.actual_count
-                        // );
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
