@@ -25,7 +25,7 @@ impl TestSummaryReport {
 impl Display for TestSummaryReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
-            ReportKind::Markdown => {
+            ReportKind::Text => {
                 writeln!(f, "\n{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
             }
             ReportKind::JSON => {
@@ -142,7 +142,7 @@ impl InvariantMetricsReport {
 impl Display for InvariantMetricsReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
-            ReportKind::Markdown => {
+            ReportKind::Text => {
                 if !self.test_metrics.is_empty() {
                     writeln!(f, "\n{}", &self.format_table_output())?;
                 }

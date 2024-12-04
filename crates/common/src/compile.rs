@@ -332,7 +332,7 @@ impl SizeReport {
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
-            ReportKind::Markdown => {
+            ReportKind::Text => {
                 writeln!(f, "\n{}", self.format_table_output())?;
             }
             ReportKind::JSON => {

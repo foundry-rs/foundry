@@ -157,7 +157,7 @@ impl GasReport {
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
-            ReportKind::Markdown => {
+            ReportKind::Text => {
                 for (name, contract) in &self.contracts {
                     if contract.functions.is_empty() {
                         trace!(name, "gas report contract without functions");
