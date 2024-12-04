@@ -1019,6 +1019,30 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter) external;
 
+    /// Expects a `count` number of reverts from the upcoming calls with any revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls that match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls that exactly match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(address reverter, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;
+
     /// Expects an error on next call that starts with the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectPartialRevert(bytes4 revertData) external;

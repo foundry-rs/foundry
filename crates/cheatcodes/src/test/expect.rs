@@ -369,6 +369,48 @@ impl Cheatcode for expectRevert_5Call {
     }
 }
 
+impl Cheatcode for expectRevert_6Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { count } = self;
+        todo!()
+    }
+}
+
+impl Cheatcode for expectRevert_7Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { revertData, count } = self;
+        todo!()
+    }
+}
+
+impl Cheatcode for expectRevert_8Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { revertData, count } = self;
+        todo!()
+    }
+}
+
+impl Cheatcode for expectRevert_9Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { reverter, count } = self;
+        todo!()
+    }
+}
+
+impl Cheatcode for expectRevert_10Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { revertData, reverter, count } = self;
+        todo!()
+    }
+}
+
+impl Cheatcode for expectRevert_11Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { revertData, reverter, count } = self;
+        todo!()
+    }
+}
+
 impl Cheatcode for expectPartialRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData } = self;
