@@ -203,7 +203,7 @@ impl Executor {
             .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // If the deployer is not currently deployed, deploy the default one.
-        if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
+        if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
             let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
