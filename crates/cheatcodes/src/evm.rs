@@ -18,7 +18,11 @@ use foundry_evm_core::{
 use foundry_evm_traces::StackSnapshotType;
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    fmt::Display,
+    path::Path,
+};
 
 mod record_debug_step;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
@@ -77,27 +81,70 @@ pub struct DealRecord {
     pub new_balance: U256,
 }
 
-/// Recorded state diffs, for each changed address.
-type StateDiffs = BTreeMap<Address, AccountStateDiffs>;
-
-/// Account state diff info.
-#[derive(Serialize)]
-struct AccountStateDiffs {
-    /// Address label, if any set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
-    /// State changes, per slot.
-    changes: BTreeMap<String, SlotStateDiff>,
-}
-
 /// Storage slot diff info.
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct SlotStateDiff {
     /// Initial storage value.
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
+}
+
+/// Balance diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct BalanceDiff {
+    /// Initial storage value.
+    previous_value: U256,
+    /// Current storage value.
+    new_value: U256,
+}
+
+/// Account state diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AccountStateDiffs {
+    /// Address label, if any set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    /// Account balance changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    balance_diff: Option<BalanceDiff>,
+    /// State changes, per slot.
+    state_diff: BTreeMap<B256, SlotStateDiff>,
+}
+
+impl Display for AccountStateDiffs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> eyre::Result<(), std::fmt::Error> {
+        // Print changed account.
+        if let Some(label) = &self.label {
+            writeln!(f, "label: {label}")?;
+        }
+        // Print balance diff if changed.
+        if let Some(balance_diff) = &self.balance_diff {
+            if balance_diff.previous_value != balance_diff.new_value {
+                writeln!(
+                    f,
+                    "- balance diff: {} → {}",
+                    balance_diff.previous_value, balance_diff.new_value
+                )?;
+            }
+        }
+        // Print state diff if any.
+        if !&self.state_diff.is_empty() {
+            writeln!(f, "- state diff:")?;
+            for (slot, slot_changes) in &self.state_diff {
+                writeln!(
+                    f,
+                    "@ {slot}: {} → {}",
+                    slot_changes.previous_value, slot_changes.new_value
+                )?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Cheatcode for addrCall {
@@ -712,20 +759,9 @@ impl Cheatcode for getStateDiffCall {
         let mut diffs = String::new();
         let state_diffs = get_recorded_state_diffs(state);
         for (address, state_diffs) in state_diffs {
-            // Print changed account.
-            if let Some(label) = state_diffs.label {
-                diffs.push_str(&format!("{address} ({label}):\n"));
-            } else {
-                diffs.push_str(&format!("{address}:\n"));
-            }
-            for (slot, slot_changes) in state_diffs.changes {
-                diffs.push_str(&format!(
-                    "@ {slot}: {} → {}\n",
-                    slot_changes.previous_value, slot_changes.new_value
-                ));
-            }
+            diffs.push_str(&format!("{address}\n"));
+            diffs.push_str(&format!("{state_diffs}\n"));
         }
-
         Ok(diffs.abi_encode())
     }
 }
@@ -1100,47 +1136,49 @@ fn genesis_account(account: &Account) -> GenesisAccount {
 }
 
 /// Helper function to returns state diffs recorded for each changed account.
-fn get_recorded_state_diffs(state: &mut Cheatcodes) -> StateDiffs {
-    let mut state_diffs: StateDiffs = BTreeMap::default();
+fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, AccountStateDiffs> {
+    let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
     if let Some(records) = &state.recorded_account_diffs_stack {
-        let mut recorded_changes: BTreeMap<Address, BTreeMap<U256, Vec<(B256, B256)>>> =
-            BTreeMap::default();
         records
             .iter()
             .flatten()
-            .filter(|account_access| !account_access.storageAccesses.is_empty())
+            .filter(|account_access| {
+                !account_access.storageAccesses.is_empty() ||
+                    account_access.oldBalance != account_access.newBalance
+            })
             .for_each(|account_access| {
+                let account_diff =
+                    state_diffs.entry(account_access.account).or_insert(AccountStateDiffs {
+                        label: state.labels.get(&account_access.account).cloned(),
+                        ..Default::default()
+                    });
+                // Update balance diff. Do not overwrite the initial balance if already set.
+                if let Some(diff) = &mut account_diff.balance_diff {
+                    diff.new_value = account_access.newBalance;
+                } else {
+                    account_diff.balance_diff = Some(BalanceDiff {
+                        previous_value: account_access.oldBalance,
+                        new_value: account_access.newBalance,
+                    });
+                }
+
                 for storage_access in &account_access.storageAccesses {
-                    // Retain only records with storage accesses writes that didn't revert.
                     if storage_access.isWrite && !storage_access.reverted {
-                        recorded_changes
-                            .entry(storage_access.account)
-                            .or_default()
-                            .entry(storage_access.slot.into())
-                            .or_default()
-                            .push((storage_access.previousValue, storage_access.newValue));
+                        // Update state diff. Do not overwrite the initial value if already set.
+                        match account_diff.state_diff.entry(storage_access.slot) {
+                            Entry::Vacant(slot_state_diff) => {
+                                slot_state_diff.insert(SlotStateDiff {
+                                    previous_value: storage_access.previousValue,
+                                    new_value: storage_access.newValue,
+                                });
+                            }
+                            Entry::Occupied(mut slot_state_diff) => {
+                                slot_state_diff.get_mut().new_value = storage_access.newValue;
+                            }
+                        }
                     }
                 }
             });
-
-        for (address, recorded_changes) in recorded_changes {
-            let mut changes = BTreeMap::default();
-            for (slot, recorded_slot_changes) in recorded_changes {
-                // For each slot we retain the initial value from first state change and the new
-                // value from last state change.
-                changes.insert(
-                    slot.to_string(),
-                    SlotStateDiff {
-                        previous_value: recorded_slot_changes.first().unwrap().0,
-                        new_value: recorded_slot_changes.last().unwrap().1,
-                    },
-                );
-            }
-            state_diffs.insert(
-                address,
-                AccountStateDiffs { label: state.labels.get(&address).cloned(), changes },
-            );
-        }
     }
     state_diffs
 }
