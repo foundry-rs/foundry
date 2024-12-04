@@ -5,7 +5,7 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
 use foundry_common::{
     calc,
     reports::{report_kind, ReportKind},
@@ -158,10 +158,6 @@ impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
             ReportKind::Markdown => {
-                if !self.contracts.is_empty() {
-                    writeln!(f, "\nGas Reports:\n")?;
-                }
-
                 for (name, contract) in &self.contracts {
                     if contract.functions.is_empty() {
                         trace!(name, "gas report contract without functions");
@@ -169,8 +165,7 @@ impl Display for GasReport {
                     }
 
                     let table = self.format_table_output(contract, name);
-                    writeln!(f, "{table}")?;
-                    writeln!(f, "\n")?;
+                    writeln!(f, "\n{table}")?;
                 }
             }
             ReportKind::JSON => {
@@ -222,7 +217,7 @@ impl GasReport {
     // Helper function to format the Markdown table output
     fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
 
         table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);
 
@@ -239,7 +234,7 @@ impl GasReport {
         table.add_row(vec![Cell::new("")]);
 
         table.add_row(vec![
-            Cell::new("Function Name").fg(Color::Cyan),
+            Cell::new("Function Name"),
             Cell::new("Min").fg(Color::Green),
             Cell::new("Avg").fg(Color::Yellow),
             Cell::new("Median").fg(Color::Yellow),

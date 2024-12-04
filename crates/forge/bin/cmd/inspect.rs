@@ -1,6 +1,6 @@
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
-use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
@@ -186,26 +186,26 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
     }
 
     let mut table = Table::new();
-    table.load_preset(ASCII_MARKDOWN);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
 
     table.set_header(vec![
-        Cell::new("Contract").fg(Color::Magenta),
-        Cell::new("Name").fg(Color::Cyan),
-        Cell::new("Type").fg(Color::Cyan),
-        Cell::new("Slot").fg(Color::Cyan),
-        Cell::new("Offset").fg(Color::Cyan),
-        Cell::new("Bytes").fg(Color::Cyan),
+        Cell::new("Name"),
+        Cell::new("Type"),
+        Cell::new("Slot"),
+        Cell::new("Offset"),
+        Cell::new("Bytes"),
+        Cell::new("Contract"),
     ]);
 
     for slot in &storage_layout.storage {
         let storage_type = storage_layout.types.get(&slot.storage_type);
         table.add_row([
-            slot.contract.as_str(),
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
             storage_type.map_or("?", |t| &t.number_of_bytes),
+            &slot.contract,
         ]);
     }
 

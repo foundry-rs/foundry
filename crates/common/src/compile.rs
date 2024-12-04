@@ -6,7 +6,7 @@ use crate::{
     term::SpinnerReporter,
     TestFunctionExt,
 };
-use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -368,14 +368,14 @@ impl SizeReport {
 
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
 
         table.set_header(vec![
-            Cell::new("Contract").fg(Color::Magenta),
-            Cell::new("Runtime Size (B)").fg(Color::Cyan),
-            Cell::new("Initcode Size (B)").fg(Color::Cyan),
-            Cell::new("Runtime Margin (B)").fg(Color::Cyan),
-            Cell::new("Initcode Margin (B)").fg(Color::Cyan),
+            Cell::new("Contract"),
+            Cell::new("Runtime Size (B)"),
+            Cell::new("Initcode Size (B)"),
+            Cell::new("Runtime Margin (B)"),
+            Cell::new("Initcode Margin (B)"),
         ]);
 
         // Filters out dev contracts (Test or Script)

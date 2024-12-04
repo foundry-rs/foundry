@@ -6,7 +6,7 @@ use alloy_rpc_types::BlockId;
 use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
-use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
@@ -288,17 +288,17 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
     }
 
     let mut table = Table::new();
-    table.load_preset(ASCII_MARKDOWN);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
 
     table.set_header(vec![
-        Cell::new("Contract").fg(Color::Magenta),
-        Cell::new("Name").fg(Color::Cyan),
-        Cell::new("Type").fg(Color::Cyan),
-        Cell::new("Slot").fg(Color::Cyan),
-        Cell::new("Offset").fg(Color::Cyan),
-        Cell::new("Bytes").fg(Color::Cyan),
-        Cell::new("Value").fg(Color::Cyan),
-        Cell::new("Hex Value").fg(Color::Cyan),
+        Cell::new("Name"),
+        Cell::new("Type"),
+        Cell::new("Slot"),
+        Cell::new("Offset"),
+        Cell::new("Bytes"),
+        Cell::new("Value"),
+        Cell::new("Hex Value"),
+        Cell::new("Contract"),
     ]);
 
     for (slot, storage_value) in layout.storage.into_iter().zip(values) {
@@ -308,7 +308,6 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
         let converted_value = U256::from_be_bytes(value.0);
 
         table.add_row([
-            slot.contract.as_str(),
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
@@ -316,6 +315,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             storage_type.map_or("?", |t| &t.number_of_bytes),
             &converted_value.to_string(),
             &value.to_string(),
+            &slot.contract,
         ]);
     }
 

@@ -1,5 +1,5 @@
 use crate::cmd::test::TestOutcome;
-use comfy_table::{presets::ASCII_MARKDOWN, Cell, Color, Row, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Row, Table};
 use foundry_common::reports::{report_kind, ReportKind};
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
@@ -26,8 +26,7 @@ impl Display for TestSummaryReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
             ReportKind::Markdown => {
-                writeln!(f, "\nTest Summary:\n")?;
-                writeln!(f, "{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
+                writeln!(f, "\n{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", &self.format_json_output(&self.is_detailed, &self.outcome))?;
@@ -69,10 +68,10 @@ impl TestSummaryReport {
     // Helper function to format the Markdown table output.
     fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
 
         let mut row = Row::from(vec![
-            Cell::new("Test Suite").fg(Color::Magenta),
+            Cell::new("Test Suite"),
             Cell::new("Passed").fg(Color::Green),
             Cell::new("Failed").fg(Color::Red),
             Cell::new("Skipped").fg(Color::Yellow),
@@ -179,11 +178,11 @@ impl InvariantMetricsReport {
     // Helper function to format the Markdown table output.
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
 
         table.set_header(vec![
-            Cell::new("Contract").fg(Color::Magenta),
-            Cell::new("Selector").fg(Color::Cyan),
+            Cell::new("Contract"),
+            Cell::new("Selector"),
             Cell::new("Calls").fg(Color::Green),
             Cell::new("Reverts").fg(Color::Red),
             Cell::new("Discards").fg(Color::Yellow),

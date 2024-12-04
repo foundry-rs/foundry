@@ -1,4 +1,4 @@
-use comfy_table::{ContentArrangement, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
 use revm_primitives::{
     eof::{EofBody, EofHeader},
     Eof,
@@ -24,6 +24,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
     let mut result = String::new();
 
     let mut table = Table::new();
+    table.apply_modifier(UTF8_ROUND_CORNERS);
     table.add_row(vec!["type_size", &types_size.to_string()]);
     table.add_row(vec!["num_code_sections", &code_sizes.len().to_string()]);
     if !code_sizes.is_empty() {
@@ -39,6 +40,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
 
     if !code_section.is_empty() {
         let mut table = Table::new();
+        table.apply_modifier(UTF8_ROUND_CORNERS);
         table.set_content_arrangement(ContentArrangement::Dynamic);
         table.set_header(vec!["", "Inputs", "Outputs", "Max stack height", "Code"]);
         for (idx, (code, type_section)) in code_section.iter().zip(types_section).enumerate() {
@@ -56,6 +58,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
 
     if !container_section.is_empty() {
         let mut table = Table::new();
+        table.apply_modifier(UTF8_ROUND_CORNERS);
         table.set_content_arrangement(ContentArrangement::Dynamic);
         for (idx, container) in container_section.iter().enumerate() {
             table.add_row(vec![&idx.to_string(), &container.to_string()]);
@@ -66,6 +69,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
 
     if !data_section.is_empty() {
         let mut table = Table::new();
+        table.apply_modifier(UTF8_ROUND_CORNERS);
         table.set_content_arrangement(ContentArrangement::Dynamic);
         table.add_row(vec![&data_section.to_string()]);
         write!(result, "\n\nData section:\n{table}")?;
