@@ -127,110 +127,66 @@ impl TestSummaryReport {
 
 /// Represents an invariant metrics report.
 pub struct InvariantMetricsReport {
-    /// The kind of report to generate.
-    report_kind: ReportKind,
     /// The invariant metrics to report.
     pub test_metrics: HashMap<String, InvariantMetrics>,
 }
 
 impl InvariantMetricsReport {
     pub fn new(test_metrics: HashMap<String, InvariantMetrics>) -> Self {
-        Self { report_kind: report_kind(), test_metrics }
+        Self { test_metrics }
     }
 }
 
 impl Display for InvariantMetricsReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_kind {
-            ReportKind::Text => {
-                if !self.test_metrics.is_empty() {
-                    writeln!(f, "\n{}", &self.format_table_output())?;
+        if !self.test_metrics.is_empty() {
+            let mut table = Table::new();
+            table.apply_modifier(UTF8_ROUND_CORNERS);
+
+            table.set_header(vec![
+                Cell::new("Contract"),
+                Cell::new("Selector"),
+                Cell::new("Calls").fg(Color::Green),
+                Cell::new("Reverts").fg(Color::Red),
+                Cell::new("Discards").fg(Color::Yellow),
+            ]);
+
+            for name in self.test_metrics.keys().sorted() {
+                if let Some((contract, selector)) =
+                    name.split_once(':').and_then(|(_, contract)| contract.split_once('.'))
+                {
+                    let mut row = Row::new();
+                    row.add_cell(Cell::new(contract));
+                    row.add_cell(Cell::new(selector));
+
+                    if let Some(metrics) = self.test_metrics.get(name) {
+                        let calls_cell = Cell::new(metrics.calls).fg(if metrics.calls > 0 {
+                            Color::Green
+                        } else {
+                            Color::White
+                        });
+
+                        let reverts_cell = Cell::new(metrics.reverts).fg(if metrics.reverts > 0 {
+                            Color::Red
+                        } else {
+                            Color::White
+                        });
+
+                        let discards_cell = Cell::new(metrics.discards)
+                            .fg(if metrics.discards > 0 { Color::Yellow } else { Color::White });
+
+                        row.add_cell(calls_cell);
+                        row.add_cell(reverts_cell);
+                        row.add_cell(discards_cell);
+                    }
+
+                    table.add_row(row);
                 }
             }
-            ReportKind::JSON => {
-                writeln!(f, "{}", &self.format_json_output())?;
-            }
+
+            writeln!(f, "\n{table}")?;
         }
 
         Ok(())
-    }
-}
-
-impl InvariantMetricsReport {
-    // Helper function to format the JSON output.
-    fn format_json_output(&self) -> String {
-        let output = json!({
-            "metrics": self.test_metrics.iter().map(|(name, metrics)| {
-                let (contract, selector) = name.split_once(':').unwrap().1.split_once('.').unwrap();
-                json!({
-                    "contract": contract,
-                    "selector": selector,
-                    "calls": metrics.calls,
-                    "reverts": metrics.reverts,
-                    "discards": metrics.discards,
-                })
-            }).collect::<Vec<serde_json::Value>>(),
-        });
-
-        serde_json::to_string_pretty(&output).unwrap()
-    }
-
-    // Helper function to format the Markdown table output.
-    //
-    // | Contract              | Selector       | Calls | Reverts | Discards |
-    // |-----------------------|----------------|-------|---------|----------|
-    // | AnotherCounterHandler | doWork         |  7451 |   123   |   4941   |
-    // | AnotherCounterHandler | doWorkThing    |  7279 |   137   |   4849   |
-    // | CounterHandler        | doAnotherThing |  7302 |   150   |   4794   |
-    // | CounterHandler        | doSomething    |  7382 |   160   |   4830   |
-    fn format_table_output(&self) -> Table {
-        let mut table = Table::new();
-        table.apply_modifier(UTF8_ROUND_CORNERS);
-
-        table.set_header(vec![
-            Cell::new("Contract"),
-            Cell::new("Selector"),
-            Cell::new("Calls").fg(Color::Green),
-            Cell::new("Reverts").fg(Color::Red),
-            Cell::new("Discards").fg(Color::Yellow),
-        ]);
-
-        for name in self.test_metrics.keys().sorted() {
-            if let Some((contract, selector)) =
-                name.split_once(':').and_then(|(_, contract)| contract.split_once('.'))
-            {
-                let mut row = Row::new();
-                row.add_cell(Cell::new(contract));
-                row.add_cell(Cell::new(selector));
-
-                if let Some(metrics) = self.test_metrics.get(name) {
-                    let calls_cell = Cell::new(metrics.calls).fg(if metrics.calls > 0 {
-                        Color::Green
-                    } else {
-                        Color::White
-                    });
-
-                    let reverts_cell = Cell::new(metrics.reverts).fg(if metrics.reverts > 0 {
-                        Color::Red
-                    } else {
-                        Color::White
-                    });
-
-                    let discards_cell = Cell::new(metrics.discards).fg(if metrics.discards > 0 {
-                        Color::Yellow
-                    } else {
-                        Color::White
-                    });
-
-                    row.add_cell(calls_cell);
-                    row.add_cell(reverts_cell);
-                    row.add_cell(discards_cell);
-                }
-
-                table.add_row(row);
-            }
-        }
-
-        table
     }
 }
