@@ -195,7 +195,7 @@ pub struct Backend {
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
-    alphanet: bool,
+    odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -223,7 +223,7 @@ impl Backend {
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         print_logs: bool,
-        alphanet: bool,
+        odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
@@ -275,7 +275,7 @@ impl Backend {
             (cfg.slots_in_an_epoch, cfg.precompile_factory.clone())
         };
 
-        let (capabilities, executor_wallet) = if alphanet {
+        let (capabilities, executor_wallet) = if odyssey {
             // Insert account that sponsors the delegated txs. And deploy P256 delegation contract.
             let mut db = db.write().await;
 
@@ -326,7 +326,7 @@ impl Backend {
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
-            alphanet,
+            odyssey,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -999,7 +999,7 @@ impl Backend {
         &'i mut dyn revm::Inspector<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
     > {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector, self.alphanet);
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector, self.odyssey);
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
@@ -1080,7 +1080,7 @@ impl Backend {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             precompile_factory: self.precompile_factory.clone(),
-            alphanet: self.alphanet,
+            odyssey: self.odyssey,
         };
 
         // create a new pending block
@@ -1162,7 +1162,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
-                    alphanet: self.alphanet,
+                    odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();

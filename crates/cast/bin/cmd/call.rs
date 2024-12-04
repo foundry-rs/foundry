@@ -73,9 +73,9 @@ pub struct CallArgs {
     #[arg(long, short)]
     block: Option<BlockId>,
 
-    /// Enable Alphanet features.
-    #[arg(long, alias = "odyssey")]
-    pub alphanet: bool,
+    /// Enable Odyssey features.
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 
     #[command(subcommand)]
     command: Option<CallSubcommands>,
@@ -180,7 +180,7 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut env, fork, chain, alphanet) =
+            let (mut env, fork, chain, odyssey) =
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
@@ -195,14 +195,8 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(shell::verbosity() > 4);
-            let mut executor = TracingExecutor::new(
-                env,
-                fork,
-                evm_version,
-                trace_mode,
-                alphanet,
-                create2_deployer,
-            );
+            let mut executor =
+                TracingExecutor::new(env, fork, evm_version, trace_mode, odyssey, create2_deployer);
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
@@ -247,8 +241,8 @@ impl figment::Provider for CallArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut map = Map::new();
 
-        if self.alphanet {
-            map.insert("alphanet".into(), self.alphanet.into());
+        if self.odyssey {
+            map.insert("odyssey".into(), self.odyssey.into());
         }
 
         if let Some(evm_version) = self.evm_version {

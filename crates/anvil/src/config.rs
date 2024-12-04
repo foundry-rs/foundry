@@ -187,8 +187,8 @@ pub struct NodeConfig {
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
-    /// Enable Alphanet features.
-    pub alphanet: bool,
+    /// Enable Odyssey features.
+    pub odyssey: bool,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -467,7 +467,7 @@ impl Default for NodeConfig {
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
-            alphanet: false,
+            odyssey: false,
             silent: false,
             cache_path: None,
         }
@@ -507,7 +507,7 @@ impl NodeConfig {
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.alphanet {
+        if self.odyssey {
             return ChainHardfork::Ethereum(EthereumHardfork::PragueEOF);
         }
         if let Some(hardfork) = self.hardfork {
@@ -952,10 +952,10 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Alphanet support
+    /// Sets whether to enable Odyssey support
     #[must_use]
-    pub fn with_alphanet(mut self, alphanet: bool) -> Self {
-        self.alphanet = alphanet;
+    pub fn with_odyssey(mut self, odyssey: bool) -> Self {
+        self.odyssey = odyssey;
         self
     }
 
@@ -1055,7 +1055,7 @@ impl NodeConfig {
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.print_logs,
-            self.alphanet,
+            self.odyssey,
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,
