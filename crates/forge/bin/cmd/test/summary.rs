@@ -65,7 +65,6 @@ impl TestSummaryReport {
         serde_json::to_string_pretty(&output).unwrap()
     }
 
-    // Helper function to format the Markdown table output.
     fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);
@@ -125,68 +124,68 @@ impl TestSummaryReport {
     }
 }
 
-/// Represents an invariant metrics report.
-pub struct InvariantMetricsReport {
-    /// The invariant metrics to report.
-    pub test_metrics: HashMap<String, InvariantMetrics>,
-}
+/// Helper function to print the invariant metrics.
+///
+/// ╭-----------------------+----------------+-------+---------+----------╮
+/// | Contract              | Selector       | Calls | Reverts | Discards |
+/// +=====================================================================+
+/// | AnotherCounterHandler | doWork         | 7451  | 123     | 4941     |
+/// |-----------------------+----------------+-------+---------+----------|
+/// | AnotherCounterHandler | doWorkThing    | 7279  | 137     | 4849     |
+/// |-----------------------+----------------+-------+---------+----------|
+/// | CounterHandler        | doAnotherThing | 7302  | 150     | 4794     |
+/// |-----------------------+----------------+-------+---------+----------|
+/// | CounterHandler        | doSomething    | 7382  | 160     |4794      |
+/// ╰-----------------------+----------------+-------+---------+----------╯
+pub(crate) fn print_invariant_metrics(test_metrics: &HashMap<String, InvariantMetrics>) {
+    if !test_metrics.is_empty() {
+        let mut table = Table::new();
+        table.apply_modifier(UTF8_ROUND_CORNERS);
 
-impl InvariantMetricsReport {
-    pub fn new(test_metrics: HashMap<String, InvariantMetrics>) -> Self {
-        Self { test_metrics }
-    }
-}
+        table.set_header(vec![
+            Cell::new("Contract"),
+            Cell::new("Selector"),
+            Cell::new("Calls").fg(Color::Green),
+            Cell::new("Reverts").fg(Color::Red),
+            Cell::new("Discards").fg(Color::Yellow),
+        ]);
 
-impl Display for InvariantMetricsReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        if !self.test_metrics.is_empty() {
-            let mut table = Table::new();
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+        for name in test_metrics.keys().sorted() {
+            if let Some((contract, selector)) =
+                name.split_once(':').and_then(|(_, contract)| contract.split_once('.'))
+            {
+                let mut row = Row::new();
+                row.add_cell(Cell::new(contract));
+                row.add_cell(Cell::new(selector));
 
-            table.set_header(vec![
-                Cell::new("Contract"),
-                Cell::new("Selector"),
-                Cell::new("Calls").fg(Color::Green),
-                Cell::new("Reverts").fg(Color::Red),
-                Cell::new("Discards").fg(Color::Yellow),
-            ]);
+                if let Some(metrics) = test_metrics.get(name) {
+                    let calls_cell = Cell::new(metrics.calls).fg(if metrics.calls > 0 {
+                        Color::Green
+                    } else {
+                        Color::White
+                    });
 
-            for name in self.test_metrics.keys().sorted() {
-                if let Some((contract, selector)) =
-                    name.split_once(':').and_then(|(_, contract)| contract.split_once('.'))
-                {
-                    let mut row = Row::new();
-                    row.add_cell(Cell::new(contract));
-                    row.add_cell(Cell::new(selector));
+                    let reverts_cell = Cell::new(metrics.reverts).fg(if metrics.reverts > 0 {
+                        Color::Red
+                    } else {
+                        Color::White
+                    });
 
-                    if let Some(metrics) = self.test_metrics.get(name) {
-                        let calls_cell = Cell::new(metrics.calls).fg(if metrics.calls > 0 {
-                            Color::Green
-                        } else {
-                            Color::White
-                        });
+                    let discards_cell = Cell::new(metrics.discards).fg(if metrics.discards > 0 {
+                        Color::Yellow
+                    } else {
+                        Color::White
+                    });
 
-                        let reverts_cell = Cell::new(metrics.reverts).fg(if metrics.reverts > 0 {
-                            Color::Red
-                        } else {
-                            Color::White
-                        });
-
-                        let discards_cell = Cell::new(metrics.discards)
-                            .fg(if metrics.discards > 0 { Color::Yellow } else { Color::White });
-
-                        row.add_cell(calls_cell);
-                        row.add_cell(reverts_cell);
-                        row.add_cell(discards_cell);
-                    }
-
-                    table.add_row(row);
+                    row.add_cell(calls_cell);
+                    row.add_cell(reverts_cell);
+                    row.add_cell(discards_cell);
                 }
-            }
 
-            writeln!(f, "\n{table}")?;
+                table.add_row(row);
+            }
         }
 
-        Ok(())
+        let _ = sh_println!("\n{table}\n");
     }
 }

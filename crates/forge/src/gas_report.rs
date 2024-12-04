@@ -214,7 +214,6 @@ impl GasReport {
         .unwrap()
     }
 
-    // Helper function to format the Markdown table output
     fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);
