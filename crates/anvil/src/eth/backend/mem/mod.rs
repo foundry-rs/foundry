@@ -75,6 +75,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
+use eyre::{Context, Result};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
@@ -229,7 +230,7 @@ impl Backend {
         automine_block_time: Option<Duration>,
         cache_path: Option<PathBuf>,
         node_config: Arc<AsyncRwLock<NodeConfig>>,
-    ) -> Self {
+    ) -> Result<Self> {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(fork) = fork.read().as_ref() {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
@@ -341,8 +342,8 @@ impl Backend {
         }
 
         // Note: this can only fail in forking mode, in which case we can't recover
-        backend.apply_genesis().await.expect("Failed to create genesis");
-        backend
+        backend.apply_genesis().await.wrap_err("failed to create genesis")?;
+        Ok(backend)
     }
 
     /// Writes the CREATE2 deployer code directly to the database at the address provided.
@@ -500,7 +501,7 @@ impl Backend {
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
 
-                    node_config.setup_fork_db_config(eth_rpc_url, &mut env, &self.fees).await
+                    node_config.setup_fork_db_config(eth_rpc_url, &mut env, &self.fees).await?
                 };
 
                 *self.db.write().await = Box::new(db);
@@ -536,7 +537,7 @@ impl Backend {
 
                     let mut env = self.env.read().clone();
                     let (forked_db, client_fork_config) =
-                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await;
+                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
 
                     *self.db.write().await = Box::new(forked_db);
                     let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
@@ -1232,7 +1233,7 @@ impl Backend {
                 if storage.blocks.len() > transaction_block_keeper {
                     let to_clear = block_number
                         .to::<u64>()
-                        .saturating_sub(transaction_block_keeper.try_into().unwrap());
+                        .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
                     storage.remove_block_transactions_by_number(to_clear)
                 }
             }
@@ -2877,7 +2878,7 @@ pub fn transaction_build(
             gas_limit,
         };
 
-        let ser = serde_json::to_value(&dep_tx).unwrap();
+        let ser = serde_json::to_value(&dep_tx).expect("could not serialize TxDeposit");
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
