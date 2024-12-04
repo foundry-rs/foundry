@@ -30,6 +30,10 @@ contract Reverter {
         revert(message);
     }
 
+    function callThenNoRevert(Dummy dummy) public pure {
+        dummy.callMe();
+    }
+
     function revertWithoutReason() public pure {
         revert();
     }
@@ -436,5 +440,60 @@ contract ExpectRevertCount is DSTest {
         Reverter reverter = new Reverter();
         vm.expectRevert("revert", count);
         reverter.revertWithMessage("revert2");
+    }
+
+    function testRevertCountWithConstructor() public {
+        uint64 count = 1;
+        vm.expectRevert("constructor revert", count);
+        new ConstructorReverter("constructor revert");
+    }
+
+    function testNoRevertWithConstructor() public {
+        uint64 count = 0;
+        vm.expectRevert("constructor revert", count);
+        new CContract();
+    }
+
+    function testRevertCountNestedSpecific() public {
+        uint64 count = 2;
+        Reverter reverter = new Reverter();
+        Reverter inner = new Reverter();
+
+        vm.expectRevert("nested revert", count);
+        reverter.revertWithMessage("nested revert");
+        reverter.nestedRevert(inner, "nested revert");
+
+        vm.expectRevert("nested revert", count);
+        reverter.nestedRevert(inner, "nested revert");
+        reverter.nestedRevert(inner, "nested revert");
+    }
+
+    function testRevertCountCallsThenReverts() public {
+        uint64 count = 2;
+        Reverter reverter = new Reverter();
+        Dummy dummy = new Dummy();
+
+        vm.expectRevert("called a function and then reverted", count);
+        reverter.callThenRevert(dummy, "called a function and then reverted");
+        reverter.callThenRevert(dummy, "called a function and then reverted");
+    }
+
+    function testFailRevertCountCallsThenReverts() public {
+        uint64 count = 2;
+        Reverter reverter = new Reverter();
+        Dummy dummy = new Dummy();
+
+        vm.expectRevert("called a function and then reverted", count);
+        reverter.callThenRevert(dummy, "called a function and then reverted");
+        reverter.callThenRevert(dummy, "wrong revert");
+    }
+
+    function testNoRevertCall() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        Dummy dummy = new Dummy();
+
+        vm.expectRevert("called a function and then reverted", count);
+        reverter.callThenNoRevert(dummy);
     }
 }
