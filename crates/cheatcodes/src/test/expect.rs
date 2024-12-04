@@ -379,42 +379,82 @@ impl Cheatcode for expectRevert_5Call {
 impl Cheatcode for expectRevert_6Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { count } = self;
-        todo!()
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false, None, *count)
     }
 }
 
 impl Cheatcode for expectRevert_7Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, count } = self;
-        todo!()
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+            None,
+            *count,
+        )
     }
 }
 
 impl Cheatcode for expectRevert_8Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, count } = self;
-        todo!()
+        expect_revert(
+            ccx.state,
+            Some(revertData),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+            None,
+            *count,
+        )
     }
 }
 
 impl Cheatcode for expectRevert_9Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { reverter, count } = self;
-        todo!()
+        expect_revert(
+            ccx.state,
+            None,
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+            Some(*reverter),
+            *count,
+        )
     }
 }
 
 impl Cheatcode for expectRevert_10Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, reverter, count } = self;
-        todo!()
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+            Some(*reverter),
+            *count,
+        )
     }
 }
 
 impl Cheatcode for expectRevert_11Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { revertData, reverter, count } = self;
-        todo!()
+        expect_revert(
+            ccx.state,
+            Some(revertData),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+            Some(*reverter),
+            *count,
+        )
     }
 }
 
