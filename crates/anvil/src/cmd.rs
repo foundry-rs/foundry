@@ -89,8 +89,8 @@ pub struct NodeArgs {
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
-    #[arg(long, value_name = "OUT_FILE")]
-    pub config_out: Option<String>,
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    pub config_out: Option<PathBuf>,
 
     /// Disable auto and interval mining, and mine on demand instead.
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
