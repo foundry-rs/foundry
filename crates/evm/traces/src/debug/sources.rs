@@ -88,7 +88,7 @@ impl ArtifactData {
     fn new(bytecode: ContractBytecodeSome, build_id: String, file_id: u32) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
-            let source_map = if b.source_map.as_ref().map_or(true, |s| s.is_empty()) {
+            let source_map = if b.source_map.as_ref().is_none_or(|s| s.is_empty()) {
                 Ok(None)
             } else {
                 b.source_map().transpose().wrap_err_with(|| {

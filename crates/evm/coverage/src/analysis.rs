@@ -372,8 +372,9 @@ impl<'a> ContractVisitor<'a> {
                     let expr: Option<Node> = node.attribute("expression");
                     if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
                         // Might be a require call, add branch coverage.
+                        // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                         let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                        if let Some("require" | "assert") = name.as_deref() {
+                        if let Some("require") = name.as_deref() {
                             let branch_id = self.branch_id;
                             self.branch_id += 1;
                             self.push_item_kind(
