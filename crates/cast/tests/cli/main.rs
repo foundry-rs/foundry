@@ -1955,3 +1955,22 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/9476
+forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
+    let chain_id = 5555u64;
+    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
+
+    let http_endpoint = handle.http_endpoint();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+            "--chain",
+            &chain_id.to_string(),
+        ])
+        .assert_success();
+});
