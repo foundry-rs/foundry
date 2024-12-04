@@ -754,11 +754,11 @@ where {
             if ecx.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     false,
                     true,
-                    &expected_revert,
+                    &mut expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
@@ -1315,11 +1315,13 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 };
 
                 if needs_processing {
-                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    // Only `remove` the expected revert from state if `expected_revert.count` ==
+                    // `expected_revert.actual_count`
+                    let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                     return match expect::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        &expected_revert,
+                        &mut expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,

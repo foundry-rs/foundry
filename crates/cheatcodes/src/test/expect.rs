@@ -89,6 +89,8 @@ pub struct ExpectedRevert {
     pub reverted_by: Option<Address>,
     /// Number of times this revert is expected.
     pub count: u64,
+    /// Actual number of times this revert has been seen.
+    pub actual_count: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -773,6 +775,7 @@ fn expect_revert(
         reverter,
         reverted_by: None,
         count,
+        actual_count: 0,
     });
     Ok(Default::default())
 }
@@ -780,7 +783,7 @@ fn expect_revert(
 pub(crate) fn handle_expect_revert(
     is_cheatcode: bool,
     is_create: bool,
-    expected_revert: &ExpectedRevert,
+    expected_revert: &mut ExpectedRevert,
     status: InstructionResult,
     retdata: Bytes,
     known_contracts: &Option<ContractsByArtifact>,
