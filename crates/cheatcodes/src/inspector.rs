@@ -1314,6 +1314,14 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 expected_revert.reverted_by.is_none()
             {
                 expected_revert.reverted_by = Some(call.target_address);
+            } else if outcome.result.is_revert() &&
+                expected_revert.reverter.is_some() &&
+                expected_revert.reverted_by.is_some() &&
+                expected_revert.count > 1
+            {
+                // If we're expecting more than one revert, we need to reset the reverted_by address
+                // to latest reverter.
+                expected_revert.reverted_by = Some(call.target_address);
             }
 
             if ecx.journaled_state.depth() <= expected_revert.depth {
@@ -1352,11 +1360,11 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert.clone());
                             }
-                            // tracing::info!(
-                            //     "call::end:: expected count {}, actual count {}",
-                            //     expected_revert.count,
-                            //     expected_revert.actual_count
-                            // );
+                            tracing::info!(
+                                "call::end:: expected count {}, actual count {}",
+                                expected_revert.count,
+                                expected_revert.actual_count
+                            );
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
                             outcome
