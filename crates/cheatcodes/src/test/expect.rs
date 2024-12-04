@@ -834,10 +834,9 @@ pub(crate) fn handle_expect_revert(
                         "expected 0 reverts with reason: {}, but got one",
                         &stringify(expected_reason)
                     ))
-                } else {
-                    // Return succes if the revert is not the expected one.
-                    return Ok(success_return());
                 }
+
+                return Ok(success_return())
             }
 
             bail!(msg);
