@@ -275,13 +275,13 @@ impl VerifyArgs {
 
             let cache = project.read_cache_file().ok();
 
-            let version = if let Some(ref version) = self.compiler_version {
-                version.trim_start_matches('v').parse()?
-            } else if let Some(ref solc) = config.solc {
+            let version = if let Some(ref solc) = config.solc {
                 match solc {
                     SolcReq::Version(version) => version.to_owned(),
                     SolcReq::Local(solc) => Solc::new(solc)?.version,
                 }
+            } else if let Some(ref version) = self.compiler_version {
+                version.trim_start_matches('v').parse()?
             } else if let Some(entry) =
                 cache.as_ref().and_then(|cache| cache.files.get(&contract_path).cloned())
             {
