@@ -755,15 +755,27 @@ where {
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
+                let handler_result = expect::handle_expect_revert(
                     false,
                     true,
                     &mut expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
-                ) {
+                );
+
+                return match handler_result {
                     Ok((address, retdata)) => {
+                        expected_revert.actual_count += 1;
+                        if expected_revert.actual_count < expected_revert.count {
+                            self.expected_revert = Some(expected_revert.clone());
+                        }
+
+                        // tracing::info!(
+                        //     "create::end:: expected count {}, actual count {}",
+                        //     expected_revert.count,
+                        //     expected_revert.actual_count
+                        // );
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
@@ -1318,14 +1330,17 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                     // Only `remove` the expected revert from state if `expected_revert.count` ==
                     // `expected_revert.actual_count`
                     let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                    return match expect::handle_expect_revert(
+
+                    let handler_result = expect::handle_expect_revert(
                         cheatcode_call,
                         false,
                         &mut expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
-                    ) {
+                    );
+
+                    return match handler_result {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;
@@ -1333,6 +1348,15 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             outcome
                         }
                         Ok((_, retdata)) => {
+                            expected_revert.actual_count += 1;
+                            if expected_revert.actual_count < expected_revert.count {
+                                self.expected_revert = Some(expected_revert.clone());
+                            }
+                            // tracing::info!(
+                            //     "call::end:: expected count {}, actual count {}",
+                            //     expected_revert.count,
+                            //     expected_revert.actual_count
+                            // );
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
                             outcome

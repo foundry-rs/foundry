@@ -796,6 +796,17 @@ pub(crate) fn handle_expect_revert(
         }
     };
 
+    // If count is 0, we expect the call NOT to revert
+    if expected_revert.count == 0 &&
+        expected_revert.reason.is_none() &&
+        expected_revert.reverter.is_none()
+    {
+        if matches!(status, return_ok!()) {
+            return Ok(success_return());
+        }
+        bail!("call reverted when it was expected not to revert");
+    }
+
     ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
 
     // If expected reverter address is set then check it matches the actual reverter.

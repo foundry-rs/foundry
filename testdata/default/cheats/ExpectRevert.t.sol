@@ -188,7 +188,7 @@ contract ExpectRevertTest is DSTest {
     }
 
     function testexpectCheatcodeRevert() public {
-        vm._expectCheatcodeRevert("JSON value at \".a\" is not an object");
+        vm._expectCheatcodeRevert('JSON value at ".a" is not an object');
         vm.parseJsonKeys('{"a": "b"}', ".a");
     }
 
@@ -349,5 +349,33 @@ contract ExpectRevertWithReverterTest is DSTest {
         vm.expectRevert(address(aContract));
         aContract.doNotRevert();
         aContract.callAndRevert();
+    }
+}
+
+contract ExpectRevertCount is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testRevertCountAny() public {
+        uint64 count = 3;
+        Reverter reverter = new Reverter();
+        vm.expectRevert(count);
+        reverter.revertWithMessage("revert");
+        reverter.revertWithMessage("revert2");
+        reverter.revertWithMessage("revert3");
+    }
+
+    function testFailRevertCountAny() public {
+        uint64 count = 3;
+        Reverter reverter = new Reverter();
+        vm.expectRevert(count);
+        reverter.revertWithMessage("revert");
+        reverter.revertWithMessage("revert2");
+    }
+
+    function testNoRevert() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        vm.expectRevert(count);
+        reverter.doNotRevert();
     }
 }
