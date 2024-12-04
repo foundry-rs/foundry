@@ -175,10 +175,7 @@ contract ExpectRevertTest is DSTest {
 
         Dummy dummy = new Dummy();
         vm.expectRevert();
-        reverter.callThenRevert(
-            dummy,
-            "revert message 4 i ran out of synonims for also"
-        );
+        reverter.callThenRevert(dummy, "revert message 4 i ran out of synonims for also");
 
         vm.expectRevert();
         reverter.revertWithoutReason();
@@ -329,22 +326,13 @@ contract ExpectRevertWithReverterTest is DSTest {
         vm.expectPartialRevert(CContractError.selector, address(cContract));
         aContract.callAndRevertInCContractThroughBContract();
         // Test expect revert with exact data match and reverter at second subcall.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                CContractError.selector,
-                "Reverted by CContract"
-            ),
-            address(cContract)
-        );
+        vm.expectRevert(abi.encodeWithSelector(CContractError.selector, "Reverted by CContract"), address(cContract));
         aContract.callAndRevertInCContract();
     }
 
     function testExpectRevertsWithReverterInConstructor() public {
         // Test expect revert with reverter when constructor reverts.
-        vm.expectRevert(
-            abi.encodePacked("Reverted by DContract"),
-            address(cContract)
-        );
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), address(cContract));
         cContract.createDContract();
 
         vm.expectRevert(address(bContract));
@@ -538,5 +526,40 @@ contract ExpectRevertCountWithReverter is DSTest {
         Reverter reverter = new Reverter();
         vm.expectRevert(address(reverter), count);
         reverter.revertWithMessage("revert");
+    }
+
+    function testReverterCountWithData() public {
+        uint64 count = 2;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.revertWithMessage("revert");
+        reverter.revertWithMessage("revert");
+    }
+
+    function testFailReverterCountWithWrongData() public {
+        uint64 count = 2;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.revertWithMessage("revert");
+        reverter.revertWithMessage("wrong revert");
+    }
+
+    function testFailWrongReverterCountWithData() public {
+        uint64 count = 2;
+        Reverter reverter = new Reverter();
+        Reverter reverter2 = new Reverter();
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.revertWithMessage("revert");
+        reverter2.revertWithMessage("revert");
+    }
+
+    function testNoReverterCountWithData() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.doNotRevert();
+
+        vm.expectRevert("revert", address(reverter), count);
+        reverter.revertWithMessage("revert2");
     }
 }

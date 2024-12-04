@@ -837,6 +837,39 @@ pub(crate) fn handle_expect_revert(
                 }
 
                 return Ok(success_return())
+            } else if expected_revert.reason.is_some() && expected_revert.reverter.is_some() {
+                let mut reason_match = false;
+                let mut reverter_match = false;
+                let mut actual_revert: Vec<u8> = retdata.into();
+                let expected_reason = expected_revert.reason.as_deref().unwrap();
+
+                if matches!(
+                    actual_revert.get(..4).map(|s| s.try_into().unwrap()),
+                    Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
+                ) {
+                    if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
+                        actual_revert = decoded;
+                    }
+                }
+
+                if actual_revert == expected_reason {
+                    reason_match = true;
+                }
+
+                let expected_reverter = expected_revert.reverter.unwrap();
+                if expected_reverter == expected_revert.reverted_by.unwrap_or_default() {
+                    reverter_match = true;
+                }
+
+                if reason_match && reverter_match {
+                    return Err(fmt_err!(
+                        "expected 0 reverts with reason: {}, from address: {}, but got one",
+                        &stringify(expected_reason),
+                        expected_reverter
+                    ))
+                }
+
+                return Ok(success_return())
             }
 
             if let Some(expected_reverter) = expected_revert.reverter {
