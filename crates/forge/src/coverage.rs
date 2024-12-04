@@ -62,9 +62,6 @@ impl CoverageReporter for CoverageSummaryReporter {
             self.add_row(path.display(), summary);
         }
 
-        // Add a spacer row before the total.
-        self.table.add_row(vec![Cell::new("")]);
-
         self.add_row("Total", self.total.clone());
         sh_println!("\n{}", self.table)?;
         Ok(())
