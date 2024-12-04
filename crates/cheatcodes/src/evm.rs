@@ -106,11 +106,11 @@ struct BalanceDiff {
 #[serde(rename_all = "camelCase")]
 struct AccountStateDiffs {
     /// Address label, if any set.
-    #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     /// Account balance changes.
-    #[serde(skip_serializing_if = "Option::is_none")]
     balance_diff: Option<BalanceDiff>,
+    /// Placeholder for nonce diff, to be implemented.
+    nonce_diff: Option<(U256, U256)>,
     /// State changes, per slot.
     state_diff: BTreeMap<B256, SlotStateDiff>,
 }
@@ -1152,16 +1152,21 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                         label: state.labels.get(&account_access.account).cloned(),
                         ..Default::default()
                     });
-                // Update balance diff. Do not overwrite the initial balance if already set.
-                if let Some(diff) = &mut account_diff.balance_diff {
-                    diff.new_value = account_access.newBalance;
-                } else {
-                    account_diff.balance_diff = Some(BalanceDiff {
-                        previous_value: account_access.oldBalance,
-                        new_value: account_access.newBalance,
-                    });
+
+                // Record account balance diffs.
+                if account_access.oldBalance != account_access.newBalance {
+                    // Update balance diff. Do not overwrite the initial balance if already set.
+                    if let Some(diff) = &mut account_diff.balance_diff {
+                        diff.new_value = account_access.newBalance;
+                    } else {
+                        account_diff.balance_diff = Some(BalanceDiff {
+                            previous_value: account_access.oldBalance,
+                            new_value: account_access.newBalance,
+                        });
+                    }
                 }
 
+                // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
                         // Update state diff. Do not overwrite the initial value if already set.
