@@ -109,8 +109,6 @@ struct AccountStateDiffs {
     label: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
-    /// Placeholder for nonce diff, to be implemented.
-    nonce_diff: Option<(U256, U256)>,
     /// State changes, per slot.
     state_diff: BTreeMap<B256, SlotStateDiff>,
 }
