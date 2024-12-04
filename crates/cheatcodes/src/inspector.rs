@@ -1355,11 +1355,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert.clone());
                             }
-                            tracing::info!(
-                                "call::end:: expected count {}, actual count {}",
-                                expected_revert.count,
-                                expected_revert.actual_count
-                            );
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
                             outcome
