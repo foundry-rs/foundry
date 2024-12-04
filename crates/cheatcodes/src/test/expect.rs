@@ -796,14 +796,48 @@ pub(crate) fn handle_expect_revert(
         }
     };
 
+    let stringify = |data: &[u8]| {
+        if let Ok(s) = String::abi_decode(data, true) {
+            return s;
+        }
+        if data.is_ascii() {
+            return std::str::from_utf8(data).unwrap().to_owned();
+        }
+        hex::encode_prefixed(data)
+    };
+
     match expected_revert.count {
         0 => {
-            let mut msg = "";
+            let mut msg = "call reverted when it was expected not to revert";
             if expected_revert.reason.is_none() && expected_revert.reverter.is_none() {
                 if matches!(status, return_ok!()) {
                     return Ok(success_return());
                 }
                 msg = "call reverted when it was expected not to revert";
+            }
+
+            if expected_revert.reason.is_some() && expected_revert.reverter.is_none() {
+                let mut actual_revert: Vec<u8> = retdata.into();
+                let expected_reason = expected_revert.reason.as_deref().unwrap();
+
+                if matches!(
+                    actual_revert.get(..4).map(|s| s.try_into().unwrap()),
+                    Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
+                ) {
+                    if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
+                        actual_revert = decoded;
+                    }
+                }
+
+                if actual_revert == expected_reason {
+                    return Err(fmt_err!(
+                        "expected 0 reverts with reason: {}, but got one",
+                        &stringify(expected_reason)
+                    ))
+                } else {
+                    // Return succes if the revert is not the expected one.
+                    return Ok(success_return());
+                }
             }
 
             bail!(msg);
@@ -864,15 +898,6 @@ pub(crate) fn handle_expect_revert(
                         &decoder.decode(expected_reason, Some(status)),
                     )
                 } else {
-                    let stringify = |data: &[u8]| {
-                        if let Ok(s) = String::abi_decode(data, true) {
-                            return s;
-                        }
-                        if data.is_ascii() {
-                            return std::str::from_utf8(data).unwrap().to_owned();
-                        }
-                        hex::encode_prefixed(data)
-                    };
                     (&stringify(&actual_revert), &stringify(expected_reason))
                 };
                 Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))

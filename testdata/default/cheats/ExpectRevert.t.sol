@@ -374,6 +374,9 @@ contract ExpectRevertCount is DSTest {
         reverter.revertWithMessage("revert");
         reverter.revertWithMessage("revert2");
         reverter.revertWithMessage("revert3");
+
+        vm.expectRevert("revert");
+        reverter.revertWithMessage("revert");
     }
 
     function testFailRevertCountAny() public {
@@ -412,5 +415,26 @@ contract ExpectRevertCount is DSTest {
         vm.expectRevert("revert", count);
         reverter.revertWithMessage("revert");
         reverter.revertWithMessage("second-revert");
+    }
+
+    function testNoRevertSpecific() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", count);
+        reverter.doNotRevert();
+    }
+
+    function testFailNoRevertSpecific() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", count);
+        reverter.revertWithMessage("revert");
+    }
+
+    function testNoRevertSpecificButDiffRevert() public {
+        uint64 count = 0;
+        Reverter reverter = new Reverter();
+        vm.expectRevert("revert", count);
+        reverter.revertWithMessage("revert2");
     }
 }
