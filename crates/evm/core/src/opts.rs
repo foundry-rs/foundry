@@ -7,6 +7,7 @@ use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config, GasLimit};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,13 +130,13 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            let mut err_msg = "Could not instantiate forked environment".to_string();
+            let mut msg = "Could not instantiate forked environment".to_string();
             if let Ok(url) = Url::parse(fork_url) {
                 if let Some(provider) = url.host() {
-                    err_msg.push_str(&format!(" with provider {provider}"));
+                    write!(msg, " with provider {provider}").unwrap();
                 }
             }
-            err_msg
+            msg
         })
     }
 

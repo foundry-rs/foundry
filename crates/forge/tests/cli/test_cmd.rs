@@ -2659,7 +2659,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork:  Could not instantiate forked environment with provider eth-mainnet.g.alchemy.com;] test_fork_err_message() ([GAS])
+[FAIL: vm.createSelectFork: Could not instantiate forked environment with provider eth-mainnet.g.alchemy.com] test_fork_err_message() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 
@@ -2697,6 +2697,30 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Tests that chained errors are properly displayed.
+// <https://github.com/foundry-rs/foundry/issues/9161>
+forgetest!(displays_chained_error, |prj, cmd| {
+    prj.add_test(
+        "Foo.t.sol",
+        r#"
+contract ContractTest {
+    function test_anything(uint) public {}
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.arg("test").arg("--gas-limit=100").assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/Foo.t.sol:ContractTest
+[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 });
