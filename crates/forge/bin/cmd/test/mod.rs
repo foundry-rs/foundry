@@ -606,7 +606,9 @@ impl TestArgs {
                 // Display invariant metrics if invariant kind.
                 if let TestKind::Invariant { metrics, .. } = &result.kind {
                     let report = InvariantMetricsReport::new(metrics.clone());
-                    sh_println!("{}", report)?;
+                    if !report.test_metrics.is_empty() {
+                        sh_println!("{}", report)?;
+                    }
                 }
 
                 if !silent {

@@ -130,7 +130,7 @@ pub struct InvariantMetricsReport {
     /// The kind of report to generate.
     report_kind: ReportKind,
     /// The invariant metrics to report.
-    test_metrics: HashMap<String, InvariantMetrics>,
+    pub test_metrics: HashMap<String, InvariantMetrics>,
 }
 
 impl InvariantMetricsReport {
@@ -176,6 +176,13 @@ impl InvariantMetricsReport {
     }
 
     // Helper function to format the Markdown table output.
+    //
+    // | Contract              | Selector       | Calls | Reverts | Discards |
+    // |-----------------------|----------------|-------|---------|----------|
+    // | AnotherCounterHandler | doWork         |  7451 |   123   |   4941   |
+    // | AnotherCounterHandler | doWorkThing    |  7279 |   137   |   4849   |
+    // | CounterHandler        | doAnotherThing |  7302 |   150   |   4794   |
+    // | CounterHandler        | doSomething    |  7382 |   160   |   4830   |
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);

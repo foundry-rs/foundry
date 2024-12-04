@@ -66,7 +66,7 @@ impl CoverageReporter for CoverageSummaryReporter {
         self.table.add_row(vec![Cell::new("")]);
 
         self.add_row("Total", self.total.clone());
-        sh_println!("{}", self.table)?;
+        sh_println!("\n{}", self.table)?;
         Ok(())
     }
 }
