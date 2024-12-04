@@ -20,7 +20,7 @@ use foundry_common::{
     shell,
 };
 use foundry_compilers::{
-    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
     compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
@@ -284,7 +284,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             "{}",
             serde_json::to_string_pretty(&serde_json::to_value(StorageReport { layout, values })?)?
         )?;
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
@@ -314,7 +314,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
     Ok(())
 }
 
-fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
+fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
     project.update_output_selection(|selection| {
         selection.0.values_mut().for_each(|contract_selection| {

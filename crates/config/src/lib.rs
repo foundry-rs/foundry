@@ -35,8 +35,8 @@ use foundry_compilers::{
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
-    ConfigurableArtifacts, Graph, Project, ProjectPathsConfig, RestrictionsWithVersion,
-    VyperLanguage,
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    RestrictionsWithVersion, VyperLanguage,
 };
 use regex::Regex;
 use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
@@ -1021,7 +1021,10 @@ impl Config {
     }
 
     /// Cleans the project.
-    pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
+    pub fn cleanup<C: Compiler, T: ArtifactOutput<CompilerContract = C::CompilerContract>>(
+        &self,
+        project: &Project<C, T>,
+    ) -> Result<(), SolcError> {
         project.cleanup()?;
 
         // Remove last test run failures file.
@@ -1090,7 +1093,7 @@ impl Config {
                     rx.recv().expect("sender dropped")
                 }
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
-            }
+            };
         }
         if let Some(ref solc) = self.solc {
             let solc = match solc {
@@ -1291,11 +1294,11 @@ impl Config {
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.map(Cow::Owned))
+            return Some(endpoint.map(Cow::Owned));
         }
 
         if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
-            return Some(Ok(Cow::Owned(endpoint.url)))
+            return Some(Ok(Cow::Owned(endpoint.url)));
         }
 
         None

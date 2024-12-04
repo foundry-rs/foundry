@@ -10,7 +10,7 @@ use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, BytecodeObject, Source},
+    artifacts::{remappings::Remapping, BytecodeObject, Contract, Source},
     compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
@@ -129,7 +129,10 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
+    pub fn compile<C: Compiler<CompilerContract = Contract>>(
+        mut self,
+        project: &Project<C>,
+    ) -> Result<ProjectCompileOutput<C>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
@@ -163,7 +166,10 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    fn compile_with<C: Compiler, F>(self, f: F) -> Result<ProjectCompileOutput<C>>
+    fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
+        self,
+        f: F,
+    ) -> Result<ProjectCompileOutput<C>>
     where
         F: FnOnce() -> Result<ProjectCompileOutput<C>>,
     {
@@ -202,7 +208,10 @@ impl ProjectCompiler {
     }
 
     /// If configured, this will print sizes or names
-    fn handle_output<C: Compiler>(&self, output: &ProjectCompileOutput<C>) {
+    fn handle_output<C: Compiler<CompilerContract = Contract>>(
+        &self,
+        output: &ProjectCompileOutput<C>,
+    ) {
         let print_names = self.print_names.unwrap_or(false);
         let print_sizes = self.print_sizes.unwrap_or(false);
 
@@ -465,7 +474,7 @@ pub struct ContractInfo {
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target<C: Compiler>(
+pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
     target_path: &Path,
     project: &Project<C>,
     quiet: bool,
