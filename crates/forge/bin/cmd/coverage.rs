@@ -182,7 +182,7 @@ impl CoverageArgs {
         // Get source maps and bytecodes
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
-            .par_bridge()
+            .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
                 let source_id = report.get_source_id(id.version.clone(), id.source.clone())?;
                 ArtifactData::new(&id, source_id, artifact)
