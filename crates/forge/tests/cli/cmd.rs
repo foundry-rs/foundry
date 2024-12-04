@@ -2114,20 +2114,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-Ran 1 test for src/Contracts.sol:ContractOneTest
-[PASS] testFoo() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for src/Contracts.sol:ContractTwoTest
-[PASS] testBar() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for src/Contracts.sol:ContractThreeTest
-[PASS] testBaz() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
+...
 ╭------------------------------------------+-----------------+--------+--------+--------+---------╮
 | src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
 +=================================================================================================+
@@ -2358,20 +2345,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .arg("--gas-report")
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-Ran 1 test for src/Contracts.sol:ContractOneTest
-[PASS] testFoo() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for src/Contracts.sol:ContractTwoTest
-[PASS] testBar() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test for src/Contracts.sol:ContractThreeTest
-[PASS] testBaz() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
+...
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
 +=============================================================================================+
@@ -2536,14 +2510,7 @@ contract CounterTest is DSTest {
     .unwrap();
 
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for src/CounterTest.t.sol:CounterTest
-[PASS] test_Increment() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
+...
 ╭----------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
 +=======================================================================================+
