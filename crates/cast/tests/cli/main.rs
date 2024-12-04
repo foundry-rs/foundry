@@ -1958,7 +1958,7 @@ Transaction successfully executed.
 
 // https://github.com/foundry-rs/foundry/issues/9476
 forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
-    let chain_id = 5555u64;
+    let chain_id = 55555u64;
     let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
 
     let http_endpoint = handle.http_endpoint();
