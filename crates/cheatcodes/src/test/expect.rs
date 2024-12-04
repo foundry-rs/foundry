@@ -87,6 +87,8 @@ pub struct ExpectedRevert {
     pub reverter: Option<Address>,
     /// Actual reverter of the call.
     pub reverted_by: Option<Address>,
+    /// Number of times this revert is expected.
+    pub count: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -295,7 +297,7 @@ impl Cheatcode for expectEmitAnonymous_3Call {
 impl Cheatcode for expectRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false, None)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false, None, 1)
     }
 }
 
@@ -309,6 +311,7 @@ impl Cheatcode for expectRevert_1Call {
             false,
             false,
             None,
+            1,
         )
     }
 }
@@ -323,6 +326,7 @@ impl Cheatcode for expectRevert_2Call {
             false,
             false,
             None,
+            1,
         )
     }
 }
@@ -337,6 +341,7 @@ impl Cheatcode for expectRevert_3Call {
             false,
             false,
             Some(*reverter),
+            1,
         )
     }
 }
@@ -351,6 +356,7 @@ impl Cheatcode for expectRevert_4Call {
             false,
             false,
             Some(*reverter),
+            1,
         )
     }
 }
@@ -365,6 +371,7 @@ impl Cheatcode for expectRevert_5Call {
             false,
             false,
             Some(*reverter),
+            1,
         )
     }
 }
@@ -421,6 +428,7 @@ impl Cheatcode for expectPartialRevert_0Call {
             false,
             true,
             None,
+            1,
         )
     }
 }
@@ -435,13 +443,14 @@ impl Cheatcode for expectPartialRevert_1Call {
             false,
             true,
             Some(*reverter),
+            1,
         )
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true, false, None)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true, false, None, 1)
     }
 }
 
@@ -455,6 +464,7 @@ impl Cheatcode for _expectCheatcodeRevert_1Call {
             true,
             false,
             None,
+            1,
         )
     }
 }
@@ -469,6 +479,7 @@ impl Cheatcode for _expectCheatcodeRevert_2Call {
             true,
             false,
             None,
+            1,
         )
     }
 }
@@ -704,6 +715,7 @@ fn expect_revert(
     cheatcode: bool,
     partial_match: bool,
     reverter: Option<Address>,
+    count: u64,
 ) -> Result {
     ensure!(
         state.expected_revert.is_none(),
@@ -720,6 +732,7 @@ fn expect_revert(
         partial_match,
         reverter,
         reverted_by: None,
+        count,
     });
     Ok(Default::default())
 }
