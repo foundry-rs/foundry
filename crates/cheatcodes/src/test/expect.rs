@@ -832,15 +832,7 @@ pub(crate) fn handle_expect_revert(
         let expected_reason = expected_revert.reason.as_deref();
         if let Some(expected_reason) = expected_reason {
             let mut actual_revert: Vec<u8> = retdata.into();
-
-            if matches!(
-                actual_revert.get(..4).map(|s| s.try_into().unwrap()),
-                Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-            ) {
-                if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
-                    actual_revert = decoded;
-                }
-            }
+            actual_revert = decode_revert(actual_revert);
 
             if actual_revert == expected_reason {
                 reason_match = Some(true);
@@ -903,14 +895,7 @@ pub(crate) fn handle_expect_revert(
         }
 
         // Try decoding as known errors.
-        if matches!(
-            actual_revert.get(..4).map(|s| s.try_into().unwrap()),
-            Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-        ) {
-            if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
-                actual_revert = decoded;
-            }
-        }
+        actual_revert = decode_revert(actual_revert);
 
         if actual_revert == expected_reason ||
             (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
@@ -937,4 +922,16 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Default::default())
+}
+
+fn decode_revert(revert: Vec<u8>) -> Vec<u8> {
+    if matches!(
+        revert.get(..4).map(|s| s.try_into().unwrap()),
+        Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
+    ) {
+        if let Ok(decoded) = Vec::<u8>::abi_decode(&revert[4..], false) {
+            return decoded;
+        }
+    }
+    revert
 }
