@@ -840,25 +840,19 @@ pub(crate) fn handle_expect_revert(
         };
 
         match (reason_match, reverter_match) {
-            (Some(true), Some(true)) => {
-                Err(fmt_err!(
-                    "expected 0 reverts with reason: {}, from address: {}, but got one",
-                    &stringify(expected_reason.unwrap_or_default()),
-                    expected_revert.reverter.unwrap()
-                ))
-            }
-            (Some(true), None) => {
-                Err(fmt_err!(
-                    "expected 0 reverts with reason: {}, but got one",
-                    &stringify(expected_reason.unwrap_or_default())
-                ))
-            }
-            (None, Some(true)) => {
-                Err(fmt_err!(
-                    "expected 0 reverts from address: {}, but got one",
-                    expected_revert.reverter.unwrap()
-                ))
-            }
+            (Some(true), Some(true)) => Err(fmt_err!(
+                "expected 0 reverts with reason: {}, from address: {}, but got one",
+                &stringify(expected_reason.unwrap_or_default()),
+                expected_revert.reverter.unwrap()
+            )),
+            (Some(true), None) => Err(fmt_err!(
+                "expected 0 reverts with reason: {}, but got one",
+                &stringify(expected_reason.unwrap_or_default())
+            )),
+            (None, Some(true)) => Err(fmt_err!(
+                "expected 0 reverts from address: {}, but got one",
+                expected_revert.reverter.unwrap()
+            )),
             _ => Ok(success_return()),
         }
     } else {
