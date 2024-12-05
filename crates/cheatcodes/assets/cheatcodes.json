@@ -5174,7 +5174,7 @@
     {
       "func": {
         "id": "expectRevert_6",
-        "description": "Expects a `count` number of reverts from the upcoming calls with any revert data.",
+        "description": "Expects a `count` number of reverts from the upcoming calls with any revert data or reverter.",
         "declaration": "function expectRevert(uint64 count) external;",
         "visibility": "external",
         "mutability": "",
