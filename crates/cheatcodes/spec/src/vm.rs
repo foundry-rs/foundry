@@ -1019,7 +1019,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter) external;
 
-    /// Expects a `count` number of reverts from the upcoming calls with any revert data.
+    /// Expects a `count` number of reverts from the upcoming calls with any revert data or reverter.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(uint64 count) external;
 
