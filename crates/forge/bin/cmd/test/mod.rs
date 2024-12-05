@@ -355,7 +355,7 @@ impl TestArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
-            .alphanet(evm_opts.alphanet)
+            .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
         let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {

@@ -288,8 +288,8 @@ pub struct TestRunnerConfig {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation.
     pub isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
 }
 
 impl TestRunnerConfig {
@@ -305,7 +305,7 @@ impl TestRunnerConfig {
         // self.debug = N/A;
         // self.decode_internal = N/A;
         // self.isolation = N/A;
-        self.alphanet = config.alphanet;
+        self.odyssey = config.odyssey;
 
         self.config = config;
     }
@@ -323,7 +323,7 @@ impl TestRunnerConfig {
         inspector.tracing(self.trace_mode());
         inspector.collect_coverage(self.coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.alphanet(self.alphanet);
+        inspector.odyssey(self.odyssey);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -353,7 +353,7 @@ impl TestRunnerConfig {
                     .trace_mode(self.trace_mode())
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
-                    .alphanet(self.alphanet)
+                    .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.spec_id)
@@ -394,8 +394,8 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -410,7 +410,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
-            alphanet: Default::default(),
+            odyssey: Default::default(),
         }
     }
 
@@ -454,8 +454,8 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn alphanet(mut self, enable: bool) -> Self {
-        self.alphanet = enable;
+    pub fn odyssey(mut self, enable: bool) -> Self {
+        self.odyssey = enable;
         self
     }
 
@@ -533,7 +533,7 @@ impl MultiContractRunnerBuilder {
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
-                alphanet: self.alphanet,
+                odyssey: self.odyssey,
 
                 config: self.config,
             },
