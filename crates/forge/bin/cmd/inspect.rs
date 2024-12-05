@@ -1,10 +1,10 @@
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
-use comfy_table::{presets::ASCII_MARKDOWN, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof};
+use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof, shell};
 use foundry_compilers::{
     artifacts::{
         output_selection::{
@@ -111,7 +111,7 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), pretty)?;
+                print_storage_layout(artifact.storage_layout.as_ref())?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -176,18 +176,26 @@ impl InspectArgs {
     }
 }
 
-pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool) -> Result<()> {
+pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
         eyre::bail!("Could not get storage layout");
     };
 
-    if !pretty {
+    if shell::is_json() {
         return print_json(&storage_layout)
     }
 
     let mut table = Table::new();
-    table.load_preset(ASCII_MARKDOWN);
-    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+
+    table.set_header(vec![
+        Cell::new("Name"),
+        Cell::new("Type"),
+        Cell::new("Slot"),
+        Cell::new("Offset"),
+        Cell::new("Bytes"),
+        Cell::new("Contract"),
+    ]);
 
     for slot in &storage_layout.storage {
         let storage_type = storage_layout.types.get(&slot.storage_type);
@@ -201,7 +209,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>, pretty: bool
         ]);
     }
 
-    sh_println!("{table}")?;
+    sh_println!("\n{table}\n")?;
     Ok(())
 }
 

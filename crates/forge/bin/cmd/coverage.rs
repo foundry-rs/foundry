@@ -6,8 +6,8 @@ use forge::{
     coverage::{
         analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles},
         anchors::find_anchors,
-        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, DebugReporter, ItemAnchor,
-        LcovReporter, SummaryReporter,
+        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
+        DebugReporter, ItemAnchor, LcovReporter,
     },
     opts::EvmOpts,
     utils::IcPcMap,
@@ -19,6 +19,7 @@ use foundry_compilers::{
     artifacts::{
         sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
     },
+    compilers::multi::MultiCompiler,
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};
@@ -181,7 +182,7 @@ impl CoverageArgs {
         // Get source maps and bytecodes
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
-            .par_bridge()
+            .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
                 let source_id = report.get_source_id(id.version.clone(), id.source.clone())?;
                 ArtifactData::new(&id, source_id, artifact)
@@ -245,7 +246,7 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .set_coverage(true)
-            .build(&root, output, env, evm_opts)?;
+            .build::<MultiCompiler>(&root, output, env, evm_opts)?;
 
         let known_contracts = runner.known_contracts.clone();
 
@@ -301,7 +302,7 @@ impl CoverageArgs {
         // Output final report
         for report_kind in self.report {
             match report_kind {
-                CoverageReportKind::Summary => SummaryReporter::default().report(&report),
+                CoverageReportKind::Summary => CoverageSummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
                     let path =
                         root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));

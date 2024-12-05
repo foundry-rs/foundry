@@ -18,7 +18,7 @@ impl TracingExecutor {
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,
-        alphanet: bool,
+        odyssey: bool,
         create2_deployer: Address,
     ) -> Self {
         let db = Backend::spawn(fork);
@@ -27,12 +27,9 @@ impl TracingExecutor {
             // tracing will be enabled only for the targeted transaction
             executor: ExecutorBuilder::new()
                 .inspectors(|stack| {
-                    stack
-                        .trace_mode(trace_mode)
-                        .alphanet(alphanet)
-                        .create2_deployer(create2_deployer)
+                    stack.trace_mode(trace_mode).odyssey(odyssey).create2_deployer(create2_deployer)
                 })
-                .spec_id(evm_spec_id(version.unwrap_or_default(), alphanet))
+                .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
                 .build(env, db),
         }
     }
@@ -54,7 +51,7 @@ impl TracingExecutor {
 
         let fork = evm_opts.get_fork(config, env.clone());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.alphanet))
+        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.odyssey))
     }
 }
 

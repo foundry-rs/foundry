@@ -30,16 +30,24 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
     // Make sure inline config is parsed in coverage too.
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
 Ran 2 tests for test/inline.sol:Inline
 [PASS] test1(bool) (runs: 2, [AVG_GAS])
 [PASS] test2(bool) (runs: 3, [AVG_GAS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+╭-------+---------------+---------------+---------------+---------------╮
 | File  | % Lines       | % Statements  | % Branches    | % Funcs       |
-|-------|---------------|---------------|---------------|---------------|
++=======================================================================+
 | Total | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) |
+╰-------+---------------+---------------+---------------+---------------╯
 
 "#]]);
 });
