@@ -6,8 +6,8 @@ use forge::{
     coverage::{
         analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles},
         anchors::find_anchors,
-        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, DebugReporter, ItemAnchor,
-        LcovReporter, SummaryReporter,
+        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
+        DebugReporter, ItemAnchor, LcovReporter,
     },
     opts::EvmOpts,
     utils::IcPcMap,
@@ -302,7 +302,7 @@ impl CoverageArgs {
         // Output final report
         for report_kind in self.report {
             match report_kind {
-                CoverageReportKind::Summary => SummaryReporter::default().report(&report),
+                CoverageReportKind::Summary => CoverageSummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
                     let path =
                         root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
