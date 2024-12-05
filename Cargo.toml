@@ -224,7 +224,7 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
-## op-alloy 
+## op-alloy
 op-alloy-rpc-types = "0.7.1"
 op-alloy-consensus = "0.7.1"
 
@@ -260,7 +260,7 @@ color-eyre = "0.6"
 comfy-table = "7"
 dunce = "1"
 evm-disassembler = "0.5"
-evmole = "0.5"
+evmole = "0.6"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
