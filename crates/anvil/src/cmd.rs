@@ -89,8 +89,8 @@ pub struct NodeArgs {
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
-    #[arg(long, value_name = "OUT_FILE")]
-    pub config_out: Option<String>,
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    pub config_out: Option<PathBuf>,
 
     /// Disable auto and interval mining, and mine on demand instead.
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
@@ -275,7 +275,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm_opts.optimism)
-            .with_alphanet(self.evm_opts.alphanet)
+            .with_odyssey(self.evm_opts.odyssey)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm_opts.memory_limit)
@@ -583,9 +583,9 @@ pub struct AnvilEvmArgs {
     #[arg(long)]
     pub memory_limit: Option<u64>,
 
-    /// Enable Alphanet features
-    #[arg(long, visible_alias = "odyssey")]
-    pub alphanet: bool,
+    /// Enable Odyssey features
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

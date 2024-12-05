@@ -1,7 +1,4 @@
-use crate::{
-    foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, utils::get_dir_remapping,
-    Config,
-};
+use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
 use figment::{
     value::{Dict, Map},
     Error, Figment, Metadata, Profile, Provider,
@@ -39,7 +36,12 @@ impl Remappings {
     pub fn with_figment(mut self, figment: &Figment) -> Self {
         let mut add_project_remapping = |path: &str| {
             if let Ok(path) = figment.find_value(path) {
-                if let Some(remapping) = path.into_string().and_then(get_dir_remapping) {
+                if let Some(path) = path.into_string() {
+                    let remapping = Remapping {
+                        context: None,
+                        name: format!("{path}/"),
+                        path: format!("{path}/"),
+                    };
                     self.project_paths.push(remapping);
                 }
             }

@@ -2,7 +2,7 @@ use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest_async,
-    rpc::{next_http_archive_rpc_endpoint, next_mainnet_etherscan_api_key},
+    rpc::{next_http_archive_rpc_url, next_mainnet_etherscan_api_key},
     util::OutputExt,
     TestCommand, TestProject,
 };
@@ -20,7 +20,7 @@ fn test_verify_bytecode(
     expected_matches: (&str, &str),
 ) {
     let etherscan_key = next_mainnet_etherscan_api_key();
-    let rpc_url = next_http_archive_rpc_endpoint();
+    let rpc_url = next_http_archive_rpc_url();
 
     // fetch and flatten source code
     let source_code = cmd
@@ -75,7 +75,7 @@ fn test_verify_bytecode_with_ignore(
     chain: &str,
 ) {
     let etherscan_key = next_mainnet_etherscan_api_key();
-    let rpc_url = next_http_archive_rpc_endpoint();
+    let rpc_url = next_http_archive_rpc_url();
 
     // fetch and flatten source code
     let source_code = cmd

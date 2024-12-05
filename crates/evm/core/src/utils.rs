@@ -1,6 +1,6 @@
 pub use crate::ic::*;
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ALPHANET_P256,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
     InspectorExt,
 };
 use alloy_consensus::BlockHeader;
@@ -286,13 +286,13 @@ pub fn create2_handler_register<I: InspectorExt>(
         });
 }
 
-/// Adds Alphanet P256 precompile to the list of loaded precompiles.
-pub fn alphanet_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
+/// Adds Odyssey P256 precompile to the list of loaded precompiles.
+pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
     let prev = handler.pre_execution.load_precompiles.clone();
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
 
-        loaded_precompiles.extend([ALPHANET_P256]);
+        loaded_precompiles.extend([ODYSSEY_P256]);
 
         loaded_precompiles
     });
@@ -321,8 +321,8 @@ pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
 
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    if inspector.is_alphanet() {
-        handler.append_handler_register_plain(alphanet_handler_register);
+    if inspector.is_odyssey() {
+        handler.append_handler_register_plain(odyssey_handler_register);
     }
     handler.append_handler_register_plain(create2_handler_register);
 
@@ -339,8 +339,8 @@ pub fn new_evm_with_existing_context<'a>(
 
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    if inspector.is_alphanet() {
-        handler.append_handler_register_plain(alphanet_handler_register);
+    if inspector.is_odyssey() {
+        handler.append_handler_register_plain(odyssey_handler_register);
     }
     handler.append_handler_register_plain(create2_handler_register);
 

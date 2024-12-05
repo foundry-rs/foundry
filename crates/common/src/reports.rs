@@ -5,7 +5,7 @@ use crate::shell;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ReportKind {
     #[default]
-    Markdown,
+    Text,
     JSON,
 }
 
@@ -14,6 +14,6 @@ pub fn report_kind() -> ReportKind {
     if shell::is_json() {
         ReportKind::JSON
     } else {
-        ReportKind::Markdown
+        ReportKind::Text
     }
 }
