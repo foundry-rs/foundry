@@ -346,6 +346,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("arbitrum", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Polygon))),
         ("avaxTestnet", RpcEndpoint::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("moonbeam", RpcEndpoint::Url("https://moonbeam-rpc.publicnode.com".into())),
         ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".into())),
     ])
 }

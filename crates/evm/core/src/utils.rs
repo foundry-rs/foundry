@@ -6,7 +6,7 @@ use crate::{
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{Address, Selector, TxKind, U256};
+use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
@@ -34,17 +34,24 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     env: &mut revm::primitives::Env,
     block: &N::BlockResponse,
 ) {
+    use NamedChain::*;
     if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
         let block_number = block.header().number();
 
         match chain {
-            NamedChain::Mainnet => {
+            Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 
                 return;
+            }
+            Moonbeam | Moonbase | Moonriver | MoonbeamDev => {
+                if env.block.prevrandao.is_none() {
+                    // <https://github.com/foundry-rs/foundry/issues/4232>
+                    env.block.prevrandao = Some(B256::random());
+                }
             }
             c if c.is_arbitrum() => {
                 // on arbitrum `block.number` is the L1 block which is included in the
