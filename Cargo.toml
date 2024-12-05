@@ -239,7 +239,7 @@ quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
 derive_more = { version = "1.0", features = ["full"] }
-thiserror = "1"
+thiserror = "2"
 
 # bench
 divan = "0.1"
