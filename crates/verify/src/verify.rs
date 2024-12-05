@@ -50,7 +50,7 @@ impl Default for VerifierArgs {
     }
 }
 
-/// CLI arguments for `forge verify`.
+/// CLI arguments for `forge verify-contract`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyArgs {
     /// The address of the contract to verify.
