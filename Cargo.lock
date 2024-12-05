@@ -3265,9 +3265,9 @@ dependencies = [
 
 [[package]]
 name = "evmole"
-version = "0.5.1"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fcfb15a14bc209e2b3d2bd32291ec445b1e348d7d9d986aa61a09149350fd7"
+checksum = "f58e21c69e0ae62877b65241d25cae9e28477818482fab8c1101d15289725a46"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
