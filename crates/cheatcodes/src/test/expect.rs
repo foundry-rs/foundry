@@ -806,119 +806,19 @@ pub(crate) fn handle_expect_revert(
         hex::encode_prefixed(data)
     };
 
-    match expected_revert.count {
-        0 => {
-            let mut msg = "call reverted when it was expected not to revert";
-            if expected_revert.reason.is_none() && expected_revert.reverter.is_none() {
-                if matches!(status, return_ok!()) {
-                    return Ok(success_return());
-                }
-                msg = "call reverted when it was expected not to revert";
-            }
-
-            if expected_revert.reason.is_some() && expected_revert.reverter.is_none() {
-                let mut actual_revert: Vec<u8> = retdata.into();
-                let expected_reason = expected_revert.reason.as_deref().unwrap();
-
-                if matches!(
-                    actual_revert.get(..4).map(|s| s.try_into().unwrap()),
-                    Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-                ) {
-                    if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
-                        actual_revert = decoded;
-                    }
-                }
-
-                if actual_revert == expected_reason {
-                    return Err(fmt_err!(
-                        "expected 0 reverts with reason: {}, but got one",
-                        &stringify(expected_reason)
-                    ))
-                }
-
-                return Ok(success_return())
-            } else if expected_revert.reason.is_some() && expected_revert.reverter.is_some() {
-                let mut reason_match = false;
-                let mut reverter_match = false;
-                let mut actual_revert: Vec<u8> = retdata.into();
-                let expected_reason = expected_revert.reason.as_deref().unwrap();
-
-                if matches!(
-                    actual_revert.get(..4).map(|s| s.try_into().unwrap()),
-                    Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-                ) {
-                    if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
-                        actual_revert = decoded;
-                    }
-                }
-
-                if actual_revert == expected_reason {
-                    reason_match = true;
-                }
-
-                let expected_reverter = expected_revert.reverter.unwrap();
-                if expected_reverter == expected_revert.reverted_by.unwrap_or_default() {
-                    reverter_match = true;
-                }
-
-                if reason_match && reverter_match {
-                    return Err(fmt_err!(
-                        "expected 0 reverts with reason: {}, from address: {}, but got one",
-                        &stringify(expected_reason),
-                        expected_reverter
-                    ))
-                }
-
-                return Ok(success_return())
-            }
-
-            if let Some(expected_reverter) = expected_revert.reverter {
-                if expected_reverter == expected_revert.reverted_by.unwrap_or_default() {
-                    return Err(fmt_err!(
-                        "expected 0 reverts from address: {}, but got one",
-                        expected_reverter
-                    ))
-                }
-
-                return Ok(success_return())
-            }
-
-            bail!(msg);
-        }
-        _ => {
-            ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
-
-            // If expected reverter address is set then check it matches the actual reverter.
-            if let (Some(expected_reverter), Some(actual_reverter)) =
-                (expected_revert.reverter, expected_revert.reverted_by)
-            {
-                if expected_reverter != actual_reverter {
-                    return Err(fmt_err!(
-                        "Reverter != expected reverter: {} != {}",
-                        actual_reverter,
-                        expected_reverter
-                    ));
-                }
-            }
-
-            let expected_reason = expected_revert.reason.as_deref();
-            // If None, accept any revert.
-            let Some(expected_reason) = expected_reason else {
+    if expected_revert.count == 0 {
+        let mut msg = "call reverted when it was expected not to revert";
+        if expected_revert.reason.is_none() && expected_revert.reverter.is_none() {
+            if matches!(status, return_ok!()) {
                 return Ok(success_return());
-            };
-
-            if !expected_reason.is_empty() && retdata.is_empty() {
-                bail!("call reverted as expected, but without data");
             }
+            msg = "call reverted when it was expected not to revert";
+        }
 
+        if expected_revert.reason.is_some() && expected_revert.reverter.is_none() {
             let mut actual_revert: Vec<u8> = retdata.into();
+            let expected_reason = expected_revert.reason.as_deref().unwrap();
 
-            // Compare only the first 4 bytes if partial match.
-            if expected_revert.partial_match && actual_revert.get(..4) == expected_reason.get(..4) {
-                return Ok(success_return())
-            }
-
-            // Try decoding as known errors.
             if matches!(
                 actual_revert.get(..4).map(|s| s.try_into().unwrap()),
                 Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
@@ -928,23 +828,119 @@ pub(crate) fn handle_expect_revert(
                 }
             }
 
-            if actual_revert == expected_reason ||
-                (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
-            {
-                Ok(success_return())
-            } else {
-                let (actual, expected) = if let Some(contracts) = known_contracts {
-                    let decoder =
-                        RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
-                    (
-                        &decoder.decode(actual_revert.as_slice(), Some(status)),
-                        &decoder.decode(expected_reason, Some(status)),
-                    )
-                } else {
-                    (&stringify(&actual_revert), &stringify(expected_reason))
-                };
-                Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
+            if actual_revert == expected_reason {
+                return Err(fmt_err!(
+                    "expected 0 reverts with reason: {}, but got one",
+                    &stringify(expected_reason)
+                ))
             }
+
+            return Ok(success_return())
+        } else if expected_revert.reason.is_some() && expected_revert.reverter.is_some() {
+            let mut reason_match = false;
+            let mut reverter_match = false;
+            let mut actual_revert: Vec<u8> = retdata.into();
+            let expected_reason = expected_revert.reason.as_deref().unwrap();
+
+            if matches!(
+                actual_revert.get(..4).map(|s| s.try_into().unwrap()),
+                Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
+            ) {
+                if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
+                    actual_revert = decoded;
+                }
+            }
+
+            if actual_revert == expected_reason {
+                reason_match = true;
+            }
+
+            let expected_reverter = expected_revert.reverter.unwrap();
+            if expected_reverter == expected_revert.reverted_by.unwrap_or_default() {
+                reverter_match = true;
+            }
+
+            if reason_match && reverter_match {
+                return Err(fmt_err!(
+                    "expected 0 reverts with reason: {}, from address: {}, but got one",
+                    &stringify(expected_reason),
+                    expected_reverter
+                ))
+            }
+
+            return Ok(success_return())
+        }
+
+        if let Some(expected_reverter) = expected_revert.reverter {
+            if expected_reverter == expected_revert.reverted_by.unwrap_or_default() {
+                return Err(fmt_err!(
+                    "expected 0 reverts from address: {}, but got one",
+                    expected_reverter
+                ))
+            }
+
+            return Ok(success_return())
+        }
+
+        bail!(msg);
+    } else {
+        ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
+
+        // If expected reverter address is set then check it matches the actual reverter.
+        if let (Some(expected_reverter), Some(actual_reverter)) =
+            (expected_revert.reverter, expected_revert.reverted_by)
+        {
+            if expected_reverter != actual_reverter {
+                return Err(fmt_err!(
+                    "Reverter != expected reverter: {} != {}",
+                    actual_reverter,
+                    expected_reverter
+                ));
+            }
+        }
+
+        let expected_reason = expected_revert.reason.as_deref();
+        // If None, accept any revert.
+        let Some(expected_reason) = expected_reason else {
+            return Ok(success_return());
+        };
+
+        if !expected_reason.is_empty() && retdata.is_empty() {
+            bail!("call reverted as expected, but without data");
+        }
+
+        let mut actual_revert: Vec<u8> = retdata.into();
+
+        // Compare only the first 4 bytes if partial match.
+        if expected_revert.partial_match && actual_revert.get(..4) == expected_reason.get(..4) {
+            return Ok(success_return())
+        }
+
+        // Try decoding as known errors.
+        if matches!(
+            actual_revert.get(..4).map(|s| s.try_into().unwrap()),
+            Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
+        ) {
+            if let Ok(decoded) = Vec::<u8>::abi_decode(&actual_revert[4..], false) {
+                actual_revert = decoded;
+            }
+        }
+
+        if actual_revert == expected_reason ||
+            (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
+        {
+            Ok(success_return())
+        } else {
+            let (actual, expected) = if let Some(contracts) = known_contracts {
+                let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
+                (
+                    &decoder.decode(actual_revert.as_slice(), Some(status)),
+                    &decoder.decode(expected_reason, Some(status)),
+                )
+            } else {
+                (&stringify(&actual_revert), &stringify(expected_reason))
+            };
+            Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
         }
     }
 }
