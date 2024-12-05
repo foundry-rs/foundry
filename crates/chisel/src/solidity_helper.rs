@@ -9,14 +9,14 @@ use crate::{
 };
 use rustyline::{
     completion::Completer,
-    highlight::{CmdKind, Highlighter},
+    highlight::{CmdKind, Highlighter, MatchingBracketHighlighter},
     hint::Hinter,
-    validate::{ValidationContext, ValidationResult, Validator},
+    validate::{MatchingBracketValidator, ValidationContext, ValidationResult, Validator},
     Helper,
 };
 use solar_parse::{
     interface::{Pos, Session, SessionGlobals},
-    token::{Token, TokenKind},
+    token::Token,
     Lexer,
 };
 use std::{borrow::Cow, ops::Range, str::FromStr};
@@ -38,6 +38,9 @@ pub struct SolidityHelper {
     do_paint: bool,
     sess: Session,
     globals: SessionGlobals,
+
+    brackets_highlighter: MatchingBracketHighlighter,
+    brackets_validator: MatchingBracketValidator,
 }
 
 impl Default for SolidityHelper {
@@ -54,6 +57,8 @@ impl SolidityHelper {
             do_paint: yansi::is_enabled(),
             sess: Session::builder().with_silent_emitter(None).build(),
             globals: SessionGlobals::new(),
+            brackets_highlighter: MatchingBracketHighlighter::new(),
+            brackets_validator: MatchingBracketValidator::new(),
         }
     }
 
@@ -131,29 +136,6 @@ impl SolidityHelper {
         });
     }
 
-    /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
-    fn validate_closed(&self, input: &str) -> ValidationResult {
-        let mut depth = [0usize; 3];
-        self.enter(|sess| {
-            for token in Lexer::new(sess, input) {
-                match token.kind {
-                    TokenKind::OpenDelim(delim) => {
-                        depth[delim as usize] += 1;
-                    }
-                    TokenKind::CloseDelim(delim) => {
-                        depth[delim as usize] = depth[delim as usize].saturating_sub(1);
-                    }
-                    _ => {}
-                }
-            }
-        });
-        if depth == [0; 3] {
-            ValidationResult::Valid(None)
-        } else {
-            ValidationResult::Incomplete
-        }
-    }
-
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or
     /// `self.do_paint`.
     fn paint_unchecked(string: &str, style: Style, out: &mut String) {
@@ -184,12 +166,14 @@ impl SolidityHelper {
 }
 
 impl Highlighter for SolidityHelper {
-    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        self.highlight(line)
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> Cow<'l, str> {
+        let line = self.highlight(&line);
+        let line = self.brackets_highlighter.highlight(&line, pos);
+        line.into_owned().into()
     }
 
-    fn highlight_char(&self, line: &str, pos: usize, _kind: CmdKind) -> bool {
-        pos == line.len()
+    fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
+        self.brackets_highlighter.highlight_char(line, pos, kind) || pos == line.len()
     }
 
     fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
@@ -227,7 +211,7 @@ impl Highlighter for SolidityHelper {
 
 impl Validator for SolidityHelper {
     fn validate(&self, ctx: &mut ValidationContext<'_>) -> rustyline::Result<ValidationResult> {
-        Ok(self.validate_closed(ctx.input()))
+        self.brackets_validator.validate(ctx)
     }
 }
 
