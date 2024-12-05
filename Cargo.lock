@@ -3568,7 +3568,6 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-transport",
- "async-recursion",
  "clap",
  "dialoguer",
  "dunce",
