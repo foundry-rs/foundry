@@ -65,8 +65,8 @@ pub struct EvmOpts {
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// whether to enable Odyssey features.
+    pub odyssey: bool,
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
@@ -91,7 +91,7 @@ impl Default for EvmOpts {
             memory_limit: 0,
             isolate: false,
             disable_block_gas_limit: false,
-            alphanet: false,
+            odyssey: false,
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }

@@ -1,7 +1,7 @@
 //! Coverage reports.
 
 use alloy_primitives::map::HashMap;
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
 use semver::Version;
@@ -19,24 +19,31 @@ pub trait CoverageReporter {
 }
 
 /// A simple summary reporter that prints the coverage results in a table.
-pub struct SummaryReporter {
+pub struct CoverageSummaryReporter {
     /// The summary table.
     table: Table,
     /// The total coverage of the entire project.
     total: CoverageSummary,
 }
 
-impl Default for SummaryReporter {
+impl Default for CoverageSummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
-        table.set_header(["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+
+        table.set_header(vec![
+            Cell::new("File"),
+            Cell::new("% Lines"),
+            Cell::new("% Statements"),
+            Cell::new("% Branches"),
+            Cell::new("% Funcs"),
+        ]);
 
         Self { table, total: CoverageSummary::default() }
     }
 }
 
-impl SummaryReporter {
+impl CoverageSummaryReporter {
     fn add_row(&mut self, name: impl Into<Cell>, summary: CoverageSummary) {
         let mut row = Row::new();
         row.add_cell(name.into())
@@ -48,7 +55,7 @@ impl SummaryReporter {
     }
 }
 
-impl CoverageReporter for SummaryReporter {
+impl CoverageReporter for CoverageSummaryReporter {
     fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total.merge(&summary);
@@ -56,7 +63,7 @@ impl CoverageReporter for SummaryReporter {
         }
 
         self.add_row("Total", self.total.clone());
-        sh_println!("{}", self.table)?;
+        sh_println!("\n{}", self.table)?;
         Ok(())
     }
 }

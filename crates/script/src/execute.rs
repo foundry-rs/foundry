@@ -12,7 +12,6 @@ use alloy_primitives::{
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
-use async_recursion::async_recursion;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -101,7 +100,6 @@ pub struct PreExecutionState {
 impl PreExecutionState {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
-    #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
             .script_config
@@ -127,7 +125,7 @@ impl PreExecutionState {
                 build_data: self.build_data.build_data,
             };
 
-            return state.link().await?.prepare_execution().await?.execute().await;
+            return Box::pin(state.link().await?.prepare_execution().await?.execute()).await;
         }
 
         Ok(ExecutedState {

@@ -5,6 +5,7 @@ use alloy_primitives::U256;
 use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
+    compilers::multi::MultiCompiler,
     utils::RuntimeOrHandle,
     Project, ProjectCompileOutput, SolcConfig, Vyper,
 };
@@ -212,7 +213,7 @@ impl ForgeTestData {
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)
-            .build(root, &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(root, &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -221,7 +222,7 @@ impl ForgeTestData {
         let mut opts = config_evm_opts(&self.config);
         opts.verbosity = 5;
         self.base_runner()
-            .build(self.project.root(), &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(self.project.root(), &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -237,7 +238,7 @@ impl ForgeTestData {
 
         self.base_runner()
             .with_fork(fork)
-            .build(self.project.root(), &self.output, env, opts)
+            .build::<MultiCompiler>(self.project.root(), &self.output, env, opts)
             .unwrap()
     }
 }
@@ -345,6 +346,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("arbitrum", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Polygon))),
         ("avaxTestnet", RpcEndpoint::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("moonbeam", RpcEndpoint::Url("https://moonbeam-rpc.publicnode.com".into())),
         ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".into())),
     ])
 }
