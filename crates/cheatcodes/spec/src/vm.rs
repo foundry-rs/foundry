@@ -19,6 +19,10 @@ sol! {
 #[derive(Debug, Cheatcode)] // Keep this list small to avoid unnecessary bloat.
 #[sol(abi)]
 interface Vm {
+    /// Gets the address for a given private key.
+    #[cheatcode(group = Credible, safety = Safe)]
+    function assertionEx(bytes memory tx, bytes memory assertionBytecode) external returns (bool success);
+
     //  ======== Types ========
 
     /// Error thrown by cheatcodes.
