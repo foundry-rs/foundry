@@ -14,6 +14,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_subscriber::prelude::*;
@@ -589,12 +590,101 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
     }
 }
 
+/// Deserialized `git submodule status lib/dep` output.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Submodule {
+    /// Current commit hash the submodule is checked out at.
+    rev: String,
+    /// Relative path to the submodule.
+    path: PathBuf,
+}
+
+impl Submodule {
+    pub fn new(rev: String, path: PathBuf) -> Self {
+        Self { rev, path }
+    }
+
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl FromStr for Submodule {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let re = regex::Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$")?;
+
+        let caps = re.captures(s).ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
+
+        Ok(Self {
+            rev: caps.get(1).unwrap().as_str().to_string(),
+            path: PathBuf::from(caps.get(2).unwrap().as_str()),
+        })
+    }
+}
+
+/// Deserialized `git submodule status` output.
+pub struct Submodules(pub Vec<Submodule>);
+
+impl FromStr for Submodules {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let subs = s.lines().map(str::parse).collect::<Result<Vec<Submodule>>>()?;
+        Ok(Self(subs))
+    }
+}
+
+impl Iterator for Submodules {
+    type Item = Submodule;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.pop()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_submodule_status() {
+        let s = "+8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts (v4.8.0-791-g8829465a)";
+        let sub = Submodule::from_str(s).unwrap();
+        assert_eq!(sub.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(sub.path(), Path::new("lib/openzeppelin-contracts"));
+
+        let s = "-8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts";
+        let sub = Submodule::from_str(s).unwrap();
+        assert_eq!(sub.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(sub.path(), Path::new("lib/openzeppelin-contracts"));
+
+        let s = "8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts";
+        let sub = Submodule::from_str(s).unwrap();
+        assert_eq!(sub.rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(sub.path(), Path::new("lib/openzeppelin-contracts"));
+    }
+
+    #[test]
+    fn parse_multiline_submodule_status() {
+        let s = r#"+d3db4ef90a72b7d24aa5a2e5c649593eaef7801d lib/forge-std (v1.9.4-6-gd3db4ef)
++8829465a08cac423dcf59852f21e448449c1a1a8 lib/openzeppelin-contracts (v4.8.0-791-g8829465a)
+"#;
+        let subs = Submodules::from_str(s).unwrap().0;
+        assert_eq!(subs.len(), 2);
+        assert_eq!(subs[0].rev(), "d3db4ef90a72b7d24aa5a2e5c649593eaef7801d");
+        assert_eq!(subs[0].path(), Path::new("lib/forge-std"));
+        assert_eq!(subs[1].rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
+        assert_eq!(subs[1].path(), Path::new("lib/openzeppelin-contracts"));
+    }
 
     #[test]
     fn foundry_path_ext_works() {
