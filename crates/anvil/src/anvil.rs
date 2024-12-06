@@ -49,6 +49,11 @@ fn main() {
 fn run() -> Result<()> {
     utils::load_dotenv();
 
+    if let Some(to) = utils::should_redirect_to() {
+        utils::redirect_execution(to)?;
+        return Ok(());
+    }
+
     let mut args = Anvil::parse();
     args.global.init()?;
     args.node.evm.resolve_rpc_alias();
@@ -70,7 +75,7 @@ fn run() -> Result<()> {
                 &mut std::io::stdout(),
             ),
         }
-        return Ok(())
+        return Ok(());
     }
 
     let _ = fdlimit::raise_fd_limit();

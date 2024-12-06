@@ -27,6 +27,9 @@ pub use suggestions::*;
 mod abi;
 pub use abi::*;
 
+mod bin_redirect;
+pub use bin_redirect::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;

@@ -38,6 +38,7 @@ use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
     RestrictionsWithVersion, VyperLanguage,
 };
+use network_family::NetworkFamily;
 use regex::Regex;
 use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
 use semver::Version;
@@ -123,6 +124,11 @@ use bind_json::BindJsonConfig;
 
 mod compilation;
 use compilation::{CompilationRestrictions, SettingsOverrides};
+
+mod binary_mappings;
+use binary_mappings::BinaryMappings;
+
+mod network_family;
 
 /// Foundry configuration
 ///
@@ -515,6 +521,17 @@ pub struct Config {
     /// Restrictions on compilation of certain files.
     #[serde(default)]
     pub compilation_restrictions: Vec<CompilationRestrictions>,
+
+    /// Configuration for alternative versions of foundry tools to be used.
+    #[serde(default)]
+    pub binary_mappings: Option<BinaryMappings>,
+
+    /// Network family configuration.
+    /// If specified, network family can be used to change certain defaults (such as
+    /// binary mappings). Note, however, that network family only changes _defaults_,
+    /// so if the configuration is explicitly provided, it takes precedence.
+    #[serde(default)]
+    pub network_family: NetworkFamily,
 
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -2023,6 +2040,11 @@ impl Config {
         }
     }
 
+    /// Returns the binary mappings.
+    pub fn binary_mappings(&self) -> BinaryMappings {
+        self.binary_mappings.clone().unwrap_or_else(|| self.network_family.binary_mappings())
+    }
+
     /// The path provided to this function should point to a cached chain folder.
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
@@ -2413,6 +2435,8 @@ impl Default for Config {
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
             eof: false,
+            binary_mappings: Default::default(),
+            network_family: NetworkFamily::Ethereum,
             _non_exhaustive: (),
         }
     }
@@ -4890,6 +4914,70 @@ mod tests {
                     remappings_location: RemappingsLocation::Txt,
                     recursive_deps: true,
                 })
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_binary_mappings() {
+        figment::Jail::expect_with(|jail| {
+            // No mappings by default.
+            let config = Config::load();
+            assert_eq!(config.binary_mappings(), BinaryMappings::default());
+
+            // Load specified mappings.
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                binary_mappings = { "forge" = "forge-zksync", "anvil" = "anvil-zksync" }
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(
+                config.binary_mappings(),
+                BinaryMappings::from([
+                    (binary_mappings::BinaryName::Forge, PathBuf::from("forge-zksync")),
+                    (binary_mappings::BinaryName::Anvil, PathBuf::from("anvil-zksync"))
+                ])
+            );
+
+            // Override via network family.
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network_family = "zksync"
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(
+                config.binary_mappings(),
+                BinaryMappings::from([
+                    (binary_mappings::BinaryName::Forge, PathBuf::from("forge-zksync")),
+                    (binary_mappings::BinaryName::Cast, PathBuf::from("cast-zksync")),
+                    (binary_mappings::BinaryName::Anvil, PathBuf::from("anvil-zksync"))
+                ])
+            );
+
+            // Config precedence.
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                binary_mappings = { "forge" = "something-custom", "anvil" = "something-else" }
+                network_family = "zksync"
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(
+                config.binary_mappings(),
+                BinaryMappings::from([
+                    (binary_mappings::BinaryName::Forge, PathBuf::from("something-custom")),
+                    (binary_mappings::BinaryName::Anvil, PathBuf::from("something-else"))
+                ])
             );
 
             Ok(())
