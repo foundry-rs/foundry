@@ -327,6 +327,10 @@ impl VanityMatcher for RegexMatcher {
 }
 
 fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
+    if pattern.chars().any(|c| !c.is_ascii_hexdigit()) {
+        return Err(eyre::eyre!("Pattern must contain only valid hex characters (0-9, a-f, A-F)"));
+    }
+
     if let Ok(decoded) = hex::decode(pattern) {
         if decoded.len() > 20 {
             return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
@@ -367,6 +371,15 @@ mod tests {
         let addr = wallet.address();
         let addr = format!("{addr:x}");
         assert!(addr.ends_with("00"));
+    }
+
+    #[test]
+    fn impossible_vanity_error() {
+        let args: VanityArgs = VanityArgs::parse_from(["foundry-cli", "--starts-with", "z"]);
+        assert!(args.run().is_err());
+
+        assert!(parse_pattern("x", true).is_err());
+        assert!(parse_pattern("z", false).is_err());
     }
 
     #[test]
