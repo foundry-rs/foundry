@@ -12,8 +12,8 @@ use crate::{
     test::{
         assume::AssumeNoRevert,
         expect::{
-            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedRevert,
-            ExpectedRevertKind,
+            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmitTracker,
+            ExpectedRevert, ExpectedRevertKind,
         },
     },
     utils::IgnoredTraces,
@@ -61,8 +61,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-
-use self::expect::ExpectedEmitTracker;
 
 mod utils;
 
@@ -1421,7 +1419,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         let should_check_emits = self
             .expected_emits
             .iter()
-            .any(|(expected, _count_map)| expected.depth == ecx.journaled_state.depth()) &&
+            .any(|(expected, _)| expected.depth == ecx.journaled_state.depth()) &&
             // Ignore staticcalls
             !call.is_static;
         if should_check_emits {
@@ -1457,7 +1455,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 .collect::<Vec<_>>();
 
             // Not all emits were matched.
-            if self.expected_emits.iter().any(|(expected, _count_map)| !expected.found) {
+            if self.expected_emits.iter().any(|(expected, _)| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
                 return outcome;
@@ -1569,7 +1567,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             }
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|(expected, _count_map)| {
+            self.expected_emits.retain(|(expected, _)| {
                 if !expected.found && expected.count == 0 {
                     tracing::info!("expected.found == false");
                     // This indicates that we were expecting 0 zero events, hence remove it.
