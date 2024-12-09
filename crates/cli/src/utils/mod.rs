@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, U256};
 use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
@@ -453,6 +453,22 @@ impl<'a> Git<'a> {
             .map(|stdout| !stdout.is_empty())
     }
 
+    pub fn has_tag(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
+            .args(["tag", "--list"])
+            .arg(tag)
+            .get_stdout_lossy()
+            .map(|stdout| !stdout.is_empty())
+    }
+
+    pub fn has_rev(self, rev: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
+            .args(["cat-file", "-t"])
+            .arg(rev)
+            .get_stdout_lossy()
+            .map(|stdout| &stdout == "commit")
+    }
+
     pub fn ensure_clean(self) -> Result<()> {
         if self.is_clean()? {
             Ok(())
@@ -610,6 +626,43 @@ impl Submodule {
 
     pub fn path(&self) -> &PathBuf {
         &self.path
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum TagType {
+    Branch(String),
+    Tag(String),
+    Rev(String),
+}
+
+impl TagType {
+    pub fn resolve_type(git: &Git<'_>, lib_path: &PathBuf, s: &str) -> Result<TagType> {
+        tracing::info!("Resolving tag type {} for submodule at path {}", s, lib_path.display());
+        // Get the tags for the submodule
+        if git.has_tag(s, lib_path)? {
+            return Ok(TagType::Tag(String::from(s)));
+        }
+
+        if git.has_branch(s, lib_path)? {
+            return Ok(TagType::Branch(String::from(s)));
+        }
+
+        if git.has_rev(s, lib_path)? {
+            return Ok(TagType::Rev(String::from(s)));
+        }
+
+        Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
+    }
+}
+
+impl std::fmt::Display for TagType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TagType::Branch(s) => write!(f, "branch={}", s),
+            TagType::Tag(s) => write!(f, "tag={}", s),
+            TagType::Rev(s) => write!(f, "rev={}", s),
+        }
     }
 }
 
