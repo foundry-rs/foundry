@@ -158,6 +158,7 @@ impl DependencyInstallOpts {
 
             // this tracks the actual installed tag
             let installed_tag;
+            let mut tag_type = None;
             if no_git {
                 installed_tag = installer.install_as_folder(&dep, &path)?;
             } else {
@@ -189,8 +190,21 @@ impl DependencyInstallOpts {
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
                     if let Some(tag) = &installed_tag {
-                        msg.push_str("\n\n");
-                        msg.push_str(tag);
+                        tag_type = TagType::resolve_type(&git, &path, &tag).ok();
+                        submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
+
+                        if let Some(tag_type) = tag_type {
+                            msg.push("\n\n");
+                            msg.push_str(tag_type.to_string().as_str());
+                        } else {
+                            msg.push_str("\n\n");
+                            msg.push_str(tag);
+                        }
+                    }
+
+                    // write .submodules-info.json
+                    if !submodule_info.is_empty() {
+                        fs::write_json_file(&submodule_info_path, &submodule_info)?;
                     }
                     git.commit(&msg)?;
                 }
@@ -198,10 +212,7 @@ impl DependencyInstallOpts {
 
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
             if let Some(tag) = dep.tag.or(installed_tag) {
-                let tag_type = TagType::resolve_type(&git, &path, &tag).ok();
                 if let Some(tag_type) = tag_type {
-                    tracing::info!("Inserting {} for submodule {}", tag_type, rel_path.display());
-                    submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
                     msg.push(' ');
                     msg.push_str(tag_type.to_string().as_str());
                 } else {
@@ -218,10 +229,6 @@ impl DependencyInstallOpts {
             config.update_libs()?;
         }
 
-        // write .submodules-info.json
-        if !submodule_info.is_empty() {
-            fs::write_json_file(&submodule_info_path, &submodule_info)?;
-        }
         Ok(())
     }
 }
