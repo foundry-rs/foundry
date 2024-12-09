@@ -706,27 +706,13 @@ pub(crate) fn handle_expect_emit(
     }
 
     event_to_fill_or_check.found = || -> bool {
-        // Topic count must match.
-        if expected.topics().len() != log.topics().len() {
+        if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
             return false
         }
-        // Match topics according to the checks.
-        if !log
-            .topics()
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| event_to_fill_or_check.checks[*i])
-            .all(|(i, topic)| topic == &expected.topics()[i])
-        {
-            return false
-        }
+
         // Maybe match source address.
         if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
             return false;
-        }
-        // Maybe match data.
-        if event_to_fill_or_check.checks[4] && expected.data.as_ref() != log.data.data.as_ref() {
-            return false
         }
 
         let expected_count = event_to_fill_or_check.count;
@@ -816,27 +802,7 @@ impl LogCountMap {
 
     /// Checks the incoming raw log against the expected logs topics and data.
     fn satisfies_checks(&self, log: &RawLog) -> bool {
-        if log.topics().len() != self.expected_log.topics().len() {
-            return false
-        }
-
-        // Check topics.
-        if !log
-            .topics()
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| self.checks[*i])
-            .all(|(i, topic)| topic == &self.expected_log.topics()[i])
-        {
-            return false
-        }
-
-        // Check data
-        if self.checks[4] && self.expected_log.data.as_ref() != log.data.as_ref() {
-            return false
-        }
-
-        true
+        checks_topics_and_data(self.checks, &self.expected_log, log)
     }
 
     pub fn count(&self, log: &RawLog) -> u64 {
@@ -962,6 +928,30 @@ pub(crate) fn handle_expect_revert(
         };
         Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
     }
+}
+
+fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) -> bool {
+    if log.topics().len() != expected.topics().len() {
+        return false
+    }
+
+    // Check topics.
+    if !log
+        .topics()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| checks[*i])
+        .all(|(i, topic)| topic == &expected.topics()[i])
+    {
+        return false
+    }
+
+    // Check data
+    if checks[4] && expected.data.as_ref() != log.data.as_ref() {
+        return false
+    }
+
+    true
 }
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {
