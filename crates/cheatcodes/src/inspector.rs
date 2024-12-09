@@ -1427,23 +1427,19 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 .expected_emits
                 .iter()
                 .filter_map(|(expected, count_map)| {
-                    let count = if let Some(emitter) = expected.address {
-                        if let Some(log_count) = count_map.get(&emitter) {
-                            expected
+                    let count = match expected.address {
+                        Some(emitter) => match count_map.get(&emitter) {
+                            Some(log_count) => expected
                                 .log
                                 .as_ref()
                                 .map(|l| log_count.count(l))
-                                .unwrap_or(log_count.count_unchecked())
-                        } else {
-                            0
-                        }
-                    } else if expected.log.is_none() {
-                        count_map.values().map(|logs| logs.count_unchecked()).sum()
-                    } else {
-                        count_map
-                            .values()
-                            .map(|logs| logs.count(expected.log.as_ref().unwrap()))
-                            .sum()
+                                .unwrap_or_else(|| log_count.count_unchecked()),
+                            None => 0,
+                        },
+                        None => match &expected.log {
+                            Some(log) => count_map.values().map(|logs| logs.count(log)).sum(),
+                            None => count_map.values().map(|logs| logs.count_unchecked()).sum(),
+                        },
                     };
 
                     if count != expected.count {

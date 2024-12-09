@@ -684,10 +684,9 @@ pub(crate) fn handle_expect_emit(
     // Increment/set `count` for `log.address` and `log.data`
     match count_map.entry(log.address) {
         Entry::Occupied(mut entry) => {
-            let log_count_map = entry.get_mut();
-
             // Checks and inserts the log into the map.
             // If the log doesn't pass the checks, it is ignored and `count` is not incremented.
+            let log_count_map = entry.get_mut();
             log_count_map.insert(&log.data);
         }
         Entry::Vacant(entry) => {
