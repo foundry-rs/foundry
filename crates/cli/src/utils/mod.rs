@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{map::HashMap, U256};
+use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
@@ -376,6 +376,10 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
+    pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
+        self.cmd_at(at).arg("checkout").arg(tag).exec().map(drop)
+    }
+
     pub fn init(self) -> Result<()> {
         self.cmd().arg("init").exec().map(drop)
     }
@@ -497,6 +501,17 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
         self.cmd().arg("tag").get_stdout_lossy()
     }
 
+    pub fn tag_for_commit(self, rev: &str, at: &Path) -> Result<Option<String>> {
+        self.cmd_at(at).args(["tag", "--contains"]).arg(rev).get_stdout_lossy().map(|stdout| {
+            // Get the last tag (most recent)
+            if !stdout.is_empty() {
+                let Some(last_line) = stdout.lines().last() else { return None };
+                return Some(last_line.to_string());
+            }
+            None
+        })
+    }
+
     pub fn has_missing_dependencies<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
@@ -578,6 +593,10 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
+    pub fn submodules(&self) -> Result<Submodules> {
+        self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
+    }
+
     pub fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
@@ -637,19 +656,19 @@ pub enum TagType {
 }
 
 impl TagType {
-    pub fn resolve_type(git: &Git<'_>, lib_path: &PathBuf, s: &str) -> Result<TagType> {
+    pub fn resolve_type(git: &Git<'_>, lib_path: &Path, s: &str) -> Result<Self> {
         tracing::info!("Resolving tag type {} for submodule at path {}", s, lib_path.display());
         // Get the tags for the submodule
         if git.has_tag(s, lib_path)? {
-            return Ok(TagType::Tag(String::from(s)));
+            return Ok(Self::Tag(String::from(s)));
         }
 
         if git.has_branch(s, lib_path)? {
-            return Ok(TagType::Branch(String::from(s)));
+            return Ok(Self::Branch(String::from(s)));
         }
 
         if git.has_rev(s, lib_path)? {
-            return Ok(TagType::Rev(String::from(s)));
+            return Ok(Self::Rev(String::from(s)));
         }
 
         Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
@@ -659,9 +678,9 @@ impl TagType {
 impl std::fmt::Display for TagType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TagType::Branch(s) => write!(f, "branch={}", s),
-            TagType::Tag(s) => write!(f, "tag={}", s),
-            TagType::Rev(s) => write!(f, "rev={}", s),
+            Self::Branch(s) => write!(f, "branch={s}"),
+            Self::Tag(s) => write!(f, "tag={s}"),
+            Self::Rev(s) => write!(f, "rev={s}"),
         }
     }
 }

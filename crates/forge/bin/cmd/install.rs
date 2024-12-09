@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig, SubmoduleInfo, TagType},
+    utils::{CommandUtils, Git, LoadConfig, TagType},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -197,9 +197,8 @@ impl DependencyInstallOpts {
             }
 
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
-            let mut tag_type = None;
             if let Some(tag) = dep.tag.or(installed_tag) {
-                tag_type = TagType::resolve_type(&git, &path, &tag).ok();
+                let tag_type = TagType::resolve_type(&git, &path, &tag).ok();
                 if let Some(tag_type) = tag_type {
                     tracing::info!("Inserting {} for submodule {}", tag_type, rel_path.display());
                     submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
