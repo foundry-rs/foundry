@@ -502,14 +502,11 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
     }
 
     pub fn tag_for_commit(self, rev: &str, at: &Path) -> Result<Option<String>> {
-        self.cmd_at(at).args(["tag", "--contains"]).arg(rev).get_stdout_lossy().map(|stdout| {
-            // Get the last tag (most recent)
-            if !stdout.is_empty() {
-                let Some(last_line) = stdout.lines().last() else { return None };
-                return Some(last_line.to_string());
-            }
-            None
-        })
+        self.cmd_at(at)
+            .args(["tag", "--contains"])
+            .arg(rev)
+            .get_stdout_lossy()
+            .map(|stdout| stdout.lines().last().map(str::to_string))
     }
 
     pub fn has_missing_dependencies<I, S>(self, paths: I) -> Result<bool>

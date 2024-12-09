@@ -7,7 +7,7 @@ use foundry_cli::{
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
-use std::{collections::hash_map::Entry, os::unix::process::CommandExt, path::PathBuf};
+use std::{collections::hash_map::Entry, path::PathBuf};
 
 /// CLI arguments for `forge update`.
 #[derive(Clone, Debug, Parser)]
@@ -47,11 +47,8 @@ impl UpdateArgs {
         for submodule in submodules {
             if let Ok(Some(tag)) = git.tag_for_commit(submodule.rev(), &root.join(submodule.path()))
             {
-                match submodule_infos.entry(submodule.path().to_path_buf()) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(TagType::Tag(tag));
-                    }
-                    _ => {}
+                if let Entry::Vacant(entry) = submodule_infos.entry(submodule.path().to_path_buf()) {
+                    entry.insert(TagType::Tag(tag));
                 }
             }
         }
@@ -71,7 +68,7 @@ impl UpdateArgs {
             // We don't need to check for branches as they are supported by `git submodules`
             // internally
             if let TagType::Tag(tag) | TagType::Rev(tag) = tag {
-                git.checkout_at(&tag, &root.join(path))?;
+                git.checkout_at(tag, &root.join(path))?;
             }
         }
 
