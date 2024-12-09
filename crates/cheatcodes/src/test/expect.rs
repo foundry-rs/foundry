@@ -691,10 +691,7 @@ pub(crate) fn handle_expect_emit(
             log_count_map.insert(&log.data);
         }
         Entry::Vacant(entry) => {
-            let mut log_count_map = LogCountMap::new(
-                &event_to_fill_or_check.log.clone().expect("log should be filled here"),
-                event_to_fill_or_check.checks,
-            );
+            let mut log_count_map = LogCountMap::new(&event_to_fill_or_check);
 
             if log_count_map.satisfies_checks(&log.data) {
                 log_count_map.insert(&log.data);
@@ -772,8 +769,12 @@ pub struct LogCountMap {
 
 impl LogCountMap {
     /// Instantiates `LogCountMap`.
-    fn new(expected_log: &RawLog, checks: [bool; 5]) -> Self {
-        Self { checks, expected_log: expected_log.clone(), map: Default::default() }
+    fn new(expected_emit: &ExpectedEmit) -> Self {
+        Self {
+            checks: expected_emit.checks,
+            expected_log: expected_emit.log.clone().expect("log should be filled here"),
+            map: Default::default(),
+        }
     }
 
     /// Inserts a log into the map and increments the count.
