@@ -324,6 +324,13 @@ impl VerifyArgs {
                     .get(&contract.name)
                     .and_then(|artifacts| {
                         let mut cached_artifacts = artifacts.get(&version);
+                        // If we try to verify with specific build version and no cached artifacts
+                        // found, then check if we have artifacts cached for same version but
+                        // without any build metadata.
+                        // This could happen when artifacts are built / cached
+                        // with a version like `0.8.20` but verify is using a compiler-version arg
+                        // as `0.8.20+commit.a1b79de6`.
+                        // See <https://github.com/foundry-rs/foundry/issues/9510>.
                         if cached_artifacts.is_none() && version.build != BuildMetadata::EMPTY {
                             version.build = BuildMetadata::EMPTY;
                             cached_artifacts = artifacts.get(&version);
