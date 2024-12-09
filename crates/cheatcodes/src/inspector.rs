@@ -1455,7 +1455,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
                 return outcome;
-            } else if !expected_counts.is_empty() {
+            }
+
+            if !expected_counts.is_empty() {
                 let msg = if outcome.result.is_ok() {
                     let (expected, count) = expected_counts.first().unwrap();
                     format!("log emitted {count} times, expected {}", expected.count)
@@ -1468,12 +1470,12 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
                 return outcome;
-            } else {
-                // All emits were found, we're good.
-                // Clear the queue, as we expect the user to declare more events for the next call
-                // if they wanna match further events.
-                self.expected_emits.clear()
             }
+
+            // All emits were found, we're good.
+            // Clear the queue, as we expect the user to declare more events for the next call
+            // if they wanna match further events.
+            self.expected_emits.clear()
         }
 
         // this will ensure we don't have false positives when trying to diagnose reverts in fork
