@@ -21,7 +21,8 @@ sol! {
 interface Vm {
     /// Gets the address for a given private key.
     #[cheatcode(group = Credible, safety = Safe)]
-    function assertionEx(bytes memory tx, bytes memory assertionBytecode) external returns (bool success);
+    function assertionEx(bytes memory tx, address assertionAdopter, bytes[] memory assertionBytecode) external returns (bool success);
+
 
     //  ======== Types ========
 
