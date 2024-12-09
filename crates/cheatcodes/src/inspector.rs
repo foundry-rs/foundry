@@ -1563,14 +1563,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             }
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|(expected, _)| {
-                if !expected.found && expected.count == 0 {
-                    tracing::info!("expected.found == false");
-                    // This indicates that we were expecting 0 zero events, hence remove it.
-                    return false;
-                }
-                !expected.found
-            });
+            self.expected_emits.retain(|(expected, _)| expected.count > 0 && !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 let msg = if outcome.result.is_ok() {
