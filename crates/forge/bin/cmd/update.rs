@@ -47,7 +47,8 @@ impl UpdateArgs {
         for submodule in submodules {
             if let Ok(Some(tag)) = git.tag_for_commit(submodule.rev(), &root.join(submodule.path()))
             {
-                if let Entry::Vacant(entry) = submodule_infos.entry(submodule.path().to_path_buf()) {
+                if let Entry::Vacant(entry) = submodule_infos.entry(submodule.path().to_path_buf())
+                {
                     entry.insert(TagType::Tag(tag));
                 }
             }
