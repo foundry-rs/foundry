@@ -814,6 +814,7 @@ impl LogCountMap {
         true
     }
 
+    /// Checks the incoming raw log against the expected logs topics and data.
     fn satisfies_checks(&self, log: &RawLog) -> bool {
         if log.topics().len() != self.expected_log.topics().len() {
             return false
@@ -843,7 +844,7 @@ impl LogCountMap {
             return 0
         }
 
-        self.map.values().sum()
+        self.count_unchecked()
     }
 
     pub fn count_unchecked(&self) -> u64 {
