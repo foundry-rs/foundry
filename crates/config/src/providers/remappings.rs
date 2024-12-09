@@ -69,14 +69,26 @@ impl Remappings {
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    pub fn push(&mut self, remapping: Remapping) {
+    fn push(&mut self, remapping: Remapping) {
         if self.remappings.iter().any(|existing| {
-            // What we're doing here is filtering for ambiguous paths. For example, if we have
-            // @prb/math/=node_modules/@prb/math/src/ as existing, and
-            // @prb/=node_modules/@prb/  as the one being checked,
+            // What we're doing here is filtering for ambiguous / conflicting paths per context.
+            // For example, if we have
+            // `@prb/math/=node_modules/@prb/math/src/` as existing, and
+            // `@prb/=node_modules/@prb/` as the one being checked,
             // we want to keep the already existing one, which is the first one. This way we avoid
             // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
-            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
+            // Remappings are added from root of the project down to libraries, so
+            // we also want to exclude any conflicting remappings added from libraries. For example,
+            // if we have `@utils/=src/` added in project remappings and `@utils/libraries/=src/`
+            // added in a dependency, we don't want to add the new one as it conflicts with project
+            // existing remapping.
+            let mut existing_name_path = existing.name.clone();
+            if !existing_name_path.ends_with('/') {
+                existing_name_path.push('/')
+            }
+            let is_conflicting = remapping.name.starts_with(&existing_name_path) ||
+                existing.name.starts_with(&remapping.name);
+            is_conflicting && existing.context == remapping.context
         }) {
             return;
         };
