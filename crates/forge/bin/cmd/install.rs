@@ -1,8 +1,9 @@
+use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig},
+    utils::{CommandUtils, Git, LoadConfig, TagType},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -115,6 +116,10 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
+        let submodule_info_path = config.root.join("submodules-info.json");
+        let mut submodule_info: HashMap<PathBuf, TagType> =
+            fs::read_json_file(&submodule_info_path).unwrap_or_default();
+
         if dependencies.is_empty() && !self.no_git {
             // Use the root of the git repository to look for submodules.
             let root = Git::root_of(git.root)?;
@@ -153,6 +158,7 @@ impl DependencyInstallOpts {
 
             // this tracks the actual installed tag
             let installed_tag;
+            let mut tag_type = None;
             if no_git {
                 installed_tag = installer.install_as_folder(&dep, &path)?;
             } else {
@@ -184,8 +190,21 @@ impl DependencyInstallOpts {
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
                     if let Some(tag) = &installed_tag {
-                        msg.push_str("\n\n");
-                        msg.push_str(tag);
+                        tag_type = TagType::resolve_type(&git, &path, &tag).ok();
+                        submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
+
+                        if let Some(tag_type) = tag_type {
+                            msg.push("\n\n");
+                            msg.push_str(tag_type.to_string().as_str());
+                        } else {
+                            msg.push_str("\n\n");
+                            msg.push_str(tag);
+                        }
+                    }
+
+                    // write .submodules-info.json
+                    if !submodule_info.is_empty() {
+                        fs::write_json_file(&submodule_info_path, &submodule_info)?;
                     }
                     git.commit(&msg)?;
                 }
@@ -193,8 +212,13 @@ impl DependencyInstallOpts {
 
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
             if let Some(tag) = dep.tag.or(installed_tag) {
-                msg.push(' ');
-                msg.push_str(tag.as_str());
+                if let Some(tag_type) = tag_type {
+                    msg.push(' ');
+                    msg.push_str(tag_type.to_string().as_str());
+                } else {
+                    msg.push(' ');
+                    msg.push_str(tag.as_str());
+                }
             }
             sh_println!("{msg}")?;
         }
@@ -204,6 +228,7 @@ impl DependencyInstallOpts {
             config.libs.push(install_lib_dir.to_path_buf());
             config.update_libs()?;
         }
+
         Ok(())
     }
 }
