@@ -98,10 +98,13 @@ impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
-        match self._setup(call_setup) {
-            Ok(setup) => setup,
-            Err(err) => TestSetup::failed(err.to_string()),
-        }
+        self._setup(call_setup).unwrap_or_else(|err| {
+            if err.to_string().contains("skipped") {
+                TestSetup::skipped(err.to_string())
+            } else {
+                TestSetup::failed(err.to_string())
+            }
+        })
     }
 
     fn _setup(&mut self, call_setup: bool) -> Result<TestSetup> {
@@ -333,7 +336,7 @@ impl<'a> ContractRunner<'a> {
             // The setup failed, so we return a single test result for `setUp`
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::setup_fail(setup))].into(),
+                [("setUp()".to_string(), TestResult::setup_result(setup))].into(),
                 warnings,
             )
         }
