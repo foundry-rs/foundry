@@ -75,7 +75,7 @@ pub struct NodeArgs {
 
     /// The EVM hardfork to use.
     ///
-    /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
+    /// Choose the hardfork by name, e.g. `cancun`, `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
     #[arg(long)]
     pub hardfork: Option<String>,
@@ -177,7 +177,7 @@ pub struct NodeArgs {
     /// Max number of states to persist on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "prune_history")]
     pub max_persisted_states: Option<usize>,
 
     /// Number of blocks with transactions to keep in memory.
