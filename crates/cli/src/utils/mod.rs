@@ -653,8 +653,9 @@ pub enum TagType {
 }
 
 impl TagType {
+    /// Resolves the [TagType] for a submodule at a given path.
+    /// `lib_path` is the absolute path to the submodule.
     pub fn resolve_type(git: &Git<'_>, lib_path: &Path, s: &str) -> Result<Self> {
-        tracing::info!("Resolving tag type {} for submodule at path {}", s, lib_path.display());
         // Get the tags for the submodule
         if git.has_tag(s, lib_path)? {
             return Ok(Self::Tag(String::from(s)));
@@ -669,6 +670,13 @@ impl TagType {
         }
 
         Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
+    }
+
+    /// Returns the raw string representation of the [TagType]. i.e without the type prefix.
+    pub fn raw_string(&self) -> &String {
+        match self {
+            Self::Branch(s) | Self::Tag(s) | Self::Rev(s) => s,
+        }
     }
 }
 

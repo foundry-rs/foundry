@@ -1440,6 +1440,37 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
     assert_eq!(submodules_init, submodules_update);
 });
 
+forgetest!(can_override_tag_in_update, |prj, cmd| {
+    cmd.git_init();
+
+    // Installs oz at release tag
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@v5.0.2"])
+        .assert_success();
+
+    cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
+
+    let out =
+        Command::new("git").current_dir(prj.root()).args(["submodule", "status"]).output().unwrap();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_init: Submodules = status.parse().unwrap();
+
+    // Update oz to a different release tag
+    cmd.forge_fuse()
+        .args(["update", "openzeppelin/openzeppelin-contracts@v5.1.0"])
+        .assert_success();
+
+    let out =
+        Command::new("git").current_dir(prj.root()).args(["submodule", "status"]).output().unwrap();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_update: Submodules = status.parse().unwrap();
+
+    assert_ne!(submodules_init.0[0], submodules_update.0[0]);
+    assert_eq!(submodules_init.0[1], submodules_update.0[1]);
+});
+
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
