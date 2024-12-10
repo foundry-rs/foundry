@@ -386,3 +386,6 @@ test_repro!(8971; |config| {
   prj_config.isolate = true;
   config.runner.config = Arc::new(prj_config);
 });
+
+// https://github.com/foundry-rs/foundry/issues/8639
+test_repro!(8639);
