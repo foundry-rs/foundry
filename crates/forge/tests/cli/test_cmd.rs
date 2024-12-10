@@ -2724,3 +2724,44 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 });
+
+// Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
+// verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
+forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
+    prj.add_test(
+        "DebugTraceRecordingTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract DebugTraceRecordingTest is Test {
+    function test_start_stop_recording() public {
+        vm.startDebugTraceRecording();
+        Counter counter = new Counter();
+        counter.increment();
+        vm.stopAndReturnDebugTraceRecording();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_start_stop_recording", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
+[PASS] test_start_stop_recording() ([GAS])
+Traces:
+  [476338] DebugTraceRecordingTest::test_start_stop_recording()
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});
