@@ -1,6 +1,7 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
+use foundry_cli::utils::Submodules;
 use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
@@ -1409,6 +1410,34 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
     let current: Version = tag.as_ref().trim_start_matches('v').trim().parse().unwrap();
 
     assert!(current >= version);
+});
+
+forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
+    cmd.git_init();
+
+    // Installs oz at release tag
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@v5.1.0"])
+        .assert_success();
+
+    // Install solady pinned to rev i.e https://github.com/Vectorized/solady/commit/513f581675374706dbe947284d6b12d19ce35a2a
+    cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
+
+    let out =
+        Command::new("git").current_dir(prj.root()).args(["submodule", "status"]).output().unwrap();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_init: Submodules = status.parse().unwrap();
+
+    cmd.forge_fuse().arg("update").assert_success();
+
+    let out =
+        Command::new("git").current_dir(prj.root()).args(["submodule", "status"]).output().unwrap();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_update: Submodules = status.parse().unwrap();
+
+    assert_eq!(submodules_init, submodules_update);
 });
 
 // Tests that forge update doesn't break a working dependency by recursively updating nested

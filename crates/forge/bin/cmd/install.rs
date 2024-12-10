@@ -205,6 +205,7 @@ impl DependencyInstallOpts {
                     // write .submodules-info.json
                     if !submodule_info.is_empty() {
                         fs::write_json_file(&submodule_info_path, &submodule_info)?;
+                        git.root(&config.root).add(Some("submodules-info.json"))?;
                     }
                     git.commit(&msg)?;
                 }

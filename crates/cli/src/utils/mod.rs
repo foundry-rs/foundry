@@ -623,7 +623,7 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
 }
 
 /// Deserialized `git submodule status lib/dep` output.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Submodule {
     /// Current commit hash the submodule is checked out at.
     rev: String,
@@ -698,6 +698,7 @@ impl FromStr for Submodule {
 }
 
 /// Deserialized `git submodule status` output.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Submodules(pub Vec<Submodule>);
 
 impl FromStr for Submodules {
