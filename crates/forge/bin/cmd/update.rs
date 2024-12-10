@@ -9,6 +9,8 @@ use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use std::{collections::hash_map::Entry, path::PathBuf};
 
+use super::install::FORGE_SUBMODULES_INFO;
+
 /// CLI arguments for `forge update`.
 #[derive(Clone, Debug, Parser)]
 pub struct UpdateArgs {
@@ -37,7 +39,7 @@ impl UpdateArgs {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths) = dependencies_paths(&self.dependencies, &config)?;
         let mut submodule_infos: HashMap<PathBuf, TagType> =
-            fs::read_json_file(&root.join("submodules-info.json")).unwrap_or_default();
+            fs::read_json_file(&root.join(FORGE_SUBMODULES_INFO)).unwrap_or_default();
 
         let prev_len = submodule_infos.len();
 
@@ -74,7 +76,7 @@ impl UpdateArgs {
         }
 
         if prev_len < submodule_infos.len() {
-            fs::write_json_file(&root.join("submodules-info.json"), &submodule_infos)?;
+            fs::write_json_file(&root.join(FORGE_SUBMODULES_INFO), &submodule_infos)?;
         }
 
         Ok(())

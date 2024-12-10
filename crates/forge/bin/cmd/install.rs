@@ -20,6 +20,8 @@ use yansi::Paint;
 static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
 
+pub const FORGE_SUBMODULES_INFO: &str = "forge-submodules-info.json";
+
 /// CLI arguments for `forge install`.
 #[derive(Clone, Debug, Parser)]
 #[command(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
@@ -116,7 +118,7 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
-        let submodule_info_path = config.root.join("submodules-info.json");
+        let submodule_info_path = config.root.join(FORGE_SUBMODULES_INFO);
         let mut submodule_info: HashMap<PathBuf, TagType> =
             fs::read_json_file(&submodule_info_path).unwrap_or_default();
 
@@ -168,20 +170,28 @@ impl DependencyInstallOpts {
                 installed_tag = installer.install_as_submodule(&dep, &path)?;
 
                 // Pin branch to submodule if branch is used
-                if let Some(branch) = &installed_tag {
+                if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    if git.has_branch(branch, &path)? {
+                    if git.has_branch(tag_or_branch, &path)? {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
-                            .args(["submodule", "set-branch", "-b", branch])
+                            .args(["submodule", "set-branch", "-b", tag_or_branch])
                             .arg(rel_path)
                             .exec()?;
                     }
 
+                    tag_type = TagType::resolve_type(&git, &path, tag_or_branch).ok();
+                    if let Some(tag_type) = &tag_type {
+                        submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
+                    }
                     // update .gitmodules which is at the root of the repo,
                     // not necessarily at the root of the current Foundry project
                     let root = Git::root_of(git.root)?;
                     git.root(&root).add(Some(".gitmodules"))?;
+                }
+
+                if !submodule_info.is_empty() {
+                    fs::write_json_file(&submodule_info_path, &submodule_info)?;
                 }
 
                 // commit the installation
@@ -190,10 +200,7 @@ impl DependencyInstallOpts {
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
                     if let Some(tag) = &installed_tag {
-                        tag_type = TagType::resolve_type(&git, &path, tag).ok();
-
                         if let Some(tag_type) = &tag_type {
-                            submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
                             msg.push_str("\n\n");
                             msg.push_str(tag_type.to_string().as_str());
                         } else {
@@ -202,10 +209,8 @@ impl DependencyInstallOpts {
                         }
                     }
 
-                    // write .submodules-info.json
                     if !submodule_info.is_empty() {
-                        fs::write_json_file(&submodule_info_path, &submodule_info)?;
-                        git.root(&config.root).add(Some("submodules-info.json"))?;
+                        git.root(&config.root).add(Some(FORGE_SUBMODULES_INFO))?;
                     }
                     git.commit(&msg)?;
                 }
