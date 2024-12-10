@@ -70,7 +70,7 @@ impl UpdateArgs {
             git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
         }
 
-        let mut overriden = false;
+        let mut overridden = false;
         // update the submodules' tags if any overrides are present
         for (dep_path, override_tag) in &dep_overrides {
             let rel_path = dep_path
@@ -78,7 +78,7 @@ impl UpdateArgs {
                 .wrap_err("Dependency path is not relative to the repository root")?;
             if let Ok(tag_type) = TagType::resolve_type(&git, dep_path, override_tag) {
                 submodule_infos.insert(rel_path.to_path_buf(), tag_type);
-                overriden = true;
+                overridden = true;
             } else {
                 sh_warn!(
                     "Could not override submodule at {} with tag {}",
@@ -92,7 +92,7 @@ impl UpdateArgs {
             git.checkout_at(tag.raw_string(), &root.join(path))?;
         }
 
-        if prev_len < submodule_infos.len() || overriden {
+        if prev_len < submodule_infos.len() || overridden {
             fs::write_json_file(&root.join(FORGE_SUBMODULES_INFO), &submodule_infos)?;
         }
 
@@ -100,8 +100,8 @@ impl UpdateArgs {
     }
 }
 
-/// Returns `(root, paths, overriden_deps_with_abosolute_paths)` where `root` is the root of the Git
-/// repository and `paths` are the relative paths of the dependencies.
+/// Returns `(root, paths, overridden_deps_with_abosolute_paths)` where `root` is the root of the
+/// Git repository and `paths` are the relative paths of the dependencies.
 #[allow(clippy::type_complexity)]
 pub fn dependencies_paths(
     deps: &[Dependency],
