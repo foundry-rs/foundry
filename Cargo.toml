@@ -169,7 +169,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.9.0", default-features = false }
-foundry-compilers = { version = "0.12.5", default-features = false }
+foundry-compilers = { version = "0.12.7", default-features = false }
 foundry-fork-db = "0.8.0"
 solang-parser = "=0.3.3"
 solar-ast = { version = "=0.1.0", default-features = false }
@@ -240,7 +240,7 @@ quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
 derive_more = { version = "1.0", features = ["full"] }
-thiserror = "1"
+thiserror = "2"
 
 # bench
 divan = "0.1"

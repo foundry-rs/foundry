@@ -68,3 +68,4 @@ toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
+serde.workspace = true

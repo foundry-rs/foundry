@@ -754,16 +754,23 @@ where {
             if ecx.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let handler_result = expect::handle_expect_revert(
                     false,
                     true,
-                    &expected_revert,
+                    &mut expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
-                ) {
+                );
+
+                return match handler_result {
                     Ok((address, retdata)) => {
+                        expected_revert.actual_count += 1;
+                        if expected_revert.actual_count < expected_revert.count {
+                            self.expected_revert = Some(expected_revert.clone());
+                        }
+
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
@@ -1302,6 +1309,14 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 expected_revert.reverted_by.is_none()
             {
                 expected_revert.reverted_by = Some(call.target_address);
+            } else if outcome.result.is_revert() &&
+                expected_revert.reverter.is_some() &&
+                expected_revert.reverted_by.is_some() &&
+                expected_revert.count > 1
+            {
+                // If we're expecting more than one revert, we need to reset the reverted_by address
+                // to latest reverter.
+                expected_revert.reverted_by = Some(call.target_address);
             }
 
             if ecx.journaled_state.depth() <= expected_revert.depth {
@@ -1315,15 +1330,20 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 };
 
                 if needs_processing {
-                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                    return match expect::handle_expect_revert(
+                    // Only `remove` the expected revert from state if `expected_revert.count` ==
+                    // `expected_revert.actual_count`
+                    let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+
+                    let handler_result = expect::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        &expected_revert,
+                        &mut expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
-                    ) {
+                    );
+
+                    return match handler_result {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;
@@ -1331,6 +1351,10 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             outcome
                         }
                         Ok((_, retdata)) => {
+                            expected_revert.actual_count += 1;
+                            if expected_revert.actual_count < expected_revert.count {
+                                self.expected_revert = Some(expected_revert.clone());
+                            }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
                             outcome
