@@ -752,6 +752,8 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
+    /// Addresses of external libraries deployed during setup.
+    pub deployed_libs: Vec<Address>,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,
