@@ -1,6 +1,8 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, Signature, B256};
+#[allow(deprecated)]
+use alloy_primitives::Signature;
+use alloy_primitives::{hex, Address, B256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_signer_local::{
@@ -142,6 +144,7 @@ pub enum WalletSubcommands {
         message: String,
 
         /// The signature to verify.
+        #[allow(deprecated)]
         signature: Signature,
 
         /// The address of the message signer.
@@ -533,6 +536,7 @@ flag to set your key via:
     }
 
     /// Recovers an address from the specified message and signature
+    #[allow(deprecated)]
     fn recover_address_from_message(message: &str, signature: &Signature) -> Result<Address> {
         Ok(signature.recover_address_from_msg(message)?)
     }
