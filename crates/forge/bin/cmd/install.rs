@@ -190,11 +190,11 @@ impl DependencyInstallOpts {
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
                     if let Some(tag) = &installed_tag {
-                        tag_type = TagType::resolve_type(&git, &path, &tag).ok();
-                        submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
+                        tag_type = TagType::resolve_type(&git, &path, tag).ok();
 
-                        if let Some(tag_type) = tag_type {
-                            msg.push("\n\n");
+                        if let Some(tag_type) = &tag_type {
+                            submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
+                            msg.push_str("\n\n");
                             msg.push_str(tag_type.to_string().as_str());
                         } else {
                             msg.push_str("\n\n");
