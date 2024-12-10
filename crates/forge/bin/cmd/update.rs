@@ -81,7 +81,7 @@ impl UpdateArgs {
                 overridden = true;
             } else {
                 sh_warn!(
-                    "Could not override submodule at {} with tag {}",
+                    "Could not override submodule at {} with tag {}, try using forge install",
                     rel_path.display(),
                     override_tag
                 )?;
