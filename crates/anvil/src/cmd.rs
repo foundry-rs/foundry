@@ -8,7 +8,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, B256, U256};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
-use clap::{ArgGroup, Parser};
+use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
@@ -30,7 +30,6 @@ use std::{
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
-#[command(group = ArgGroup::new("mnemonic_options").multiple(false))]
 pub struct NodeArgs {
     /// Port number to listen on.
     #[arg(long, short, default_value = "8545", value_name = "NUM")]
@@ -50,14 +49,14 @@ pub struct NodeArgs {
 
     /// BIP39 mnemonic phrase used for generating accounts.
     /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used.
-    #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"], group = "mnemonic_options")]
+    #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
     pub mnemonic: Option<String>,
 
     /// Automatically generates a BIP39 mnemonic phrase, and derives accounts from it.
     /// Cannot be used with other `mnemonic` options.
     /// You can specify the number of words you want in the mnemonic.
     /// [default: 12]
-    #[arg(long, default_missing_value = "12", num_args(0..=1), group = "mnemonic_options")]
+    #[arg(long, conflicts_with_all = &["mnemonic", "mnemonic_seed"], default_missing_value = "12", num_args(0..=1))]
     pub mnemonic_random: Option<usize>,
 
     /// Generates a BIP39 mnemonic phrase from a given seed
@@ -65,13 +64,13 @@ pub struct NodeArgs {
     ///
     /// CAREFUL: This is NOT SAFE and should only be used for testing.
     /// Never use the private keys generated in production.
-    #[arg(long = "mnemonic-seed-unsafe", group = "mnemonic_options")]
+    #[arg(long = "mnemonic-seed-unsafe", conflicts_with_all = &["mnemonic", "mnemonic_random"])]
     pub mnemonic_seed: Option<u64>,
 
     /// Sets the derivation path of the child key to be derived.
     ///
     /// [default: m/44'/60'/0'/0/]
-    #[arg(long, requires = "mnemonic_options")]
+    #[arg(long)]
     pub derivation_path: Option<String>,
 
     /// The EVM hardfork to use.
