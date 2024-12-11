@@ -40,8 +40,8 @@ impl UpdateArgs {
         // dep_overrides consists of absolute paths of dependencies and their tags
         let (root, paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
         // Mapping of relative path of lib to its tag type
-        // e.g "lib/forge-std" -> TagType::Tag("v0.1.0")
-        let mut submodule_infos: HashMap<PathBuf, TagType> =
+        // e.g "lib/forge-std" -> (TagType::Tag("v0.1.0"), overidden: false)
+        let mut submodule_infos: HashMap<PathBuf, (TagType, bool)> =
             fs::read_json_file(&root.join(FORGE_SUBMODULES_INFO)).unwrap_or_default();
 
         let prev_len = submodule_infos.len();
@@ -53,7 +53,7 @@ impl UpdateArgs {
             {
                 if let Entry::Vacant(entry) = submodule_infos.entry(submodule.path().to_path_buf())
                 {
-                    entry.insert(TagType::Tag(tag));
+                    entry.insert((TagType::Tag(tag), false));
                 }
             }
         }
@@ -70,7 +70,7 @@ impl UpdateArgs {
                     rel_path.display(),
                     override_tag
                 )?;
-                submodule_infos.insert(rel_path.to_path_buf(), tag_type);
+                submodule_infos.insert(rel_path.to_path_buf(), (tag_type, true));
                 overridden = true;
             } else {
                 sh_warn!(
@@ -107,7 +107,7 @@ impl UpdateArgs {
         }
 
         // checkout the submodules at the correct tags
-        for (path, tag) in &submodule_infos {
+        for (path, (tag, _)) in &submodule_infos {
             git.checkout_at(tag.raw_string(), &root.join(path))?;
         }
 
@@ -124,13 +124,15 @@ impl UpdateArgs {
         &self,
         paths: &[PathBuf],
         submodules: &Submodules,
-        submodule_infos: &HashMap<PathBuf, TagType>,
+        submodule_infos: &HashMap<PathBuf, (TagType, bool)>,
     ) -> Option<Vec<PathBuf>> {
         let paths_to_avoid = submodule_infos
             .iter()
-            .filter_map(|(path, tag_type)| {
+            .filter_map(|(path, (tag_type, overide))| {
                 if let TagType::Tag(_) | TagType::Rev(_) = tag_type {
-                    return Some(path.clone());
+                    if !overide {
+                        return Some(path.clone());
+                    }
                 }
                 None
             })

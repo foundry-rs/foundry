@@ -860,6 +860,13 @@ impl TestCommand {
         output.success();
     }
 
+    #[track_caller]
+    pub fn git_submodule_status(&self) -> Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("submodule").arg("status").current_dir(self.project.root());
+        cmd.output().unwrap()
+    }
+
     /// Runs `git add .` inside the project's dir
     #[track_caller]
     pub fn git_add(&self) {
