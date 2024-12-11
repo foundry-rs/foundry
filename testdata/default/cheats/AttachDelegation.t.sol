@@ -86,7 +86,7 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 200);
     }
 
-    function testAttachDelegationRevertInvalidSignature() public {
+    function testFailAttachDelegationRevertInvalidSignature() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         // change v from 1 to 0
         signedDelegation.v = (signedDelegation.v + 1) % 2;
@@ -98,7 +98,6 @@ contract AttachDelegationTest is DSTest {
 
         vm.broadcast(alice_pk);
         // empty revert because no bytecode was set to Alice's account
-        vm.expectRevert();
         SimpleDelegateContract(alice).execute(calls);
     }
 
@@ -109,7 +108,7 @@ contract AttachDelegationTest is DSTest {
         // send tx to increment alice's nonce
         token.mint(1, bob);
 
-        vm.expectRevert("vm.attachDelegation: invalid nonce");
+        vm._expectCheatcodeRevert("vm.attachDelegation: invalid nonce");
         vm.attachDelegation(signedDelegation);
     }
 

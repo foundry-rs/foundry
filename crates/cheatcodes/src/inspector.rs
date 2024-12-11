@@ -54,6 +54,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
+    cmp::max,
     collections::{BTreeMap, VecDeque},
     fs::File,
     io::BufReader,
@@ -1176,6 +1177,11 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         if self.gas_metering.paused {
             self.gas_metering.paused_frames.push(interpreter.gas);
         }
+
+        // `expectRevert`: track the max call depth during `expectRevert`
+        if let Some(ref mut expected) = self.expected_revert {
+            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
+        }
     }
 
     #[inline]
@@ -1302,21 +1308,17 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
         // Handle expected reverts.
         if let Some(expected_revert) = &mut self.expected_revert {
-            // Record current reverter address before processing the expect revert if call reverted,
-            // expect revert is set with expected reverter address and no actual reverter set yet.
-            if outcome.result.is_revert() &&
-                expected_revert.reverter.is_some() &&
-                expected_revert.reverted_by.is_none()
-            {
-                expected_revert.reverted_by = Some(call.target_address);
-            } else if outcome.result.is_revert() &&
-                expected_revert.reverter.is_some() &&
-                expected_revert.reverted_by.is_some() &&
-                expected_revert.count > 1
-            {
-                // If we're expecting more than one revert, we need to reset the reverted_by address
-                // to latest reverter.
-                expected_revert.reverted_by = Some(call.target_address);
+            // Record current reverter address and call scheme before processing the expect revert
+            // if call reverted.
+            if outcome.result.is_revert() {
+                // Record current reverter address if expect revert is set with expected reverter
+                // address and no actual reverter was set yet or if we're expecting more than one
+                // revert.
+                if expected_revert.reverter.is_some() &&
+                    (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                {
+                    expected_revert.reverted_by = Some(call.target_address);
+                }
             }
 
             if ecx.journaled_state.depth() <= expected_revert.depth {
