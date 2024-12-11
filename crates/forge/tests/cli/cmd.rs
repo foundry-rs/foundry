@@ -1,7 +1,8 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_cli::utils::Submodules;
+use alloy_primitives::map::HashMap;
+use foundry_cli::utils::{Submodules, TagType};
 use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
@@ -15,7 +16,7 @@ use foundry_test_utils::{
 use semver::Version;
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
@@ -1492,6 +1493,23 @@ forgetest!(should_not_update_tagged_deps, |prj, cmd| {
     let halmos_path = prj.paths().libraries[0].join("openzeppelin-contracts/lib/halmos-cheatcodes");
 
     assert!(!halmos_path.exists());
+});
+
+forgetest!(can_remove_dep_from_foundry_lock, |prj, cmd| {
+    cmd.git_init();
+
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@tag=v4.9.4"])
+        .assert_success();
+
+    cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
+
+    cmd.forge_fuse().args(["remove", "openzeppelin-contracts"]).assert_success();
+
+    let lock: HashMap<PathBuf, TagType> =
+        foundry_common::fs::read_json_file(&prj.root().join("foundry.lock")).unwrap();
+
+    assert!(!lock.contains_key(&PathBuf::from("lib/openzeppelin-contracts")));
 });
 
 // Tests that forge update doesn't break a working dependency by recursively updating nested

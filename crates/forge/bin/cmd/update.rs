@@ -9,7 +9,7 @@ use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use std::{collections::hash_map::Entry, path::PathBuf};
 
-use super::install::FORGE_SUBMODULES_INFO;
+use super::install::FOUNDRY_LOCK;
 
 /// CLI arguments for `forge update`.
 #[derive(Clone, Debug, Parser)]
@@ -42,7 +42,7 @@ impl UpdateArgs {
         // Mapping of relative path of lib to its tag type
         // e.g "lib/forge-std" -> (TagType::Tag("v0.1.0"), overidden: false)
         let mut submodule_infos: HashMap<PathBuf, (TagType, bool)> =
-            fs::read_json_file(&root.join(FORGE_SUBMODULES_INFO)).unwrap_or_default();
+            fs::read_json_file(&root.join(FOUNDRY_LOCK)).unwrap_or_default();
 
         let prev_len = submodule_infos.len();
 
@@ -65,11 +65,6 @@ impl UpdateArgs {
                 .strip_prefix(&root)
                 .wrap_err("Dependency path is not relative to the repository root")?;
             if let Ok(tag_type) = TagType::resolve_type(&git, dep_path, override_tag) {
-                sh_println!(
-                    "Overriding submodule at {} with tag {}",
-                    rel_path.display(),
-                    override_tag
-                )?;
                 submodule_infos.insert(rel_path.to_path_buf(), (tag_type, true));
                 overridden = true;
             } else {
@@ -93,7 +88,6 @@ impl UpdateArgs {
             }
         } else {
             let update_paths = self.update_paths(&paths, &submodules, &submodule_infos);
-            sh_println!("Updating submodules: {:?}", update_paths)?;
             if let Some(update_paths) = update_paths {
                 // update root submodules
                 git.submodule_update(self.force, true, false, false, update_paths)?;
@@ -112,7 +106,7 @@ impl UpdateArgs {
         }
 
         if prev_len < submodule_infos.len() || overridden {
-            fs::write_json_file(&root.join(FORGE_SUBMODULES_INFO), &submodule_infos)?;
+            fs::write_json_file(&root.join(FOUNDRY_LOCK), &submodule_infos)?;
         }
 
         Ok(())
@@ -137,8 +131,6 @@ impl UpdateArgs {
                 None
             })
             .collect::<Vec<_>>();
-
-        sh_println!("Paths to avoid: {:?}", paths_to_avoid).unwrap();
 
         match (paths.is_empty(), paths_to_avoid.is_empty()) {
             (true, true) => {
@@ -165,9 +157,7 @@ impl UpdateArgs {
             }
             (false, false) => {
                 // running `forge update <deps>`
-                Some(
-                    paths.iter().filter(|path| !paths_to_avoid.contains(path)).cloned().collect(),
-                )
+                Some(paths.iter().filter(|path| !paths_to_avoid.contains(path)).cloned().collect())
             }
         }
     }

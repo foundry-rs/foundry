@@ -860,6 +860,7 @@ impl TestCommand {
         output.success();
     }
 
+    /// Runs `git submodule status` inside the project's dir
     #[track_caller]
     pub fn git_submodule_status(&self) -> Output {
         let mut cmd = Command::new("git");

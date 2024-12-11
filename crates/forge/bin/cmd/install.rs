@@ -20,7 +20,7 @@ use yansi::Paint;
 static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
 
-pub const FORGE_SUBMODULES_INFO: &str = "forge-submodules-info.json";
+pub const FOUNDRY_LOCK: &str = "foundry.lock";
 
 /// CLI arguments for `forge install`.
 #[derive(Clone, Debug, Parser)]
@@ -118,7 +118,7 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
-        let submodule_info_path = config.root.join(FORGE_SUBMODULES_INFO);
+        let submodule_info_path = config.root.join(FOUNDRY_LOCK);
         let mut submodule_info: HashMap<PathBuf, TagType> =
             fs::read_json_file(&submodule_info_path).unwrap_or_default();
 
@@ -210,7 +210,7 @@ impl DependencyInstallOpts {
                     }
 
                     if !submodule_info.is_empty() {
-                        git.root(&config.root).add(Some(FORGE_SUBMODULES_INFO))?;
+                        git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
                     }
                     git.commit(&msg)?;
                 }
