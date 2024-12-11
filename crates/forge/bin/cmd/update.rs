@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{Git, LoadConfig, TagType},
+    utils::{Git, LoadConfig, Submodules, TagType},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -48,7 +48,7 @@ impl UpdateArgs {
 
         let git = Git::new(&root);
         let submodules = git.submodules()?;
-        for submodule in submodules {
+        for submodule in &submodules {
             if let Ok(Some(tag)) = git.tag_for_commit(submodule.rev(), &root.join(submodule.path()))
             {
                 if let Entry::Vacant(entry) = submodule_infos.entry(submodule.path().to_path_buf())
@@ -56,18 +56,6 @@ impl UpdateArgs {
                     entry.insert(TagType::Tag(tag));
                 }
             }
-        }
-        // fetch the latest changes for each submodule (recursively if flag is set)
-        let git = Git::new(&root);
-        if self.recursive {
-            // update submodules recursively
-            git.submodule_update(self.force, true, false, true, paths)?;
-        } else {
-            // update root submodules
-            git.submodule_update(self.force, true, false, false, paths)?;
-            // initialize submodules of each submodule recursively (otherwise direct submodule
-            // dependencies will revert to last commit)
-            git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
         }
 
         let mut overridden = false;
@@ -77,6 +65,11 @@ impl UpdateArgs {
                 .strip_prefix(&root)
                 .wrap_err("Dependency path is not relative to the repository root")?;
             if let Ok(tag_type) = TagType::resolve_type(&git, dep_path, override_tag) {
+                sh_println!(
+                    "Overriding submodule at {} with tag {}",
+                    rel_path.display(),
+                    override_tag
+                )?;
                 submodule_infos.insert(rel_path.to_path_buf(), tag_type);
                 overridden = true;
             } else {
@@ -88,6 +81,32 @@ impl UpdateArgs {
             }
         }
 
+        // fetch the latest changes for each submodule (recursively if flag is set)
+        let git = Git::new(&root);
+        if self.recursive {
+            // update submodules recursively
+            let update_paths = self.update_paths(&paths, &submodules, &submodule_infos);
+            if let Some(update_paths) = update_paths {
+                git.submodule_update(self.force, true, false, true, update_paths)?;
+            } else {
+                git.submodule_update(self.force, true, false, true, Vec::<PathBuf>::new())?;
+            }
+        } else {
+            let update_paths = self.update_paths(&paths, &submodules, &submodule_infos);
+            sh_println!("Updating submodules: {:?}", update_paths)?;
+            if let Some(update_paths) = update_paths {
+                // update root submodules
+                git.submodule_update(self.force, true, false, false, update_paths)?;
+            } else {
+                // update all submodules
+                git.submodule_update(self.force, true, false, false, Vec::<PathBuf>::new())?;
+                // initialize submodules of each submodule recursively (otherwise direct submodule
+                // dependencies will revert to last commit)
+                git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
+            }
+        }
+
+        // checkout the submodules at the correct tags
         for (path, tag) in &submodule_infos {
             git.checkout_at(tag.raw_string(), &root.join(path))?;
         }
@@ -97,6 +116,58 @@ impl UpdateArgs {
         }
 
         Ok(())
+    }
+
+    /// Gets the relatives paths to the submodules that need to be updated.
+    /// If None, it means all submodules need to be updated.
+    fn update_paths(
+        &self,
+        paths: &[PathBuf],
+        submodules: &Submodules,
+        submodule_infos: &HashMap<PathBuf, TagType>,
+    ) -> Option<Vec<PathBuf>> {
+        let paths_to_avoid = submodule_infos
+            .iter()
+            .filter_map(|(path, tag_type)| {
+                if let TagType::Tag(_) | TagType::Rev(_) = tag_type {
+                    return Some(path.clone());
+                }
+                None
+            })
+            .collect::<Vec<_>>();
+
+        sh_println!("Paths to avoid: {:?}", paths_to_avoid).unwrap();
+
+        match (paths.is_empty(), paths_to_avoid.is_empty()) {
+            (true, true) => {
+                // running `forge update`
+                return None;
+            }
+            (true, false) => {
+                // running `forge update`
+                return Some(
+                    submodules
+                        .into_iter()
+                        .filter_map(|s| {
+                            if !paths_to_avoid.contains(s.path()) {
+                                return Some(s.path().to_path_buf());
+                            }
+                            None
+                        })
+                        .collect(),
+                )
+            }
+            (false, true) => {
+                // running `forge update <deps>`
+                return Some(paths.to_vec());
+            }
+            (false, false) => {
+                // running `forge update <deps>`
+                return Some(
+                    paths.iter().filter(|path| !paths_to_avoid.contains(path)).cloned().collect(),
+                );
+            }
+        }
     }
 }
 

@@ -1471,6 +1471,36 @@ forgetest!(can_override_tag_in_update, |prj, cmd| {
     assert_eq!(submodules_init.0[1], submodules_update.0[1]);
 });
 
+// Ref: https://github.com/foundry-rs/foundry/pull/9522#pullrequestreview-2494431518
+forgetest!(should_not_update_tagged_deps, |prj, cmd| {
+    cmd.git_init();
+
+    // Installs oz at release tag
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@tag=v4.9.4"])
+        .assert_success();
+
+    let out =
+        Command::new("git").current_dir(prj.root()).args(["submodule", "status"]).output().unwrap();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_init: Submodules = status.parse().unwrap();
+
+    cmd.forge_fuse().arg("update").assert_success();
+
+    let out =
+        Command::new("git").current_dir(prj.root()).args(["submodule", "status"]).output().unwrap();
+    let status = String::from_utf8_lossy(&out.stdout);
+    let submodules_update: Submodules = status.parse().unwrap();
+
+    assert_eq!(submodules_init, submodules_update);
+
+    // Check that halmos-cheatcodes dep is not added to oz deps
+    let halmos_path = prj.paths().libraries[0].join("openzeppelin-contracts/lib/halmos-cheatcodes");
+
+    assert!(!halmos_path.exists());
+});
+
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(

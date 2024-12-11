@@ -718,14 +718,14 @@ impl FromStr for Submodules {
     }
 }
 
-impl Iterator for Submodules {
-    type Item = Submodule;
+impl<'a> IntoIterator for &'a Submodules {
+    type Item = &'a Submodule;
+    type IntoIter = std::slice::Iter<'a, Submodule>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.pop()
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
