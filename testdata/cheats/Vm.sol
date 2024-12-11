@@ -242,6 +242,10 @@ interface Vm {
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
     function expectEmit() external;
     function expectEmit(address emitter) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, uint64 count) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count) external;
+    function expectEmit(uint64 count) external;
+    function expectEmit(address emitter, uint64 count) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
     function expectRevert() external;

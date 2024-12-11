@@ -12,7 +12,7 @@ use crate::{
     test::{
         assume::AssumeNoRevert,
         expect::{
-            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
+            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmitTracker,
             ExpectedRevert, ExpectedRevertKind,
         },
     },
@@ -428,7 +428,7 @@ pub struct Cheatcodes {
     /// Expected calls
     pub expected_calls: ExpectedCallTracker,
     /// Expected emits
-    pub expected_emits: VecDeque<ExpectedEmit>,
+    pub expected_emits: ExpectedEmitTracker,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
     pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
@@ -1442,21 +1442,63 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         let should_check_emits = self
             .expected_emits
             .iter()
-            .any(|expected| expected.depth == ecx.journaled_state.depth()) &&
+            .any(|(expected, _)| expected.depth == ecx.journaled_state.depth()) &&
             // Ignore staticcalls
             !call.is_static;
         if should_check_emits {
+            let expected_counts = self
+                .expected_emits
+                .iter()
+                .filter_map(|(expected, count_map)| {
+                    let count = match expected.address {
+                        Some(emitter) => match count_map.get(&emitter) {
+                            Some(log_count) => expected
+                                .log
+                                .as_ref()
+                                .map(|l| log_count.count(l))
+                                .unwrap_or_else(|| log_count.count_unchecked()),
+                            None => 0,
+                        },
+                        None => match &expected.log {
+                            Some(log) => count_map.values().map(|logs| logs.count(log)).sum(),
+                            None => count_map.values().map(|logs| logs.count_unchecked()).sum(),
+                        },
+                    };
+
+                    if count != expected.count {
+                        Some((expected, count))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
             // Not all emits were matched.
-            if self.expected_emits.iter().any(|expected| !expected.found) {
+            if self.expected_emits.iter().any(|(expected, _)| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
                 return outcome;
-            } else {
-                // All emits were found, we're good.
-                // Clear the queue, as we expect the user to declare more events for the next call
-                // if they wanna match further events.
-                self.expected_emits.clear()
             }
+
+            if !expected_counts.is_empty() {
+                let msg = if outcome.result.is_ok() {
+                    let (expected, count) = expected_counts.first().unwrap();
+                    format!("log emitted {count} times, expected {}", expected.count)
+                } else {
+                    "expected an emit, but the call reverted instead. \
+                     ensure you're testing the happy path when using `expectEmit`"
+                        .to_string()
+                };
+
+                outcome.result.result = InstructionResult::Revert;
+                outcome.result.output = Error::encode(msg);
+                return outcome;
+            }
+
+            // All emits were found, we're good.
+            // Clear the queue, as we expect the user to declare more events for the next call
+            // if they wanna match further events.
+            self.expected_emits.clear()
         }
 
         // this will ensure we don't have false positives when trying to diagnose reverts in fork
@@ -1544,10 +1586,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                     }
                 }
             }
-
             // Check if we have any leftover expected emits
             // First, if any emits were found at the root call, then we its ok and we remove them.
-            self.expected_emits.retain(|expected| !expected.found);
+            self.expected_emits.retain(|(expected, _)| expected.count > 0 && !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
                 let msg = if outcome.result.is_ok() {
