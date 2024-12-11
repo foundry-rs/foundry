@@ -69,11 +69,16 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 _Note: In the above benchmarks, compilation was always skipped_
 
-**Compilation Benchmarks**
+**Compilation Benchmark**
 
-<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" width="693px" />
+Compilation benchmark of [vectorized/solady][solady]:
 
-| Cold | Light cache | Deep Cache | Full Cache |
+| Type        | Foundry `1.0` | Hardhat `2.22.17` | Speedup |
+| ----------- | ------------- | ----------------- | ------- |
+| Cold        | 0.58s         | 1.65s             | 2.8x    |
+| Light Cache | 0.38s         | 1.24s             | 3.3x    |
+| Deep Cache  | 0.57s         | 1.27s             | 2.2x    |
+| Full Cache  | 0.17s         | 0.35s             | 2.1x    |
 
 **Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
 
@@ -143,5 +148,6 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
 [morpho-blue]: https://github.com/morpho-org/morpho-blue
 [uniswap-v4]: https://github.com/Uniswap/v4-core.git
+[openzeppelin-contracts]: https://github.com/OpenZeppelin/openzeppelin-contracts
 [foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
 [foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
