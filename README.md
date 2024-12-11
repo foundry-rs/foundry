@@ -1,6 +1,6 @@
-<img src=".github/logo.png" alt="Foundry logo" align="right" width="120" />
-
-## Foundry
+<div align="center">
+  <h1>Foundry</h1>
+  <img src=".github/banner.png" alt="Foundry banner" height="400px" />
 
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 ![Foundry](https://img.shields.io/badge/Foundry-grey?style=flat&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAElElEQVR4nH1VUUhUaRg9984YdzBpkqR0Z210rIESIXSabEbcHgydrpNRRj00kWaztj0U1MOW0MOIbD300IvLMqBpMTGYxdoqyoRNDUESBDWwUuPugCSSsTM7u0Oj1/+efdiMcmnP2/fDd77D4f/OB6xCa2urQZbllVICYGtqanK1tLS4AdgAyAAgyzJaW1sNq/ulT4twOGw4fPiwAGDp7Ow8VV1d7bVarRWxWCw/k8mgsbExm0wmZ+Lx+M/Xr1//CcAsSVmSJH01McLhsAEAnE5nx+Tk5B/xeJxOp5N9fX2sqqqixWLhnTt36HA4GIvFGI1GU3V1df5Pe/9D1t7eHkgkEuzo6GBPT49WWloq7Ha7fujQITocDu7atUs3m83i6tWr2okTJ/jixQuePn265zPScDhskGUZe/fubXv8+DFv3rypbdiwQaxbt46RSIT79u3j0NAQb926RVVVOT4+TqvVyvz8fD0YDC5NTk6ysbHxlCRJ/5KSlAAURyKRTFNTkwAg7t69S5/Px76+Pq7GyMgI9+/fz9HRUQIQO3bsEKOjo38DsJCUJADw+/0BVVW7otHo8ps3b4yvXr3CxMQETCYTTCYTNE0DAOTl5SGXy0FRFOzZswdmsxkVFRXLNTU1xmg0+kNvb+/3AGAcGBiI7969Wwcg6urq+OTJE967d49btmzh9PT0R3WJRIKBQIDBYJBTU1NsaGggAGGz2fTe3t5fAeQZAWwuLi4uP3nypOT1emEwGFBeXo7a2losLCygoaEB/f39MJlMCIVCkCQJBw8ehNVqhcfjQXNzs1RSUiKtX7++DEAZqqqq3KFQiABYUFDAM2fOkCQXFxdJkvfv32dhYSG9Xi+vXbvG2dnZj4oDgQCLioqoKAqHhobodDq/Mc7NzUklJSUIBoOw2WzYtm0blpeXsWbNGkxMTODp06doa2vD4OAgNm7cCIvFApLQdR3nzp3Dzp078fLlSxQVFeHdu3cAgIpHjx69/zBUX5k+MDBAt9vNY8eOsbu7m6lUigcOHKDL5WImkyHJz9TGYrEcALsMIPn69esZTdMIgM+ePUNXVxdu376NsrIyuN1uXLp0CWazGcPDw3C5XFBVFWfPnkVNTQ18Pp+ezWY5MzPzO4DfAABHjhzpJslUKqVdvHiR4+PjbG9vZy6XI0kuLS0xmUxSCEGS9Pv9LC0tpdFoZGVlpSaEoM/nuwIAKx/7q5GRkb9CoZBQVVWcP3+ez58/J0mm02kODg7ywoULjMViTKfTtNvtXLt2LTdt2qTncrnlsbGxLICvSUqfrl5HJBLh1NTUkhBCJ8mFhQX29/dTVVUWFBTwwYMH1HWdly9fpqIoeiKRWJqfn2d1dXWnLMuf7zMAHD16tGd+fn7FZy2bzYrKykodAAFQVVV9cXFRkNTevn3Lubk5trS0XPnfxHE4HN8ODw+nV/yanp6mx+Ohx+P5aIMQgmNjY3/W1tZ+t5rsSwG7+fjx4/76+vrm7du32woLC00AkE6n38fj8ZmHDx/+cuPGjR8BJL8YsCtYdQIMALYqilKvKEo9APuHty+egH8A3GfFDJXmxmMAAAAASUVORK5CYII%3D&link=https%3A%2F%2Fbook.getfoundry.sh%2F)
@@ -16,14 +16,18 @@
 | [Developer Docs](./docs/dev/)
 | [Crate Docs](https://foundry-rs.github.io/foundry)
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+</div>
+
+---
+
+### Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.
 
 Foundry consists of:
 
-- [**Forge**](./crates/forge): Ethereum testing framework (like Hardhat and Ape).
-- [**Cast**](./crates/cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- [**Anvil**](./crates/anvil): Local Ethereum node, akin to Hardhat Network, Tenderly.
-- [**Chisel**](./crates/chisel): Fast, utilitarian, and verbose solidity REPL.
+- [**Forge**](#forge): Ethereum testing framework (like Hardhat and Ape).
+- [**Cast**](#cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- [**Anvil**](#anvil): Local Ethereum node, akin to Hardhat Network, Tenderly.
+- [**Chisel**](#chisel): Fast, utilitarian, and verbose solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book]!**
 
@@ -57,40 +61,51 @@ Forge is quite fast at both compiling (leveraging `solc` with [foundry-compilers
 
 See the benchmarks below. More benchmarks can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
 
-**Testing Benchmarks**
+### Testing Benchmarks
 
-| Project                                                                | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup |
-| ---------------------------------------------------------------------- | ------------------------ | ------------------------ | --------- | ------- |
-| [vectorized/solady][solady]                                            | 0.9s                     | 2.3s                     | -         | 2.6x    |
-| [morpho-org/morpho-blue][morpho-blue] (invariant: `1 run @ 256 depth`) | 0.7s                     | 1m43s                    | -         | 147.1x  |
-| [morpho-org/morpho-blue-oracles][morpho-blue] (integration)            | 45.9s                    | 47.9s                    | -         | 1.04x   |
-| [transmissions11/solmate][solmate]                                     | 2.7s                     | 2.8s                     | 6m34s     | 140.0x  |
-| [reflexer-labs/geb][geb]                                               | 0.2s                     | 0.4s                     | 23s       | 57.5x   |
+| Project                                                     | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup |
+| ----------------------------------------------------------- | ------------------------ | ------------------------ | --------- | ------- |
+| [vectorized/solady][solady]                                 | 0.9s                     | 2.3s                     | -         | 2.6x    |
+| [morpho-org/morpho-blue][morpho-blue] (invariant)           | 0.7s                     | 1m43s                    | -         | 147.1x  |
+| [morpho-org/morpho-blue-oracles][morpho-blue] (integration) | 45.9s                    | 47.9s                    | -         | 1.04x   |
+| [transmissions11/solmate][solmate]                          | 2.7s                     | 2.8s                     | 6m34s     | 140.0x  |
+| [reflexer-labs/geb][geb]                                    | 0.2s                     | 0.4s                     | 23s       | 57.5x   |
 
-_Note: In the above benchmarks, compilation was always skipped_
+_Notes_:
 
-**Compilation Benchmark**
+- _In the above benchmarks, compilation was always skipped_
+- _Invariant tests were ran once at 256 depth_
+
+### Compilation Benchmark
 
 Compilation benchmark of [vectorized/solady][solady]:
 
-| Type        | Foundry `1.0` | Hardhat `2.22.17` | Speedup |
-| ----------- | ------------- | ----------------- | ------- |
-| Cold        | 0.58s         | 1.65s             | 2.8x    |
-| Light Cache | 0.38s         | 1.24s             | 3.3x    |
-| Deep Cache  | 0.57s         | 1.27s             | 2.2x    |
-| Full Cache  | 0.17s         | 0.35s             | 2.1x    |
+| Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
+| ----------- | ----------- | --------------- | ------- |
+| Cold        | 0.58s       | 1.65s           | 2.8x    |
+| Light Cache | 0.38s       | 1.24s           | 3.3x    |
+| Deep Cache  | 0.57s       | 1.27s           | 2.2x    |
+| Full Cache  | 0.17s       | 0.35s           | 2.1x    |
 
-**Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
+Takeaway: Forge compilation is consistently faster than Hardhat by a factor of **2.1-3.3x**, depending on the amount of caching involved.
+
+More documentation can be found in the [forge crate](./crates/forge/README.md).
 
 ## Cast
 
 Cast is a swiss army knife for interacting with Ethereum applications from the command line.
 
-More documentation can be found in the [cast package](./crates/cast).
+More documentation can be found in the [cast crate](./crates/cast/README.md).
+
+## Anvil
+
+More documentation can be found in the [anvil crate](./crates/anvil/README.md).
+
+## Chisel
+
+More documentation can be found in the [chisel crate](./crates/chisel/README.md).
 
 ## Configuration
-
-### Using `foundry.toml`
 
 Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./crates/config) in the root of your project, or any other parent directory. See [config package](./crates/config/README.md#all-options) for all available options.
 
@@ -147,7 +162,5 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [vscode-setup]: https://book.getfoundry.sh/config/vscode.html
 [shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
 [morpho-blue]: https://github.com/morpho-org/morpho-blue
-[uniswap-v4]: https://github.com/Uniswap/v4-core.git
-[openzeppelin-contracts]: https://github.com/OpenZeppelin/openzeppelin-contracts
 [foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
 [foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
