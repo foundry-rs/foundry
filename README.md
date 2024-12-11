@@ -1,6 +1,9 @@
 <div align="center">
   <h1>Foundry</h1>
+  
   <img src=".github/banner.png" alt="Foundry banner" height="400px" />
+
+&nbsp;
 
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 ![Foundry](https://img.shields.io/badge/Foundry-grey?style=flat&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAElElEQVR4nH1VUUhUaRg9984YdzBpkqR0Z210rIESIXSabEbcHgydrpNRRj00kWaztj0U1MOW0MOIbD300IvLMqBpMTGYxdoqyoRNDUESBDWwUuPugCSSsTM7u0Oj1/+efdiMcmnP2/fDd77D4f/OB6xCa2urQZbllVICYGtqanK1tLS4AdgAyAAgyzJaW1sNq/ulT4twOGw4fPiwAGDp7Ow8VV1d7bVarRWxWCw/k8mgsbExm0wmZ+Lx+M/Xr1//CcAsSVmSJH01McLhsAEAnE5nx+Tk5B/xeJxOp5N9fX2sqqqixWLhnTt36HA4GIvFGI1GU3V1df5Pe/9D1t7eHkgkEuzo6GBPT49WWloq7Ha7fujQITocDu7atUs3m83i6tWr2okTJ/jixQuePn265zPScDhskGUZe/fubXv8+DFv3rypbdiwQaxbt46RSIT79u3j0NAQb926RVVVOT4+TqvVyvz8fD0YDC5NTk6ysbHxlCRJ/5KSlAAURyKRTFNTkwAg7t69S5/Px76+Pq7GyMgI9+/fz9HRUQIQO3bsEKOjo38DsJCUJADw+/0BVVW7otHo8ps3b4yvXr3CxMQETCYTTCYTNE0DAOTl5SGXy0FRFOzZswdmsxkVFRXLNTU1xmg0+kNvb+/3AGAcGBiI7969Wwcg6urq+OTJE967d49btmzh9PT0R3WJRIKBQIDBYJBTU1NsaGggAGGz2fTe3t5fAeQZAWwuLi4uP3nypOT1emEwGFBeXo7a2losLCygoaEB/f39MJlMCIVCkCQJBw8ehNVqhcfjQXNzs1RSUiKtX7++DEAZqqqq3KFQiABYUFDAM2fOkCQXFxdJkvfv32dhYSG9Xi+vXbvG2dnZj4oDgQCLioqoKAqHhobodDq/Mc7NzUklJSUIBoOw2WzYtm0blpeXsWbNGkxMTODp06doa2vD4OAgNm7cCIvFApLQdR3nzp3Dzp078fLlSxQVFeHdu3cAgIpHjx69/zBUX5k+MDBAt9vNY8eOsbu7m6lUigcOHKDL5WImkyHJz9TGYrEcALsMIPn69esZTdMIgM+ePUNXVxdu376NsrIyuN1uXLp0CWazGcPDw3C5XFBVFWfPnkVNTQ18Pp+ezWY5MzPzO4DfAABHjhzpJslUKqVdvHiR4+PjbG9vZy6XI0kuLS0xmUxSCEGS9Pv9LC0tpdFoZGVlpSaEoM/nuwIAKx/7q5GRkb9CoZBQVVWcP3+ez58/J0mm02kODg7ywoULjMViTKfTtNvtXLt2LTdt2qTncrnlsbGxLICvSUqfrl5HJBLh1NTUkhBCJ8mFhQX29/dTVVUWFBTwwYMH1HWdly9fpqIoeiKRWJqfn2d1dXWnLMuf7zMAHD16tGd+fn7FZy2bzYrKykodAAFQVVV9cXFRkNTevn3Lubk5trS0XPnfxHE4HN8ODw+nV/yanp6mx+Ohx+P5aIMQgmNjY3/W1tZ+t5rsSwG7+fjx4/76+vrm7du32woLC00AkE6n38fj8ZmHDx/+cuPGjR8BJL8YsCtYdQIMALYqilKvKEo9APuHty+egH8A3GfFDJXmxmMAAAAASUVORK5CYII%3D&link=https%3A%2F%2Fbook.getfoundry.sh%2F)
@@ -31,6 +34,8 @@ Foundry consists of:
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book]!**
 
+## How Fast?!
+
 ![Demo](.github/demo.gif)
 
 ## Installation
@@ -59,22 +64,24 @@ If you're experiencing any issues while installing, check out [Getting Help](#ge
 
 Forge is quite fast at both compiling (leveraging `solc` with [foundry-compilers]) and testing.
 
-See the benchmarks below. More benchmarks can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
+See the benchmarks below. Older benchmarks against [DappTools][dapptools] can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
 
 ### Testing Benchmarks
 
-| Project                                                     | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup |
-| ----------------------------------------------------------- | ------------------------ | ------------------------ | --------- | ------- |
-| [vectorized/solady][solady]                                 | 0.9s                     | 2.3s                     | -         | 2.6x    |
-| [morpho-org/morpho-blue][morpho-blue] (invariant)           | 0.7s                     | 1m43s                    | -         | 147.1x  |
-| [morpho-org/morpho-blue-oracles][morpho-blue] (integration) | 45.9s                    | 47.9s                    | -         | 1.04x   |
-| [transmissions11/solmate][solmate]                          | 2.7s                     | 2.8s                     | 6m34s     | 140.0x  |
-| [reflexer-labs/geb][geb]                                    | 0.2s                     | 0.4s                     | 23s       | 57.5x   |
+| Project                                                             | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup        |
+| ------------------------------------------------------------------- | ------------------------ | ------------------------ | --------- | -------------- |
+| [vectorized/solady][solady]                                         | 0.9s                     | 2.3s                     | -         | 2.6x           |
+| [morpho-org/morpho-blue][morpho-blue] (invariant)                   | 0.7s                     | 1m43s                    | -         | 147.1x         |
+| [morpho-org/morpho-blue-oracles][morpho-blue] (integration, cold)   | 6.1s                     | 6.3s                     | -         | 1.04x          |
+| [morpho-org/morpho-blue-oracles][morpho-blue] (integration, cached) | 0.6s                     | 0.9s                     | -         | 1.50x          |
+| [transmissions11/solmate][solmate]                                  | 2.7s                     | 2.8s                     | 6m34s     | 1.03x / 140.0x |
+| [reflexer-labs/geb][geb]                                            | 0.2s                     | 0.4s                     | 23s       | 2.0x / 57.5x   |
 
 _Notes_:
 
 - _In the above benchmarks, compilation was always skipped_
-- _Invariant tests were ran once at 256 depth_
+- _Invariant test was ran once at 256 depth_
+- _Integration test was ran using Alchemy Ethereum RPC_
 
 ### Compilation Benchmark
 
@@ -164,3 +171,4 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [morpho-blue]: https://github.com/morpho-org/morpho-blue
 [foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
 [foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
+[dapptools]: https://github.com/dapphub/dapptools
