@@ -40,7 +40,7 @@ impl UpdateArgs {
         // dep_overrides consists of absolute paths of dependencies and their tags
         let (root, paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
         // Mapping of relative path of lib to its tag type
-        // e.g "lib/forge-std" -> (TagType::Tag("v0.1.0"), overidden: false)
+        // e.g "lib/forge-std" -> (TagType::Tag("v0.1.0"), overridden: false)
         let mut submodule_infos: HashMap<PathBuf, (TagType, bool)> =
             fs::read_json_file(&root.join(FOUNDRY_LOCK)).unwrap_or_default();
 
@@ -122,9 +122,9 @@ impl UpdateArgs {
     ) -> Option<Vec<PathBuf>> {
         let paths_to_avoid = submodule_infos
             .iter()
-            .filter_map(|(path, (tag_type, overide))| {
+            .filter_map(|(path, (tag_type, maybe_override))| {
                 if let TagType::Tag(_) | TagType::Rev(_) = tag_type {
-                    if !overide {
+                    if !maybe_override {
                         return Some(path.clone());
                     }
                 }
