@@ -709,6 +709,12 @@ impl FromStr for Submodule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Submodules(pub Vec<Submodule>);
 
+impl Submodules {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 impl FromStr for Submodules {
     type Err = eyre::Report;
 

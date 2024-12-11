@@ -131,6 +131,18 @@ impl DependencyInstallOpts {
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
+
+                    // Resync submodules and foundry.lock
+                    let submodules = git.submodules()?;
+                    if submodule_info.len() != submodules.len() {
+                        for sub in &submodules {
+                            let path = config.root.join(sub.path());
+                            let tag_type = TagType::resolve_type(&git, &path, sub.rev())?;
+                            submodule_info.insert(path, tag_type);
+                        }
+                        fs::write_json_file(&config.root.join(FOUNDRY_LOCK), &submodule_info)?;
+                        sh_println!("foundry.lock written - commit this file")?;
+                    }
                 }
 
                 Err(err) => {
