@@ -1412,7 +1412,7 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
     assert!(current >= version);
 });
 
-forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
+forgetest!(can_update_and_retain_tag_revs, |_prj, cmd| {
     cmd.git_init();
 
     // Installs oz at release tag

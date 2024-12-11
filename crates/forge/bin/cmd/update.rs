@@ -143,11 +143,11 @@ impl UpdateArgs {
         match (paths.is_empty(), paths_to_avoid.is_empty()) {
             (true, true) => {
                 // running `forge update`
-                return None;
+                None
             }
             (true, false) => {
                 // running `forge update`
-                return Some(
+                Some(
                     submodules
                         .into_iter()
                         .filter_map(|s| {
@@ -161,13 +161,13 @@ impl UpdateArgs {
             }
             (false, true) => {
                 // running `forge update <deps>`
-                return Some(paths.to_vec());
+                Some(paths.to_vec())
             }
             (false, false) => {
                 // running `forge update <deps>`
-                return Some(
+                Some(
                     paths.iter().filter(|path| !paths_to_avoid.contains(path)).cloned().collect(),
-                );
+                )
             }
         }
     }
