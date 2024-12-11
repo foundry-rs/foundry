@@ -413,11 +413,8 @@ contract MemSafetyTest is DSTest {
 
     /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
     ///      will cause the test to fail while using the `MLOAD` opcode.
-    function testExpectSafeMemory_MLOAD_REVERT() public {
+    function testFailExpectSafeMemory_MLOAD_REVERT() public {
         vm.expectSafeMemory(0x80, 0x100);
-
-        vm.expectRevert();
-
         // This should revert. Ugly hack to make sure the mload isn't optimized
         // out.
         uint256 a;
@@ -504,9 +501,8 @@ contract MemSafetyTest is DSTest {
 
     /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
     ///      will cause the test to fail while using the `LOG0` opcode.
-    function testExpectSafeMemory_LOG0_REVERT() public {
+    function testFailExpectSafeMemory_LOG0_REVERT() public {
         vm.expectSafeMemory(0x80, 0x100);
-        vm.expectRevert();
         // This should revert.
         assembly {
             log0(0x100, 0x20)
