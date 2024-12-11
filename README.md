@@ -61,13 +61,10 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 | Project                                                                | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup |
 | ---------------------------------------------------------------------- | ------------------------ | ------------------------ | --------- | ------- |
-| [vectorized/solady][solady]                                            | 0.9s                     | 2.3s                     | -         | 2.56x   |
-| [morpho-org/morpho-blue][morpho-blue] (unit)                           | 1.8s                     |                          | -         | -       |
-| [morpho-org/morpho-blue][morpho-blue] (invariant: `1 run @ 256 depth`) | 1.8s                     |                          | -         | -       |
-| [morpho-org/morpho-blue][morpho-blue] (integration)                    | -                        |                          | -         | -       |
-| [uniswap/v4-core][uniswap-v4]                                          |                          |                          | -         | -       |
-| [uniswap/v3-core][uniswap-v3]                                          |                          |                          | -         | -       |
-| [transmissions11/solmate][solmate]                                     | 2.7s                     | 2.8s                     | 6m34s     | 140x    |
+| [vectorized/solady][solady]                                            | 0.9s                     | 2.3s                     | -         | 2.6x    |
+| [morpho-org/morpho-blue][morpho-blue] (invariant: `1 run @ 256 depth`) | 0.7s                     | 1m43s                    | -         | 147.1x  |
+| [morpho-org/morpho-blue-oracles][morpho-blue] (integration)            | 45.9s                    | 47.9s                    | -         | 1.04x   |
+| [transmissions11/solmate][solmate]                                     | 2.7s                     | 2.8s                     | 6m34s     | 140.0x  |
 | [reflexer-labs/geb][geb]                                               | 0.2s                     | 0.4s                     | 23s       | 57.5x   |
 
 _Note: In the above benchmarks, compilation was always skipped_
