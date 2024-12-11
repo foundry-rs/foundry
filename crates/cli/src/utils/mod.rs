@@ -590,6 +590,15 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
+    pub fn default_branch(&self, at: &Path) -> Result<String> {
+        self.cmd_at(at).args(["remote", "show", "origin"]).get_stdout_lossy().map(|stdout| {
+            let re = regex::Regex::new(r"HEAD branch: (.*)")?;
+            let caps =
+                re.captures(&stdout).ok_or_else(|| eyre::eyre!("Could not find HEAD branch"))?;
+            Ok(caps.get(1).unwrap().as_str().to_string())
+        })?
+    }
+
     pub fn submodules(&self) -> Result<Submodules> {
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
@@ -645,7 +654,7 @@ impl Submodule {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum TagType {
     Branch(String),
     Tag(String),

@@ -10,6 +10,7 @@ use foundry_config::{impl_figment_convert_basic, Config};
 use regex::Regex;
 use semver::Version;
 use std::{
+    collections::hash_map::Entry,
     io::IsTerminal,
     path::{Path, PathBuf},
     str,
@@ -138,7 +139,10 @@ impl DependencyInstallOpts {
                         for sub in &submodules {
                             let path = config.root.join(sub.path());
                             let tag_type = TagType::resolve_type(&git, &path, sub.rev())?;
-                            submodule_info.insert(path, tag_type);
+                            if let Entry::Vacant(e) = submodule_info.entry(sub.path().to_path_buf())
+                            {
+                                e.insert(tag_type);
+                            }
                         }
                         fs::write_json_file(&config.root.join(FOUNDRY_LOCK), &submodule_info)?;
                         sh_println!("foundry.lock written - commit this file")?;

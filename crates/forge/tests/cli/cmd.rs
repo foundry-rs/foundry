@@ -1512,6 +1512,25 @@ forgetest!(can_remove_dep_from_foundry_lock, |prj, cmd| {
     assert!(!lock.contains_key(&PathBuf::from("lib/openzeppelin-contracts")));
 });
 
+forgetest!(can_sync_foundry_lock, |prj, cmd| {
+    cmd.git_init();
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std@master"]).assert_success();
+
+    cmd.forge_fuse().args(["install", "vectorized/solady"]).assert_success();
+
+    fs::remove_file(prj.root().join("foundry.lock")).unwrap();
+
+    // sync submodules and write foundry.lock
+    cmd.forge_fuse().arg("install").assert_success();
+
+    let lock: HashMap<PathBuf, TagType> =
+        foundry_common::fs::read_json_file(&prj.root().join("foundry.lock")).unwrap();
+
+    assert!(matches!(lock.get(&PathBuf::from("lib/forge-std")).unwrap(), &TagType::Rev(_)));
+    assert!(matches!(lock.get(&PathBuf::from("lib/solady")).unwrap(), &TagType::Rev(_)));
+});
+
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
 forgetest!(
