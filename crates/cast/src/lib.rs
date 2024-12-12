@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
+
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use alloy_consensus::TxEnvelope;

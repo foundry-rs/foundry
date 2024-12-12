@@ -48,7 +48,7 @@ Foundry consists of:
 
 - **Advanced Testing**
 
-  - **Solidity-First Testing**: Write tests directly in Solidity for seamless integration.
+  - **No Context Switching**: Write tests directly in Solidity.
   - **Fuzz Testing**: Quickly identify edge cases with input shrinking and counter-example generation.
   - **Invariant Testing**: Ensure complex system properties hold across a wide range of inputs.
   - **Debugging Made Easy**: Use [ForgeStd](https://github.com/foundry-rs/forge-std)'s `console.sol` for flexible debug logging.
@@ -136,17 +136,17 @@ The best way to understand Forge is to simply try it (in less than 30 seconds!).
 
 First, let's initialize a new `counter` example repository:
 
-```
+```sh
 $ forge init counter
 ```
 
 Next `cd` into `counter` and build :
 
-```
+```sh
 $ forge build
 ```
 
-```
+```console
 [⠊] Compiling...
 [⠔] Compiling 27 files with Solc 0.8.28
 [⠒] Solc 0.8.28 finished in 452.13ms
@@ -155,11 +155,11 @@ Compiler run successful!
 
 Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
 
-```
+```sh
 $ forge test
 ```
 
-```
+```console
 [⠊] Compiling...
 No files changed, compilation skipped
 
@@ -173,11 +173,11 @@ Ran 1 test suite in 5.91ms (5.35ms CPU time): 2 tests passed, 0 failed, 0 skippe
 
 Finally, let's run our deployment script:
 
-```
+```sh
 $ forge script script/Counter.s.sol
 ```
 
-```
+```console
 [⠊] Compiling...
 No files changed, compilation skipped
 Script ran successfully.
@@ -186,7 +186,7 @@ Gas used: 109037
 If you wish to simulate on-chain transactions pass a RPC URL.
 ```
 
-More documentation can be found in the [forge crate](./crates/forge/README.md).
+More documentation can be found in the [forge](https://book.getfoundry.sh/forge/) section of the Foundry Book.
 
 ## Cast
 
@@ -196,19 +196,19 @@ Here are a few examples of what you can do:
 
 **Check the latest block on Ethereum Mainnet**:
 
-```
+```sh
 $ cast block-number --rpc-url https://eth.merkle.io
 ```
 
 **Check the Ether balance of `vitalik.eth`**
 
-```
+```sh
 $ cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
 ```
 
 **Replay and trace a transaction**
 
-```
+```sh
 $ cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
 ```
 
@@ -218,7 +218,7 @@ Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces us
 
 Run `cast --help` to explore the full list of available commands and their usage.
 
-More documentation can be found in the [cast crate](./crates/cast/README.md).
+More documentation can be found in the [cast](https://book.getfoundry.sh/cast/) section of the Foundry Book.
 
 ## Anvil
 
@@ -226,31 +226,31 @@ Anvil is a fast local Ethereum development node.
 
 Let's fork Ethereum mainnet at the latest block:
 
-```
+```sh
 $ anvil --fork-url https://eth.merkle.io
 ```
 
 You can use those same `cast` commands against your `anvil` instance:
 
-```
+```sh
 $ cast block-number
 ```
 
 ---
 
-More documentation can be found in the [anvil crate](./crates/anvil/README.md).
+More documentation can be found in the [anvil](https://book.getfoundry.sh/anvil/) section of the Foundry Book.
 
 ## Chisel
 
 Chisel is a fast, utilitarian, and verbose Solidity REPL.
 
-```
+```sh
 $ chisel
 ```
 
 Next, create a variable `a` and query it:
 
-```
+```console
 ➜ uint256 a = 123;
 ➜ a
 Type: uint256
@@ -259,7 +259,7 @@ Type: uint256
 └ Decimal: 123
 ```
 
-Finally, run `!source` to see your change:
+Finally, run `!source` to see `a` was applied:
 
 ```solidity
 // SPDX-License-Identifier: UNLICENSED
@@ -279,7 +279,7 @@ contract REPL {
 
 ---
 
-More documentation can be found in the [chisel crate](./crates/chisel/README.md).
+More documentation can be found in the [chisel](https://book.getfoundry.sh/chisel/) section of the Foundry Book.
 
 ## Configuration
 
