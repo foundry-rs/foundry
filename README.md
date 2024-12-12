@@ -1,7 +1,5 @@
 <div align="center">
-  <h1>Foundry</h1>
-  
-  <img src=".github/banner.png" alt="Foundry banner" height="400px" />
+  <img src=".github/banner.png" alt="Foundry banner" />
 
 &nbsp;
 
@@ -56,12 +54,12 @@ Foundry consists of:
 
 - **Powerful Runtime Features**
 
-  - **RPC Forking**: Fast and efficient remote RPC forking, backed by [`Alloy`][alloy]
+  - **RPC Forking**: Fast and efficient remote RPC forking, backed by [Alloy][alloy]
   - **Lightweight & Portable**: No dependency on Nix or other package managers for installation.
 
 - **Streamlined CI/CD**
 
-  - **Optimized CI**: Accelerate builds, run tests, and execute scripts seamlessly using the [Foundry GitHub Action][foundry-gha].
+  - **Optimized CI**: Accelerate builds, run tests, and execute scripts seamlessly using the [Foundry Toolchain][foundry-gha].
 
 ## Installation
 
@@ -137,13 +135,13 @@ The best way to understand Forge is to simply try it (in less than 30 seconds!).
 First, let's initialize a new `counter` example repository:
 
 ```sh
-$ forge init counter
+forge init counter
 ```
 
 Next `cd` into `counter` and build :
 
 ```sh
-$ forge build
+forge build
 ```
 
 ```console
@@ -156,7 +154,7 @@ Compiler run successful!
 Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
 
 ```sh
-$ forge test
+forge test
 ```
 
 ```console
@@ -174,7 +172,7 @@ Ran 1 test suite in 5.91ms (5.35ms CPU time): 2 tests passed, 0 failed, 0 skippe
 Finally, let's run our deployment script:
 
 ```sh
-$ forge script script/Counter.s.sol
+forge script script/Counter.s.sol
 ```
 
 ```console
@@ -185,6 +183,8 @@ Gas used: 109037
 
 If you wish to simulate on-chain transactions pass a RPC URL.
 ```
+
+Run `forge --help` to explore the full list of available subcommands and their usage.
 
 More documentation can be found in the [forge][foundry-book-forge] section of the Foundry Book.
 
@@ -197,26 +197,26 @@ Here are a few examples of what you can do:
 **Check the latest block on Ethereum Mainnet**:
 
 ```sh
-$ cast block-number --rpc-url https://eth.merkle.io
+cast block-number --rpc-url https://eth.merkle.io
 ```
 
 **Check the Ether balance of `vitalik.eth`**
 
 ```sh
-$ cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
+cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
 ```
 
 **Replay and trace a transaction**
 
 ```sh
-$ cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
+cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
 ```
 
 Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces using verified source maps, providing more detailed and human-readable information.
 
 ---
 
-Run `cast --help` to explore the full list of available commands and their usage.
+Run `cast --help` to explore the full list of available subcommands and their usage.
 
 More documentation can be found in the [cast][foundry-book-cast] section of the Foundry Book.
 
@@ -227,16 +227,18 @@ Anvil is a fast local Ethereum development node.
 Let's fork Ethereum mainnet at the latest block:
 
 ```sh
-$ anvil --fork-url https://eth.merkle.io
+anvil --fork-url https://eth.merkle.io
 ```
 
-You can use those same `cast` commands against your `anvil` instance:
+You can use those same `cast` subcommands against your `anvil` instance:
 
 ```sh
-$ cast block-number
+cast block-number
 ```
 
 ---
+
+Run `anvil --help` to explore the full list of available features and their usage.
 
 More documentation can be found in the [anvil][foundry-book-anvil] section of the Foundry Book.
 
@@ -244,11 +246,15 @@ More documentation can be found in the [anvil][foundry-book-anvil] section of th
 
 Chisel is a fast, utilitarian, and verbose Solidity REPL.
 
+To use Chisel, simply type `chisel`.
+
 ```sh
-$ chisel
+chisel
 ```
 
-Next, create a variable `a` and query it:
+From here, start writing Solidity code! Chisel will offer verbose feedback on each input.
+
+Create a variable `a` and query it:
 
 ```console
 ➜ uint256 a = 123;
@@ -278,6 +284,8 @@ contract REPL {
 ```
 
 ---
+
+Run `chisel --help` to explore the full list of available features and their usage.
 
 More documentation can be found in the [chisel][foundry-book-chisel] section of the Foundry Book.
 
