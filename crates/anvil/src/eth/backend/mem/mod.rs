@@ -922,10 +922,28 @@ impl Backend {
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             if let Some((number, hash)) = fork_num_and_hash {
-                // If loading state file on a fork, set best number to the fork block number.
-                // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
-                self.blockchain.storage.write().best_number = U64::from(number);
-                self.blockchain.storage.write().best_hash = hash;
+                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
+                // If the state.block_number is greater than the fork block number, set best number
+                // to the state block number.
+                // Ref: https://github.com/foundry-rs/foundry/issues/9539
+                if best_number.to::<u64>() > number {
+                    self.blockchain.storage.write().best_number = best_number;
+                    let best_hash =
+                        self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
+                            || {
+                                BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                                    "Best hash not found for best number {best_number}",
+                                )))
+                            },
+                        )?;
+                    self.blockchain.storage.write().best_hash = best_hash;
+                } else {
+                    // If loading state file on a fork, set best number to the fork block number.
+                    // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
+                    self.blockchain.storage.write().best_number = U64::from(number);
+                    self.blockchain.storage.write().best_hash = hash;
+                }
             } else {
                 let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
                 self.blockchain.storage.write().best_number = best_number;
