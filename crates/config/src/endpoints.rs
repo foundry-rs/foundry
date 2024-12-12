@@ -24,9 +24,7 @@ impl RpcEndpoints {
             endpoints: endpoints
                 .into_iter()
                 .map(|(name, e)| match e.into() {
-                    RpcEndpointType::String(url) => {
-                        (name.into(), RpcEndpoint::new(url))
-                    }
+                    RpcEndpointType::String(url) => (name.into(), RpcEndpoint::new(url)),
                     RpcEndpointType::Config(config) => (name.into(), config),
                 })
                 .collect(),
@@ -396,7 +394,11 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             auth,
         } = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
-        Ok(Self { endpoint, auth, config: RpcEndpointConfig { retries, retry_backoff, compute_units_per_second } })
+        Ok(Self {
+            endpoint,
+            auth,
+            config: RpcEndpointConfig { retries, retry_backoff, compute_units_per_second },
+        })
     }
 }
 
@@ -479,7 +481,6 @@ impl DerefMut for ResolvedRpcEndpoints {
         &mut self.endpoints
     }
 }
-
 
 #[cfg(test)]
 mod tests {

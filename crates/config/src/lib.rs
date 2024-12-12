@@ -58,7 +58,9 @@ pub mod utils;
 pub use utils::*;
 
 mod endpoints;
-pub use endpoints::{ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpointUrl, RpcEndpoints, RpcEndpoint};
+pub use endpoints::{
+    ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
+};
 
 mod etherscan;
 use etherscan::{
@@ -3365,11 +3367,15 @@ mod tests {
                     ("optimism", RpcEndpointUrl::Url("https://example.com/".to_string())),
                     (
                         "mainnet",
-                        RpcEndpointUrl::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                        RpcEndpointUrl::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123455".to_string()
+                        )
                     ),
                     (
                         "mainnet_2",
-                        RpcEndpointUrl::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                        RpcEndpointUrl::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123456".to_string()
+                        )
                     ),
                     (
                         "mainnet_3",
