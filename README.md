@@ -25,7 +25,7 @@
 
 Foundry consists of:
 
-- [**Forge**](#forge): Build, test, fuzz, debug and deploy Solidity contracts, like Hardhat, Brownie, Ape.
+- [**Forge**](#forge): Build, test, fuzz, debug and deploy [Solidity][solidity] contracts, like Hardhat, Brownie, Ape.
 - [**Cast**](#cast): A Swiss Army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
 - [**Anvil**](#anvil): Fast local Ethereum development node, akin to Hardhat Network, Tenderly.
 - [**Chisel**](#chisel): Fast, utilitarian, and verbose Solidity REPL.
@@ -54,12 +54,12 @@ Foundry consists of:
 
 - **Powerful Runtime Features**
 
-  - **RPC Forking**: Fast and efficient remote RPC forking, backed by [Alloy][alloy]
+  - **RPC Forking**: Fast and efficient remote RPC forking backed by [Alloy][alloy].
   - **Lightweight & Portable**: No dependency on Nix or other package managers for installation.
 
 - **Streamlined CI/CD**
 
-  - **Optimized CI**: Accelerate builds, run tests, and execute scripts seamlessly using the [Foundry Toolchain][foundry-gha].
+  - **Optimized CI**: Accelerate builds, run tests and execute scripts using [Foundry's GitHub action][foundry-gha].
 
 ## Installation
 
@@ -106,7 +106,7 @@ _In the above benchmarks, compilation was always skipped_
 
 ### Compilation Benchmarks
 
-Compilation benchmark of [vectorized/solady][solady] (version: `0.0.281`):
+[vectorized/solady][solady] (version: `0.0.281`):
 
 | Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
 | ----------- | ----------- | --------------- | ------- |
@@ -115,7 +115,7 @@ Compilation benchmark of [vectorized/solady][solady] (version: `0.0.281`):
 | Deep Cache  | 0.57s       | 1.27s           | 2.2x    |
 | Full Cache  | 0.17s       | 0.35s           | 2.1x    |
 
-Compilation benchmark of [openzeppelin/contracts][openzeppelin] (version `5.1`):
+[openzeppelin/openzeppelin-contracts][openzeppelin] (version `5.1`):
 
 | Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
 | ----------- | ----------- | --------------- | ------- |
@@ -341,6 +341,7 @@ shall be dual licensed as above, without any additional terms or conditions.
 - [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
 - All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs), [alloy][alloy] & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
+[solidity]: https://soliditylang.org/
 [foundry-book]: https://book.getfoundry.sh
 [foundry-book-config]: https://book.getfoundry.sh/config/
 [foundry-book-forge]: https://book.getfoundry.sh/forge/
