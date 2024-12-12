@@ -699,9 +699,7 @@ fn expect_emit(
 ) -> Result {
     let expected_emit =
         ExpectedEmit { depth, checks, address, found: false, log: None, anonymous, count };
-    if let Some(found_emit_pos) =
-        state.expected_emits.iter().position(|(emit, _count_map)| emit.found)
-    {
+    if let Some(found_emit_pos) = state.expected_emits.iter().position(|(emit, _)| emit.found) {
         // The order of emits already found (back of queue) should not be modified, hence push any
         // new emit before first found emit.
         state.expected_emits.insert(found_emit_pos, (expected_emit, Default::default()));
@@ -728,19 +726,18 @@ pub(crate) fn handle_expect_emit(
     // First, we can return early if all events have been matched.
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
-    if state.expected_emits.iter().all(|(expected, _count_map)| expected.found) {
+    if state.expected_emits.iter().all(|(expected, _)| expected.found) {
         return
     }
 
-    let should_fill_logs =
-        state.expected_emits.iter().any(|(expected, _count_map)| expected.log.is_none());
+    let should_fill_logs = state.expected_emits.iter().any(|(expected, _)| expected.log.is_none());
     let index_to_fill_or_check = if should_fill_logs {
         // If there's anything to fill, we start with the last event to match in the queue
         // (without taking into account events already matched).
         state
             .expected_emits
             .iter()
-            .position(|(emit, _count_map)| emit.found)
+            .position(|(emit, _)| emit.found)
             .unwrap_or(state.expected_emits.len())
             .saturating_sub(1)
     } else {
