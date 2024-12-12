@@ -67,6 +67,10 @@ jobs:
     uses: ./.github/workflows/docker-publish.yml
 
   release:
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
     name: ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
@@ -156,7 +160,17 @@ jobs:
             du -h "$bin" || true
             ldd "$bin" || true
             $bin --version || true
+            echo "${name}_bin_path=${bin}" >> $GITHUB_ENV
           done
+
+      - name: Binaries attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ${{ env.anvil_bin_path }}
+            ${{ env.cast_bin_path }}
+            ${{ env.chisel_bin_path }}
+            ${{ env.forge_bin_path }}
 
       - name: Archive binaries
         id: artifacts
