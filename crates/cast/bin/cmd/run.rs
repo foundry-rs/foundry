@@ -212,6 +212,19 @@ impl RunArgs {
 
                     configure_tx_env(&mut env, &tx.inner);
 
+                    let is_impersonated = match tx.inner.inner {
+                        alloy_network::AnyTxEnvelope::Ethereum(ref envelope) => {
+                            tx_is_impersonated(envelope.signature(), envelope.ty())
+                        }
+                        _ => false,
+                    };
+
+                    if is_impersonated {
+                        // If the transaction is impersonated, we need to set the caller to the from
+                        // address Ref: https://github.com/foundry-rs/foundry/issues/9541
+                        env.tx.caller = tx.from;
+                    }
+
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
