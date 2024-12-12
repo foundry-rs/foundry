@@ -69,13 +69,13 @@ Getting started is very easy:
 
 Install `foundryup`:
 
-```bash
+```
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
 Next, run `foundryup` - it will automatically install the latest (nightly) versions of the precompiled binaries: `forge`, `cast`, `anvil`, and `chisel`.
 
-```bash
+```
 foundryup
 ```
 
@@ -85,7 +85,7 @@ For additional details see the [installation guide](https://book.getfoundry.sh/g
 
 If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
 
-### How Fast?
+## How Fast?
 
 Forge is quite fast at both compiling (leveraging `solc` with [foundry-compilers]) and testing.
 
@@ -136,13 +136,13 @@ The best way to understand Forge is to simply try it (in less than 30 seconds!).
 
 First, let's initialize a new `counter` example repository:
 
-```bash
+```
 $ forge init counter
 ```
 
 Next `cd` into `counter` and build :
 
-```bash
+```
 $ forge build
 ```
 
@@ -155,7 +155,7 @@ Compiler run successful!
 
 Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
 
-```bash
+```
 $ forge test
 ```
 
@@ -173,7 +173,7 @@ Ran 1 test suite in 5.91ms (5.35ms CPU time): 2 tests passed, 0 failed, 0 skippe
 
 Finally, let's run our deployment script:
 
-```bash
+```
 $ forge script script/Counter.s.sol
 ```
 
@@ -196,19 +196,19 @@ Here are a few examples of what you can do:
 
 **Check the latest block on Ethereum Mainnet**:
 
-```bash
+```
 $ cast block-number --rpc-url https://eth.merkle.io
 ```
 
 **Check the Ether balance of `vitalik.eth`**
 
-```bash
+```
 $ cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
 ```
 
 **Replay and trace a transaction**
 
-```bash
+```
 $ cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
 ```
 
@@ -226,13 +226,13 @@ Anvil is a fast local Ethereum development node.
 
 Let's fork Ethereum mainnet at the latest block:
 
-```bash
+```
 $ anvil --fork-url https://eth.merkle.io
 ```
 
 You can use those same `cast` commands against your `anvil` instance:
 
-```bash
+```
 $ cast block-number
 ```
 
@@ -244,7 +244,7 @@ More documentation can be found in the [anvil crate](./crates/anvil/README.md).
 
 Chisel is a fast, utilitarian, and verbose Solidity REPL.
 
-```bash
+```
 $ chisel
 ```
 
