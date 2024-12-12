@@ -608,6 +608,8 @@ contract ExpectEmitCountTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     Emitter emitter;
 
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
+
     function setUp() public {
         emitter = new Emitter();
     }
