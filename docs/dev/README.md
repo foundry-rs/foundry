@@ -72,7 +72,7 @@ We also have [`T-discuss`](https://github.com/foundry-rs/foundry/issues?q=is%3Ai
 
 ## CI
 
-We use GitHub Actions for continious integration (CI).
+We use GitHub Actions for continuous integration (CI).
 
 We use [cargo-nextest][nextest] as the test runner.
 
