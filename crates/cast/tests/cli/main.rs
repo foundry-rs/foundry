@@ -1,9 +1,10 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
-use alloy_network::TransactionResponse;
-use alloy_primitives::{b256, B256};
-use alloy_rpc_types::{BlockNumberOrTag, Index};
+use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_primitives::{address, b256, Bytes, B256};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file, forgetest, forgetest_async,
@@ -1993,5 +1994,39 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
             "--chain",
             &chain_id.to_string(),
         ])
+        .assert_success();
+});
+
+// https://github.com/foundry-rs/foundry/issues/9541
+forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_auto_impersonate(true)
+            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+    )
+    .await;
+
+    let http_endpoint = handle.http_endpoint();
+
+    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
+
+    // send impersonated tx
+    let tx = TransactionRequest::default()
+        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_input(
+            Bytes::from_str(
+                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+            )
+            .unwrap(),
+        );
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    // run impersonated tx
+    cmd.cast_fuse()
+        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
         .assert_success();
 });
