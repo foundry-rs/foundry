@@ -814,34 +814,6 @@ pub(crate) fn handle_expect_emit(
                 .find(|log_map| log_map.satisfies_checks(&log.data))
                 .is_some_and(|map| map.count(&log.data) >= expected_count),
         }
-        // if let Some(emitter) = event_to_fill_or_check.address {
-        //     let entry = count_map.get(&emitter);
-
-        //     // If none, we haven't seen the emitter yet. We can't set `found` to true.
-        //     if entry.is_none() {
-        //         return false
-        //     }
-
-        //     if let Some(log_count_map) = entry {
-        //         let count = log_count_map.count(&log.data);
-
-        //         if count >= expected_count {
-        //             return true
-        //         }
-        //     }
-        //     false
-        // } else {
-        //     let log_count_map =
-        //         count_map.values().find(|log_map| log_map.satisfies_checks(&log.data));
-
-        //     if let Some(map) = log_count_map {
-        //         let count = map.count(&log.data);
-        //         if count >= expected_count {
-        //             return true
-        //         }
-        //     }
-        //     false
-        // }
     }();
 
     // If we found the event, we can push it to the back of the queue
@@ -892,11 +864,9 @@ impl LogCountMap {
         }
 
         if !self.satisfies_checks(log) {
-            tracing::info!("Ignoring log: {:#?}", log);
             return false
         }
 
-        tracing::info!("Inserting log: {:#?}", log);
         self.map.entry(log.clone()).and_modify(|c| *c += 1).or_insert(1);
 
         true

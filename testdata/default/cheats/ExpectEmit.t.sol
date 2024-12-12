@@ -674,4 +674,11 @@ contract ExpectEmitCountTest is DSTest {
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count - 1);
     }
+
+    function testEmitSomethingElse() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitSomethingElse(23214);
+    }
 }
