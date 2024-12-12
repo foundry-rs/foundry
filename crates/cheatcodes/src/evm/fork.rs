@@ -332,6 +332,9 @@ fn create_fork_request(
     evm_opts.fork_block_number = block;
     evm_opts.fork_retries = rpc_endpoint.config.retries;
     evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
+    if let Some(Ok(auth)) = rpc_endpoint.auth {
+        evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
+    }
     let fork = CreateFork {
         enable_caching: !ccx.state.config.no_storage_caching &&
             ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
