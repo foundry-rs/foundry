@@ -437,10 +437,28 @@ impl ResolvedRpcEndpoint {
         self.endpoint.clone()
     }
 
+    // Returns true if all environment variables are resolved successfully
     pub fn is_unresolved(&self) -> bool {
         let endpoint_err = self.endpoint.is_err();
         let auth_err = self.auth.as_ref().map(|auth| auth.is_err()).unwrap_or(false);
         endpoint_err || auth_err
+    }
+
+    // Attempts to resolve unresolved environment variables into a new instance
+    pub fn try_resolve(self) -> Self {
+        if !self.is_unresolved() {
+            return self
+        }
+        let mut new_endpoint = self.clone();
+        if let Err(err) = self.endpoint {
+            new_endpoint.endpoint = err.try_resolve()
+        }
+        if let Some(auth) = &new_endpoint.auth {
+            if let Err(err) = auth {
+                new_endpoint.auth = Some(err.try_resolve())
+            }
+        }
+        return new_endpoint
     }
 }
 
