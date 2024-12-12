@@ -1,5 +1,7 @@
 //! Commonly used constants.
 
+use alloy_consensus::Typed2718;
+use alloy_network::AnyTxEnvelope;
 use alloy_primitives::{address, Address, PrimitiveSignature, B256};
 use std::time::Duration;
 
@@ -53,7 +55,14 @@ pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS].contains(&sender)
 }
 
-pub fn tx_is_impersonated(sig: &PrimitiveSignature, ty: u8) -> bool {
+pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
+    if let AnyTxEnvelope::Ethereum(tx) = tx {
+        return is_impersonated_sig(tx.signature(), tx.ty());
+    }
+    false
+}
+
+pub fn is_impersonated_sig(sig: &PrimitiveSignature, ty: u8) -> bool {
     let impersonated_sig = PrimitiveSignature::from_scalars_and_parity(
         B256::with_last_byte(1),
         B256::with_last_byte(1),
