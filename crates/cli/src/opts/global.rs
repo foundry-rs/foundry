@@ -50,11 +50,6 @@ impl GlobalOpts {
         Ok(())
     }
 
-    /// Initialize the global thread pool.
-    pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
-        init_thread_pool(self.threads.unwrap_or(0))
-    }
-
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
         let mode = match self.quiet {
@@ -68,6 +63,11 @@ impl GlobalOpts {
         };
 
         Shell::new_with(format, mode, color, self.verbosity)
+    }
+
+    /// Initialize the global thread pool.
+    pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
+        init_thread_pool(self.threads.unwrap_or(0))
     }
 }
 

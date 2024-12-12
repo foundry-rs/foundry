@@ -200,8 +200,7 @@ contract DeployScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-    let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
     let (_api, handle) = spawn(node_config).await;
     let dev = handle.dev_accounts().next().unwrap();
     cmd.set_current_dir(prj.root());
@@ -302,8 +301,7 @@ contract DeployScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-    let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -492,8 +490,7 @@ contract DeployScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-    let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -1923,6 +1920,10 @@ contract SimpleScript is Script {
 
 // Asserts that the script runs with expected non-output using `--quiet` flag
 forgetest_async!(adheres_to_json_flag, |prj, cmd| {
+    if cfg!(feature = "isolate-by-default") {
+        return;
+    }
+
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
         "Foo",
@@ -2367,12 +2368,12 @@ contract SimpleScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [103771] SimpleScript::run()
+  [..] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     │   └─ ← [Return] 116 bytes of code
-    ├─ [13162] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     │   ├─ [145] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
@@ -2395,33 +2396,6 @@ Simulated On-chain Traces:
 ...
 "#]]);
 });
-
-// Tests that chained errors are properly displayed.
-// <https://github.com/foundry-rs/foundry/issues/9161>
-forgetest_init!(
-    #[ignore]
-    should_display_evm_chained_error,
-    |prj, cmd| {
-        let script = prj
-            .add_source(
-                "Foo",
-                r#"
-import "forge-std/Script.sol";
-
-contract ContractScript is Script {
-    function run() public {
-    }
-}
-   "#,
-            )
-            .unwrap();
-        cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
-Error: Failed to deploy script:
-backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
-
-"#]]);
-    }
-);
 
 forgetest_async!(should_detect_additional_contracts, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;

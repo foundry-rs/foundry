@@ -1,6 +1,7 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
+    artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
     error::Result as SolcResult,
@@ -202,7 +203,7 @@ impl ExtTester {
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
-            test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
+            test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_url());
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
         test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
@@ -420,7 +421,9 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 ///
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
-pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
+pub struct TestProject<
+    T: ArtifactOutput<CompilerContract = Contract> + Default = ConfigurableArtifacts,
+> {
     /// The directory in which this test executable is running.
     exe_root: PathBuf,
     /// The project in which the test should run.

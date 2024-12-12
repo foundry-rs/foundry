@@ -69,8 +69,8 @@ impl CheatsConfig {
         running_version: Option<Version>,
     ) -> Self {
         let mut allowed_paths = vec![config.root.clone()];
-        allowed_paths.extend(config.libs.clone());
-        allowed_paths.extend(config.allow_paths.clone());
+        allowed_paths.extend(config.libs.iter().cloned());
+        allowed_paths.extend(config.allow_paths.iter().cloned());
 
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -99,6 +99,17 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
         }
+    }
+
+    /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
+    pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
+        Self::new(
+            config,
+            evm_opts,
+            self.available_artifacts.clone(),
+            self.running_contract.clone(),
+            self.running_version.clone(),
+        )
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.

@@ -35,8 +35,8 @@ use foundry_compilers::{
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
-    ConfigurableArtifacts, Graph, Project, ProjectPathsConfig, RestrictionsWithVersion,
-    VyperLanguage,
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    RestrictionsWithVersion, VyperLanguage,
 };
 use regex::Regex;
 use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
@@ -490,8 +490,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eof_version: Option<EofVersion>,
 
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// Whether to enable Odyssey features.
+    #[serde(alias = "alphanet")]
+    pub odyssey: bool,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
@@ -1021,7 +1022,10 @@ impl Config {
     }
 
     /// Cleans the project.
-    pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
+    pub fn cleanup<C: Compiler, T: ArtifactOutput<CompilerContract = C::CompilerContract>>(
+        &self,
+        project: &Project<C, T>,
+    ) -> Result<(), SolcError> {
         project.cleanup()?;
 
         // Remove last test run failures file.
@@ -1090,7 +1094,7 @@ impl Config {
                     rx.recv().expect("sender dropped")
                 }
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
-            }
+            };
         }
         if let Some(ref solc) = self.solc {
             let solc = match solc {
@@ -1125,7 +1129,7 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(&self.evm_version, self.alphanet)
+        evm_spec_id(self.evm_version, self.odyssey)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -1291,11 +1295,11 @@ impl Config {
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.map(Cow::Owned))
+            return Some(endpoint.map(Cow::Owned));
         }
 
         if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
-            return Some(Ok(Cow::Owned(endpoint.url)))
+            return Some(Ok(Cow::Owned(endpoint.url)));
         }
 
         None
@@ -2370,7 +2374,7 @@ impl Default for Config {
             warnings: vec![],
             extra_args: vec![],
             eof_version: None,
-            alphanet: false,
+            odyssey: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),

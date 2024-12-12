@@ -166,7 +166,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
             }
 
             if let Some(v) = dict.remove("odyssey") {
-                dict.insert("alphanet".to_string(), v);
+                dict.insert("odyssey".to_string(), v);
             }
             map.insert(profile, dict);
         }
