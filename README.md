@@ -15,9 +15,9 @@
 [tg-support-url]: https://t.me/foundry_support
 
 **[Install](https://book.getfoundry.sh/getting-started/installation)**
-| [User Book](https://book.getfoundry.sh)
-| [Developer Docs](./docs/dev/)
-| [Crate Docs](https://foundry-rs.github.io/foundry)
+| [User Book][foundry-book]
+| [Developer Docs](./docs/dev/README.md)
+| [Contributing](./CONTRIBUTING.md)
 
 </div>
 
@@ -27,7 +27,7 @@
 
 Foundry consists of:
 
-- [**Forge**](#forge): Build, test, fuzz, debug and deploy Solidity contracts, like Hardhat, Ape.
+- [**Forge**](#forge): Build, test, fuzz, debug and deploy Solidity contracts, like Hardhat, Brownie, Ape.
 - [**Cast**](#cast): A Swiss Army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
 - [**Anvil**](#anvil): Fast local Ethereum development node, akin to Hardhat Network, Tenderly.
 - [**Chisel**](#chisel): Fast, utilitarian, and verbose Solidity REPL.
@@ -56,7 +56,7 @@ Foundry consists of:
 
 - **Powerful Runtime Features**
 
-  - **RPC Forking**: Fast and efficient remote RPC forking, backed by [`Alloy`](https://github.com/alloy-rs/alloy)
+  - **RPC Forking**: Fast and efficient remote RPC forking, backed by [`Alloy`][alloy]
   - **Lightweight & Portable**: No dependency on Nix or other package managers for installation.
 
 - **Streamlined CI/CD**
@@ -73,7 +73,7 @@ Install `foundryup`:
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-Next, run `foundryup` - it will automatically install the latest (nightly) versions of the precompiled binaries: `forge`, `cast`, `anvil`, and `chisel`.
+Next, run `foundryup` - it will automatically install the latest (nightly) versions of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
 
 ```
 foundryup
@@ -186,7 +186,7 @@ Gas used: 109037
 If you wish to simulate on-chain transactions pass a RPC URL.
 ```
 
-More documentation can be found in the [forge](https://book.getfoundry.sh/forge/) section of the Foundry Book.
+More documentation can be found in the [forge][foundry-book-forge] section of the Foundry Book.
 
 ## Cast
 
@@ -218,7 +218,7 @@ Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces us
 
 Run `cast --help` to explore the full list of available commands and their usage.
 
-More documentation can be found in the [cast](https://book.getfoundry.sh/cast/) section of the Foundry Book.
+More documentation can be found in the [cast][foundry-book-cast] section of the Foundry Book.
 
 ## Anvil
 
@@ -238,7 +238,7 @@ $ cast block-number
 
 ---
 
-More documentation can be found in the [anvil](https://book.getfoundry.sh/anvil/) section of the Foundry Book.
+More documentation can be found in the [anvil][foundry-book-anvil] section of the Foundry Book.
 
 ## Chisel
 
@@ -279,7 +279,7 @@ contract REPL {
 
 ---
 
-More documentation can be found in the [chisel](https://book.getfoundry.sh/chisel/) section of the Foundry Book.
+More documentation can be found in the [chisel][foundry-book-chisel] section of the Foundry Book.
 
 ## Configuration
 
@@ -294,7 +294,7 @@ Foundry is highly configurable, allowing you to tailor it to your needs. Configu
 
 ---
 
-You can find additional [setup and configurations guides](https://book.getfoundry.sh/config/) in the [Foundry Book][foundry-book] and in the [config crate](./crates/config/README.md):
+You can find additional [setup and configurations guides][foundry-book-config] in the [Foundry Book][foundry-book] and in the [config crate](./crates/config/README.md):
 
 - [Configuring with `foundry.toml`](https://book.getfoundry.sh/config/)
 - [Setting up VSCode][vscode-setup]
@@ -327,13 +327,18 @@ shall be dual licensed as above, without any additional terms or conditions.
 
 ## Acknowledgements
 
-- Foundry is a clean-room rewrite of the testing framework [DappTools](https://github.com/dapphub/dapptools). None of this would have been possible without the DappHub team's work over the years.
+- Foundry is a clean-room rewrite of the testing framework [DappTools][dapptools]. None of this would have been possible without the DappHub team's work over the years.
 - [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc] which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
 - [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
 - [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
-- All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs), [alloy](https://github.com/alloy-rs/alloy) & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
+- All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs), [alloy][alloy] & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
 [foundry-book]: https://book.getfoundry.sh
+[foundry-book-config]: https://book.getfoundry.sh/config/
+[foundry-book-forge]: https://book.getfoundry.sh/forge/
+[foundry-book-anvil]: https://book.getfoundry.sh/anvil/
+[foundry-book-cast]: https://book.getfoundry.sh/cast/
+[foundry-book-chisel]: https://book.getfoundry.sh/chisel/
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
@@ -349,3 +354,4 @@ shall be dual licensed as above, without any additional terms or conditions.
 [foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
 [foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
 [dapptools]: https://github.com/dapphub/dapptools
+[alloy]: https://github.com/alloy-rs/alloy
