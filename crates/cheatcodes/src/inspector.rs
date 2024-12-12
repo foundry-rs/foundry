@@ -759,6 +759,7 @@ where {
                 let handler_result = expect::handle_expect_revert(
                     false,
                     true,
+                    self.config.internal_expect_revert,
                     &mut expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
@@ -1339,6 +1340,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                     let handler_result = expect::handle_expect_revert(
                         cheatcode_call,
                         false,
+                        self.config.internal_expect_revert,
                         &mut expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),

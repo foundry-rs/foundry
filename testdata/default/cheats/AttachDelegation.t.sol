@@ -86,7 +86,8 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 200);
     }
 
-    function testFailAttachDelegationRevertInvalidSignature() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testAttachDelegationRevertInvalidSignature() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         // change v from 1 to 0
         signedDelegation.v = (signedDelegation.v + 1) % 2;
@@ -98,6 +99,7 @@ contract AttachDelegationTest is DSTest {
 
         vm.broadcast(alice_pk);
         // empty revert because no bytecode was set to Alice's account
+        vm.expectRevert();
         SimpleDelegateContract(alice).execute(calls);
     }
 

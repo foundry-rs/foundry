@@ -786,6 +786,7 @@ fn expect_revert(
 pub(crate) fn handle_expect_revert(
     is_cheatcode: bool,
     is_create: bool,
+    internal_expect_revert: bool,
     expected_revert: &mut ExpectedRevert,
     status: InstructionResult,
     retdata: Bytes,
@@ -809,7 +810,8 @@ pub(crate) fn handle_expect_revert(
         hex::encode_prefixed(data)
     };
 
-    if !is_cheatcode {
+    // Check depths if it's not an expect cheatcode call and if internal expect reverts not enabled.
+    if !is_cheatcode && !internal_expect_revert {
         ensure!(
             expected_revert.max_depth > expected_revert.depth,
             "call didn't revert at a lower depth than cheatcode call depth"

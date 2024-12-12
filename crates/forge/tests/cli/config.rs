@@ -87,6 +87,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             ..Default::default()
         },
         ffi: true,
+        allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),

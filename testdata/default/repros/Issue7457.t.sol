@@ -61,8 +61,10 @@ contract Issue7457Test is DSTest, ITarget {
         target.emitAnonymousEventEmpty();
     }
 
-    function testFailEmitEventNonIndexedReverts() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testEmitEventNonIndexedReverts() public {
         vm.expectEmit(false, false, false, true);
+        vm.expectRevert("use vm.expectEmitAnonymous to match anonymous events");
         emit AnonymousEventNonIndexed(1);
     }
 
