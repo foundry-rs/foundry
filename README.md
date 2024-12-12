@@ -68,22 +68,22 @@ See the benchmarks below. Older benchmarks against [DappTools][dapptools] can be
 
 ### Testing Benchmarks
 
-| Project                                                             | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup        |
-| ------------------------------------------------------------------- | ------------------------ | ------------------------ | --------- | -------------- |
-| [vectorized/solady][solady]                                         | 0.9s                     | 2.3s                     | -         | 2.6x           |
-| [morpho-org/morpho-blue][morpho-blue] (invariant)                   | 0.7s                     | 1m43s                    | -         | 147.1x         |
-| [morpho-org/morpho-blue-oracles][morpho-blue] (integration, cold)   | 6.1s                     | 6.3s                     | -         | 1.04x          |
-| [morpho-org/morpho-blue-oracles][morpho-blue] (integration, cached) | 0.6s                     | 0.9s                     | -         | 1.50x          |
-| [transmissions11/solmate][solmate]                                  | 2.7s                     | 2.8s                     | 6m34s     | 1.03x / 140.0x |
-| [reflexer-labs/geb][geb]                                            | 0.2s                     | 0.4s                     | 23s       | 2.0x / 57.5x   |
+| Project                                       | Type                 | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup        |
+| --------------------------------------------- | -------------------- | ------------------------ | ------------------------ | --------- | -------------- |
+| [vectorized/solady][solady]                   | Unit / Fuzz          | 0.9s                     | 2.3s                     | -         | 2.6x           |
+| [morpho-org/morpho-blue][morpho-blue]         | Invariant            | 0.7s                     | 1m43s                    | -         | 147.1x         |
+| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cold)   | 6.1s                     | 6.3s                     | -         | 1.04x          |
+| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cached) | 0.6s                     | 0.9s                     | -         | 1.50x          |
+| [transmissions11/solmate][solmate]            | Unit / Fuzz          | 2.7s                     | 2.8s                     | 6m34s     | 1.03x / 140.0x |
+| [reflexer-labs/geb][geb]                      | Unit / Fuzz          | 0.2s                     | 0.4s                     | 23s       | 2.0x / 57.5x   |
 
 _Notes_:
 
 - _In the above benchmarks, compilation was always skipped_
 - _Invariant test was ran once at 256 depth_
-- _Integration test was ran using Alchemy Ethereum RPC_
+- _Integration test was ran using Alchemy Ethereum Mainnet RPC_
 
-### Compilation Benchmark
+### Compilation Benchmarks
 
 Compilation benchmark of [vectorized/solady][solady]:
 
@@ -94,7 +94,16 @@ Compilation benchmark of [vectorized/solady][solady]:
 | Deep Cache  | 0.57s       | 1.27s           | 2.2x    |
 | Full Cache  | 0.17s       | 0.35s           | 2.1x    |
 
-Takeaway: Forge compilation is consistently faster than Hardhat by a factor of **2.1-3.3x**, depending on the amount of caching involved.
+Compilation benchmark of [openzeppelin/contracts][openzeppelin]:
+
+| Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
+| ----------- | ----------- | --------------- | ------- |
+| Cold        | 9.07s       | 28.08s          | 3.1x    |
+| Light Cache | 0.99s       | 5.11s           | 5.2x    |
+| Deep Cache  | 2.29s       | 8.66s           | 3.8x    |
+| Full Cache  | 0.18s       | 0.47s           | 2.6x    |
+
+**Takeaway: Forge compilation is consistently faster than Hardhat by a factor of `2.1x` to `5.2x`, depending on the amount of caching involved.**
 
 More documentation can be found in the [forge crate](./crates/forge/README.md).
 
@@ -162,13 +171,14 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
 [solady]: https://github.com/Vectorized/solady
+[openzeppelin]: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/release-v5.1
+[morpho-blue]: https://github.com/morpho-org/morpho-blue
 [solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing
 [convex]: https://github.com/mds1/convex-shutdown-simulation
 [vscode-setup]: https://book.getfoundry.sh/config/vscode.html
 [shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
-[morpho-blue]: https://github.com/morpho-org/morpho-blue
 [foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
 [foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
 [dapptools]: https://github.com/dapphub/dapptools
