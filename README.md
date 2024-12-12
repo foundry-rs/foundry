@@ -56,7 +56,7 @@ Foundry consists of:
 
 - **Powerful Runtime Features**
 
-  - **RPC Forking**: Fast and efficient remote RPC forking, built on Rust's async infrastructure (e.g., Tokio).
+  - **RPC Forking**: Fast and efficient remote RPC forking, backed by [`Alloy`](https://github.com/alloy-rs/alloy)
   - **Lightweight & Portable**: No dependency on Nix or other package managers for installation.
 
 - **Streamlined CI/CD**
@@ -294,7 +294,7 @@ Foundry is highly configurable, allowing you to tailor it to your needs. Configu
 
 ---
 
-You can find additional [setup and configurations guides](https://book.getfoundry.sh/config/) in the [Foundry Book][foundry-book]:
+You can find additional [setup and configurations guides](https://book.getfoundry.sh/config/) in the [Foundry Book][foundry-book] and in the [config crate](./crates/config/README.md):
 
 - [Configuring with `foundry.toml`](https://book.getfoundry.sh/config/)
 - [Setting up VSCode][vscode-setup]
@@ -315,6 +315,15 @@ If the answer is not there:
 - Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
 
 If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
+
+## License
+
+Licensed under either of [Apache License](./LICENSE-APACHE), Version
+2.0 or [MIT License](./LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in these crates by you, as defined in the Apache-2.0 license,
+shall be dual licensed as above, without any additional terms or conditions.
 
 ## Acknowledgements
 
