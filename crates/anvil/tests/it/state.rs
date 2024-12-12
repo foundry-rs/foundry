@@ -2,7 +2,7 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{address, utils::Unit, Bytes, Uint, U256};
+use alloy_primitives::{address, utils::Unit, Bytes, Uint, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -244,4 +244,35 @@ async fn test_fork_load_state() {
     assert_eq!(nonce_bob + 1, latest_nonce_bob);
 
     assert_eq!(balance_alice + value, latest_balance_alice);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/9539>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_load_state_with_greater_state_block() {
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_fork_block_number(Some(21070682u64)),
+    )
+    .await;
+
+    api.mine_one().await;
+
+    let block_number = api.block_number().unwrap();
+
+    let serialized_state = api.serialized_state(false).await.unwrap();
+
+    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<U64>()));
+
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_fork_block_number(Some(21070682u64)) // Forked chain has moved forward
+            .with_init_state(Some(serialized_state)),
+    )
+    .await;
+
+    let new_block_number = api.block_number().unwrap();
+
+    assert_eq!(new_block_number, block_number);
 }
