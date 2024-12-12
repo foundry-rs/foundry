@@ -71,7 +71,9 @@ Install `foundryup`:
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-Next, run `foundryup` - it will automatically install the latest (nightly) versions of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
+Next, run `foundryup`.
+
+It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
 
 ```
 foundryup
