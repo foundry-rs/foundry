@@ -1,6 +1,6 @@
 //! Commonly used constants.
 
-use alloy_primitives::{address, Address};
+use alloy_primitives::{address, Address, PrimitiveSignature, B256};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -51,6 +51,18 @@ pub const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION
 #[inline]
 pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS].contains(&sender)
+}
+
+pub fn tx_is_impersonated(sig: &PrimitiveSignature, ty: u8) -> bool {
+    let impersonated_sig = PrimitiveSignature::from_scalars_and_parity(
+        B256::with_last_byte(1),
+        B256::with_last_byte(1),
+        false,
+    );
+    if ty != SYSTEM_TRANSACTION_TYPE && sig == &impersonated_sig {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
