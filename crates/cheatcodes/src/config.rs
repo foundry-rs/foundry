@@ -187,12 +187,8 @@ impl CheatsConfig {
     ///    `ws` `scheme` and is not a path to an existing file
     pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
         if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
-            let mut endpoint = endpoint.clone();
-            if endpoint.is_unresolved() {
-                // try resolve again, by checking if env vars are now set
-                endpoint = endpoint.try_resolve();
-            }
-            Ok(endpoint)
+            // try resolve again, by checking if env vars are now set
+            Ok(endpoint.clone().try_resolve())
         } else {
             // check if it's a URL or a path to an existing file to an ipc socket
             if url_or_alias.starts_with("http") ||
