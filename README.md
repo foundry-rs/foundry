@@ -27,16 +27,41 @@
 
 Foundry consists of:
 
-- [**Forge**](#forge): Ethereum testing framework (like Hardhat and Ape).
-- [**Cast**](#cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- [**Anvil**](#anvil): Local Ethereum node, akin to Hardhat Network, Tenderly.
-- [**Chisel**](#chisel): Fast, utilitarian, and verbose solidity REPL.
+- [**Forge**](#forge): Build, test, fuzz, debug and deploy Solidity contracts, like Hardhat, Ape.
+- [**Cast**](#cast): A Swiss Army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- [**Anvil**](#anvil): Fast local Ethereum development node, akin to Hardhat Network, Tenderly.
+- [**Chisel**](#chisel): Fast, utilitarian, and verbose Solidity REPL.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book]!**
 
-## How Fast?!
-
 ![Demo](.github/demo.gif)
+
+## Features
+
+- **High-Performance Compilation**
+
+  - **Fast and Flexible**: Automatically detects and installs the required Solidity compiler version.
+  - **Vyper Support**: Fully supports Vyper out-of-the-box.
+  - **Incremental Compilation**: Re-compiles only changed files, saving time.
+  - **Parallelized Pipeline**: Leverages multi-core systems for ultra-fast builds.
+  - **Broad Compatibility**: Supports non-standard directory structures, including [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829).
+
+- **Advanced Testing**
+
+  - **Solidity-First Testing**: Write tests directly in Solidity for seamless integration.
+  - **Fuzz Testing**: Quickly identify edge cases with input shrinking and counter-example generation.
+  - **Invariant Testing**: Ensure complex system properties hold across a wide range of inputs.
+  - **Debugging Made Easy**: Use [ForgeStd](https://github.com/foundry-rs/forge-std)'s `console.sol` for flexible debug logging.
+  - **Interactive Debugger**: Step through your Solidity code with Foundry's interactive debugger, making it easy to pinpoint issues.
+
+- **Powerful Runtime Features**
+
+  - **RPC Forking**: Fast and efficient remote RPC forking, built on Rust's async infrastructure (e.g., Tokio).
+  - **Lightweight & Portable**: No dependency on Nix or other package managers for installation.
+
+- **Streamlined CI/CD**
+
+  - **Optimized CI**: Accelerate builds, run tests, and execute scripts seamlessly using the [Foundry GitHub Action][foundry-gha].
 
 ## Installation
 
@@ -54,75 +79,11 @@ Next, run `foundryup` - it will automatically install the latest (nightly) versi
 foundryup
 ```
 
-Done!
+**Done!**
 
 For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the Foundry book.
 
 If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
-
-## Forge
-
-Forge helps you build, test, fuzz, debug and deploy Solidity contracts.
-
-The best way to understand Forge is to simply use it.
-
-First, let's initialize a new `counter` example repository:
-
-```bash
-forge init counter
-```
-
-Next, let's build and test our contracts:
-
-```bash
-forge test
-```
-
-```
-[⠊] Compiling...
-[⠔] Compiling 25 files with Solc 0.8.28
-[⠒] Solc 0.8.28 finished in 442.47ms
-Compiler run successful!
-
-Ran 2 tests for test/Counter.t.sol:CounterTest
-[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: 31121, ~: 31277)
-[PASS] test_Increment() (gas: 31293)
-Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 4.96ms (4.71ms CPU time)
-
-Ran 1 test suite in 5.56ms (4.96ms CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
-```
-
-Finally, let's run our deployment script:
-
-```bash
-forge script script/Counter.s.sol
-```
-
-```
-[⠊] Compiling...
-No files changed, compilation skipped
-Script ran successfully.
-Gas used: 109037
-
-If you wish to simulate on-chain transactions pass a RPC URL.
-```
-
-More documentation can be found in the [forge crate](./crates/forge/README.md).
-
-### Features
-
-- **Fast & flexible compilation pipeline**
-  - Automatic Solidity compiler version detection & installation
-  - Supports Vyper out-of-the-box
-  - **Incremental compilation & caching**: Only changed files are re-compiled
-  - Parallel compilation
-  - Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
-- **Tests are written in Solidity**
-- **Fast fuzz testing** with shrinking of inputs & printing of counter-examples
-- **Fast remote RPC forking mode**, leveraging Rust's async infrastructure like Tokio
-- **Flexible debug logging** using [ForgeStd](https://github.com/foundry-rs/forge-std)'s `console.sol`
-- **Portable & easy to install** without requiring Nix or any other package manager
-- **Fast CI** with the [Foundry GitHub action][foundry-gha].
 
 ### How Fast?
 
@@ -141,11 +102,9 @@ See the benchmarks below. Older benchmarks against [DappTools][dapptools] can be
 | [transmissions11/solmate][solmate]            | Unit / Fuzz          | 2.7s                     | 2.8s                     | 6m34s     | 1.03x / 140.0x |
 | [reflexer-labs/geb][geb]                      | Unit / Fuzz          | 0.2s                     | 0.4s                     | 23s       | 2.0x / 57.5x   |
 
-_Notes_:
+_In the above benchmarks, compilation was always skipped_
 
-- _In the above benchmarks, compilation was always skipped_
-- _Invariant test was ran once at 256 depth_
-- _Integration test was ran using Alchemy Ethereum Mainnet RPC_
+**Takeaway: Forge dramatically outperforms the competition, delivering blazing-fast execution speeds while continuously expanding its robust feature set.**
 
 ### Compilation Benchmarks
 
@@ -169,9 +128,95 @@ Compilation benchmark of [openzeppelin/contracts][openzeppelin] (version `5.1`):
 
 **Takeaway: Forge compilation is consistently faster than Hardhat by a factor of `2.1x` to `5.2x`, depending on the amount of caching involved.**
 
+## Forge
+
+Forge helps you build, test, fuzz, debug and deploy Solidity contracts.
+
+The best way to understand Forge is to simply try it (in less than 30 seconds!).
+
+First, let's initialize a new `counter` example repository:
+
+```bash
+$ forge init counter
+```
+
+Next `cd` into `counter` and build :
+
+```bash
+$ forge build
+```
+
+```
+[⠊] Compiling...
+[⠔] Compiling 27 files with Solc 0.8.28
+[⠒] Solc 0.8.28 finished in 452.13ms
+Compiler run successful!
+```
+
+Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
+
+```bash
+$ forge test
+```
+
+```
+[⠊] Compiling...
+No files changed, compilation skipped
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: 31121, ~: 31277)
+[PASS] test_Increment() (gas: 31293)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 5.35ms (4.86ms CPU time)
+
+Ran 1 test suite in 5.91ms (5.35ms CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
+```
+
+Finally, let's run our deployment script:
+
+```bash
+$ forge script script/Counter.s.sol
+```
+
+```
+[⠊] Compiling...
+No files changed, compilation skipped
+Script ran successfully.
+Gas used: 109037
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+```
+
+More documentation can be found in the [forge crate](./crates/forge/README.md).
+
 ## Cast
 
-Cast is a swiss army knife for interacting with Ethereum applications from the command line.
+Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
+
+Here are a few examples of what you can do:
+
+**Check the latest block on Ethereum Mainnet**:
+
+```bash
+$ cast block-number --rpc-url https://eth.merkle.io
+```
+
+**Check the Ether balance of `vitalik.eth`**
+
+```bash
+$ cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
+```
+
+**Replay and trace a transaction**
+
+```bash
+$ cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
+```
+
+Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces using verified source maps, providing more detailed and human-readable information.
+
+---
+
+Run `cast --help` to explore the full list of available commands and their usage.
 
 More documentation can be found in the [cast crate](./crates/cast/README.md).
 
@@ -179,11 +224,60 @@ More documentation can be found in the [cast crate](./crates/cast/README.md).
 
 Anvil is a fast local Ethereum development node.
 
+Let's fork Ethereum mainnet at the latest block:
+
+```bash
+$ anvil --fork-url https://eth.merkle.io
+```
+
+You can use those same `cast` commands against your `anvil` instance:
+
+```bash
+$ cast block-number
+```
+
+---
+
 More documentation can be found in the [anvil crate](./crates/anvil/README.md).
 
 ## Chisel
 
 Chisel is a fast, utilitarian, and verbose Solidity REPL.
+
+```bash
+$ chisel
+```
+
+Next, create a variable `a` and query it:
+
+```
+➜ uint256 a = 123;
+➜ a
+Type: uint256
+├ Hex: 0x7b
+├ Hex (full word): 0x000000000000000000000000000000000000000000000000000000000000007b
+└ Decimal: 123
+```
+
+Finally, run `!source` to see your change:
+
+```solidity
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
+
+import {Vm} from "forge-std/Vm.sol";
+
+contract REPL {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    /// @notice REPL contract entry point
+    function run() public {
+        uint256 a = 123;
+    }
+}
+```
+
+---
 
 More documentation can be found in the [chisel crate](./crates/chisel/README.md).
 
