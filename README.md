@@ -40,16 +40,80 @@ Foundry consists of:
 
 ## Installation
 
-See the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the book.
+Getting started is very easy:
+
+Install `foundryup`:
+
+```bash
+curl -L https://foundry.paradigm.xyz | bash
+```
+
+Next, run `foundryup` - it will automatically install the latest (nightly) versions of the precompiled binaries: `forge`, `cast`, `anvil`, and `chisel`.
+
+```bash
+foundryup
+```
+
+Done!
+
+For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the Foundry book.
 
 If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
 
 ## Forge
 
+Forge helps you build, test, fuzz, debug and deploy Solidity contracts.
+
+The best way to understand Forge is to simply use it.
+
+First, let's initialize a new `counter` example repository:
+
+```bash
+forge init counter
+```
+
+Next, let's build and test our contracts:
+
+```bash
+forge test
+```
+
+```
+[⠊] Compiling...
+[⠔] Compiling 25 files with Solc 0.8.28
+[⠒] Solc 0.8.28 finished in 442.47ms
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: 31121, ~: 31277)
+[PASS] test_Increment() (gas: 31293)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 4.96ms (4.71ms CPU time)
+
+Ran 1 test suite in 5.56ms (4.96ms CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
+```
+
+Finally, let's run our deployment script:
+
+```bash
+forge script script/Counter.s.sol
+```
+
+```
+[⠊] Compiling...
+No files changed, compilation skipped
+Script ran successfully.
+Gas used: 109037
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+```
+
+More documentation can be found in the [forge crate](./crates/forge/README.md).
+
 ### Features
 
 - **Fast & flexible compilation pipeline**
   - Automatic Solidity compiler version detection & installation
+  - Supports Vyper out-of-the-box
   - **Incremental compilation & caching**: Only changed files are re-compiled
   - Parallel compilation
   - Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
@@ -85,7 +149,7 @@ _Notes_:
 
 ### Compilation Benchmarks
 
-Compilation benchmark of [vectorized/solady][solady]:
+Compilation benchmark of [vectorized/solady][solady] (version: `0.0.281`):
 
 | Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
 | ----------- | ----------- | --------------- | ------- |
@@ -94,7 +158,7 @@ Compilation benchmark of [vectorized/solady][solady]:
 | Deep Cache  | 0.57s       | 1.27s           | 2.2x    |
 | Full Cache  | 0.17s       | 0.35s           | 2.1x    |
 
-Compilation benchmark of [openzeppelin/contracts][openzeppelin]:
+Compilation benchmark of [openzeppelin/contracts][openzeppelin] (version `5.1`):
 
 | Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
 | ----------- | ----------- | --------------- | ------- |
@@ -105,8 +169,6 @@ Compilation benchmark of [openzeppelin/contracts][openzeppelin]:
 
 **Takeaway: Forge compilation is consistently faster than Hardhat by a factor of `2.1x` to `5.2x`, depending on the amount of caching involved.**
 
-More documentation can be found in the [forge crate](./crates/forge/README.md).
-
 ## Cast
 
 Cast is a swiss army knife for interacting with Ethereum applications from the command line.
@@ -115,9 +177,13 @@ More documentation can be found in the [cast crate](./crates/cast/README.md).
 
 ## Anvil
 
+Anvil is a fast local Ethereum development node.
+
 More documentation can be found in the [anvil crate](./crates/anvil/README.md).
 
 ## Chisel
+
+Chisel is a fast, utilitarian, and verbose Solidity REPL.
 
 More documentation can be found in the [chisel crate](./crates/chisel/README.md).
 
