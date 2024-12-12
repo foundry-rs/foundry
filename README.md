@@ -81,7 +81,7 @@ foundryup
 
 **Done!**
 
-For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the Foundry book.
+For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the [Foundry Book][foundry-book].
 
 If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
 
@@ -283,22 +283,20 @@ More documentation can be found in the [chisel crate](./crates/chisel/README.md)
 
 ## Configuration
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./crates/config) in the root of your project, or any other parent directory. See [config package](./crates/config/README.md#all-options) for all available options.
+Foundry is highly configurable, allowing you to tailor it to your needs. Configuration is managed via a file called [`foundry.toml`](./crates/config) located in the root of your project or any parent directory. For a full list of configuration options, refer to the [config package documentation](./crates/config/README.md#all-options).
 
-Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./crates/config/README.md#default-profile)).
+**Profiles and Namespaces**
 
-You can select another profile using the `FOUNDRY_PROFILE` environment variable. You can also override parts of your configuration using `FOUNDRY_` prefixed environment variables, like `FOUNDRY_SRC`.
+- Configuration can be organized into **profiles**, which are arbitrarily namespaced for flexibility.
+- The default profile is named `default`. Learn more in the [Default Profile section](./crates/config/README.md#default-profile).
+- To select a different profile, set the `FOUNDRY_PROFILE` environment variable.
+- Override specific settings using environment variables prefixed with `FOUNDRY_` (e.g., `FOUNDRY_SRC`).
 
-`forge init` creates a basic, extendable `foundry.toml` file.
+---
 
-To see your current configuration, run `forge config`. To see only basic options (as set with `forge init`), run `forge config --basic`. This can be used to create a new `foundry.toml` file with `forge config --basic > foundry.toml`.
+You can find additional [setup and configurations guides](https://book.getfoundry.sh/config/) in the [Foundry Book][foundry-book]:
 
-By default `forge config` shows the currently selected foundry profile and its values. It also accepts the same arguments as `forge build`.
-
-### Additional Configuration
-
-You can find additional setup and configurations guides in the [Foundry Book][foundry-book]:
-
+- [Configuring with `foundry.toml`](https://book.getfoundry.sh/config/)
 - [Setting up VSCode][vscode-setup]
 - [Shell autocompletions][shell-setup]
 
@@ -308,7 +306,7 @@ See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
-First, see if the answer to your question can be found in [book][foundry-book], or in the relevant crate.
+First, see if the answer to your question can be found in the [Foundy Book][foundry-book], or in the relevant crate.
 
 If the answer is not there:
 
