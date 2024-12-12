@@ -186,27 +186,25 @@ impl CheatsConfig {
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
     ///    `ws` `scheme` and is not a path to an existing file
     pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
-        let maybe_rpc_endpoint = self.rpc_endpoints.get(url_or_alias);
-
-        if maybe_rpc_endpoint.is_none() {
-                // check if it's a URL or a path to an existing file to an ipc socket
-                if url_or_alias.starts_with("http") ||
-                    url_or_alias.starts_with("ws") ||
-                    // check for existing ipc file
-                    Path::new(url_or_alias).exists()
-                {
-                    let url = RpcEndpointUrl::Env(url_or_alias.to_string());
-                    return Ok(RpcEndpoint::new(url).resolve())
-                } else {
-                    return Err(fmt_err!("invalid rpc url: {url_or_alias}"))
-                }
-        } else {
-            let mut endpoint = maybe_rpc_endpoint.unwrap().clone();
+        if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
+            let mut endpoint = endpoint.clone();
             if endpoint.is_unresolved() {
                 // try resolve again, by checking if env vars are now set
                 endpoint = endpoint.try_resolve();
             }
             return Ok(endpoint)
+        } else {
+            // check if it's a URL or a path to an existing file to an ipc socket
+            if url_or_alias.starts_with("http") ||
+                url_or_alias.starts_with("ws") ||
+                // check for existing ipc file
+                Path::new(url_or_alias).exists()
+            {
+                let url = RpcEndpointUrl::Env(url_or_alias.to_string());
+                return Ok(RpcEndpoint::new(url).resolve())
+            } else {
+                return Err(fmt_err!("invalid rpc url: {url_or_alias}"))
+            }
         }
     }
     /// Returns all the RPC urls and their alias.
