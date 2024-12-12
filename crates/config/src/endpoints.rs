@@ -43,7 +43,6 @@ impl RpcEndpoints {
         ResolvedRpcEndpoints {
             endpoints: self
                 .endpoints
-                .clone()
                 .into_iter()
                 .map(|(name, e)| (name, e.resolve()))
                 .collect(),
@@ -268,7 +267,7 @@ impl<'de> Deserialize<'de> for RpcAuth {
 }
 
 // Rpc endpoint configuration
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RpcEndpointConfig {
     /// The number of retries.
     pub retries: Option<u32>,
@@ -299,12 +298,6 @@ impl fmt::Display for RpcEndpointConfig {
         }
 
         Ok(())
-    }
-}
-
-impl Default for RpcEndpointConfig {
-    fn default() -> Self {
-        Self { retries: None, retry_backoff: None, compute_units_per_second: None }
     }
 }
 
@@ -453,12 +446,10 @@ impl ResolvedRpcEndpoint {
         if let Err(err) = self.endpoint {
             new_endpoint.endpoint = err.try_resolve()
         }
-        if let Some(auth) = &new_endpoint.auth {
-            if let Err(err) = auth {
-                new_endpoint.auth = Some(err.try_resolve())
-            }
+        if let Some(Err(err)) = &new_endpoint.auth {
+            new_endpoint.auth = Some(err.try_resolve())
         }
-        return new_endpoint
+        new_endpoint
     }
 }
 

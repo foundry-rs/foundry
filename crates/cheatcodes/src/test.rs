@@ -42,7 +42,7 @@ impl Cheatcode for getFoundryVersionCall {
 impl Cheatcode for rpcUrlCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { rpcAlias } = self;
-        let url = state.config.rpc_endpoint(&rpcAlias)?.url()?.abi_encode();
+        let url = state.config.rpc_endpoint(rpcAlias)?.url()?.abi_encode();
         Ok(url)
     }
 }
