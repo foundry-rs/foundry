@@ -584,9 +584,34 @@ contract ExpectEmitTest is DSTest {
         emitter.emitWindow();
     }
 
-    /// ----- `count` arg tests -----
+    /// This test will fail if we check that all expected logs were emitted
+    /// after every call from the same depth as the call that invoked the cheatcode.
+    ///
+    /// Expected emits should only be checked when the call from which the cheatcode
+    /// was invoked ends.
+    ///
+    /// Ref: issue #1214
+    /// NOTE: This is now invalid behavior.
+    // function testExpectEmitIsCheckedWhenCurrentCallTerminates() public {
+    //     vm.expectEmit(true, true, true, true);
+    //     emitter.doesNothing();
+    //     emit Something(1, 2, 3, 4);
 
-    /// Test zero emits.
+    //     // This should fail since `SomethingElse` in the test
+    //     // and in the `Emitter` contract have differing
+    //     // amounts of indexed topics.
+    //     emitter.emitEvent(1, 2, 3, 4);
+    // }
+}
+
+contract ExpectEmitCountTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    Emitter emitter;
+
+    function setUp() public {
+        emitter = new Emitter();
+    }
+
     function testCountNoEmit() public {
         vm.expectEmit(0);
         emit Something(1, 2, 3, 4);
@@ -647,23 +672,4 @@ contract ExpectEmitTest is DSTest {
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count - 1);
     }
-
-    /// This test will fail if we check that all expected logs were emitted
-    /// after every call from the same depth as the call that invoked the cheatcode.
-    ///
-    /// Expected emits should only be checked when the call from which the cheatcode
-    /// was invoked ends.
-    ///
-    /// Ref: issue #1214
-    /// NOTE: This is now invalid behavior.
-    // function testExpectEmitIsCheckedWhenCurrentCallTerminates() public {
-    //     vm.expectEmit(true, true, true, true);
-    //     emitter.doesNothing();
-    //     emit Something(1, 2, 3, 4);
-
-    //     // This should fail since `SomethingElse` in the test
-    //     // and in the `Emitter` contract have differing
-    //     // amounts of indexed topics.
-    //     emitter.emitEvent(1, 2, 3, 4);
-    // }
 }
