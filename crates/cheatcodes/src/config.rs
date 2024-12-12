@@ -192,7 +192,7 @@ impl CheatsConfig {
                 // try resolve again, by checking if env vars are now set
                 endpoint = endpoint.try_resolve();
             }
-            return Ok(endpoint)
+            Ok(endpoint)
         } else {
             // check if it's a URL or a path to an existing file to an ipc socket
             if url_or_alias.starts_with("http") ||
@@ -201,9 +201,9 @@ impl CheatsConfig {
                 Path::new(url_or_alias).exists()
             {
                 let url = RpcEndpointUrl::Env(url_or_alias.to_string());
-                return Ok(RpcEndpoint::new(url).resolve())
+                Ok(RpcEndpoint::new(url).resolve())
             } else {
-                return Err(fmt_err!("invalid rpc url: {url_or_alias}"))
+                Err(fmt_err!("invalid rpc url: {url_or_alias}"))
             }
         }
     }
