@@ -3862,14 +3862,14 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7235826f00dd9196bcbdbb9c168ea38235601db95883a78819ba2303dee34bb8"
+checksum = "d817beee8c566a99f4267f25ff63d0de46c442948496ecef91ead56e3383090c"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "auto_impl",
- "derivative",
+ "derive_more",
  "dirs 5.0.1",
  "dyn-clone",
  "foundry-compilers-artifacts",
@@ -3899,9 +3899,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "097bc5db7be5acf6d92938ad7daabf1932d7aa7c44326cdfc256531a53034d31"
+checksum = "bec784a3a809ba2ee723fcfeb737a6ac90b4fd1e4d048c2d49fed6723bd35547"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3909,9 +3909,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4168053c1ad217866c677a074517e8d51988e5b1bad044b95f3c513aa5b6caa"
+checksum = "44549c33e5a03408c8d40c36d764b7e84d261258ef481c19e4a612e609fdf8a4"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3933,9 +3933,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b7beffe7182551d01d249f022a5eab17c36c73b39ae8efd404e0fb9c98b9f80"
+checksum = "a438605ae74689752b2f717165daac15766f1b2a166d2095715d5f9407084b52"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3948,9 +3948,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac5247875b96dfb99da12d0cd0f6ce98954116d1cf8a9188d613b2a35cd6937b"
+checksum = "04ac6d85c3e2d12585f8e698b12ed4880b02716ec7fde5d62de9a194e62f4e36"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
