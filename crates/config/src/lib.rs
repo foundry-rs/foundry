@@ -977,7 +977,20 @@ impl Config {
                 if !map.contains_key(source) {
                     map.insert(source.clone(), res);
                 } else {
-                    map.get_mut(source.as_path()).unwrap().merge(res);
+                    let value = map.remove(source.as_path()).unwrap();
+                    if let Some(merged) = value.clone().merge(res) {
+                        map.insert(source.clone(), merged);
+                    } else {
+                        // `sh_warn!` is a circular dependency, preventing us from using it here.
+                        eprintln!(
+                            "{}",
+                            yansi::Paint::yellow(&format!(
+                                "Failed to merge compilation restrictions for {}",
+                                source.display()
+                            ))
+                        );
+                        map.insert(source.clone(), value);
+                    }
                 }
             }
         }
