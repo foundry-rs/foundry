@@ -949,6 +949,7 @@ impl Config {
     }
 
     /// Resolves globs and builds a mapping from individual source files to their restrictions
+    #[expect(clippy::disallowed_macros)]
     fn restrictions(
         &self,
         paths: &ProjectPathsConfig,
