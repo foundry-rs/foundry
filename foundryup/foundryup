@@ -23,7 +23,7 @@ main() {
 
       -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
       -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
-      -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
+      -i|--install)     shift; FOUNDRYUP_VERSION=$1;;
       -l|--list)        shift; list;;
       -u|--use)         shift; FOUNDRYUP_VERSION=$1; use;;
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
@@ -140,16 +140,16 @@ main() {
     BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
-    mkdir -p $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG
+    ensure mkdir -p $FOUNDRY_VERSIONS_DIR
     # Download and extract the binaries archive
-    say "downloading latest forge, cast, anvil, and chisel"
+    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
       tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       rm -f "$tmp"
     else
-      ensure download "$BIN_ARCHIVE_URL" | ensure tar -xzC "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      ensure download "$BIN_ARCHIVE_URL" | ensure tar -xz --one-top-level="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
     fi
 
     # Optionally download the manuals
@@ -245,7 +245,7 @@ USAGE:
 
 OPTIONS:
     -h, --help      Print help information
-    -v, --version   Install a specific version from built binaries
+    -i, --install   Install a specific version from built binaries
     -l, --list      List versions installed from built binaries
     -u, --use       Use a specific installed version from built binaries
     -b, --branch    Build and install a specific branch
@@ -267,6 +267,7 @@ list() {
         bin_path="$VERSION/$bin"
         say "- $(ensure "$bin_path" --version)"
       done
+      printf "\n"
     done
   else
     for bin in "${BINS[@]}"; do
