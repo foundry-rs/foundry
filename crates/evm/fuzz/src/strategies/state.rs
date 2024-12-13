@@ -27,10 +27,16 @@ const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
 #[derive(Clone, Debug)]
 pub struct EvmFuzzState {
     inner: Arc<RwLock<FuzzDictionary>>,
+    /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
+    pub deployed_libs: Vec<Address>,
 }
 
 impl EvmFuzzState {
-    pub fn new<DB: DatabaseRef>(db: &CacheDB<DB>, config: FuzzDictionaryConfig) -> Self {
+    pub fn new<DB: DatabaseRef>(
+        db: &CacheDB<DB>,
+        config: FuzzDictionaryConfig,
+        deployed_libs: &[Address],
+    ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
@@ -38,7 +44,7 @@ impl EvmFuzzState {
         // Create fuzz dictionary and insert values from db state.
         let mut dictionary = FuzzDictionary::new(config);
         dictionary.insert_db_values(accs);
-        Self { inner: Arc::new(RwLock::new(dictionary)) }
+        Self { inner: Arc::new(RwLock::new(dictionary)), deployed_libs: deployed_libs.to_vec() }
     }
 
     pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {

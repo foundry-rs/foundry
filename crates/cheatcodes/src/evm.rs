@@ -855,11 +855,12 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
-
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
                 node.trace.steps = Vec::new();
+                node.logs = Vec::new();
+                node.ordering = Vec::new();
             });
         }
 

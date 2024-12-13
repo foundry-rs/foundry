@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, Signature, B256};
+use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_signer_local::{

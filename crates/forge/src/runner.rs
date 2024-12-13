@@ -98,10 +98,13 @@ impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
-        match self._setup(call_setup) {
-            Ok(setup) => setup,
-            Err(err) => TestSetup::failed(err.to_string()),
-        }
+        self._setup(call_setup).unwrap_or_else(|err| {
+            if err.to_string().contains("skipped") {
+                TestSetup::skipped(err.to_string())
+            } else {
+                TestSetup::failed(err.to_string())
+            }
+        })
     }
 
     fn _setup(&mut self, call_setup: bool) -> Result<TestSetup> {
@@ -127,6 +130,12 @@ impl<'a> ContractRunner<'a> {
                 U256::ZERO,
                 Some(&self.mcr.revert_decoder),
             );
+
+            // Record deployed library address.
+            if let Ok(deployed) = &deploy_result {
+                result.deployed_libs.push(deployed.address);
+            }
+
             let (raw, reason) = RawCallResult::from_evm_result(deploy_result.map(Into::into))?;
             result.extend(raw, TraceKind::Deployment);
             if reason.is_some() {
@@ -333,7 +342,7 @@ impl<'a> ContractRunner<'a> {
             // The setup failed, so we return a single test result for `setUp`
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::setup_fail(setup))].into(),
+                [("setUp()".to_string(), TestResult::setup_result(setup))].into(),
                 warnings,
             )
         }
@@ -611,6 +620,7 @@ impl<'a> FunctionRunner<'a> {
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
+            &self.setup.deployed_libs,
             progress.as_ref(),
         ) {
             Ok(x) => x,
@@ -725,6 +735,7 @@ impl<'a> FunctionRunner<'a> {
         let result = fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,
+            &self.setup.deployed_libs,
             self.address,
             should_fail,
             &self.cr.mcr.revert_decoder,

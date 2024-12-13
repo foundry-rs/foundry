@@ -323,6 +323,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
         progress: Option<&ProgressBar>,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
@@ -331,7 +332,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         let (invariant_test, invariant_strategy) =
-            self.prepare_test(&invariant_contract, fuzz_fixtures)?;
+            self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
         // Start timer for this invariant test.
         let timer = FuzzTestTimer::new(self.config.timeout);
@@ -506,6 +507,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
     ) -> Result<(InvariantTest, impl Strategy<Value = BasicTxDetails>)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
@@ -513,8 +515,11 @@ impl<'a> InvariantExecutor<'a> {
             self.select_contracts_and_senders(invariant_contract.address)?;
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let fuzz_state =
-            EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary);
+        let fuzz_state = EvmFuzzState::new(
+            self.executor.backend().mem_db(),
+            self.config.dictionary,
+            deployed_libs,
+        );
 
         // Creates the invariant strategy.
         let strategy = invariant_strat(
