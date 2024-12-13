@@ -742,8 +742,8 @@ async fn test_trace() {
 
             assert_eq!(
                 deployment_traces.count(),
-                12,
-                "Test {test_name} did not have exactly 12 deployment trace."
+                13,
+                "Test {test_name} did not have exactly 13 deployment trace."
             );
             assert!(setup_traces.count() <= 1, "Test {test_name} had more than 1 setup trace.");
             assert_eq!(

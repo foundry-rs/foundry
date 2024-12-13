@@ -52,7 +52,7 @@ impl ExecutorBuilder {
 
     /// Sets the EVM spec to use.
     #[inline]
-    pub fn spec(mut self, spec: SpecId) -> Self {
+    pub fn spec_id(mut self, spec: SpecId) -> Self {
         self.spec_id = spec;
         self
     }

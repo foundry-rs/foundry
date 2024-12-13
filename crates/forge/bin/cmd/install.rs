@@ -164,7 +164,7 @@ impl DependencyInstallOpts {
                 // Pin branch to submodule if branch is used
                 if let Some(branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    if git.has_branch(branch)? {
+                    if git.has_branch(branch, &path)? {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
                             .args(["submodule", "set-branch", "-b", branch])

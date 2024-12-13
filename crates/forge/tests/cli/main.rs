@@ -4,7 +4,6 @@ extern crate foundry_test_utils;
 pub mod constants;
 pub mod utils;
 
-mod alphanet;
 mod bind_json;
 mod build;
 mod cache;
@@ -20,6 +19,7 @@ mod eip712;
 mod geiger;
 mod inline_config;
 mod multi_script;
+mod odyssey;
 mod script;
 mod soldeer;
 mod svm;

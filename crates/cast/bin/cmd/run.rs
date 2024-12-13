@@ -10,7 +10,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_impersonated_tx, is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -85,9 +85,9 @@ pub struct RunArgs {
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 
-    /// Enables Alphanet features.
-    #[arg(long, alias = "odyssey")]
-    pub alphanet: bool,
+    /// Enables Odyssey features.
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
@@ -138,7 +138,7 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let (mut env, fork, chain, alphanet) =
+        let (mut env, fork, chain, odyssey) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
         let mut evm_version = self.evm_version;
@@ -176,7 +176,7 @@ impl RunArgs {
             fork,
             evm_version,
             trace_mode,
-            alphanet,
+            odyssey,
             create2_deployer,
         );
         let mut env =
@@ -211,6 +211,12 @@ impl RunArgs {
                     }
 
                     configure_tx_env(&mut env, &tx.inner);
+
+                    if is_impersonated_tx(&tx.inner.inner) {
+                        // If the transaction is impersonated, we need to set the caller to the from
+                        // address Ref: https://github.com/foundry-rs/foundry/issues/9541
+                        env.tx.caller = tx.from;
+                    }
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
@@ -251,6 +257,12 @@ impl RunArgs {
 
             configure_tx_env(&mut env, &tx.inner);
 
+            if is_impersonated_tx(&tx.inner.inner) {
+                // If the transaction is impersonated, we need to set the caller to the from address
+                // Ref: https://github.com/foundry-rs/foundry/issues/9541
+                env.tx.caller = tx.from;
+            }
+
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
                 TraceResult::try_from(executor.transact_with_env(env))?
@@ -283,8 +295,8 @@ impl figment::Provider for RunArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut map = Map::new();
 
-        if self.alphanet {
-            map.insert("alphanet".into(), self.alphanet.into());
+        if self.odyssey {
+            map.insert("odyssey".into(), self.odyssey.into());
         }
 
         if let Some(api_key) = &self.etherscan.key {

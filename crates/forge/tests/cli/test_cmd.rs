@@ -473,7 +473,7 @@ contract Contract {
     )
     .unwrap();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
         "Contract.t.sol",
@@ -545,7 +545,7 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
 forgetest_init!(fork_traces, |prj, cmd| {
     prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
         "Contract.t.sol",
@@ -699,7 +699,7 @@ contract TransientTest is Test {
 forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
     prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_endpoint();
+    let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.add_test(
         "Contract.t.sol",
@@ -2026,6 +2026,48 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 6 skipped (6 total tests)
 "#]]);
 });
 
+forgetest_init!(skip_setup, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SkipCounterSetup is Test {
+
+    function setUp() public {
+        vm.skip(true, "skip counter test");
+    }
+
+    function test_require1() public pure {
+        require(1 > 2);
+    }
+
+    function test_require2() public pure {
+        require(1 > 2);
+    }
+
+    function test_require3() public pure {
+        require(1 > 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "SkipCounterSetup"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:SkipCounterSetup
+[SKIP: skipped: skip counter test] setUp() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});
+
 forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
     prj.wipe_contracts();
     prj.insert_ds_test();
@@ -2357,10 +2399,10 @@ Compiler run successful!
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
 Traces:
-  [149783] MetadataTraceTest::test_proxy_trace()
-    ├─ [47297] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [..] MetadataTraceTest::test_proxy_trace()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 236 bytes of code
-    ├─ [37762] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop] 
 
@@ -2382,10 +2424,10 @@ Compiler run successful!
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
 Traces:
-  [128142] MetadataTraceTest::test_proxy_trace()
-    ├─ [36485] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [..] MetadataTraceTest::test_proxy_trace()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 182 bytes of code
-    ├─ [26959] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 8 bytes of code
     └─ ← [Stop] 
 
@@ -2659,7 +2701,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork:  Could not instantiate forked environment with provider eth-mainnet.g.alchemy.com;] test_fork_err_message() ([GAS])
+[FAIL: vm.createSelectFork: Could not instantiate forked environment with provider eth-mainnet.g.alchemy.com] test_fork_err_message() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 
@@ -2667,6 +2709,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 });
 
 // Tests that test traces display state changes when running with verbosity.
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -2698,4 +2741,69 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+// Tests that chained errors are properly displayed.
+// <https://github.com/foundry-rs/foundry/issues/9161>
+forgetest!(displays_chained_error, |prj, cmd| {
+    prj.add_test(
+        "Foo.t.sol",
+        r#"
+contract ContractTest {
+    function test_anything(uint) public {}
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.arg("test").arg("--gas-limit=100").assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/Foo.t.sol:ContractTest
+[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+// Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
+// verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
+forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
+    prj.add_test(
+        "DebugTraceRecordingTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract DebugTraceRecordingTest is Test {
+    function test_start_stop_recording() public {
+        vm.startDebugTraceRecording();
+        Counter counter = new Counter();
+        counter.increment();
+        vm.stopAndReturnDebugTraceRecording();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_start_stop_recording", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
+[PASS] test_start_stop_recording() ([GAS])
+Traces:
+  [476338] DebugTraceRecordingTest::test_start_stop_recording()
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
 });

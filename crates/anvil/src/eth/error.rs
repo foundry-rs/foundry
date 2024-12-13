@@ -98,6 +98,12 @@ pub enum BlockchainError {
     Message(String),
 }
 
+impl From<eyre::Report> for BlockchainError {
+    fn from(err: eyre::Report) -> Self {
+        Self::Message(err.to_string())
+    }
+}
+
 impl From<RpcError> for BlockchainError {
     fn from(err: RpcError) -> Self {
         Self::RpcError(err)

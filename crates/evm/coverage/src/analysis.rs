@@ -58,9 +58,10 @@ impl<'a> ContractVisitor<'a> {
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
 
-        // Do not add coverage item for constructors without statements.
-        if kind == "constructor" && !has_statements(body) {
-            return Ok(())
+        // TODO: We currently can only detect empty bodies in normal functions, not any of the other
+        // kinds: https://github.com/foundry-rs/foundry/issues/9458
+        if kind != "function" && !has_statements(body) {
+            return Ok(());
         }
 
         // `fallback`, `receive`, and `constructor` functions have an empty `name`.
@@ -372,8 +373,9 @@ impl<'a> ContractVisitor<'a> {
                     let expr: Option<Node> = node.attribute("expression");
                     if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
                         // Might be a require call, add branch coverage.
+                        // Asserts should not be considered branches: <https://github.com/foundry-rs/foundry/issues/9460>.
                         let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                        if let Some("require" | "assert") = name.as_deref() {
+                        if let Some("require") = name.as_deref() {
                             let branch_id = self.branch_id;
                             self.branch_id += 1;
                             self.push_item_kind(

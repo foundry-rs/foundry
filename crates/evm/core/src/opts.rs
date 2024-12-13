@@ -7,6 +7,7 @@ use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config, GasLimit};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,8 +65,8 @@ pub struct EvmOpts {
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
 
-    /// whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// whether to enable Odyssey features.
+    pub odyssey: bool,
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
@@ -90,7 +91,7 @@ impl Default for EvmOpts {
             memory_limit: 0,
             isolate: false,
             disable_block_gas_limit: false,
-            alphanet: false,
+            odyssey: false,
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
         }
     }
@@ -113,9 +114,8 @@ impl EvmOpts {
     /// And the block that was used to configure the environment.
     pub async fn fork_evm_env(
         &self,
-        fork_url: impl AsRef<str>,
+        fork_url: &str,
     ) -> eyre::Result<(revm::primitives::Env, AnyRpcBlock)> {
-        let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
             .build()?;
@@ -130,13 +130,13 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            let mut err_msg = "Could not instantiate forked environment".to_string();
+            let mut msg = "Could not instantiate forked environment".to_string();
             if let Ok(url) = Url::parse(fork_url) {
                 if let Some(provider) = url.host() {
-                    err_msg.push_str(&format!(" with provider {provider}"));
+                    write!(msg, " with provider {provider}").unwrap();
                 }
             }
-            err_msg
+            msg
         })
     }
 
