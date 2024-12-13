@@ -64,7 +64,7 @@ impl BindJsonArgs {
         let config = self.try_load_config_emit_warnings()?;
         let project = config.create_project(false, true)?;
 
-        let target_path = config.root.0.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
+        let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
         let sources = project.paths.read_input_files()?;
         let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;

@@ -30,7 +30,7 @@ resolver = "2"
 version = "0.2.0"
 edition = "2021"
 # Remember to update clippy.toml as well
-rust-version = "1.80"
+rust-version = "1.83"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -169,8 +169,8 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.9.0", default-features = false }
-foundry-compilers = { version = "0.12.3", default-features = false }
-foundry-fork-db = "0.7.0"
+foundry-compilers = { version = "0.12.7", default-features = false }
+foundry-fork-db = "0.9.0"
 solang-parser = "=0.3.3"
 solar-ast = { version = "=0.1.0", default-features = false }
 solar-parse = { version = "=0.1.0", default-features = false }
@@ -178,55 +178,56 @@ solar-parse = { version = "=0.1.0", default-features = false }
 ## revm
 revm = { version = "18.0.0", default-features = false }
 revm-primitives = { version = "14.0.0", default-features = false }
-revm-inspectors = { version = "0.11.0", features = ["serde"] }
+revm-inspectors = { version = "0.13.0", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.6.4", default-features = false }
-alloy-contract = { version = "0.6.4", default-features = false }
-alloy-eips = { version = "0.6.4", default-features = false }
-alloy-genesis = { version = "0.6.4", default-features = false }
-alloy-json-rpc = { version = "0.6.4", default-features = false }
-alloy-network = { version = "0.6.4", default-features = false }
-alloy-provider = { version = "0.6.4", default-features = false }
-alloy-pubsub = { version = "0.6.4", default-features = false }
-alloy-rpc-client = { version = "0.6.4", default-features = false }
-alloy-rpc-types = { version = "0.6.4", default-features = true }
-alloy-serde = { version = "0.6.4", default-features = false }
-alloy-signer = { version = "0.6.4", default-features = false }
-alloy-signer-aws = { version = "0.6.4", default-features = false }
-alloy-signer-gcp = { version = "0.6.4", default-features = false }
-alloy-signer-ledger = { version = "0.6.4", default-features = false }
-alloy-signer-local = { version = "0.6.4", default-features = false }
-alloy-signer-trezor = { version = "0.6.4", default-features = false }
-alloy-transport = { version = "0.6.4", default-features = false }
-alloy-transport-http = { version = "0.6.4", default-features = false }
-alloy-transport-ipc = { version = "0.6.4", default-features = false }
-alloy-transport-ws = { version = "0.6.4", default-features = false }
-alloy-node-bindings = { version = "0.6.4", default-features = false }
+alloy-consensus = { version = "0.8.0", default-features = false }
+alloy-contract = { version = "0.8.0", default-features = false }
+alloy-eips = { version = "0.8.0", default-features = false }
+alloy-genesis = { version = "0.8.0", default-features = false }
+alloy-json-rpc = { version = "0.8.0", default-features = false }
+alloy-network = { version = "0.8.0", default-features = false }
+alloy-provider = { version = "0.8.0", default-features = false }
+alloy-pubsub = { version = "0.8.0", default-features = false }
+alloy-rpc-client = { version = "0.8.0", default-features = false }
+alloy-rpc-types = { version = "0.8.0", default-features = true }
+alloy-serde = { version = "0.8.0", default-features = false }
+alloy-signer = { version = "0.8.0", default-features = false }
+alloy-signer-aws = { version = "0.8.0", default-features = false }
+alloy-signer-gcp = { version = "0.8.0", default-features = false }
+alloy-signer-ledger = { version = "0.8.0", default-features = false }
+alloy-signer-local = { version = "0.8.0", default-features = false }
+alloy-signer-trezor = { version = "0.8.0", default-features = false }
+alloy-transport = { version = "0.8.0", default-features = false }
+alloy-transport-http = { version = "0.8.0", default-features = false }
+alloy-transport-ipc = { version = "0.8.0", default-features = false }
+alloy-transport-ws = { version = "0.8.0", default-features = false }
+alloy-node-bindings = { version = "0.8.0", default-features = false }
+alloy-network-primitives = { version = "0.8.0", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "0.8.11"
-alloy-json-abi = "0.8.11"
-alloy-primitives = { version = "0.8.11", features = [
+alloy-dyn-abi = "0.8.14"
+alloy-json-abi = "0.8.14"
+alloy-primitives = { version = "0.8.14", features = [
     "getrandom",
     "rand",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "0.8.11"
-alloy-sol-macro-input = "0.8.11"
-alloy-sol-types = "0.8.11"
-syn-solidity = "0.8.11"
+alloy-sol-macro-expander = "0.8.14"
+alloy-sol-macro-input = "0.8.14"
+alloy-sol-types = "0.8.14"
+syn-solidity = "0.8.14"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
-alloy-trie = "0.6.0"
+alloy-trie = "0.7.0"
 
-## op-alloy 
-op-alloy-rpc-types = "0.6.5"
-op-alloy-consensus = "0.6.5"
+## op-alloy
+op-alloy-rpc-types = "0.8.0"
+op-alloy-consensus = "0.8.0"
 
 ## cli
 anstream = "0.6"
@@ -239,7 +240,7 @@ quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
 derive_more = { version = "1.0", features = ["full"] }
-thiserror = "1"
+thiserror = "2"
 
 # bench
 divan = "0.1"
@@ -260,7 +261,7 @@ color-eyre = "0.6"
 comfy-table = "7"
 dunce = "1"
 evm-disassembler = "0.5"
-evmole = "0.5"
+evmole = "0.6"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"

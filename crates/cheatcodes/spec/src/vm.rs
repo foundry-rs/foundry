@@ -384,6 +384,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
 
+    /// Returns state diffs from current `vm.startStateDiffRecording` session.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStateDiff() external view returns (string memory diff);
+
+    /// Returns state diffs from current `vm.startStateDiffRecording` session, in json format.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStateDiffJson() external view returns (string memory diff);
+
     // -------- Recording Map Writes --------
 
     /// Starts recording all map SSTOREs for later retrieval.
@@ -1018,6 +1026,30 @@ interface Vm {
     /// Expects an error from reverter address on next call, that exactly matches the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls with any revert data or reverter.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls that match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls that exactly match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(address reverter, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;
 
     /// Expects an error on next call that starts with the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]

@@ -16,9 +16,7 @@ use foundry_config::{
         Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    get_available_profiles,
-    providers::remappings::Remappings,
-    Config, RootPath,
+    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -145,10 +143,6 @@ pub struct CoreBuildArgs {
     #[command(flatten)]
     #[serde(flatten)]
     pub project_paths: ProjectPathsArgs,
-
-    /// Profile to use for compiling the project.
-    #[arg(long)]
-    pub profile: Option<Profile>,
 }
 
 impl CoreBuildArgs {
@@ -198,25 +192,6 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
             figment = figment.merge(("skip", skip));
         };
 
-        if let Some(profile) = &args.profile {
-            let root = figment.extract_inner::<RootPath>("root").unwrap_or_default();
-
-            let config_path = root.0.join(Config::FILE_NAME);
-
-            let available_profiles = get_available_profiles(&config_path).unwrap_or_default();
-
-            if !available_profiles.contains(&profile.to_string()) {
-                let _ = sh_warn!(
-                    "Profile `{}` not found in available profiles `{:?}`. Using {} profile",
-                    profile,
-                    available_profiles,
-                    figment.profile(),
-                );
-            } else {
-                figment = figment.select(profile.clone());
-            }
-        }
-
         figment
     }
 }
@@ -228,7 +203,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.project_paths.config_path.is_some() {
-            config.root = args.project_paths.project_root().into();
+            config.root = args.project_paths.project_root();
         }
         config
     }
@@ -310,12 +285,6 @@ impl Provider for CoreBuildArgs {
             dict.insert("eof".to_string(), true.into());
         }
 
-        let profile = if let Some(profile) = &self.profile {
-            profile.clone()
-        } else {
-            Config::selected_profile()
-        };
-
-        Ok(Map::from([(profile, dict)]))
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }

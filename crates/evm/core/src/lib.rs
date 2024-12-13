@@ -52,8 +52,8 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
     /// Simulates `console.log` invocation.
     fn console_log(&mut self, _input: String) {}
 
-    /// Returns `true` if the current network is Alphanet.
-    fn is_alphanet(&self) -> bool {
+    /// Returns `true` if the current network is Odyssey.
+    fn is_odyssey(&self) -> bool {
         false
     }
 

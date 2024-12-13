@@ -1,14 +1,15 @@
 //! Helper trait and functions to format Ethereum types.
 
 use alloy_consensus::{
-    AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope,
-    TxType,
+    Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope, TxType, Typed2718,
 };
-use alloy_network::{AnyHeader, AnyRpcBlock, AnyTxEnvelope, ReceiptResponse};
+use alloy_network::{
+    AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyTransactionReceipt, AnyTxEnvelope,
+    ReceiptResponse,
+};
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64, U8};
 use alloy_rpc_types::{
-    AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Header, Log, Transaction,
-    TransactionReceipt,
+    AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use serde::Deserialize;
@@ -900,6 +901,7 @@ fn pretty_block_basics<T>(block: &Block<T, alloy_rpc_types::Header<AnyHeader>>) 
                         excess_blob_gas,
                         parent_beacon_block_root,
                         requests_hash,
+                        target_blobs_per_block,
                     },
             },
         uncles: _,
@@ -931,7 +933,8 @@ withdrawalsRoot      {}
 totalDifficulty      {}
 blobGasUsed          {}
 excessBlobGas        {}
-requestsHash         {}",
+requestsHash         {}
+targetBlobsPerBlock  {}",
         base_fee_per_gas.pretty(),
         difficulty.pretty(),
         extra_data.pretty(),
@@ -959,6 +962,7 @@ requestsHash         {}",
         blob_gas_used.pretty(),
         excess_blob_gas.pretty(),
         requests_hash.pretty(),
+        target_blobs_per_block.pretty(),
     )
 }
 
