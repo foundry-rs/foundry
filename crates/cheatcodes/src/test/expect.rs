@@ -805,7 +805,7 @@ pub(crate) fn handle_expect_emit(
 
         let expected_count = event_to_fill_or_check.count;
 
-        return match event_to_fill_or_check.address {
+        match event_to_fill_or_check.address {
             Some(emitter) => count_map
                 .get(&emitter)
                 .is_some_and(|log_map| log_map.count(&log.data) >= expected_count),
