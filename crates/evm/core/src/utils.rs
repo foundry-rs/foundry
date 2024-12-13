@@ -89,7 +89,7 @@ pub fn get_function<'a>(
 }
 
 /// Configures the env for the given RPC transaction.
-/// Accounts for an impersonated transaction by reseting the `env.tx.caller` field to `tx.from`.
+/// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxEnvelope>) {
     let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from);
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner {
@@ -99,7 +99,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxE
 
 /// Configures the env for the given RPC transaction request.
 /// `impersonated_from` is the address of the impersonated account. This helps account for an
-/// impersonated transaction by reseting the `env.tx.caller` field to `impersonated_from`.
+/// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
 pub fn configure_tx_req_env(
     env: &mut revm::primitives::Env,
     tx: &TransactionRequest,
