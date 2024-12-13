@@ -9,6 +9,7 @@ use alloy_network::AnyTxEnvelope;
 use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
+use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -88,16 +89,21 @@ pub fn get_function<'a>(
 }
 
 /// Configures the env for the given RPC transaction.
+/// Accounts for an impersonated transaction by reseting the `env.tx.caller` field to `tx.from`.
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxEnvelope>) {
+    let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from);
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner {
-        configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
+        configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
     }
 }
 
 /// Configures the env for the given RPC transaction request.
+/// `impersonated_from` is the address of the impersonated account. This helps account for an
+/// impersonated transaction by reseting the `env.tx.caller` field to `impersonated_from`.
 pub fn configure_tx_req_env(
     env: &mut revm::primitives::Env,
     tx: &TransactionRequest,
+    impersonated_from: Option<Address>,
 ) -> eyre::Result<()> {
     let TransactionRequest {
         nonce,
@@ -120,7 +126,10 @@ pub fn configure_tx_req_env(
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
     env.tx.transact_to = to.unwrap_or(TxKind::Create);
-    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
+    // If the transaction is impersonated, we need to set the caller to the from
+    // address Ref: https://github.com/foundry-rs/foundry/issues/9541
+    env.tx.caller =
+        impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce;
     env.tx.value = value.unwrap_or_default();
