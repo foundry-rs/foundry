@@ -69,7 +69,7 @@ jobs:
   release:
     permissions:
       id-token: write
-      contents: read
+      contents: write
       attestations: write
     name: ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
@@ -163,15 +163,6 @@ jobs:
             echo "${name}_bin_path=${bin}" >> $GITHUB_ENV
           done
 
-      - name: Binaries attestation
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            ${{ env.anvil_bin_path }}
-            ${{ env.cast_bin_path }}
-            ${{ env.chisel_bin_path }}
-            ${{ env.forge_bin_path }}
-
       - name: Archive binaries
         id: artifacts
         env:
@@ -227,6 +218,15 @@ jobs:
           files: |
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.foundry_man }}
+
+      - name: Binaries attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ${{ env.anvil_bin_path }}
+            ${{ env.cast_bin_path }}
+            ${{ env.chisel_bin_path }}
+            ${{ env.forge_bin_path }}
 
       # If this is a nightly release, it also updates the release
       # tagged `nightly` for compatibility with `foundryup`
