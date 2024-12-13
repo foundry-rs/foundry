@@ -39,7 +39,7 @@ Foundry consists of:
 - **High-Performance Compilation**
 
   - **Fast and Flexible**: Automatically detects and installs the required Solidity compiler version.
-  - **Vyper Support**: Fully supports Vyper out-of-the-box.
+  - **Solidity and Vyper Support**: Fully supports both Solidity and Vyper out-of-the-box.
   - **Incremental Compilation**: Re-compiles only changed files, saving time.
   - **Parallelized Pipeline**: Leverages multi-core systems for ultra-fast builds.
   - **Broad Compatibility**: Supports non-standard directory structures, including [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829).
