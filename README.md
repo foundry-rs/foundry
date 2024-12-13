@@ -49,7 +49,7 @@ Foundry consists of:
   - **No Context Switching**: Write tests directly in Solidity.
   - **Fuzz Testing**: Quickly identify edge cases with input shrinking and counter-example generation.
   - **Invariant Testing**: Ensure complex system properties hold across a wide range of inputs.
-  - **Debugging Made Easy**: Use [ForgeStd](https://github.com/foundry-rs/forge-std)'s `console.sol` for flexible debug logging.
+  - **Debugging Made Easy**: Use [forge-std](https://github.com/foundry-rs/forge-std)'s `console.sol` for flexible debug logging.
   - **Interactive Debugger**: Step through your Solidity code with Foundry's interactive debugger, making it easy to pinpoint issues.
 
 - **Powerful Runtime Features**

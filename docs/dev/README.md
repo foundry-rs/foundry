@@ -60,7 +60,7 @@ See also [Getting Help](../../README.md#getting-help)
 
 ## Issue Labels
 
-Whenever a ticket is initially opened a [`T-needs-triage`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-needs-triage) label is assigned. It usually means no other developer has looked into the ticket yet.
+Whenever a ticket is initially opened a [`T-needs-triage`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-needs-triage) label is assigned. This means that a member has yet to correctly label it.
 
 If this is your first time contributing have a look at our [`first-issue`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3A%22first+issue%22) tickets. These are tickets we think are a good way to get familiar with the codebase.
 
