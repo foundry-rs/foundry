@@ -183,6 +183,11 @@ where
             tx.set_nonce(nonce.to());
         }
 
+        tx.input = TransactionInput {
+            input: if tx_opts.input_only_data { None } else { Some(Bytes::new()) },
+            data: if tx_opts.input_only_input { None } else { Some(Bytes::new()) },
+        };
+
         Ok(Self {
             provider,
             tx,
@@ -311,7 +316,15 @@ where
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
         let input = Bytes::copy_from_slice(&self.state.input);
-        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+        match (self.tx.input.input.is_some(), self.tx.input.data.is_some()) {
+            (true, false) => self.tx.input.input = Some(input),
+            (false, true) => self.tx.input.data = Some(input),
+            (true, true) => {
+            self.tx.input.input = Some(input.clone());
+            self.tx.input.data = Some(input);
+            }
+            _ => {}
+        }
 
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());

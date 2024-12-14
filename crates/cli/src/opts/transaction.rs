@@ -76,6 +76,16 @@ pub struct TransactionOpts {
     #[arg(long)]
     pub legacy: bool,
 
+    /// Transaction input containing only the input field.
+    /// By default, both the input and data fields will be set.
+    #[arg(long, default_value = "false")]
+    pub input_only_input: bool,
+
+    /// Transaction input containing only the data field.
+    /// By default, both the input and data fields will be set.
+    #[arg(long, default_value = "false")]
+    pub input_only_data: bool,
+
     /// Send a EIP-4844 blob transaction.
     #[arg(long, conflicts_with = "legacy")]
     pub blob: bool,
