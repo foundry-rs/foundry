@@ -1281,7 +1281,7 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(&mut env, tx)?;
+            configure_tx_req_env(&mut env, tx, None)?;
             let env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();

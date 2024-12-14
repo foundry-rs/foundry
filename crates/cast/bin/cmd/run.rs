@@ -10,7 +10,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_impersonated_tx, is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -212,12 +212,6 @@ impl RunArgs {
 
                     configure_tx_env(&mut env, &tx.inner);
 
-                    if is_impersonated_tx(&tx.inner.inner) {
-                        // If the transaction is impersonated, we need to set the caller to the from
-                        // address Ref: https://github.com/foundry-rs/foundry/issues/9541
-                        env.tx.caller = tx.from;
-                    }
-
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
@@ -256,12 +250,6 @@ impl RunArgs {
             executor.set_trace_printer(self.trace_printer);
 
             configure_tx_env(&mut env, &tx.inner);
-
-            if is_impersonated_tx(&tx.inner.inner) {
-                // If the transaction is impersonated, we need to set the caller to the from address
-                // Ref: https://github.com/foundry-rs/foundry/issues/9541
-                env.tx.caller = tx.from;
-            }
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
