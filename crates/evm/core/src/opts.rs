@@ -29,6 +29,9 @@ pub struct EvmOpts {
     /// Initial retry backoff.
     pub fork_retry_backoff: Option<u64>,
 
+    /// Headers to use with `fork_url`
+    pub fork_headers: Option<Vec<String>>,
+
     /// The available compute units per second.
     ///
     /// See also <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
@@ -80,6 +83,7 @@ impl Default for EvmOpts {
             fork_block_number: None,
             fork_retries: None,
             fork_retry_backoff: None,
+            fork_headers: None,
             compute_units_per_second: None,
             no_rpc_rate_limit: false,
             no_storage_caching: false,
