@@ -320,8 +320,8 @@ where
             (true, false) => self.tx.input.input = Some(input),
             (false, true) => self.tx.input.data = Some(input),
             (true, true) => {
-            self.tx.input.input = Some(input.clone());
-            self.tx.input.data = Some(input);
+                self.tx.input.input = Some(input.clone());
+                self.tx.input.data = Some(input);
             }
             _ => {}
         }
