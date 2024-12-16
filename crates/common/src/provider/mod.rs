@@ -241,6 +241,12 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets http headers. If `None`, defaults to the already-set value.
+    pub fn maybe_headers(mut self, headers: Option<Vec<String>>) -> Self {
+        self.headers = headers.unwrap_or(self.headers);
+        self
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let Self {

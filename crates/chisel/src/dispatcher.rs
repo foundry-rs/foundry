@@ -13,7 +13,7 @@ use crate::{
 use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use forge_fmt::FormatterConfig;
-use foundry_config::{Config, RpcEndpoint};
+use foundry_config::{Config, RpcEndpointUrl};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
@@ -357,9 +357,9 @@ impl ChiselDispatcher {
                 {
                     endpoint.clone()
                 } else {
-                    RpcEndpoint::Env(arg.to_string()).into()
+                    RpcEndpointUrl::Env(arg.to_string()).into()
                 };
-                let fork_url = match endpoint.resolve() {
+                let fork_url = match endpoint.resolve().url() {
                     Ok(fork_url) => fork_url,
                     Err(e) => {
                         return DispatchResult::CommandFailed(Self::make_error(format!(
