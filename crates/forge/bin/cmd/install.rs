@@ -193,6 +193,7 @@ impl DependencyInstallOpts {
                         tag_type = Some(TagType::Branch(tag_or_branch.clone()));
                     }
 
+                    trace!(?tag_type, ?tag_or_branch, "resolved tag type");
                     if let Some(tag_type) = &tag_type {
                         foundry_lock.insert(rel_path.to_path_buf(), tag_type.clone());
                     }
