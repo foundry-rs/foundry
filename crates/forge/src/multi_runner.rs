@@ -2,20 +2,22 @@
 
 use crate::{
     progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
-    TestFilter, TestOptions,
+    TestFilter,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
-    artifacts::Libraries, compilers::Compiler, Artifact, ArtifactId, ProjectCompileOutput,
+    artifacts::{Contract, Libraries},
+    compilers::Compiler,
+    Artifact, ArtifactId, ProjectCompileOutput,
 };
-use foundry_config::Config;
+use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
     backend::Backend,
     decode::RevertDecoder,
-    executors::ExecutorBuilder,
+    executors::{Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -48,38 +50,34 @@ pub struct MultiContractRunner {
     /// Mapping of contract name to JsonAbi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
-    /// The EVM instance used in the test runner
-    pub evm_opts: EvmOpts,
-    /// The configured evm
-    pub env: revm::primitives::Env,
-    /// The EVM spec
-    pub evm_spec: SpecId,
-    /// Revert decoder. Contains all known errors and their selectors.
-    pub revert_decoder: RevertDecoder,
-    /// The address which will be used as the `from` field in all EVM calls
-    pub sender: Option<Address>,
-    /// The fork to use at launch
-    pub fork: Option<CreateFork>,
-    /// Project config.
-    pub config: Arc<Config>,
-    /// Whether to collect coverage info
-    pub coverage: bool,
-    /// Whether to collect debug info
-    pub debug: bool,
-    /// Whether to enable steps tracking in the tracer.
-    pub decode_internal: InternalTraceMode,
-    /// Settings related to fuzz and/or invariant tests
-    pub test_options: TestOptions,
-    /// Whether to enable call isolation
-    pub isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
     /// Known contracts linked with computed library addresses.
     pub known_contracts: ContractsByArtifact,
+    /// Revert decoder. Contains all known errors and their selectors.
+    pub revert_decoder: RevertDecoder,
     /// Libraries to deploy.
     pub libs_to_deploy: Vec<Bytes>,
     /// Library addresses used to link contracts.
     pub libraries: Libraries,
+
+    /// The fork to use at launch
+    pub fork: Option<CreateFork>,
+
+    /// The base configuration for the test runner.
+    pub tcfg: TestRunnerConfig,
+}
+
+impl std::ops::Deref for MultiContractRunner {
+    type Target = TestRunnerConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tcfg
+    }
+}
+
+impl std::ops::DerefMut for MultiContractRunner {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.tcfg
+    }
 }
 
 impl MultiContractRunner {
@@ -196,7 +194,7 @@ impl MultiContractRunner {
                     let result = self.run_test_suite(
                         id,
                         contract,
-                        db.clone(),
+                        &db,
                         filter,
                         &tokio_handle,
                         Some(&tests_progress),
@@ -219,8 +217,7 @@ impl MultiContractRunner {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result =
-                    self.run_test_suite(id, contract, db.clone(), filter, &tokio_handle, None);
+                let result = self.run_test_suite(id, contract, &db, filter, &tokio_handle, None);
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -230,40 +227,13 @@ impl MultiContractRunner {
         &self,
         artifact_id: &ArtifactId,
         contract: &TestContract,
-        db: Backend,
+        db: &Backend,
         filter: &dyn TestFilter,
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
-
-        let cheats_config = CheatsConfig::new(
-            &self.config,
-            self.evm_opts.clone(),
-            Some(self.known_contracts.clone()),
-            Some(artifact_id.name.clone()),
-            Some(artifact_id.version.clone()),
-        );
-
-        let trace_mode = TraceMode::default()
-            .with_debug(self.debug)
-            .with_decode_internal(self.decode_internal)
-            .with_verbosity(self.evm_opts.verbosity);
-
-        let executor = ExecutorBuilder::new()
-            .inspectors(|stack| {
-                stack
-                    .cheatcodes(Arc::new(cheats_config))
-                    .trace_mode(trace_mode)
-                    .coverage(self.coverage)
-                    .enable_isolation(self.isolation)
-                    .alphanet(self.alphanet)
-            })
-            .spec(self.evm_spec)
-            .gas_limit(self.evm_opts.gas_limit())
-            .legacy_assertions(self.config.legacy_assertions)
-            .build(self.env.clone(), db);
 
         if !enabled!(tracing::Level::TRACE) {
             span_name = get_contract_name(&identifier);
@@ -274,24 +244,130 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
-        let runner = ContractRunner {
-            name: &identifier,
+        let runner = ContractRunner::new(
+            &identifier,
             contract,
-            libs_to_deploy: &self.libs_to_deploy,
-            executor,
-            revert_decoder: &self.revert_decoder,
-            initial_balance: self.evm_opts.initial_balance,
-            sender: self.sender.unwrap_or_default(),
-            debug: self.debug,
+            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
             progress,
             tokio_handle,
             span,
-        };
-        let r = runner.run_tests(filter, &self.test_options, self.known_contracts.clone());
+            self,
+        );
+        let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
         r
+    }
+}
+
+/// Configuration for the test runner.
+///
+/// This is modified after instantiation through inline config.
+#[derive(Clone)]
+pub struct TestRunnerConfig {
+    /// Project config.
+    pub config: Arc<Config>,
+    /// Inline configuration.
+    pub inline_config: Arc<InlineConfig>,
+
+    /// EVM configuration.
+    pub evm_opts: EvmOpts,
+    /// EVM environment.
+    pub env: revm::primitives::Env,
+    /// EVM version.
+    pub spec_id: SpecId,
+    /// The address which will be used to deploy the initial contracts and send all transactions.
+    pub sender: Address,
+
+    /// Whether to collect coverage info
+    pub coverage: bool,
+    /// Whether to collect debug info
+    pub debug: bool,
+    /// Whether to enable steps tracking in the tracer.
+    pub decode_internal: InternalTraceMode,
+    /// Whether to enable call isolation.
+    pub isolation: bool,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
+}
+
+impl TestRunnerConfig {
+    /// Reconfigures all fields using the given `config`.
+    pub fn reconfigure_with(&mut self, config: Arc<Config>) {
+        debug_assert!(!Arc::ptr_eq(&self.config, &config));
+
+        // TODO: self.evm_opts
+        // TODO: self.env
+        self.spec_id = config.evm_spec_id();
+        self.sender = config.sender;
+        // self.coverage = N/A;
+        // self.debug = N/A;
+        // self.decode_internal = N/A;
+        // self.isolation = N/A;
+        self.odyssey = config.odyssey;
+
+        self.config = config;
+    }
+
+    /// Configures the given executor with this configuration.
+    pub fn configure_executor(&self, executor: &mut Executor) {
+        // TODO: See above
+
+        let inspector = executor.inspector_mut();
+        // inspector.set_env(&self.env);
+        if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
+            cheatcodes.config =
+                Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
+        }
+        inspector.tracing(self.trace_mode());
+        inspector.collect_coverage(self.coverage);
+        inspector.enable_isolation(self.isolation);
+        inspector.odyssey(self.odyssey);
+        // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
+
+        // executor.env_mut().clone_from(&self.env);
+        executor.set_spec_id(self.spec_id);
+        // executor.set_gas_limit(self.evm_opts.gas_limit());
+        executor.set_legacy_assertions(self.config.legacy_assertions);
+    }
+
+    /// Creates a new executor with this configuration.
+    pub fn executor(
+        &self,
+        known_contracts: ContractsByArtifact,
+        artifact_id: &ArtifactId,
+        db: Backend,
+    ) -> Executor {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &self.config,
+            self.evm_opts.clone(),
+            Some(known_contracts),
+            Some(artifact_id.name.clone()),
+            Some(artifact_id.version.clone()),
+        ));
+        ExecutorBuilder::new()
+            .inspectors(|stack| {
+                stack
+                    .cheatcodes(cheats_config)
+                    .trace_mode(self.trace_mode())
+                    .coverage(self.coverage)
+                    .enable_isolation(self.isolation)
+                    .odyssey(self.odyssey)
+                    .create2_deployer(self.evm_opts.create2_deployer)
+            })
+            .spec_id(self.spec_id)
+            .gas_limit(self.evm_opts.gas_limit())
+            .legacy_assertions(self.config.legacy_assertions)
+            .build(self.env.clone(), db)
+    }
+
+    fn trace_mode(&self) -> TraceMode {
+        TraceMode::default()
+            .with_debug(self.debug)
+            .with_decode_internal(self.decode_internal)
+            .with_verbosity(self.evm_opts.verbosity)
+            .with_state_changes(verbosity() > 4)
     }
 }
 
@@ -318,10 +394,8 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
-    /// Settings related to fuzz and/or invariant tests
-    pub test_options: Option<TestOptions>,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -335,9 +409,8 @@ impl MultiContractRunnerBuilder {
             coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
-            test_options: Default::default(),
             decode_internal: Default::default(),
-            alphanet: Default::default(),
+            odyssey: Default::default(),
         }
     }
 
@@ -361,11 +434,6 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
-        self.test_options = Some(test_options);
-        self
-    }
-
     pub fn set_coverage(mut self, enable: bool) -> Self {
         self.coverage = enable;
         self
@@ -386,17 +454,17 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn alphanet(mut self, enable: bool) -> Self {
-        self.alphanet = enable;
+    pub fn odyssey(mut self, enable: bool) -> Self {
+        self.odyssey = enable;
         self
     }
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<C: Compiler>(
+    pub fn build<C: Compiler<CompilerContract = Contract>>(
         self,
         root: &Path,
-        output: &ProjectCompileOutput<C>,
+        output: &ProjectCompileOutput,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
@@ -447,22 +515,28 @@ impl MultiContractRunnerBuilder {
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
-            evm_opts,
-            env,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::CANCUN),
-            sender: self.sender,
             revert_decoder,
-            fork: self.fork,
-            config: self.config,
-            coverage: self.coverage,
-            debug: self.debug,
-            decode_internal: self.decode_internal,
-            test_options: self.test_options.unwrap_or_default(),
-            isolation: self.isolation,
-            alphanet: self.alphanet,
             known_contracts,
             libs_to_deploy,
             libraries,
+
+            fork: self.fork,
+
+            tcfg: TestRunnerConfig {
+                evm_opts,
+                env,
+                spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
+                sender: self.sender.unwrap_or(self.config.sender),
+
+                coverage: self.coverage,
+                debug: self.debug,
+                decode_internal: self.decode_internal,
+                inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
+                isolation: self.isolation,
+                odyssey: self.odyssey,
+
+                config: self.config,
+            },
         })
     }
 }

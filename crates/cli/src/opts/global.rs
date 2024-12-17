@@ -15,7 +15,7 @@ pub struct GlobalOpts {
     /// - 2 (-vv): Print logs for all tests.
     /// - 3 (-vvv): Print execution traces for failing tests.
     /// - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
-    /// - 5 (-vvvvv): Print execution and setup traces for all tests.
+    /// - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
     #[arg(help_heading = "Display options", global = true, short, long, verbatim_doc_comment, conflicts_with = "quiet", action = ArgAction::Count)]
     verbosity: Verbosity,
 
@@ -50,11 +50,6 @@ impl GlobalOpts {
         Ok(())
     }
 
-    /// Initialize the global thread pool.
-    pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
-        init_thread_pool(self.threads.unwrap_or(0))
-    }
-
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
         let mode = match self.quiet {
@@ -68,6 +63,11 @@ impl GlobalOpts {
         };
 
         Shell::new_with(format, mode, color, self.verbosity)
+    }
+
+    /// Initialize the global thread pool.
+    pub fn force_init_thread_pool(&self) -> eyre::Result<()> {
+        init_thread_pool(self.threads.unwrap_or(0))
     }
 }
 

@@ -808,7 +808,7 @@ async fn test_reorg() {
 // === wallet endpoints === //
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_wallet_capabilities() {
-    let (api, handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+    let (api, handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
     let provider = handle.http_provider();
 
@@ -834,7 +834,7 @@ async fn can_get_wallet_capabilities() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_add_capability() {
-    let (api, _handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
     let init_capabilities = api.get_capabilities().unwrap();
 
@@ -864,7 +864,7 @@ async fn can_add_capability() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_executor() {
-    let (api, _handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
     let expected_addr = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();

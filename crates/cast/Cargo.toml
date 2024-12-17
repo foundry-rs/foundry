@@ -94,6 +94,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
+alloy-node-bindings.workspace = true
 
 async-trait.workspace = true
 divan.workspace = true

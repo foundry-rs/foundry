@@ -1,6 +1,7 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
+    artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
     error::Result as SolcResult,
@@ -11,7 +12,7 @@ use foundry_compilers::{
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{assert_data_eq, cmd::OutputAssert, str, IntoData};
+use snapbox::{assert_data_eq, cmd::OutputAssert, Data, IntoData};
 use std::{
     env,
     ffi::OsStr,
@@ -202,7 +203,7 @@ impl ExtTester {
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
-            test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
+            test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_url());
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
         test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
@@ -420,7 +421,9 @@ pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
 ///
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
-pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
+pub struct TestProject<
+    T: ArtifactOutput<CompilerContract = Contract> + Default = ConfigurableArtifacts,
+> {
     /// The directory in which this test executable is running.
     exe_root: PathBuf,
     /// The project in which the test should run.
@@ -902,10 +905,10 @@ impl TestCommand {
         assert_data_eq!(actual, expected);
     }
 
-    /// Runs the command and asserts that it **failed** nothing was printed to stdout.
+    /// Runs the command and asserts that it **succeeded** nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
-        self.assert_success().stdout_eq(str![[r#""#]]);
+        self.assert_success().stdout_eq(Data::new());
     }
 
     /// Runs the command and asserts that it failed.
@@ -923,7 +926,23 @@ impl TestCommand {
     /// Runs the command and asserts that it **failed** nothing was printed to stderr.
     #[track_caller]
     pub fn assert_empty_stderr(&mut self) {
-        self.assert_failure().stderr_eq(str![[r#""#]]);
+        self.assert_failure().stderr_eq(Data::new());
+    }
+
+    /// Runs the command with a temporary file argument and asserts that the contents of the file
+    /// match the given data.
+    #[track_caller]
+    pub fn assert_file(&mut self, data: impl IntoData) {
+        self.assert_file_with(|this, path| _ = this.arg(path).assert_success(), data);
+    }
+
+    /// Creates a temporary file, passes it to `f`, then asserts that the contents of the file match
+    /// the given data.
+    #[track_caller]
+    pub fn assert_file_with(&mut self, f: impl FnOnce(&mut Self, &Path), data: impl IntoData) {
+        let file = tempfile::NamedTempFile::new().expect("couldn't create temporary file");
+        f(self, file.path());
+        assert_data_eq!(Data::read_from(file.path(), None), data);
     }
 
     /// Does not apply [`snapbox`] redactions to the command output.

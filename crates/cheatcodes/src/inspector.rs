@@ -439,7 +439,7 @@ pub struct Cheatcodes {
     /// Scripting based transactions
     pub broadcastable_transactions: BroadcastableTransactions,
 
-    /// Additional, user configurable context this Inspector has access to when inspecting a call
+    /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
     /// Test-scoped context holding data that needs to be reset every test run
@@ -540,7 +540,7 @@ impl Cheatcodes {
 
     /// Returns the configured wallets if available, else creates a new instance.
     pub fn wallets(&mut self) -> &Wallets {
-        self.wallets.get_or_insert(Wallets::new(MultiWallet::default(), None))
+        self.wallets.get_or_insert_with(|| Wallets::new(MultiWallet::default(), None))
     }
 
     /// Sets the unlocked wallets.
@@ -754,16 +754,23 @@ where {
             if ecx.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let handler_result = expect::handle_expect_revert(
                     false,
                     true,
-                    &expected_revert,
+                    &mut expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
-                ) {
+                );
+
+                return match handler_result {
                     Ok((address, retdata)) => {
+                        expected_revert.actual_count += 1;
+                        if expected_revert.actual_count < expected_revert.count {
+                            self.expected_revert = Some(expected_revert.clone());
+                        }
+
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
@@ -902,12 +909,11 @@ where {
                     *calldata == call.input[..calldata.len()] &&
                     // The value matches, if provided
                     expected
-                        .value
-                        .map_or(true, |value| Some(value) == call.transfer_value()) &&
+                        .value.is_none_or(|value| Some(value) == call.transfer_value()) &&
                     // The gas matches, if provided
-                    expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
+                    expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
-                    expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
+                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit)
                 {
                     *actual_count += 1;
                 }
@@ -925,7 +931,7 @@ where {
                     .iter_mut()
                     .find(|(mock, _)| {
                         call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.map_or(true, |value| Some(value) == call.transfer_value())
+                            mock.value.is_none_or(|value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v),
             } {
@@ -1303,6 +1309,14 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 expected_revert.reverted_by.is_none()
             {
                 expected_revert.reverted_by = Some(call.target_address);
+            } else if outcome.result.is_revert() &&
+                expected_revert.reverter.is_some() &&
+                expected_revert.reverted_by.is_some() &&
+                expected_revert.count > 1
+            {
+                // If we're expecting more than one revert, we need to reset the reverted_by address
+                // to latest reverter.
+                expected_revert.reverted_by = Some(call.target_address);
             }
 
             if ecx.journaled_state.depth() <= expected_revert.depth {
@@ -1316,15 +1330,20 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 };
 
                 if needs_processing {
-                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                    return match expect::handle_expect_revert(
+                    // Only `remove` the expected revert from state if `expected_revert.count` ==
+                    // `expected_revert.actual_count`
+                    let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+
+                    let handler_result = expect::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        &expected_revert,
+                        &mut expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
-                    ) {
+                    );
+
+                    return match handler_result {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;
@@ -1332,6 +1351,10 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             outcome
                         }
                         Ok((_, retdata)) => {
+                            expected_revert.actual_count += 1;
+                            if expected_revert.actual_count < expected_revert.count {
+                                self.expected_revert = Some(expected_revert.clone());
+                            }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
                             outcome
@@ -1586,6 +1609,10 @@ impl InspectorExt for Cheatcodes {
         } else {
             false
         }
+    }
+
+    fn create2_deployer(&self) -> Address {
+        self.config.evm_opts.create2_deployer
     }
 }
 

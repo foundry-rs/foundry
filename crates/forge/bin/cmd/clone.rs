@@ -266,7 +266,7 @@ impl CloneArgs {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
                 if fs::write(&remappings_txt, remappings_txt_content).is_err() {
-                    return false
+                    return false;
                 }
 
                 let profile = config.profile.as_str().as_str();
@@ -612,7 +612,7 @@ impl EtherscanClient for Client {
 mod tests {
     use super::*;
     use alloy_primitives::hex;
-    use foundry_compilers::Artifact;
+    use foundry_compilers::CompilerContract;
     use foundry_test_utils::rpc::next_mainnet_etherscan_api_key;
     use std::collections::BTreeMap;
 
@@ -631,7 +631,7 @@ mod tests {
             contracts.iter().for_each(|(name, contract)| {
                 if name == contract_name {
                     let compiled_creation_code =
-                        contract.get_bytecode_object().expect("creation code not found");
+                        contract.bin_ref().expect("creation code not found");
                     assert!(
                         hex::encode(compiled_creation_code.as_ref())
                             .starts_with(stripped_creation_code),

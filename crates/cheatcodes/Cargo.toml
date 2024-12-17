@@ -45,6 +45,7 @@ alloy-signer-local = { workspace = true, features = [
 ] }
 parking_lot.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-network.workspace = true
 alloy-rlp.workspace = true
 
 base64.workspace = true
@@ -67,3 +68,4 @@ toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
+serde.workspace = true

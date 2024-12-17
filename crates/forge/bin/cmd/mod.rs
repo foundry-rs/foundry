@@ -24,7 +24,7 @@
 //! #[derive(Clone, Debug, Parser)]
 //! pub struct MyArgs {
 //!     #[command(flatten)]
-//!     evm_opts: EvmArgs,
+//!     evm_args: EvmArgs,
 //!     #[command(flatten)]
 //!     opts: BuildArgs,
 //! }

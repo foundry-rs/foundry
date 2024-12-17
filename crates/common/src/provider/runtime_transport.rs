@@ -1,7 +1,7 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport and supports retries based on CUPS logic.
 
-use crate::REQUEST_TIMEOUT;
+use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types::engine::{Claims, JwtSecret};
@@ -173,6 +173,14 @@ impl RuntimeTransport {
             headers.insert(
                 HeaderName::from_str(key.trim()).map_err(|_| make_err())?,
                 HeaderValue::from_str(val.trim()).map_err(|_| make_err())?,
+            );
+        }
+
+        if !headers.iter().any(|(k, _v)| k.as_str().starts_with("User-Agent:")) {
+            headers.insert(
+                reqwest::header::USER_AGENT,
+                HeaderValue::from_str(DEFAULT_USER_AGENT)
+                    .expect("User-Agent should be valid string"),
             );
         }
 

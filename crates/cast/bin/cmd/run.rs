@@ -10,7 +10,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -23,6 +23,7 @@ use foundry_config::{
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
+    traces::{InternalTraceMode, TraceMode},
     utils::configure_tx_env,
 };
 
@@ -84,9 +85,9 @@ pub struct RunArgs {
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 
-    /// Enables Alphanet features.
-    #[arg(long, alias = "odyssey")]
-    pub alphanet: bool,
+    /// Enables Odyssey features.
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
@@ -107,11 +108,9 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::ProviderBuilder::new(
-            &config.get_rpc_url_or_localhost_http()?,
-        )
-        .compute_units_per_second_opt(compute_units_per_second)
-        .build()?;
+        let provider = foundry_cli::utils::get_provider_builder(&config)?
+            .compute_units_per_second_opt(compute_units_per_second)
+            .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let tx = provider
@@ -138,7 +137,8 @@ impl RunArgs {
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
-        let (mut env, fork, chain, alphanet) =
+        let create2_deployer = evm_opts.create2_deployer;
+        let (mut env, fork, chain, odyssey) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
         let mut evm_version = self.evm_version;
@@ -163,20 +163,30 @@ impl RunArgs {
             }
         }
 
+        let trace_mode = TraceMode::Call
+            .with_debug(self.debug)
+            .with_decode_internal(if self.decode_internal {
+                InternalTraceMode::Full
+            } else {
+                InternalTraceMode::None
+            })
+            .with_state_changes(shell::verbosity() > 4);
         let mut executor = TracingExecutor::new(
             env.clone(),
             fork,
             evm_version,
-            self.debug,
-            self.decode_internal,
-            alphanet,
+            trace_mode,
+            odyssey,
+            create2_deployer,
         );
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            sh_println!("Executing previous transactions from the block.")?;
+            if !shell::is_json() {
+                sh_println!("Executing previous transactions from the block.")?;
+            }
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
@@ -273,8 +283,8 @@ impl figment::Provider for RunArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut map = Map::new();
 
-        if self.alphanet {
-            map.insert("alphanet".into(), self.alphanet.into());
+        if self.odyssey {
+            map.insert("odyssey".into(), self.odyssey.into());
         }
 
         if let Some(api_key) = &self.etherscan.key {

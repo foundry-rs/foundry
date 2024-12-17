@@ -73,7 +73,7 @@ impl<'a> CowBackend<'a> {
         self.spec_id = env.handler_cfg.spec_id;
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
-        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+        let res = evm.transact().wrap_err("EVM error")?;
 
         env.env = evm.context.evm.inner.env;
 

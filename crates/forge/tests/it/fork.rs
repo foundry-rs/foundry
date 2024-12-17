@@ -35,9 +35,9 @@ async fn test_cheats_fork_revert() {
 /// Executes all non-reverting fork cheatcodes
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cheats_fork() {
-    let mut config = TEST_DATA_PARIS.config.clone();
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_PARIS.runner_with_config(config);
+    let runner = TEST_DATA_PARIS.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    });
     let filter = Filter::new(".*", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -46,9 +46,9 @@ async fn test_cheats_fork() {
 /// Executes eth_getLogs cheatcode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_logs_fork() {
-    let mut config = TEST_DATA_DEFAULT.config.clone();
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    });
     let filter = Filter::new("testEthGetLogs", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -57,9 +57,9 @@ async fn test_get_logs_fork() {
 /// Executes rpc cheatcode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_fork() {
-    let mut config = TEST_DATA_DEFAULT.config.clone();
-    config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.fs_permissions = FsPermissions::new(vec![PathPermission::read("./fixtures")]);
+    });
     let filter = Filter::new("testRpc", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
         .exclude_tests(".*Revert");
     TestConfig::with_filter(runner, filter).run().await;
@@ -68,7 +68,7 @@ async fn test_rpc_fork() {
 /// Tests that we can launch in forking mode
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork() {
-    let rpc_url = foundry_test_utils::rpc::next_http_archive_rpc_endpoint();
+    let rpc_url = foundry_test_utils::rpc::next_http_archive_rpc_url();
     let runner = TEST_DATA_DEFAULT.forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;
@@ -77,7 +77,7 @@ async fn test_launch_fork() {
 /// Smoke test that forking workings with websockets
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_fork_ws() {
-    let rpc_url = foundry_test_utils::rpc::next_ws_archive_rpc_endpoint();
+    let rpc_url = foundry_test_utils::rpc::next_ws_archive_rpc_url();
     let runner = TEST_DATA_DEFAULT.forked_runner(&rpc_url).await;
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}Launch"));
     TestConfig::with_filter(runner, filter).run().await;
@@ -102,25 +102,25 @@ async fn test_create_same_fork() {
 /// Test that `no_storage_caching` config is properly applied
 #[tokio::test(flavor = "multi_thread")]
 async fn test_storage_caching_config() {
-    // no_storage_caching set to true: storage should not be cached
-    let mut config = TEST_DATA_DEFAULT.config.clone();
-    config.no_storage_caching = true;
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
     let filter =
         Filter::new("testStorageCaching", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
             .exclude_tests(".*Revert");
-    TestConfig::with_filter(runner, filter).run().await;
+
+    let runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.no_storage_caching = true;
+    });
+
+    // no_storage_caching set to true: storage should not be cached
+    TestConfig::with_filter(runner, filter.clone()).run().await;
     let cache_dir = Config::foundry_block_cache_dir(Chain::mainnet(), 19800000).unwrap();
     let _ = fs::remove_file(cache_dir);
 
-    // no_storage_caching set to false: storage should be cached
-    let mut config = TEST_DATA_DEFAULT.config.clone();
-    config.no_storage_caching = false;
-    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
-    let filter =
-        Filter::new("testStorageCaching", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
-            .exclude_tests(".*Revert");
+    let runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.no_storage_caching = false;
+    });
     TestConfig::with_filter(runner, filter).run().await;
+
+    // no_storage_caching set to false: storage should be cached
     let cache_dir = Config::foundry_block_cache_dir(Chain::mainnet(), 19800000).unwrap();
     assert!(cache_dir.exists());
 

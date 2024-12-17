@@ -2103,13 +2103,28 @@ impl SimpleCast {
     /// ```
     pub fn extract_functions(bytecode: &str) -> Result<Vec<(String, String, &str)>> {
         let code = hex::decode(strip_0x(bytecode))?;
-        Ok(evmole::function_selectors(&code, 0)
+        let info = evmole::contract_info(
+            evmole::ContractInfoArgs::new(&code)
+                .with_selectors()
+                .with_arguments()
+                .with_state_mutability(),
+        );
+        Ok(info
+            .functions
+            .expect("functions extraction was requested")
             .into_iter()
-            .map(|s| {
+            .map(|f| {
                 (
-                    hex::encode_prefixed(s),
-                    evmole::function_arguments(&code, &s, 0),
-                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
+                    hex::encode_prefixed(f.selector),
+                    f.arguments
+                        .expect("arguments extraction was requested")
+                        .into_iter()
+                        .map(|t| t.sol_type_name().to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                    f.state_mutability
+                        .expect("state_mutability extraction was requested")
+                        .as_json_str(),
                 )
             })
             .collect())
