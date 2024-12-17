@@ -28,6 +28,7 @@ use foundry_compilers::{
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         multi::{MultiCompiler, MultiCompilerSettings},
+        resolc::ResolcSettings,
         solc::{Solc, SolcCompiler},
         vyper::{Vyper, VyperSettings},
         Compiler,
@@ -35,9 +36,10 @@ use foundry_compilers::{
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
-    ConfigurableArtifacts, Graph, Project, ProjectPathsConfig, RestrictionsWithVersion,
-    VyperLanguage,
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    RestrictionsWithVersion, VyperLanguage,
 };
+
 use regex::Regex;
 use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
 use semver::Version;
@@ -53,7 +55,7 @@ use std::{
 };
 
 mod macros;
-
+pub mod resolc;
 pub mod utils;
 pub use utils::*;
 
@@ -112,7 +114,7 @@ pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
 pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
-
+use resolc::ResolcConfig;
 mod vyper;
 use vyper::VyperConfig;
 
@@ -522,6 +524,8 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
+    /// Resolc Config/Settings
+    pub resolc_config: ResolcConfig,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -1021,7 +1025,10 @@ impl Config {
     }
 
     /// Cleans the project.
-    pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
+    pub fn cleanup<C: Compiler, T: ArtifactOutput>(
+        &self,
+        project: &Project<C, T>,
+    ) -> Result<(), SolcError> {
         project.cleanup()?;
 
         // Remove last test run failures file.
@@ -1090,7 +1097,7 @@ impl Config {
                     rx.recv().expect("sender dropped")
                 }
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
-            }
+            };
         }
         if let Some(ref solc) = self.solc {
             let solc = match solc {
@@ -1141,9 +1148,9 @@ impl Config {
 
     /// Whether caching should be enabled for the given chain id
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
-        !self.no_storage_caching &&
-            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
-            self.rpc_storage_caching.enable_for_endpoint(endpoint)
+        !self.no_storage_caching
+            && self.rpc_storage_caching.enable_for_chain_id(chain_id.into())
+            && self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig` sub set of the config.
@@ -1291,11 +1298,11 @@ impl Config {
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.map(Cow::Owned))
+            return Some(endpoint.map(Cow::Owned));
         }
 
         if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
-            return Some(Ok(Cow::Owned(endpoint.url)))
+            return Some(Ok(Cow::Owned(endpoint.url)));
         }
 
         None
@@ -1997,8 +2004,8 @@ impl Config {
             let file_name = block.file_name();
             let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else if file_type.is_file() &&
-                file_name.to_string_lossy().chars().all(char::is_numeric)
+            } else if file_type.is_file()
+                && file_name.to_string_lossy().chars().all(char::is_numeric)
             {
                 block.path()
             } else {
@@ -2376,6 +2383,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             eof: false,
             _non_exhaustive: (),
+            resolc_config: ResolcConfig::default(),
         }
     }
 }

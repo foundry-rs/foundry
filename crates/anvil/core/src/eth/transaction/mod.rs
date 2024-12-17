@@ -1259,9 +1259,9 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
             TypedReceipt::Deposit(_) => 0x7E,
         } as u8;
         let receipt = ReceiptWithBloom::<Receipt<alloy_rpc_types::Log>>::from(value);
-        let status = receipt.status();
-        let cumulative_gas_used = receipt.cumulative_gas_used() as u64;
-        let logs = receipt.logs().to_vec();
+        let status = receipt.receipt.status.coerce_status();
+        let cumulative_gas_used = receipt.receipt.cumulative_gas_used.try_into().unwrap_or(u64::MAX);
+        let logs = receipt.receipt.logs.clone();
         let logs_bloom = receipt.logs_bloom;
 
         Self { status, cumulative_gas_used, logs: Some(logs), logs_bloom: Some(logs_bloom), r#type }

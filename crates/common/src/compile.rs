@@ -11,7 +11,9 @@ use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{remappings::Remapping, BytecodeObject, Source},
+    compile::resolc::{ output::ResolcProjectCompileOutput, resolc_artifact_output::ResolcArtifactOutput},
     compilers::{
+        resolc::Resolc,
         solc::{Solc, SolcCompiler},
         Compiler,
     },
@@ -127,6 +129,36 @@ impl ProjectCompiler {
         self.files.extend(files);
         self
     }
+    /// Compiles the project using revive.
+    pub fn revive_compile(
+        mut self,
+        project: &Project<Resolc,ResolcArtifactOutput>,
+    ) -> Result<ResolcProjectCompileOutput> {
+        // TODO: Avoid process::exit
+        if !project.paths.has_input_files() && self.files.is_empty() {
+            sh_println!("Nothing to compile")?;
+            // nothing to do here
+            std::process::exit(0);
+        }
+
+        // Taking is fine since we don't need these in `compile_with`.
+        let files = std::mem::take(&mut self.files);
+        // Here we want to display that we using revive perhaps add a version
+        {
+            let version = Resolc::get_version_for_path(&project.compiler.resolc)?;
+            Report::new(SpinnerReporter::spawn_with(format!("Using revive {:?}", version)));
+        }
+        self.compile_with_resolc(|| {
+            let files_to_compile =
+                if !files.is_empty() { files } else { project.paths.input_files() };
+            let sources = Source::read_all(files_to_compile)?;
+            foundry_compilers::resolc::project::ProjectCompiler::with_sources(
+                project, sources,
+            )?
+            .compile()
+            .map_err(Into::into)
+        })
+    }
 
     /// Compiles the project.
     pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
@@ -201,6 +233,131 @@ impl ProjectCompiler {
         Ok(output)
     }
 
+    #[instrument(target = "forge::compile", skip_all)]
+    fn compile_with_resolc<F>(
+        self,
+        f: F,
+    ) -> Result<ResolcProjectCompileOutput>
+    where
+        F: FnOnce() -> Result<ResolcProjectCompileOutput>,
+    {
+        let quiet = self.quiet.unwrap_or(false);
+        let bail = self.bail.unwrap_or(true);
+
+        let output = with_compilation_reporter(self.quiet.unwrap_or(false), || {
+            tracing::debug!("compiling project");
+
+            let timer = Instant::now();
+            let r = f();
+            let elapsed = timer.elapsed();
+
+            tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
+            r
+        })?;
+
+        if bail && output.has_compiler_errors() {
+            eyre::bail!("{output}")
+        }
+
+        if !quiet {
+            if !shell::is_json() {
+                if output.is_unchanged() {
+                    sh_println!("No files changed, compilation skipped")?;
+                } else {
+                    // print the compiler output / warnings
+                    sh_println!("{output}")?;
+                }
+            }
+
+            self.handle_resolc_output(&output);
+        }
+
+        Ok(output)
+    }
+
+    /// If configured, this will print sizes or names
+    fn handle_resolc_output(
+        &self,
+        output: &ResolcProjectCompileOutput,
+    ) {
+        let print_names = self.print_names.unwrap_or(false);
+        let print_sizes = self.print_sizes.unwrap_or(false);
+
+        // print any sizes or names
+        if print_names {
+            let mut artifacts: BTreeMap<_, Vec<_>> = BTreeMap::new();
+            for (name, (_, version)) in output.versioned_artifacts() {
+                artifacts.entry(version).or_default().push(name);
+            }
+
+            if shell::is_json() {
+                let _ = sh_println!("{}", serde_json::to_string(&artifacts).unwrap());
+            } else {
+                for (version, names) in artifacts {
+                    let _ = sh_println!(
+                        "  compiler version: {}.{}.{}",
+                        version.major,
+                        version.minor,
+                        version.patch
+                    );
+                    for name in names {
+                        let _ = sh_println!("    - {name}");
+                    }
+                }
+            }
+        }
+
+        if print_sizes {
+            // add extra newline if names were already printed
+            if print_names && !shell::is_json() {
+                let _ = sh_println!();
+            }
+
+            let mut size_report =
+                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
+
+            let artifacts: BTreeMap<_, _> = output
+                .artifact_ids()
+                .filter(|(id, _)| {
+                    // filter out forge-std specific contracts
+                    !id.source.to_string_lossy().contains("/forge-std/src/")
+                })
+                .map(|(id, artifact)| (id.name, artifact))
+                .collect();
+
+            for (name, artifact) in artifacts {
+                let runtime_size = contract_size(artifact, false).unwrap_or_default();
+                let init_size = contract_size(artifact, true).unwrap_or_default();
+
+                let is_dev_contract = artifact
+                    .abi
+                    .as_ref()
+                    .map(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
+                        })
+                    })
+                    .unwrap_or(false);
+                size_report
+                    .contracts
+                    .insert(name, ContractInfo { runtime_size, init_size, is_dev_contract });
+            }
+
+            let _ = sh_println!("{size_report}");
+
+            // TODO: avoid process::exit
+            // exit with error if any contract exceeds the size limit, excluding test contracts.
+            if size_report.exceeds_runtime_size_limit() {
+                std::process::exit(1);
+            }
+
+            // Check size limits only if not ignoring EIP-3860
+            if !self.ignore_eip_3860 && size_report.exceeds_initcode_size_limit() {
+                std::process::exit(1);
+            }
+        }
+    }
     /// If configured, this will print sizes or names
     fn handle_output<C: Compiler>(&self, output: &ProjectCompileOutput<C>) {
         let print_names = self.print_names.unwrap_or(false);
@@ -257,8 +414,8 @@ impl ProjectCompiler {
                     .as_ref()
                     .map(|abi| {
                         abi.functions().any(|f| {
-                            f.test_function_kind().is_known() ||
-                                matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
                     })
                     .unwrap_or(false);
@@ -497,7 +654,7 @@ pub fn etherscan_project(
             name: "@openzeppelin/".into(),
             path: sources_path.join("@openzeppelin").display().to_string(),
         };
-        settings.remappings.push(oz);
+        settings.remappings.push(Remapping { context: oz.context, name: oz.name, path: oz.path });
     }
 
     // root/

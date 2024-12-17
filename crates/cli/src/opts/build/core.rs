@@ -84,7 +84,10 @@ pub struct CoreBuildArgs {
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub no_metadata: bool,
-
+    /// Use resloc to compile contracts
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub resolc_compile: bool,
     /// The path to the contract artifacts folder.
     #[arg(
         long = "out",
@@ -247,7 +250,9 @@ impl Provider for CoreBuildArgs {
         if self.force {
             dict.insert("force".to_string(), self.force.into());
         }
-
+        if self.resolc_compile {
+            dict.insert(self.resolc_compile.to_string(), self.resolc_compile.into());
+        }
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());

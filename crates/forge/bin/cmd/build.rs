@@ -3,10 +3,12 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_compilers::compile::resolc::resolc_artifact_output::ResolcArtifactOutput;
 use foundry_compilers::{
-    compilers::{multi::MultiCompilerLanguage, Language},
+    artifacts::Severity,
+    compilers::{multi::MultiCompilerLanguage, resolc::Resolc, Language},
     utils::source_files_iter,
-    Project, ProjectCompileOutput,
+    Project, ProjectBuilder,
 };
 use foundry_config::{
     figment::{
@@ -15,11 +17,11 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    Config,
+    Config, SkipBuildFilters,
 };
+use foundry_resolc::ResolcCompiler;
 use serde::Serialize;
 use std::path::PathBuf;
-
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
 /// CLI arguments for `forge build`.
@@ -76,44 +78,52 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    pub fn run(self) -> Result<ProjectCompileOutput> {
+    pub fn run(self) -> Result<()> {
         let mut config = self.try_load_config_emit_warnings()?;
-
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
         }
+        if !self.args.resolc_compile {
+            let project = config.project()?;
 
-        let project = config.project()?;
-
-        // Collect sources to compile if build subdirectories specified.
-        let mut files = vec![];
-        if let Some(paths) = &self.paths {
-            for path in paths {
-                let joined = project.root().join(path);
-                let path = if joined.exists() { &joined } else { path };
-                files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
+            // Collect sources to compile if build subdirectories specified.
+            let mut files = vec![];
+            if let Some(paths) = &self.paths {
+                for path in paths {
+                    let joined = project.root().join(path);
+                    let path = if joined.exists() { &joined } else { path };
+                    files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
+                }
+                if files.is_empty() {
+                    eyre::bail!("No source files found in specified build paths.")
+                }
             }
-            if files.is_empty() {
-                eyre::bail!("No source files found in specified build paths.")
+
+            let format_json = shell::is_json();
+            let compiler = ProjectCompiler::new()
+                .files(files)
+                .print_names(self.names)
+                .print_sizes(self.sizes)
+                .ignore_eip_3860(self.ignore_eip_3860)
+                .bail(!format_json);
+
+            compiler.compile(&project)?;
+            if config.force {
+                let _ = config.cleanup(&project);
             }
+            Ok(())
+        } else {
+            let format_json = shell::is_json();
+            let project =ResolcCompiler::create_project(&config)?;
+            let project_compiler = ProjectCompiler::new()
+                .print_names(self.names)
+                .print_sizes(self.sizes)
+                .quiet(format_json)
+                .bail(!format_json);
+            _ = project_compiler.revive_compile(&project)?;
+            Ok(())
         }
-
-        let format_json = shell::is_json();
-        let compiler = ProjectCompiler::new()
-            .files(files)
-            .print_names(self.names)
-            .print_sizes(self.sizes)
-            .ignore_eip_3860(self.ignore_eip_3860)
-            .bail(!format_json);
-
-        let output = compiler.compile(&project)?;
-
-        if format_json && !self.names && !self.sizes {
-            sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
-        }
-
-        Ok(output)
     }
 
     /// Returns the `Project` for the current workspace
@@ -142,6 +152,7 @@ impl BuildArgs {
         })
     }
 }
+
 
 // Make this args a `figment::Provider` so that it can be merged into the `Config`
 impl Provider for BuildArgs {
