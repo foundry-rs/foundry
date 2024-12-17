@@ -44,7 +44,7 @@ impl UpdateArgs {
         let git = Git::new(&root);
         let foundry_lock_path = root.join(FOUNDRY_LOCK);
         let (mut foundry_lock, out_of_sync) =
-            crate::cmd::install::read_and_sync_foundry_lock(&foundry_lock_path, &git)?;
+            crate::cmd::install::read_or_generate_foundry_lock(&foundry_lock_path, Some(&git))?;
         if out_of_sync {
             fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
         }

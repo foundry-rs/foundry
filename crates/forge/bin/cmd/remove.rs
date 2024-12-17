@@ -1,9 +1,8 @@
-use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
     opts::Dependency,
-    utils::{Git, LoadConfig, TagType},
+    utils::{Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::impl_figment_convert_basic;
@@ -38,7 +37,9 @@ impl RemoveArgs {
         let git_modules = root.join(".git/modules");
 
         let git = Git::new(&root);
-        let (mut foundry_lock, _) = crate::cmd::install::read_and_sync_foundry_lock(&root, &git)?;
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+        let (mut foundry_lock, _) =
+            crate::cmd::install::read_or_generate_foundry_lock(&foundry_lock_path, Some(&git))?;
 
         // remove all the dependencies by invoking `git rm` only once with all the paths
         git.rm(self.force, &paths)?;
@@ -50,7 +51,7 @@ impl RemoveArgs {
             std::fs::remove_dir_all(git_modules.join(path))?;
         }
 
-        fs::write_json_file(&config.root.join(FOUNDRY_LOCK), &foundry_lock)?;
+        fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
 
         Ok(())
     }

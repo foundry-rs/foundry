@@ -10,6 +10,7 @@ use foundry_config::{impl_figment_convert_basic, Config};
 use regex::Regex;
 use semver::Version;
 use std::{
+    collections::hash_map::Entry,
     io::IsTerminal,
     path::{Path, PathBuf},
     str,
@@ -119,7 +120,11 @@ impl DependencyInstallOpts {
         let libs = git.root.join(install_lib_dir);
 
         let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
-        let (mut foundry_lock, out_of_sync) = read_and_sync_foundry_lock(&foundry_lock_path, &git)?;
+
+        let (mut foundry_lock, out_of_sync) = read_or_generate_foundry_lock(
+            &foundry_lock_path,
+            if no_git { None } else { Some(&git) },
+        )?;
 
         if dependencies.is_empty() && !self.no_git {
             // Use the root of the git repository to look for submodules.
@@ -551,13 +556,12 @@ fn match_yn(input: String) -> bool {
 
 /// Reads and syncs the foundry.lock file with the current state of the submodules.
 ///
-/// Takes the absolute path to the foundry.lock file and a Git instance.
+/// Takes the absolute path to the foundry.lock file and an optional Git instance.
 ///
-/// Returns a tuple of the foundry.lock HashMap and a boolean indicating if the foundry.lock file is
-/// out of sync.
-pub fn read_and_sync_foundry_lock(
+/// Returns a tuple of the foundry.lock HashMap.
+pub fn read_or_generate_foundry_lock(
     path: &Path,
-    git: &Git<'_>,
+    git: Option<&Git<'_>>,
 ) -> Result<(HashMap<PathBuf, TagType>, bool)> {
     let mut lock: HashMap<PathBuf, TagType> = if !path.exists() {
         HashMap::default()
@@ -570,32 +574,30 @@ pub fn read_and_sync_foundry_lock(
     trace!(?lock, "read foundry.lock");
 
     let mut out_of_sync = false;
+
+    if git.is_none() {
+        return Ok((lock, out_of_sync))
+    }
+
+    let git = git.unwrap();
     // Check if foundry.lock is in sync with the current state of the submodules
     let submodules = git.submodules()?;
     for sub in &submodules {
         let rel_path = sub.path();
         let rev = sub.rev();
 
-        // Resolve TagType for rev. TagType::Tag if tag exists, TagType::Rev otherwise.
-        let tag = if let Some(tag) = git.tag_for_commit(rev, &git.root.join(rel_path))? {
+        let tag = if let Ok(Some(tag)) = git.tag_for_commit(rev, &git.root.join(rel_path)) {
             TagType::Tag(tag)
         } else {
             TagType::Rev(rev.to_string())
         };
 
-        // In sync: if submodule path exists in lock and resolved tag rev matches OR if a
-        // branch/tag is used.
-        let existing_tag = lock.get(rel_path);
-        if existing_tag
-            .is_some_and(|t| matches!(t, TagType::Branch(_) | TagType::Tag(_)) || *t == tag)
-        {
-            continue;
-        }
+        let entry = lock.entry(rel_path.to_path_buf());
 
-        // Out of sync: update lock with resolved tag type.
-        trace!(?rel_path, new_tag=?tag, old_tag=?existing_tag, "submodule out of sync");
-        lock.insert(rel_path.to_path_buf(), tag);
-        out_of_sync = true;
+        if let Entry::Vacant(e) = entry {
+            out_of_sync = true;
+            e.insert(tag);
+        }
     }
 
     Ok((lock, out_of_sync))
