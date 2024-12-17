@@ -501,6 +501,7 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
         self.cmd().arg("tag").get_stdout_lossy()
     }
 
+    /// Returns the latest tag for a given commit.
     pub fn tag_for_commit(self, rev: &str, at: &Path) -> Result<Option<String>> {
         self.cmd_at(at)
             .args(["tag", "--contains"])
@@ -721,6 +722,10 @@ pub struct Submodules(pub Vec<Submodule>);
 impl Submodules {
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

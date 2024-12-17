@@ -36,20 +36,21 @@ impl RemoveArgs {
         let config = self.try_load_config_emit_warnings()?;
         let (root, paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");
-        let mut submodule_infos: HashMap<PathBuf, TagType> =
-            fs::read_json_file(&config.root.join(FOUNDRY_LOCK))?;
+
+        let git = Git::new(&root);
+        let mut foundry_lock = crate::cmd::install::read_and_sync_foundry_lock(&root, &git)?;
 
         // remove all the dependencies by invoking `git rm` only once with all the paths
-        Git::new(&root).rm(self.force, &paths)?;
+        git.rm(self.force, &paths)?;
 
         // remove all the dependencies from .git/modules
         for (Dependency { name, url, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
             sh_println!("Removing '{name}' in {}, (url: {url:?}, tag: {tag:?})", path.display())?;
-            let _ = submodule_infos.remove(path);
+            let _ = foundry_lock.remove(path);
             std::fs::remove_dir_all(git_modules.join(path))?;
         }
 
-        fs::write_json_file(&config.root.join(FOUNDRY_LOCK), &submodule_infos)?;
+        fs::write_json_file(&config.root.join(FOUNDRY_LOCK), &foundry_lock)?;
 
         Ok(())
     }

@@ -10,7 +10,6 @@ use foundry_config::{impl_figment_convert_basic, Config};
 use regex::Regex;
 use semver::Version;
 use std::{
-    collections::hash_map::Entry,
     io::IsTerminal,
     path::{Path, PathBuf},
     str,
@@ -119,9 +118,8 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
-        let submodule_info_path = config.root.join(FOUNDRY_LOCK);
-        let mut submodule_info: HashMap<PathBuf, TagType> =
-            fs::read_json_file(&submodule_info_path).unwrap_or_default();
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+        let (mut foundry_lock, out_of_sync) = read_and_sync_foundry_lock(&foundry_lock_path, &git)?;
 
         if dependencies.is_empty() && !self.no_git {
             // Use the root of the git repository to look for submodules.
@@ -133,19 +131,9 @@ impl DependencyInstallOpts {
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
 
-                    // Resync submodules and foundry.lock
-                    let submodules = git.submodules()?;
-                    if submodule_info.len() != submodules.len() {
-                        for sub in &submodules {
-                            let path = config.root.join(sub.path());
-                            let tag_type = TagType::resolve_type(&git, &path, sub.rev())?;
-                            if let Entry::Vacant(e) = submodule_info.entry(sub.path().to_path_buf())
-                            {
-                                e.insert(tag_type);
-                            }
-                        }
-                        fs::write_json_file(&config.root.join(FOUNDRY_LOCK), &submodule_info)?;
-                        sh_println!("foundry.lock written - commit this file")?;
+                    if out_of_sync {
+                        // write foundry.lock
+                        fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
                     }
                 }
 
@@ -188,17 +176,20 @@ impl DependencyInstallOpts {
                 // Pin branch to submodule if branch is used
                 if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
+                    tag_type = TagType::resolve_type(&git, &path, tag_or_branch).ok();
                     if git.has_branch(tag_or_branch, &path)? {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
                             .args(["submodule", "set-branch", "-b", tag_or_branch])
                             .arg(rel_path)
                             .exec()?;
+
+                        // Resolve tag type should be TagType::Branch
+                        tag_type = Some(TagType::Branch(tag_or_branch.clone()));
                     }
 
-                    tag_type = TagType::resolve_type(&git, &path, tag_or_branch).ok();
                     if let Some(tag_type) = &tag_type {
-                        submodule_info.insert(rel_path.to_path_buf(), tag_type.clone());
+                        foundry_lock.insert(rel_path.to_path_buf(), tag_type.clone());
                     }
                     // update .gitmodules which is at the root of the repo,
                     // not necessarily at the root of the current Foundry project
@@ -206,8 +197,8 @@ impl DependencyInstallOpts {
                     git.root(&root).add(Some(".gitmodules"))?;
                 }
 
-                if !submodule_info.is_empty() {
-                    fs::write_json_file(&submodule_info_path, &submodule_info)?;
+                if !foundry_lock.is_empty() {
+                    fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
                 }
 
                 // commit the installation
@@ -225,7 +216,7 @@ impl DependencyInstallOpts {
                         }
                     }
 
-                    if !submodule_info.is_empty() {
+                    if !foundry_lock.is_empty() {
                         git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
                     }
                     git.commit(&msg)?;
@@ -556,6 +547,58 @@ impl Installer<'_> {
 fn match_yn(input: String) -> bool {
     let s = input.trim().to_lowercase();
     matches!(s.as_str(), "" | "y" | "yes")
+}
+
+/// Reads and syncs the foundry.lock file with the current state of the submodules.
+///
+/// Takes the absolute path to the foundry.lock file and a Git instance.
+///
+/// Returns a tuple of the foundry.lock HashMap and a boolean indicating if the foundry.lock file is
+/// out of sync.
+pub fn read_and_sync_foundry_lock(
+    path: &Path,
+    git: &Git<'_>,
+) -> Result<(HashMap<PathBuf, TagType>, bool)> {
+    let mut lock: HashMap<PathBuf, TagType> = if !path.exists() {
+        HashMap::default()
+    } else {
+        let str_lock = fs::read_to_string(path)?;
+        let lock: HashMap<PathBuf, TagType> = serde_json::from_str(&str_lock).unwrap_or_default();
+        lock
+    };
+
+    trace!(?lock, "read foundry.lock");
+
+    let mut out_of_sync = false;
+    // Check if foundry.lock is in sync with the current state of the submodules
+    let submodules = git.submodules()?;
+    for sub in &submodules {
+        let rel_path = sub.path();
+        let rev = sub.rev();
+
+        // Resolve TagType for rev. TagType::Tag if tag exists, TagType::Rev otherwise.
+        let tag = if let Some(tag) = git.tag_for_commit(rev, &git.root.join(rel_path))? {
+            TagType::Tag(tag)
+        } else {
+            TagType::Rev(rev.to_string())
+        };
+
+        // In sync: if submodule path exists in lock and resolved tag rev matches OR if a
+        // branch/tag is used.
+        let existing_tag = lock.get(rel_path);
+        if existing_tag
+            .is_some_and(|t| matches!(t, TagType::Branch(_) | TagType::Tag(_)) || *t == tag)
+        {
+            continue;
+        }
+
+        // Out of sync: update lock with resolved tag type.
+        trace!(?rel_path, new_tag=?tag, old_tag=?existing_tag, "submodule out of sync");
+        lock.insert(rel_path.to_path_buf(), tag);
+        out_of_sync = true;
+    }
+
+    Ok((lock, out_of_sync))
 }
 
 #[cfg(test)]
