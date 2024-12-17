@@ -1528,7 +1528,7 @@ forgetest!(can_sync_foundry_lock, |prj, cmd| {
         foundry_common::fs::read_json_file(&prj.root().join("foundry.lock")).unwrap();
 
     assert!(matches!(lock.get(&PathBuf::from("lib/forge-std")).unwrap(), &TagType::Rev(_)));
-    assert!(matches!(lock.get(&PathBuf::from("lib/solady")).unwrap(), &TagType::Rev(_)));
+    assert!(matches!(lock.get(&PathBuf::from("lib/solady")).unwrap(), &TagType::Tag(_)));
 });
 
 // Tests that forge update doesn't break a working dependency by recursively updating nested
