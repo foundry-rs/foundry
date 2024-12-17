@@ -357,11 +357,11 @@ banner() {
 
 .xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
 
-Repo       : https://github.com/foundry-rs/
+Repo       : https://github.com/foundry-rs/foundry
 Book       : https://book.getfoundry.sh/
 Chat       : https://t.me/foundry_rs/
 Support    : https://t.me/foundry_support/
-Contribute : https://github.com/orgs/foundry-rs/projects/2/
+Contribute : https://github.com/foundry-rs/foundry/blob/master/CONTRIBUTING.md
 
 .xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
 
