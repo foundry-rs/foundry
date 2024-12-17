@@ -38,7 +38,7 @@ impl RemoveArgs {
         let git_modules = root.join(".git/modules");
 
         let git = Git::new(&root);
-        let mut foundry_lock = crate::cmd::install::read_and_sync_foundry_lock(&root, &git)?;
+        let (mut foundry_lock, _) = crate::cmd::install::read_and_sync_foundry_lock(&root, &git)?;
 
         // remove all the dependencies by invoking `git rm` only once with all the paths
         git.rm(self.force, &paths)?;
