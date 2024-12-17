@@ -149,7 +149,13 @@ main() {
       ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       rm -f "$tmp"
     else
-      ensure download "$BIN_ARCHIVE_URL" | ensure tar -xz --one-top-level="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.tar.gz"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      # Make sure it's a valid tar archive.
+      ensure tar tf $tmp 1> /dev/null
+      ensure mkdir -p $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG
+      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf $tmp
+      rm -f "$tmp"
     fi
 
     # Optionally download the manuals
