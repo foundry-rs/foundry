@@ -86,6 +86,7 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 200);
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
     function testAttachDelegationRevertInvalidSignature() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         // change v from 1 to 0
@@ -109,7 +110,7 @@ contract AttachDelegationTest is DSTest {
         // send tx to increment alice's nonce
         token.mint(1, bob);
 
-        vm.expectRevert("vm.attachDelegation: invalid nonce");
+        vm._expectCheatcodeRevert("vm.attachDelegation: invalid nonce");
         vm.attachDelegation(signedDelegation);
     }
 
