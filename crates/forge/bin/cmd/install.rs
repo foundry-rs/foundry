@@ -136,7 +136,7 @@ impl DependencyInstallOpts {
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
 
-                    if out_of_sync {
+                    if out_of_sync || !foundry_lock_path.exists() {
                         // write foundry.lock
                         fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
                     }
