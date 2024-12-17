@@ -637,6 +637,8 @@ casttest!(impl_slot, |_prj, cmd| {
         "0x4965f6FA20fE9728deCf5165016fc338a5a85aBF",
         "--rpc-url",
         eth_rpc_url.as_str(),
+        "--block",
+        "21422087",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -655,6 +657,8 @@ casttest!(impl_slot_beacon, |_prj, cmd| {
         "--beacon",
         "--rpc-url",
         eth_rpc_url.as_str(),
+        "--block",
+        "21422087",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
