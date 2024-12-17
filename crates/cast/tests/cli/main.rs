@@ -627,6 +627,42 @@ casttest!(rlp, |_prj, cmd| {
 "#]]);
 });
 
+// test that `cast impl` works correctly for both the implementation slot and the beacon slot
+casttest!(impl_slot, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast impl` for the implementation slot (AAVE Proxy)
+    cmd.args([
+        "impl",
+        "0x4965f6FA20fE9728deCf5165016fc338a5a85aBF",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xb61306c8eb34a2104d9eb8d84f1bb1001067fa4b
+
+"#]]);
+});
+
+casttest!(impl_slot_beacon, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast impl` for the beacon slot
+    cmd.args([
+        "impl",
+        "0xc63d9f0040d35f328274312fc8771a986fc4ba86",
+        "--beacon",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xa748ae65ba11606492a9c57effa0d4b7be551ec2
+
+"#]]);
+});
+
 // test for cast_rpc without arguments
 casttest!(rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
