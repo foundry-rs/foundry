@@ -22,10 +22,12 @@ foundry-wallets.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
 
+alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
+alloy-rlp.workspace = true
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 
@@ -35,7 +37,9 @@ dotenvy = "0.15"
 eyre.workspace = true
 futures.workspace = true
 indicatif = "0.17"
-regex = { version = "1", default-features = false }
+rayon.workspace = true
+regex = { workspace = true, default-features = false }
+serde_json.workspace = true
 serde.workspace = true
 strsim = "0.11"
 strum = { workspace = true, features = ["derive"] }

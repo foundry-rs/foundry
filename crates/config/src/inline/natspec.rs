@@ -1,8 +1,10 @@
-use super::{remove_whitespaces, INLINE_CONFIG_PREFIX, INLINE_CONFIG_PREFIX_SELECTED_PROFILE};
+use super::{InlineConfigError, InlineConfigErrorKind, INLINE_CONFIG_PREFIX};
+use figment::Profile;
 use foundry_compilers::{
     artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
 };
+use itertools::Itertools;
 use serde_json::Value;
 use solang_parser::{helpers::CodeLocation, pt};
 use std::{collections::BTreeMap, path::Path};
@@ -10,15 +12,13 @@ use std::{collections::BTreeMap, path::Path};
 /// Convenient struct to hold in-line per-test configurations
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NatSpec {
-    /// The parent contract of the natspec
+    /// The parent contract of the natspec.
     pub contract: String,
-    /// The function annotated with the natspec. None if the natspec is contract-level
+    /// The function annotated with the natspec. None if the natspec is contract-level.
     pub function: Option<String>,
-    /// The line the natspec appears, in the form
-    /// `row:col:length` i.e. `10:21:122`
+    /// The line the natspec appears, in the form `row:col:length`, i.e. `10:21:122`.
     pub line: String,
-    /// The actual natspec comment, without slashes or block
-    /// punctuation
+    /// The actual natspec comment, without slashes or block punctuation.
     pub docs: String,
 }
 
@@ -56,29 +56,52 @@ impl NatSpec {
         natspecs
     }
 
-    /// Returns a string describing the natspec
-    /// context, for debugging purposes 🐞
-    /// i.e. `test/Counter.t.sol:CounterTest:testFuzz_SetNumber`
-    pub fn debug_context(&self) -> String {
-        format!("{}:{}", self.contract, self.function.as_deref().unwrap_or_default())
+    /// Checks if all configuration lines use a valid profile.
+    ///
+    /// i.e. Given available profiles
+    /// ```rust
+    /// let _profiles = vec!["ci", "default"];
+    /// ```
+    /// A configuration like `forge-config: ciii.invariant.depth = 1` would result
+    /// in an error.
+    pub fn validate_profiles(&self, profiles: &[Profile]) -> eyre::Result<()> {
+        for config in self.config_values() {
+            if !profiles.iter().any(|p| {
+                config
+                    .strip_prefix(p.as_str().as_str())
+                    .is_some_and(|rest| rest.trim_start().starts_with('.'))
+            }) {
+                Err(InlineConfigError {
+                    location: self.location_string(),
+                    kind: InlineConfigErrorKind::InvalidProfile(
+                        config.to_string(),
+                        profiles.iter().format(", ").to_string(),
+                    ),
+                })?
+            }
+        }
+        Ok(())
     }
 
-    /// Returns a list of configuration lines that match the current profile
-    pub fn current_profile_configs(&self) -> impl Iterator<Item = String> + '_ {
-        self.config_lines_with_prefix(INLINE_CONFIG_PREFIX_SELECTED_PROFILE.as_str())
+    /// Returns the path of the contract.
+    pub fn path(&self) -> &str {
+        match self.contract.split_once(':') {
+            Some((path, _)) => path,
+            None => self.contract.as_str(),
+        }
     }
 
-    /// Returns a list of configuration lines that match a specific string prefix
-    pub fn config_lines_with_prefix<'a>(
-        &'a self,
-        prefix: &'a str,
-    ) -> impl Iterator<Item = String> + 'a {
-        self.config_lines().filter(move |l| l.starts_with(prefix))
+    /// Returns the location of the natspec as a string.
+    pub fn location_string(&self) -> String {
+        format!("{}:{}", self.path(), self.line)
     }
 
-    /// Returns a list of all the configuration lines available in the natspec
-    pub fn config_lines(&self) -> impl Iterator<Item = String> + '_ {
-        self.docs.lines().filter(|line| line.contains(INLINE_CONFIG_PREFIX)).map(remove_whitespaces)
+    /// Returns a list of all the configuration values available in the natspec.
+    pub fn config_values(&self) -> impl Iterator<Item = &str> {
+        self.docs.lines().filter_map(|line| {
+            line.find(INLINE_CONFIG_PREFIX)
+                .map(|idx| line[idx + INLINE_CONFIG_PREFIX.len()..].trim())
+        })
     }
 }
 
@@ -259,6 +282,42 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn can_reject_invalid_profiles() {
+        let profiles = ["ci".into(), "default".into()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r"
+            forge-config: ciii.invariant.depth = 1
+            forge-config: default.invariant.depth = 1
+            "
+            .into(),
+        };
+
+        let result = natspec.validate_profiles(&profiles);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn can_accept_valid_profiles() {
+        let profiles = ["ci".into(), "default".into()];
+        let natspec = NatSpec {
+            contract: Default::default(),
+            function: Default::default(),
+            line: Default::default(),
+            docs: r"
+            forge-config: ci.invariant.depth = 1
+            forge-config: default.invariant.depth = 1
+            "
+            .into(),
+        };
+
+        let result = natspec.validate_profiles(&profiles);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn parse_solang() {
         let src = "
 contract C { /// forge-config: default.fuzz.runs = 600
@@ -355,42 +414,13 @@ contract FuzzInlineConf is DSTest {
     #[test]
     fn config_lines() {
         let natspec = natspec();
-        let config_lines = natspec.config_lines();
+        let config_lines = natspec.config_values();
         assert_eq!(
             config_lines.collect::<Vec<_>>(),
-            vec![
-                "forge-config:default.fuzz.runs=600".to_string(),
-                "forge-config:ci.fuzz.runs=500".to_string(),
-                "forge-config:default.invariant.runs=1".to_string()
-            ]
-        )
-    }
-
-    #[test]
-    fn current_profile_configs() {
-        let natspec = natspec();
-        let config_lines = natspec.current_profile_configs();
-
-        assert_eq!(
-            config_lines.collect::<Vec<_>>(),
-            vec![
-                "forge-config:default.fuzz.runs=600".to_string(),
-                "forge-config:default.invariant.runs=1".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn config_lines_with_prefix() {
-        use super::INLINE_CONFIG_PREFIX;
-        let natspec = natspec();
-        let prefix = format!("{INLINE_CONFIG_PREFIX}:default");
-        let config_lines = natspec.config_lines_with_prefix(&prefix);
-        assert_eq!(
-            config_lines.collect::<Vec<_>>(),
-            vec![
-                "forge-config:default.fuzz.runs=600".to_string(),
-                "forge-config:default.invariant.runs=1".to_string()
+            [
+                "default.fuzz.runs = 600".to_string(),
+                "ci.fuzz.runs = 500".to_string(),
+                "default.invariant.runs = 1".to_string()
             ]
         )
     }

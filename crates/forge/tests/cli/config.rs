@@ -29,7 +29,9 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
-        root: Default::default(),
+        // `profiles` is not serialized.
+        profiles: vec![],
+        root: ".".into(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -43,6 +45,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
+        gas_reports_include_tests: false,
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         auto_detect_remappings: true,
@@ -105,6 +108,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
+        eth_rpc_timeout: None,
+        eth_rpc_headers: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -141,6 +146,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
+        create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
         skip: vec![],
         dependencies: Default::default(),
@@ -150,8 +156,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         eof_version: None,
-        alphanet: false,
+        odyssey: false,
         transaction_timeout: 120,
+        additional_compiler_profiles: Default::default(),
+        compilation_restrictions: Default::default(),
         eof: false,
         _non_exhaustive: (),
     };
@@ -260,7 +268,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
         cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
             r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
-    Installed solmate
+    Installed solmate[..]
 
 "#
         ]]);
@@ -397,8 +405,7 @@ Compiler run successful!
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-`solc` this/solc/does/not/exist does not exist
+Error: `solc` this/solc/does/not/exist does not exist
 
 "#]]);
 
@@ -434,8 +441,7 @@ contract Foo {
     .unwrap();
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-Error: 
-Compiler run failed:
+Error: Compiler run failed:
 Error (6553): The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
  [FILE]:6:8:
   |
@@ -569,6 +575,25 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
+
+    // check if lib path is absolute, it should deteect nested lib
+    let mut config = cmd.config();
+    config.libs = vec![nested];
+
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
+    similar_asserts::assert_eq!(
+        remappings,
+        vec![
+            // local to the lib
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
+            // global
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remappings local to the lib
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+        ]
+    );
 });
 
 // test remappings with closer paths are prioritised
@@ -652,7 +677,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
 
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
-warning: Found unknown config section in foundry.toml: [default]
+Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
 
@@ -757,4 +782,110 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
+
+    // See <https://github.com/foundry-rs/foundry/issues/7014>
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.17", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::London);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.18", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Paris);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.23", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Shanghai);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.26", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Cancun);
+});
+
+// Tests that root paths are properly resolved even if submodule specifies remappings for them.
+// See <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(test_submodule_root_path_remappings, |prj, cmd| {
+    prj.add_script(
+        "BaseScript.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract BaseScript is Script {
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "MyScript.sol",
+        r#"
+import "script/BaseScript.sol";
+
+contract MyScript is BaseScript {
+}
+   "#,
+    )
+    .unwrap();
+
+    let nested = prj.paths().libraries[0].join("another-dep");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested);
+    lib_config.remappings = vec![
+        Remapping::from_str("test/=test/").unwrap().into(),
+        Remapping::from_str("script/=script/").unwrap().into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+    cmd.forge_fuse().args(["build"]).assert_success();
+});
+
+// Tests that project remappings use config paths.
+// For `src=src/contracts` config, remapping should be `src/contracts/ = src/contracts/`.
+// For `src=src` config, remapping should be `src/ = src/`.
+// <https://github.com/foundry-rs/foundry/issues/9454>
+forgetest!(test_project_remappings, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let config = Config {
+        src: "src/contracts".into(),
+        remappings: vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add Counter.sol in `src/contracts` project dir.
+    let src_dir = &prj.root().join("src/contracts");
+    pretty_err(src_dir, fs::create_dir_all(src_dir));
+    pretty_err(
+        src_dir.join("Counter.sol"),
+        fs::write(src_dir.join("Counter.sol"), "contract Counter{}"),
+    );
+    prj.add_test(
+        "CounterTest.sol",
+        r#"
+import "contracts/Counter.sol";
+
+contract CounterTest {
+}
+   "#,
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["build"]).assert_success();
 });

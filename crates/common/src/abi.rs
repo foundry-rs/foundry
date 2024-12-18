@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function, Param};
+use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{hex, Address, LogData};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
@@ -85,6 +85,11 @@ pub fn get_event(sig: &str) -> Result<Event> {
     Event::parse(sig).wrap_err("could not parse event signature")
 }
 
+/// Given an error signature string, it tries to parse it as a `Error`
+pub fn get_error(sig: &str) -> Result<Error> {
+    Error::parse(sig).wrap_err("could not parse event signature")
+}
+
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
 /// proper indexed parameters. Otherwise, it returns the original event.
 pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
@@ -146,9 +151,9 @@ pub fn find_source(
             Ok(source)
         } else {
             let implementation = metadata.implementation.unwrap();
-            println!(
+            sh_println!(
                 "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
-            );
+            )?;
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
                 Err(e) => {

@@ -73,10 +73,10 @@ contract Verify is Unique {
     .unwrap();
 }
 
+#[allow(clippy::disallowed_macros)]
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
-    // give etherscan some time to verify the contract
-    let retry = Retry::new(retries, Some(Duration::from_secs(30)));
-    retry.run(|| -> eyre::Result<()> {
+    // Give Etherscan some time to verify the contract.
+    Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
         let output = cmd.execute();
         let out = String::from_utf8_lossy(&output.stdout);
         println!("{out}");
@@ -93,9 +93,8 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
 
 fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
     let guid = {
-        // give etherscan some time to detect the transaction
-        let retry = Retry::new(5, Some(Duration::from_secs(60)));
-        retry
+        // Give Etherscan some time to detect the transaction.
+        Retry::new(5, Duration::from_secs(60))
             .run(|| -> eyre::Result<String> {
                 let output = cmd.execute();
                 let out = String::from_utf8_lossy(&output.stdout);
@@ -124,6 +123,7 @@ fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
     parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
 }
 
+#[allow(clippy::disallowed_macros)]
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -157,6 +157,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
     }
 }
 
+#[allow(clippy::disallowed_macros)]
 fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -197,6 +198,7 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
+#[allow(clippy::disallowed_macros)]
 /// Executes create --verify on the given chain
 fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present

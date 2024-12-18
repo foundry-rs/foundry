@@ -1,4 +1,4 @@
-use crate::executors::{Executor, RawCallResult};
+use crate::executors::{Executor, FuzzTestTimer, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{map::HashMap, Address, Bytes, Log, U256};
@@ -6,7 +6,7 @@ use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    constants::MAGIC_ASSUME,
+    constants::{MAGIC_ASSUME, TEST_TIMEOUT},
     decode::{RevertDecoder, SkipReason},
 };
 use foundry_evm_coverage::HitMaps;
@@ -77,10 +77,12 @@ impl FuzzedExecutor {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
+    #[allow(clippy::too_many_arguments)]
     pub fn fuzz(
         &self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
@@ -88,7 +90,7 @@ impl FuzzedExecutor {
     ) -> FuzzTestResult {
         // Stores the fuzz test execution data.
         let execution_data = RefCell::new(FuzzTestData::default());
-        let state = self.build_fuzz_state();
+        let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
@@ -98,7 +100,15 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
+        // Start timer for this fuzz test.
+        let timer = FuzzTestTimer::new(self.config.timeout);
+
         let run_result = self.runner.clone().run(&strategy, |calldata| {
+            // Check if the timeout has been reached.
+            if timer.is_timed_out() {
+                return Err(TestCaseError::fail(TEST_TIMEOUT));
+            }
+
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             // If running with progress then increment current run.
@@ -127,11 +137,7 @@ impl FuzzedExecutor {
                         data.logs.extend(case.logs);
                     }
 
-                    // Collect and merge coverage if `forge snapshot` context.
-                    match &mut data.coverage {
-                        Some(prev) => prev.merge(case.coverage.unwrap()),
-                        opt => *opt = case.coverage,
-                    }
+                    HitMaps::merge_opt(&mut data.coverage, case.coverage);
 
                     data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
@@ -197,17 +203,21 @@ impl FuzzedExecutor {
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                result.reason = (!reason.is_empty()).then_some(reason);
-
-                let args = if let Some(data) = calldata.get(4..) {
-                    func.abi_decode_input(data, false).unwrap_or_default()
+                if reason == TEST_TIMEOUT {
+                    // If the reason is a timeout, we consider the fuzz test successful.
+                    result.success = true;
                 } else {
-                    vec![]
-                };
+                    result.reason = (!reason.is_empty()).then_some(reason);
+                    let args = if let Some(data) = calldata.get(4..) {
+                        func.abi_decode_input(data, false).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
 
-                result.counterexample = Some(CounterExample::Single(
-                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
-                ));
+                    result.counterexample = Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                    ));
+                }
             }
         }
 
@@ -266,11 +276,15 @@ impl FuzzedExecutor {
     }
 
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
-    pub fn build_fuzz_state(&self) -> EvmFuzzState {
+    pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(fork_db, self.config.dictionary)
+            EvmFuzzState::new(fork_db, self.config.dictionary, deployed_libs)
         } else {
-            EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary)
+            EvmFuzzState::new(
+                self.executor.backend().mem_db(),
+                self.config.dictionary,
+                deployed_libs,
+            )
         }
     }
 }

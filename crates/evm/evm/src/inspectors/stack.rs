@@ -3,7 +3,7 @@ use super::{
     TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
-use foundry_cheatcodes::CheatcodesExecutor;
+use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -55,8 +55,12 @@ pub struct InspectorStackBuilder {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
+    /// The wallets to set in the cheatcodes context.
+    pub wallets: Option<Wallets>,
+    /// The CREATE2 deployer address.
+    pub create2_deployer: Address,
 }
 
 impl InspectorStackBuilder {
@@ -84,6 +88,13 @@ impl InspectorStackBuilder {
     #[inline]
     pub fn cheatcodes(mut self, config: Arc<CheatsConfig>) -> Self {
         self.cheatcodes = Some(config);
+        self
+    }
+
+    /// Set the wallets.
+    #[inline]
+    pub fn wallets(mut self, wallets: Wallets) -> Self {
+        self.wallets = Some(wallets);
         self
     }
 
@@ -139,11 +150,17 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to enable Alphanet features.
+    /// Set whether to enable Odyssey features.
     /// For description of call isolation, see [`InspectorStack::enable_isolation`].
     #[inline]
-    pub fn alphanet(mut self, yes: bool) -> Self {
-        self.alphanet = yes;
+    pub fn odyssey(mut self, yes: bool) -> Self {
+        self.odyssey = yes;
+        self
+    }
+
+    #[inline]
+    pub fn create2_deployer(mut self, create2_deployer: Address) -> Self {
+        self.create2_deployer = create2_deployer;
         self
     }
 
@@ -160,14 +177,22 @@ impl InspectorStackBuilder {
             print,
             chisel_state,
             enable_isolation,
-            alphanet,
+            odyssey,
+            wallets,
+            create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
 
         // inspectors
         if let Some(config) = cheatcodes {
-            stack.set_cheatcodes(Cheatcodes::new(config));
+            let mut cheatcodes = Cheatcodes::new(config);
+            // Set wallets if they are provided
+            if let Some(wallets) = wallets {
+                cheatcodes.set_wallets(wallets);
+            }
+            stack.set_cheatcodes(cheatcodes);
         }
+
         if let Some(fuzzer) = fuzzer {
             stack.set_fuzzer(fuzzer);
         }
@@ -180,7 +205,8 @@ impl InspectorStackBuilder {
         stack.tracing(trace_mode);
 
         stack.enable_isolation(enable_isolation);
-        stack.alphanet(alphanet);
+        stack.odyssey(odyssey);
+        stack.set_create2_deployer(create2_deployer);
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -265,7 +291,8 @@ pub struct InspectorStackInner {
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
     pub enable_isolation: bool,
-    pub alphanet: bool,
+    pub odyssey: bool,
+    pub create2_deployer: Address,
 
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -378,8 +405,14 @@ impl InspectorStack {
 
     /// Set whether to enable call isolation.
     #[inline]
-    pub fn alphanet(&mut self, yes: bool) {
-        self.alphanet = yes;
+    pub fn odyssey(&mut self, yes: bool) {
+        self.odyssey = yes;
+    }
+
+    /// Set the CREATE2 deployer address.
+    #[inline]
+    pub fn set_create2_deployer(&mut self, deployer: Address) {
+        self.create2_deployer = deployer;
     }
 
     /// Set whether to enable the log collector.
@@ -437,7 +470,7 @@ impl InspectorStack {
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
             traces,
-            coverage: coverage.map(|coverage| coverage.maps),
+            coverage: coverage.map(|coverage| coverage.finish()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
@@ -1003,8 +1036,12 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         ));
     }
 
-    fn is_alphanet(&self) -> bool {
-        self.inner.alphanet
+    fn is_odyssey(&self) -> bool {
+        self.inner.odyssey
+    }
+
+    fn create2_deployer(&self) -> Address {
+        self.inner.create2_deployer
     }
 }
 
@@ -1105,8 +1142,12 @@ impl InspectorExt for InspectorStack {
         self.as_mut().should_use_create2_factory(ecx, inputs)
     }
 
-    fn is_alphanet(&self) -> bool {
-        self.alphanet
+    fn is_odyssey(&self) -> bool {
+        self.odyssey
+    }
+
+    fn create2_deployer(&self) -> Address {
+        self.create2_deployer
     }
 }
 

@@ -1,11 +1,11 @@
 use super::Result;
-use crate::{script::ScriptWallets, Vm::Rpc};
+use crate::Vm::Rpc;
 use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
-    ResolvedRpcEndpoints,
+    ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
 };
 use foundry_evm_core::opts::EvmOpts;
 use semver::Version;
@@ -37,14 +37,14 @@ pub struct CheatsConfig {
     pub fs_permissions: FsPermissions,
     /// Project root
     pub root: PathBuf,
+    /// Absolute Path to broadcast dir i.e project_root/broadcast
+    pub broadcast: PathBuf,
     /// Paths (directories) where file reading/writing is allowed
     pub allowed_paths: Vec<PathBuf>,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
     pub labels: AddressHashMap<String>,
-    /// Script wallets
-    pub script_wallets: Option<ScriptWallets>,
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
@@ -65,13 +65,12 @@ impl CheatsConfig {
         config: &Config,
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
-        script_wallets: Option<ScriptWallets>,
         running_contract: Option<String>,
         running_version: Option<Version>,
     ) -> Self {
-        let mut allowed_paths = vec![config.root.0.clone()];
-        allowed_paths.extend(config.libs.clone());
-        allowed_paths.extend(config.allow_paths.clone());
+        let mut allowed_paths = vec![config.root.clone()];
+        allowed_paths.extend(config.libs.iter().cloned());
+        allowed_paths.extend(config.allow_paths.iter().cloned());
 
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -89,17 +88,28 @@ impl CheatsConfig {
             rpc_endpoints,
             paths: config.project_paths(),
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
-            root: config.root.0.clone(),
+            root: config.root.clone(),
+            broadcast: config.root.clone().join(&config.broadcast),
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
-            script_wallets,
             available_artifacts,
             running_contract,
             running_version,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
         }
+    }
+
+    /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
+    pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
+        Self::new(
+            config,
+            evm_opts,
+            self.available_artifacts.clone(),
+            self.running_contract.clone(),
+            self.running_version.clone(),
+        )
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -175,33 +185,28 @@ impl CheatsConfig {
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
     ///    `ws` `scheme` and is not a path to an existing file
-    pub fn rpc_url(&self, url_or_alias: &str) -> Result<String> {
-        match self.rpc_endpoints.get(url_or_alias) {
-            Some(Ok(url)) => Ok(url.clone()),
-            Some(Err(err)) => {
-                // try resolve again, by checking if env vars are now set
-                err.try_resolve().map_err(Into::into)
-            }
-            None => {
-                // check if it's a URL or a path to an existing file to an ipc socket
-                if url_or_alias.starts_with("http") ||
-                    url_or_alias.starts_with("ws") ||
-                    // check for existing ipc file
-                    Path::new(url_or_alias).exists()
-                {
-                    Ok(url_or_alias.into())
-                } else {
-                    Err(fmt_err!("invalid rpc url: {url_or_alias}"))
-                }
+    pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
+        if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
+            Ok(endpoint.clone().try_resolve())
+        } else {
+            // check if it's a URL or a path to an existing file to an ipc socket
+            if url_or_alias.starts_with("http") ||
+                url_or_alias.starts_with("ws") ||
+                // check for existing ipc file
+                Path::new(url_or_alias).exists()
+            {
+                let url = RpcEndpointUrl::Env(url_or_alias.to_string());
+                Ok(RpcEndpoint::new(url).resolve())
+            } else {
+                Err(fmt_err!("invalid rpc url: {url_or_alias}"))
             }
         }
     }
-
     /// Returns all the RPC urls and their alias.
     pub fn rpc_urls(&self) -> Result<Vec<Rpc>> {
         let mut urls = Vec::with_capacity(self.rpc_endpoints.len());
         for alias in self.rpc_endpoints.keys() {
-            let url = self.rpc_url(alias)?;
+            let url = self.rpc_endpoint(alias)?.url()?;
             urls.push(Rpc { key: alias.clone(), url });
         }
         Ok(urls)
@@ -220,10 +225,10 @@ impl Default for CheatsConfig {
             paths: ProjectPathsConfig::builder().build_with_root("./"),
             fs_permissions: Default::default(),
             root: Default::default(),
+            broadcast: Default::default(),
             allowed_paths: vec![],
             evm_opts: Default::default(),
             labels: Default::default(),
-            script_wallets: None,
             available_artifacts: Default::default(),
             running_contract: Default::default(),
             running_version: Default::default(),
@@ -240,9 +245,8 @@ mod tests {
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
-            &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
+            &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
-            None,
             None,
             None,
             None,

@@ -140,7 +140,7 @@ impl OpenChainClient {
             .ok_or_else(|| eyre::eyre!("No signature found"))
     }
 
-    /// Decodes the given function or event selectors using OpenChain
+    /// Decodes the given function, error or event selectors using OpenChain.
     pub async fn decode_selectors(
         &self,
         selector_type: SelectorType,
@@ -164,8 +164,8 @@ impl OpenChainClient {
         self.ensure_not_spurious()?;
 
         let expected_len = match selector_type {
-            SelectorType::Function => 10, // 0x + hex(4bytes)
-            SelectorType::Event => 66,    // 0x + hex(32bytes)
+            SelectorType::Function | SelectorType::Error => 10, // 0x + hex(4bytes)
+            SelectorType::Event => 66,                          // 0x + hex(32bytes)
         };
         if let Some(s) = selectors.iter().find(|s| s.len() != expected_len) {
             eyre::bail!(
@@ -193,7 +193,7 @@ impl OpenChainClient {
         let url = format!(
             "{SELECTOR_LOOKUP_URL}?{ltype}={selectors_str}",
             ltype = match selector_type {
-                SelectorType::Function => "function",
+                SelectorType::Function | SelectorType::Error => "function",
                 SelectorType::Event => "event",
             },
             selectors_str = selectors.join(",")
@@ -212,7 +212,7 @@ impl OpenChainClient {
         }
 
         let decoded = match selector_type {
-            SelectorType::Function => api_response.result.function,
+            SelectorType::Function | SelectorType::Error => api_response.result.function,
             SelectorType::Event => api_response.result.event,
         };
 
@@ -391,6 +391,8 @@ pub enum SelectorType {
     Function,
     /// An event selector.
     Event,
+    /// An custom error selector.
+    Error,
 }
 
 /// Decodes the given function or event selector using OpenChain.
@@ -492,24 +494,20 @@ pub struct SelectorImportResponse {
 impl SelectorImportResponse {
     /// Print info about the functions which were uploaded or already known
     pub fn describe(&self) {
-        self.result
-            .function
-            .imported
-            .iter()
-            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
-        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
-        self.result
-            .function
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
-        self.result
-            .event
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
+        self.result.function.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Function {k}: {v}");
+        });
+        self.result.event.imported.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Imported: Event {k}: {v}");
+        });
+        self.result.function.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Function {k}: {v}");
+        });
+        self.result.event.duplicated.iter().for_each(|(k, v)| {
+            let _ = sh_println!("Duplicated: Event {k}: {v}");
+        });
 
-        println!("Selectors successfully uploaded to OpenChain");
+        let _ = sh_println!("Selectors successfully uploaded to OpenChain");
     }
 }
 
@@ -579,6 +577,7 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_macros)]
 #[allow(clippy::needless_return)]
 mod tests {
     use super::*;

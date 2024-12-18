@@ -6,7 +6,7 @@ use alloy_rpc_types::BlockId;
 use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
-use comfy_table::{presets::ASCII_MARKDOWN, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
@@ -17,12 +17,13 @@ use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
     ens::NameOrAddress,
+    shell,
 };
 use foundry_compilers::{
-    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
     compilers::{
         solc::{Solc, SolcCompiler},
-        Compiler, CompilerSettings,
+        Compiler,
     },
     Artifact, Project,
 };
@@ -31,6 +32,7 @@ use foundry_config::{
     impl_figment_convert_cast, Config,
 };
 use semver::Version;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
@@ -45,7 +47,7 @@ pub struct StorageArgs {
     #[arg(value_parser = NameOrAddress::from_str)]
     address: NameOrAddress,
 
-    /// The storage slot number.
+    /// The storage slot number. If not provided, it gets the full storage layout.
     #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
@@ -92,7 +94,7 @@ impl StorageArgs {
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = slot {
             let cast = Cast::new(provider);
-            println!("{}", cast.storage(address, slot, block).await?);
+            sh_println!("{}", cast.storage(address, slot, block).await?)?;
             return Ok(());
         }
 
@@ -109,18 +111,21 @@ impl StorageArgs {
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
-            let out = ProjectCompiler::new().compile(&project)?;
+            let out = ProjectCompiler::new().quiet(shell::is_json()).compile(&project)?;
             let artifact = out.artifacts().find(|(_, artifact)| {
                 artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
             });
             if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, block, artifact, true).await;
+                return fetch_and_print_storage(
+                    provider,
+                    address,
+                    block,
+                    artifact,
+                    !shell::is_json(),
+                )
+                .await;
             }
         }
-
-        // Not a forge project or artifact not found
-        // Get code from Etherscan
-        eprintln!("No matching artifacts found, fetching source code from Etherscan...");
 
         if !self.etherscan.has_key() {
             eyre::bail!("You must provide an Etherscan API key if you're fetching a remote contract's storage.");
@@ -161,7 +166,7 @@ impl StorageArgs {
 
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
-                eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
+                sh_warn!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.")?;
                 let solc = Solc::find_or_install(&MIN_SOLC)?;
                 project.compiler = SolcCompiler::Specific(solc);
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
@@ -180,7 +185,7 @@ impl StorageArgs {
         // Clear temp directory
         root.close()?;
 
-        fetch_and_print_storage(provider, address, block, artifact, true).await
+        fetch_and_print_storage(provider, address, block, artifact, !shell::is_json()).await
     }
 }
 
@@ -215,6 +220,14 @@ impl StorageValue {
     }
 }
 
+/// Represents the storage layout of a contract and its values.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StorageReport {
+    #[serde(flatten)]
+    layout: StorageLayout,
+    values: Vec<B256>,
+}
+
 async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: P,
     address: Address,
@@ -223,7 +236,7 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     pretty: bool,
 ) -> Result<()> {
     if is_storage_layout_empty(&artifact.storage_layout) {
-        eprintln!("Storage layout is empty.");
+        sh_warn!("Storage layout is empty.")?;
         Ok(())
     } else {
         let layout = artifact.storage_layout.as_ref().unwrap().clone();
@@ -255,13 +268,38 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
-        println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(())
+        let values: Vec<_> = layout
+            .storage
+            .iter()
+            .zip(&values)
+            .map(|(slot, storage_value)| {
+                let storage_type = layout.types.get(&slot.storage_type);
+                storage_value.value(
+                    slot.offset,
+                    storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()),
+                )
+            })
+            .collect();
+        sh_println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::to_value(StorageReport { layout, values })?)?
+        )?;
+        return Ok(());
     }
 
     let mut table = Table::new();
-    table.load_preset(ASCII_MARKDOWN);
-    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+
+    table.set_header(vec![
+        Cell::new("Name"),
+        Cell::new("Type"),
+        Cell::new("Slot"),
+        Cell::new("Offset"),
+        Cell::new("Bytes"),
+        Cell::new("Value"),
+        Cell::new("Hex Value"),
+        Cell::new("Contract"),
+    ]);
 
     for (slot, storage_value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
@@ -281,14 +319,14 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
         ]);
     }
 
-    println!("{table}");
+    sh_println!("\n{table}\n")?;
 
     Ok(())
 }
 
-fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
+fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
-    project.settings.update_output_selection(|selection| {
+    project.update_output_selection(|selection| {
         selection.0.values_mut().for_each(|contract_selection| {
             contract_selection
                 .values_mut()

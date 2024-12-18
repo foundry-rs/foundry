@@ -1,4 +1,5 @@
 use crate::opts::ChainValueParser;
+use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
 use foundry_config::{
@@ -40,6 +41,18 @@ pub struct RpcOpts {
     /// "0x6bb38c26db65749ab6e472080a3d20a2f35776494e72016d1e339593f21c59bc"]'
     #[arg(long, env = "ETH_RPC_JWT_SECRET")]
     pub jwt_secret: Option<String>,
+
+    /// Timeout for the RPC request in seconds.
+    ///
+    /// The specified timeout will be used to override the default timeout for RPC requests.
+    ///
+    /// Default value: 45
+    #[arg(long, env = "ETH_RPC_TIMEOUT")]
+    pub rpc_timeout: Option<u64>,
+
+    /// Specify custom headers for RPC requests.
+    #[arg(long, alias = "headers", env = "ETH_RPC_HEADERS", value_delimiter(','))]
+    pub rpc_headers: Option<Vec<String>>,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -83,6 +96,12 @@ impl RpcOpts {
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
+        }
+        if let Some(rpc_timeout) = self.rpc_timeout {
+            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
+        }
+        if let Some(headers) = &self.rpc_headers {
+            dict.insert("eth_rpc_headers".into(), headers.clone().into());
         }
         dict
     }
@@ -136,7 +155,11 @@ impl EtherscanOpts {
             dict.insert("etherscan_api_key".into(), key.into());
         }
         if let Some(chain) = self.chain {
-            dict.insert("chain_id".into(), chain.to_string().into());
+            if let ChainKind::Id(id) = chain.kind() {
+                dict.insert("chain_id".into(), (*id).into());
+            } else {
+                dict.insert("chain_id".into(), chain.to_string().into());
+            }
         }
         dict
     }

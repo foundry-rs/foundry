@@ -10,6 +10,7 @@ use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
+use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
 use rand::{rngs::StdRng, SeedableRng};
@@ -72,13 +73,9 @@ pub struct NodeArgs {
     #[arg(long)]
     pub derivation_path: Option<String>,
 
-    /// Don't print anything on startup and don't print logs
-    #[arg(long)]
-    pub silent: bool,
-
     /// The EVM hardfork to use.
     ///
-    /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
+    /// Choose the hardfork by name, e.g. `cancun`, `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
     #[arg(long)]
     pub hardfork: Option<String>,
@@ -92,8 +89,8 @@ pub struct NodeArgs {
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
-    #[arg(long, value_name = "OUT_FILE")]
-    pub config_out: Option<String>,
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    pub config_out: Option<PathBuf>,
 
     /// Disable auto and interval mining, and mine on demand instead.
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
@@ -180,7 +177,7 @@ pub struct NodeArgs {
     /// Max number of states to persist on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "prune_history")]
     pub max_persisted_states: Option<usize>,
 
     /// Number of blocks with transactions to keep in memory.
@@ -192,6 +189,10 @@ pub struct NodeArgs {
 
     #[command(flatten)]
     pub server_config: ServerConfig,
+
+    /// Path to the cache directory where states are stored.    
+    #[arg(long, value_name = "PATH")]
+    pub cache_path: Option<PathBuf>,
 }
 
 #[cfg(windows)]
@@ -258,7 +259,7 @@ impl NodeArgs {
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
-            .set_silent(self.silent)
+            .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
@@ -274,10 +275,11 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm_opts.optimism)
-            .with_alphanet(self.evm_opts.alphanet)
+            .with_odyssey(self.evm_opts.odyssey)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
-            .with_memory_limit(self.evm_opts.memory_limit))
+            .with_memory_limit(self.evm_opts.memory_limit)
+            .with_cache_path(self.cache_path))
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -564,8 +566,9 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable autoImpersonate on startup
-    #[arg(long, visible_alias = "auto-impersonate")]
+    /// Enables automatic impersonation on startup. This allows any transaction sender to be
+    /// simulated as different accounts, which is useful for testing contract behavior.
+    #[arg(long, visible_alias = "auto-unlock")]
     pub auto_impersonate: bool,
 
     /// Run an Optimism chain
@@ -580,9 +583,9 @@ pub struct AnvilEvmArgs {
     #[arg(long)]
     pub memory_limit: Option<u64>,
 
-    /// Enable Alphanet features
-    #[arg(long, visible_alias = "alphanet")]
-    pub alphanet: bool,
+    /// Enable Odyssey features
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

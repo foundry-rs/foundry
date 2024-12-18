@@ -50,14 +50,15 @@ alloy-rpc-types.workspace = true
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs = "5"
 eyre.workspace = true
-regex = "1"
+regex.workspace = true
 reqwest.workspace = true
 revm.workspace = true
-rustyline = "14"
+rustyline = "15"
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
+solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { workspace = true, features = ["full"] }
@@ -68,7 +69,6 @@ tracing.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["async_tokio"] }
 serial_test = "3"
 tracing-subscriber.workspace = true
 
@@ -78,7 +78,3 @@ rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
-
-[[bench]]
-name = "session_source"
-harness = false

@@ -3,8 +3,12 @@ use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
-use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_common::{
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+};
 use foundry_config::{Chain, Config};
+use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -102,6 +106,14 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.jwt(jwt.as_ref());
     }
 
+    if let Some(rpc_timeout) = config.eth_rpc_timeout {
+        builder = builder.timeout(Duration::from_secs(rpc_timeout));
+    }
+
+    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
+        builder = builder.headers(rpc_headers);
+    }
+
     Ok(builder)
 }
 
@@ -133,6 +145,11 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
     })
 }
 
+/// Parses a `T` from a string using [`serde_json::from_str`].
+pub fn parse_json<T: DeserializeOwned>(value: &str) -> serde_json::Result<T> {
+    serde_json::from_str(value)
+}
+
 /// Parses a `Duration` from a &str
 pub fn parse_delay(delay: &str) -> Result<Duration> {
     let delay = if delay.ends_with("ms") {
@@ -159,23 +176,6 @@ pub fn now() -> Duration {
 pub fn block_on<F: Future>(future: F) -> F::Output {
     let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
     rt.block_on(future)
-}
-
-/// Conditionally print a message
-///
-/// This macro accepts a predicate and the message to print if the predicate is true
-///
-/// ```ignore
-/// let quiet = true;
-/// p_println!(!quiet => "message");
-/// ```
-#[macro_export]
-macro_rules! p_println {
-    ($p:expr => $($arg:tt)*) => {{
-        if $p {
-            println!($($arg)*)
-        }
-    }}
 }
 
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
@@ -282,12 +282,12 @@ pub struct Git<'a> {
 impl<'a> Git<'a> {
     #[inline]
     pub fn new(root: &'a Path) -> Self {
-        Self { root, quiet: false, shallow: false }
+        Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
     #[inline]
     pub fn from_config(config: &'a Config) -> Self {
-        Self::new(config.root.0.as_path())
+        Self::new(config.root.as_path())
     }
 
     pub fn root_of(relative_to: &Path) -> Result<PathBuf> {
@@ -444,8 +444,8 @@ impl<'a> Git<'a> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
     }
 
-    pub fn has_branch(self, branch: impl AsRef<OsStr>) -> Result<bool> {
-        self.cmd()
+    pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
             .args(["branch", "--list", "--no-color"])
             .arg(branch)
             .get_stdout_lossy()
@@ -463,10 +463,7 @@ and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
-
-If none of the previous steps worked, please open an issue at:
-https://github.com/foundry-rs/foundry/issues/new/choose"
+ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag."
             ))
         }
     }
@@ -567,6 +564,12 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
     pub fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
+        cmd
+    }
+
+    pub fn cmd_at(self, path: &Path) -> Command {
+        let mut cmd = Self::cmd_no_root();
+        cmd.current_dir(path);
         cmd
     }
 

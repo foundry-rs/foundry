@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -215,6 +215,32 @@ contract BroadcastTestNoLinking is DSTest {
         vm.startBroadcast();
         NoLink test_c2 = new NoLink{salt: bytes32(uint256(1337))}();
         assert(test_c2.view_me() == 1337);
+        NoLink test2 = new NoLink();
+        vm.stopBroadcast();
+    }
+
+    function deployCreate2(address deployer) public {
+        vm.startBroadcast();
+        bytes32 salt = bytes32(uint256(1338));
+        NoLink test_c2 = new NoLink{salt: salt}();
+        assert(test_c2.view_me() == 1337);
+
+        address expectedAddress = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            bytes1(0xff),
+                            deployer,
+                            salt,
+                            keccak256(abi.encodePacked(type(NoLink).creationCode, abi.encode()))
+                        )
+                    )
+                )
+            )
+        );
+        require(address(test_c2) == expectedAddress, "Create2 address mismatch");
+
         NoLink test2 = new NoLink();
         vm.stopBroadcast();
     }

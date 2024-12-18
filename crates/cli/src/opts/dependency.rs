@@ -12,6 +12,9 @@ pub static GH_REPO_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+static VERSION_PREFIX_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"@(tag|branch|rev)="#).unwrap());
+
 const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
 const ALIAS_SEPARATOR: char = '=';
@@ -49,6 +52,12 @@ pub struct Dependency {
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
+        // Handle dependency exact ref type (`@tag=`, `@branch=` or `@rev=`)`.
+        // Only extract version for first tag/branch/commit specified.
+        let url_and_version: Vec<&str> = VERSION_PREFIX_REGEX.split(dependency).collect();
+        let dependency = url_and_version[0];
+        let mut tag_or_branch = url_and_version.get(1).map(|version| version.to_string());
+
         // everything before "=" should be considered the alias
         let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
             (Some(String::from(split.0)), split.1.to_string())
@@ -96,14 +105,15 @@ impl FromStr for Dependency {
             // `tag` does not contain a slash
             let mut split = url_with_version.rsplit(VERSION_SEPARATOR);
 
-            let mut tag = None;
             let mut url = url_with_version.as_str();
 
-            let maybe_tag = split.next().unwrap();
-            if let Some(actual_url) = split.next() {
-                if !maybe_tag.contains('/') {
-                    tag = Some(maybe_tag.to_string());
-                    url = actual_url;
+            if tag_or_branch.is_none() {
+                let maybe_tag_or_branch = split.next().unwrap();
+                if let Some(actual_url) = split.next() {
+                    if !maybe_tag_or_branch.contains('/') {
+                        tag_or_branch = Some(maybe_tag_or_branch.to_string());
+                        url = actual_url;
+                    }
                 }
             }
 
@@ -114,7 +124,7 @@ impl FromStr for Dependency {
                 .ok_or_else(|| eyre::eyre!("no dependency name found"))?
                 .to_string();
 
-            (Some(url), Some(name), tag)
+            (Some(url), Some(name), tag_or_branch)
         } else {
             (None, None, None)
         };
@@ -359,5 +369,27 @@ mod tests {
     fn can_parse_org_shh_url_dependency() {
         let dep: Dependency = "org-git12345678@github.com:my-org/my-repo.git".parse().unwrap();
         assert_eq!(dep.url.unwrap(), "https://github.com/my-org/my-repo");
+    }
+
+    #[test]
+    fn can_parse_with_explicit_ref_type() {
+        let dep = Dependency::from_str("smartcontractkit/ccip@tag=contracts-ccip/v1.2.1").unwrap();
+        assert_eq!(dep.name, "ccip");
+        assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
+        assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
+        assert_eq!(dep.alias, None);
+
+        let dep =
+            Dependency::from_str("smartcontractkit/ccip@branch=contracts-ccip/v1.2.1").unwrap();
+        assert_eq!(dep.name, "ccip");
+        assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
+        assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
+        assert_eq!(dep.alias, None);
+
+        let dep = Dependency::from_str("smartcontractkit/ccip@rev=80eb41b").unwrap();
+        assert_eq!(dep.name, "ccip");
+        assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
+        assert_eq!(dep.tag, Some("80eb41b".to_string()));
+        assert_eq!(dep.alias, None);
     }
 }

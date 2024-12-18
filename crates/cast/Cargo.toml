@@ -1,5 +1,5 @@
 [package]
-name = "foundry-cast"
+name = "cast"
 description = "Command-line tool for performing Ethereum RPC calls"
 
 version.workspace = true
@@ -44,9 +44,14 @@ alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-provider = { workspace = true, features = [
+    "reqwest",
+    "ws",
+    "ipc",
+    "trace-api",
+] }
 alloy-rlp.workspace = true
-alloy-rpc-types = { workspace = true, features = ["eth"] }
+alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-serde.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true
@@ -54,7 +59,6 @@ alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 
 chrono.workspace = true
-evm-disassembler.workspace = true
 eyre.workspace = true
 futures.workspace = true
 rand.workspace = true
@@ -75,7 +79,7 @@ comfy-table.workspace = true
 dunce.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
@@ -90,8 +94,10 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
+alloy-node-bindings.workspace = true
+
 async-trait.workspace = true
-criterion = "0.5"
+divan.workspace = true
 
 [features]
 default = ["rustls", "jemalloc"]

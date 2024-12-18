@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::{cli_warn, ens::NameOrAddress};
+use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
@@ -38,10 +38,6 @@ pub struct SendTxArgs {
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
     confirmations: u64,
-
-    /// Print the transaction receipt as JSON.
-    #[arg(long, short, help_heading = "Display options")]
-    json: bool,
 
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
@@ -89,7 +85,7 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     #[allow(unknown_lints, dependency_on_unit_never_type_fallback)]
-    pub async fn run(self) -> Result<(), eyre::Report> {
+    pub async fn run(self) -> eyre::Result<()> {
         let Self {
             eth,
             to,
@@ -98,7 +94,6 @@ impl SendTxArgs {
             mut args,
             tx,
             confirmations,
-            json: to_json,
             command,
             unlocked,
             path,
@@ -145,7 +140,7 @@ impl SendTxArgs {
                 // switch chain if current chain id is not the same as the one specified in the
                 // config
                 if config_chain_id != current_chain_id {
-                    cli_warn!("Switching to chain {}", config_chain);
+                    sh_warn!("Switching to chain {}", config_chain)?;
                     provider
                         .raw_request(
                             "wallet_switchEthereumChain".into(),
@@ -159,7 +154,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -178,7 +173,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .on_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout).await
         }
     }
 }
@@ -189,7 +184,6 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     cast_async: bool,
     confs: u64,
     timeout: u64,
-    to_json: bool,
 ) -> Result<()> {
     let cast = Cast::new(provider);
     let pending_tx = cast.send(tx).await?;
@@ -197,12 +191,11 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     let tx_hash = pending_tx.inner().tx_hash();
 
     if cast_async {
-        println!("{tx_hash:#x}");
+        sh_println!("{tx_hash:#x}")?;
     } else {
-        let receipt = cast
-            .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false, to_json)
-            .await?;
-        println!("{receipt}");
+        let receipt =
+            cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
+        sh_println!("{receipt}")?;
     }
 
     Ok(())

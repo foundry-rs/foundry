@@ -2,8 +2,8 @@ use crate::error::WalletSignerError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{hex, Address, ChainId, B256};
-use alloy_signer::{Signature, Signer};
+use alloy_primitives::{hex, Address, ChainId, PrimitiveSignature, B256};
+use alloy_signer::Signer;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
 use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
@@ -198,11 +198,11 @@ macro_rules! delegate {
 #[async_trait]
 impl Signer for WalletSigner {
     /// Signs the given hash.
-    async fn sign_hash(&self, hash: &B256) -> alloy_signer::Result<Signature> {
+    async fn sign_hash(&self, hash: &B256) -> alloy_signer::Result<PrimitiveSignature> {
         delegate!(self, inner => inner.sign_hash(hash)).await
     }
 
-    async fn sign_message(&self, message: &[u8]) -> alloy_signer::Result<Signature> {
+    async fn sign_message(&self, message: &[u8]) -> alloy_signer::Result<PrimitiveSignature> {
         delegate!(self, inner => inner.sign_message(message)).await
     }
 
@@ -222,7 +222,7 @@ impl Signer for WalletSigner {
         &self,
         payload: &T,
         domain: &Eip712Domain,
-    ) -> alloy_signer::Result<Signature>
+    ) -> alloy_signer::Result<PrimitiveSignature>
     where
         Self: Sized,
     {
@@ -232,21 +232,21 @@ impl Signer for WalletSigner {
     async fn sign_dynamic_typed_data(
         &self,
         payload: &TypedData,
-    ) -> alloy_signer::Result<Signature> {
+    ) -> alloy_signer::Result<PrimitiveSignature> {
         delegate!(self, inner => inner.sign_dynamic_typed_data(payload)).await
     }
 }
 
 #[async_trait]
-impl TxSigner<Signature> for WalletSigner {
+impl TxSigner<PrimitiveSignature> for WalletSigner {
     fn address(&self) -> Address {
         delegate!(self, inner => alloy_signer::Signer::address(inner))
     }
 
     async fn sign_transaction(
         &self,
-        tx: &mut dyn SignableTransaction<Signature>,
-    ) -> alloy_signer::Result<Signature> {
+        tx: &mut dyn SignableTransaction<PrimitiveSignature>,
+    ) -> alloy_signer::Result<PrimitiveSignature> {
         delegate!(self, inner => inner.sign_transaction(tx)).await
     }
 }

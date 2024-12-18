@@ -8,8 +8,8 @@ use crate::{
     mem::inspector::Inspector,
     PrecompileFactory,
 };
-use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
+use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -28,7 +28,7 @@ use foundry_evm::{
         },
     },
     traces::CallTraceNode,
-    utils::alphanet_handler_register,
+    utils::odyssey_handler_register,
 };
 use revm::{db::WrapDatabaseRef, primitives::MAX_BLOB_GAS_PER_BLOCK};
 use std::sync::Arc;
@@ -106,7 +106,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// Cumulative blob gas used by all executed transactions
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
-    pub alphanet: bool,
+    pub odyssey: bool,
     pub print_logs: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
@@ -134,7 +134,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             None
         };
 
+        let is_shanghai = self.cfg_env.handler_cfg.spec_id >= SpecId::SHANGHAI;
         let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
+        let is_prague = self.cfg_env.handler_cfg.spec_id >= SpecId::PRAGUE;
         let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
@@ -208,7 +210,6 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             transactions.push(transaction.pending_transaction.transaction.clone());
         }
 
-        let ommers: Vec<Header> = Vec::new();
         let receipts_root =
             trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
 
@@ -227,12 +228,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             mix_hash: Default::default(),
             nonce: Default::default(),
             base_fee,
-            parent_beacon_block_root: Default::default(),
+            parent_beacon_block_root: is_cancun.then_some(Default::default()),
             blob_gas_used: cumulative_blob_gas_used,
             excess_blob_gas,
+            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(partial_header, transactions.clone(), ommers);
+        let block = Block::new(partial_header, transactions.clone());
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
@@ -311,7 +314,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         let exec_result = {
-            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.alphanet);
+            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -395,20 +398,20 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     }
 }
 
-/// Creates a database with given database and inspector, optionally enabling alphanet features.
+/// Creates a database with given database and inspector, optionally enabling odyssey features.
 pub fn new_evm_with_inspector<DB: revm::Database>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: &mut dyn revm::Inspector<DB>,
-    alphanet: bool,
+    odyssey: bool,
 ) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
     let EnvWithHandlerCfg { env, handler_cfg } = env;
 
     let mut handler = revm::Handler::new(handler_cfg);
 
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    if alphanet {
-        handler.append_handler_register_plain(alphanet_handler_register);
+    if odyssey {
+        handler.append_handler_register_plain(odyssey_handler_register);
     }
 
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
@@ -421,10 +424,10 @@ pub fn new_evm_with_inspector_ref<'a, DB>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
-    alphanet: bool,
+    odyssey: bool,
 ) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
 where
     DB: revm::DatabaseRef,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, alphanet)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, odyssey)
 }

@@ -6,7 +6,7 @@ use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
+foundry_config::impl_figment_convert!(DebugArgs, opts, evm_args);
 
 /// CLI arguments for `forge debug`.
 #[derive(Clone, Debug, Parser)]
@@ -33,11 +33,20 @@ pub struct DebugArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// File path to dump execution details as JSON.
+    #[arg(
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    pub dump: Option<PathBuf>,
+
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
     #[command(flatten)]
-    pub evm_opts: EvmArgs,
+    pub evm_args: EvmArgs,
 }
 
 impl DebugArgs {
@@ -49,8 +58,9 @@ impl DebugArgs {
             sig: self.sig,
             gas_estimate_multiplier: 130,
             opts: self.opts,
-            evm_opts: self.evm_opts,
+            evm_args: self.evm_args,
             debug: true,
+            dump: self.dump,
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };

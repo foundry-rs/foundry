@@ -137,7 +137,7 @@ impl ProviderBuilder {
             .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
 
         // Use the final URL string to guess if it's a local URL.
-        let is_local = url.as_ref().map_or(false, |url| guess_local_url(url.as_str()));
+        let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
 
         Self {
             url,
@@ -241,6 +241,12 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets http headers. If `None`, defaults to the already-set value.
+    pub fn maybe_headers(mut self, headers: Option<Vec<String>>) -> Self {
+        self.headers = headers.unwrap_or(self.headers);
+        self
+    }
+
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
         let Self {
@@ -270,6 +276,9 @@ impl ProviderBuilder {
             client.set_poll_interval(
                 chain
                     .average_blocktime_hint()
+                    // we cap the poll interval because if not provided, chain would default to
+                    // mainnet
+                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
                     .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
                     .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
             );

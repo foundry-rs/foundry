@@ -1,19 +1,19 @@
 use super::ScriptResult;
 use crate::build::ScriptPredeployLibraries;
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::TransactionRequest;
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_config::Config;
 use foundry_evm::{
-    constants::{CALLER, DEFAULT_CREATE2_DEPLOYER},
+    constants::CALLER,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
     revm::interpreter::{return_ok, InstructionResult},
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;
-use yansi::Paint;
 
 /// Drives script execution
 #[derive(Debug)]
@@ -83,9 +83,9 @@ impl ScriptRunner {
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
+                let create2_deployer = self.executor.create2_deployer();
                 for library in libraries {
-                    let address =
-                        DEFAULT_CREATE2_DEPLOYER.create2_from_code(salt, library.as_ref());
+                    let address = create2_deployer.create2_from_code(salt, library.as_ref());
                     // Skip if already deployed
                     if !self.executor.is_empty_code(address)? {
                         continue;
@@ -95,7 +95,7 @@ impl ScriptRunner {
                         .executor
                         .transact_raw(
                             self.evm_opts.sender,
-                            DEFAULT_CREATE2_DEPLOYER,
+                            create2_deployer,
                             calldata.clone().into(),
                             U256::from(0),
                         )
@@ -111,7 +111,7 @@ impl ScriptRunner {
                             from: Some(self.evm_opts.sender),
                             input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
-                            to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
+                            to: Some(TxKind::Call(create2_deployer)),
                             ..Default::default()
                         }
                         .into(),
@@ -133,6 +133,17 @@ impl ScriptRunner {
         // construction
         self.executor.set_balance(address, self.evm_opts.initial_balance)?;
 
+        // HACK: if the current sender is the default script sender (which is a default value), we
+        // set its nonce to a very large value before deploying the script contract. This
+        // ensures that the nonce increase during this CREATE does not affect deployment
+        // addresses of contracts that are deployed in the script, Otherwise, we'd have a
+        // nonce mismatch during script execution and onchain simulation, potentially
+        // resulting in weird errors like <https://github.com/foundry-rs/foundry/issues/8960>.
+        let prev_sender_nonce = self.executor.get_nonce(self.evm_opts.sender)?;
+        if self.evm_opts.sender == CALLER {
+            self.executor.set_nonce(self.evm_opts.sender, u64::MAX / 2)?;
+        }
+
         // Deploy an instance of the contract
         let DeployResult {
             address,
@@ -141,6 +152,10 @@ impl ScriptRunner {
             .executor
             .deploy(CALLER, code, U256::ZERO, None)
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
+
+        if self.evm_opts.sender == CALLER {
+            self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
+        }
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
@@ -209,7 +224,7 @@ impl ScriptRunner {
 
     /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> Result<ScriptResult> {
-        self.call(self.evm_opts.sender, address, calldata, U256::ZERO, false)
+        self.call(self.evm_opts.sender, address, calldata, U256::ZERO, None, false)
     }
 
     /// Runs a broadcastable transaction locally and persists its state.
@@ -219,9 +234,17 @@ impl ScriptRunner {
         to: Option<Address>,
         calldata: Option<Bytes>,
         value: Option<U256>,
+        authorization_list: Option<Vec<SignedAuthorization>>,
     ) -> Result<ScriptResult> {
         if let Some(to) = to {
-            self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::ZERO), true)
+            self.call(
+                from,
+                to,
+                calldata.unwrap_or_default(),
+                value.unwrap_or(U256::ZERO),
+                authorization_list,
+                true,
+            )
         } else if to.is_none() {
             let res = self.executor.deploy(
                 from,
@@ -233,7 +256,7 @@ impl ScriptRunner {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
-                    println!("{}", format!("\nFailed with `{reason}`:\n").red());
+                    sh_err!("Failed with `{reason}`:\n")?;
                     (Address::ZERO, raw)
                 }
                 Err(e) => eyre::bail!("Failed deploying contract: {e:?}"),
@@ -268,9 +291,20 @@ impl ScriptRunner {
         to: Address,
         calldata: Bytes,
         value: U256,
+        authorization_list: Option<Vec<SignedAuthorization>>,
         commit: bool,
     ) -> Result<ScriptResult> {
-        let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
+        let mut res = if let Some(authorization_list) = authorization_list {
+            self.executor.call_raw_with_authorization(
+                from,
+                to,
+                calldata.clone(),
+                value,
+                authorization_list,
+            )?
+        } else {
+            self.executor.call_raw(from, to, calldata.clone(), value)?
+        };
         let mut gas_used = res.gas_used;
 
         // We should only need to calculate realistic gas costs when preparing to broadcast

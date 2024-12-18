@@ -171,20 +171,20 @@ pub fn find_anchor_branch(
 /// Calculates whether `element` is within the range of the target `location`.
 fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> bool {
     // Source IDs must match.
-    let source_ids_match = element.index().map_or(false, |a| a as usize == location.source_id);
+    let source_ids_match = element.index().is_some_and(|a| a as usize == location.source_id);
     if !source_ids_match {
         return false;
     }
 
     // Needed because some source ranges in the source map mark the entire contract...
-    let is_within_start = element.offset() >= location.start;
+    let is_within_start = element.offset() >= location.bytes.start;
     if !is_within_start {
         return false;
     }
 
-    let start_of_ranges = location.start.max(element.offset());
-    let end_of_ranges = (location.start + location.length.unwrap_or_default())
-        .min(element.offset() + element.length());
+    let start_of_ranges = location.bytes.start.max(element.offset());
+    let end_of_ranges =
+        (location.bytes.start + location.len()).min(element.offset() + element.length());
     let within_ranges = start_of_ranges <= end_of_ranges;
     if !within_ranges {
         return false;

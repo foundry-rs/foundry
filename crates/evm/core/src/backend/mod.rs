@@ -8,9 +8,9 @@ use crate::{
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
+use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction, TransactionRequest};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
@@ -19,8 +19,8 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
+        Account, AccountInfo, BlobExcessGasAndPrice, Bytecode, Env, EnvWithHandlerCfg, EvmState,
+        EvmStorageSlot, HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -770,7 +770,7 @@ impl Backend {
         self.initialize(env);
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
-        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+        let res = evm.transact().wrap_err("EVM error")?;
 
         env.env = evm.context.evm.inner.env;
 
@@ -839,7 +839,7 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, Block<WithOtherFields<Transaction>>)> {
+    ) -> eyre::Result<(u64, AnyRpcBlock)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
@@ -850,13 +850,11 @@ impl Backend {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block.inner))
+            Ok((fork_block, block))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block.header.number;
-
-            let block = block.inner;
 
             Ok((number, block))
         }
@@ -871,7 +869,7 @@ impl Backend {
         env: Env,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<Option<Transaction>> {
+    ) -> eyre::Result<Option<Transaction<AnyTxEnvelope>>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -885,17 +883,17 @@ impl Backend {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
             if is_known_system_sender(tx.from) ||
-                tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
             {
-                trace!(tx=?tx.hash, "skipping system transaction");
+                trace!(tx=?tx.tx_hash(), "skipping system transaction");
                 continue;
             }
 
-            if tx.hash == tx_hash {
+            if tx.tx_hash() == tx_hash {
                 // found the target transaction
                 return Ok(Some(tx.inner))
             }
-            trace!(tx=?tx.hash, "committing transaction");
+            trace!(tx=?tx.tx_hash(), "committing transaction");
 
             commit_transaction(
                 &tx.inner,
@@ -1283,7 +1281,7 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(&mut env, tx)?;
+            configure_tx_req_env(&mut env, tx, None)?;
             let env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
@@ -1877,25 +1875,31 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 ) {
     trace!(?addr, "merging database data");
 
-    let mut acc = if let Some(acc) = active.accounts.get(&addr).cloned() {
-        acc
-    } else {
-        // Account does not exist
-        return;
-    };
+    let Some(acc) = active.accounts.get(&addr) else { return };
 
-    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
-        fork_db.contracts.insert(acc.info.code_hash, code);
+    // port contract cache over
+    if let Some(code) = active.contracts.get(&acc.info.code_hash) {
+        trace!("merging contract cache");
+        fork_db.contracts.insert(acc.info.code_hash, code.clone());
     }
 
-    if let Some(fork_account) = fork_db.accounts.get_mut(&addr) {
-        // This will merge the fork's tracked storage with active storage and update values
-        fork_account.storage.extend(std::mem::take(&mut acc.storage));
-        // swap them so we can insert the account as whole in the next step
-        std::mem::swap(&mut fork_account.storage, &mut acc.storage);
+    // port account storage over
+    use std::collections::hash_map::Entry;
+    match fork_db.accounts.entry(addr) {
+        Entry::Vacant(vacant) => {
+            trace!("target account not present - inserting from active");
+            // if the fork_db doesn't have the target account
+            // insert the entire thing
+            vacant.insert(acc.clone());
+        }
+        Entry::Occupied(mut occupied) => {
+            trace!("target account present - merging storage slots");
+            // if the fork_db does have the system,
+            // extend the existing storage (overriding)
+            let fork_account = occupied.get_mut();
+            fork_account.storage.extend(&acc.storage);
+        }
     }
-
-    fork_db.accounts.insert(addr, acc);
 }
 
 /// Returns true of the address is a contract
@@ -1908,20 +1912,23 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
+fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.miner;
+    env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+        env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas));
+    }
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction(
-    tx: &Transaction,
+    tx: &Transaction<AnyTxEnvelope>,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
@@ -1957,7 +1964,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        if !persistent_accounts.map_or(false, |accounts| accounts.contains(addr)) {
+        if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in acc.storage.iter_mut() {
                 val.present_value = db.storage(*addr, *key)?;

@@ -16,13 +16,14 @@ workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-evm-traces.workspace = true
+foundry-evm-core.workspace = true
 revm-inspectors.workspace = true
 
 alloy-primitives.workspace = true
 
 crossterm = "0.28"
 eyre.workspace = true
-ratatui = { version = "0.28", default-features = false, features = [
+ratatui = { version = "0.29", default-features = false, features = [
     "crossterm",
 ] }
 revm.workspace = true

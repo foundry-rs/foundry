@@ -1,16 +1,17 @@
+use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge_verify::RetryArgs;
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
     opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
@@ -18,8 +19,11 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self},
     fmt::parse_tokens,
+    shell,
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
+use foundry_compilers::{
+    artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize, ArtifactId,
+};
 use foundry_config::{
     figment::{
         self,
@@ -45,6 +49,7 @@ pub struct CreateArgs {
         num_args(1..),
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
+        allow_hyphen_values = true,
     )]
     constructor_args: Vec<String>,
 
@@ -56,9 +61,9 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    /// Print the deployment information as JSON.
-    #[arg(long, help_heading = "Display options")]
-    json: bool,
+    /// Broadcast the transaction.
+    #[arg(long)]
+    pub broadcast: bool,
 
     /// Verify contract after creation.
     #[arg(long)]
@@ -89,7 +94,7 @@ pub struct CreateArgs {
     eth: EthereumOpts,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     retry: RetryArgs,
@@ -98,7 +103,14 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let mut config = self.try_load_config_emit_warnings()?;
+
+        // Install missing dependencies.
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config();
+        }
+
         // Find Project & Compile
         let project = config.project()?;
 
@@ -108,10 +120,9 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output =
-            compile::compile_target(&target_path, &project, self.json || self.opts.silent)?;
+        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
-        let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
+        let (abi, bin, id) = remove_contract(output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -129,19 +140,18 @@ impl CreateArgs {
         };
 
         // Add arguments to constructor
-        let provider = utils::get_provider(&config)?;
-        let params = match abi.constructor {
-            Some(ref v) => {
-                let constructor_args =
-                    if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        read_constructor_args_file(constructor_args_path.to_path_buf())?
-                    } else {
-                        self.constructor_args.clone()
-                    };
-                self.parse_constructor_args(v, &constructor_args)?
-            }
-            None => vec![],
+        let params = if let Some(constructor) = &abi.constructor {
+            let constructor_args =
+                self.constructor_args_path.clone().map(read_constructor_args_file).transpose()?;
+            self.parse_constructor_args(
+                constructor,
+                constructor_args.as_deref().unwrap_or(&self.constructor_args),
+            )?
+        } else {
+            vec![]
         };
+
+        let provider = utils::get_provider(&config)?;
 
         // respect chain, if set explicitly via cmd args
         let chain_id = if let Some(chain_id) = self.chain_id() {
@@ -149,11 +159,25 @@ impl CreateArgs {
         } else {
             provider.get_chain_id().await?
         };
+
+        // Whether to broadcast the transaction or not
+        let dry_run = !self.broadcast;
+
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            self.deploy(abi, bin, params, provider, chain_id, sender, config.transaction_timeout)
-                .await
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                chain_id,
+                sender,
+                config.transaction_timeout,
+                id,
+                dry_run,
+            )
+            .await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
@@ -161,8 +185,18 @@ impl CreateArgs {
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
-            self.deploy(abi, bin, params, provider, chain_id, deployer, config.transaction_timeout)
-                .await
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                chain_id,
+                deployer,
+                config.transaction_timeout,
+                id,
+                dry_run,
+            )
+            .await
         }
     }
 
@@ -181,13 +215,14 @@ impl CreateArgs {
         &self,
         constructor_args: Option<String>,
         chain: u64,
+        id: &ArtifactId,
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let mut verify = forge_verify::VerifyArgs {
+        let mut verify = VerifyArgs {
             address: Default::default(),
             contract: Some(self.contract.clone()),
-            compiler_version: None,
+            compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
@@ -208,6 +243,7 @@ impl CreateArgs {
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -233,6 +269,8 @@ impl CreateArgs {
         chain: u64,
         deployer_address: Address,
         timeout: u64,
+        id: ArtifactId,
+        dry_run: bool,
     ) -> Result<()> {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
@@ -309,38 +347,65 @@ impl CreateArgs {
                 constructor_args = Some(hex::encode(encoded_args));
             }
 
-            self.verify_preflight_check(constructor_args.clone(), chain).await?;
+            self.verify_preflight_check(constructor_args.clone(), chain, &id).await?;
+        }
+
+        if dry_run {
+            if !shell::is_json() {
+                sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
+
+                sh_println!("Contract: {}", self.contract.name)?;
+                sh_println!(
+                    "Transaction: {}",
+                    serde_json::to_string_pretty(&deployer.tx.clone())?
+                )?;
+                sh_println!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
+
+                sh_warn!("To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more.")?;
+            } else {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            }
+
+            return Ok(());
         }
 
         // Deploy the actual contract
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         let address = deployed_contract;
-        if self.json {
+        if shell::is_json() {
             let output = json!({
                 "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
-            println!("{output}");
+            sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
         } else {
-            println!("Deployer: {deployer_address}");
-            println!("Deployed to: {address}");
-            println!("Transaction hash: {:?}", receipt.transaction_hash);
+            sh_println!("Deployer: {deployer_address}")?;
+            sh_println!("Deployed to: {address}")?;
+            sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
         if !self.verify {
             return Ok(());
         }
 
-        println!("Starting contract verification...");
+        sh_println!("Starting contract verification...")?;
 
-        let num_of_optimizations =
-            if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
-        let verify = forge_verify::VerifyArgs {
+        let num_of_optimizations = if self.opts.compiler.optimize.unwrap_or_default() {
+            self.opts.compiler.optimizer_runs
+        } else {
+            None
+        };
+        let verify = VerifyArgs {
             address,
             contract: Some(self.contract),
-            compiler_version: None,
+            compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations,
@@ -348,7 +413,7 @@ impl CreateArgs {
             rpc: Default::default(),
             flatten: false,
             force: false,
-            skip_is_verified_check: false,
+            skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
             libraries: self.opts.libraries.clone(),
@@ -358,8 +423,9 @@ impl CreateArgs {
             evm_version: self.opts.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
         };
-        println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
+        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
     }
 
@@ -632,6 +698,7 @@ impl From<PendingTransactionError> for ContractDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::I256;
 
     #[test]
     fn can_parse_create() {
@@ -686,5 +753,18 @@ mod tests {
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
         let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+    }
+
+    #[test]
+    fn test_parse_int_constructor_args() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--constructor-args",
+            "-5",
+        ]);
+        let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
+        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }
 }
