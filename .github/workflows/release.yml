@@ -3,6 +3,7 @@ name: release
 on:
   push:
     tags:
+      - "stable"
       - "v*.*.*"
   schedule:
     - cron: "0 0 * * *"
