@@ -9,8 +9,8 @@ use foundry_compilers::{
     Project,
 };
 use foundry_config::{
-    figment,
     figment::{
+        self,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
