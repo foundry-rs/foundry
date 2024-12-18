@@ -1,7 +1,7 @@
 /// Result alias
 pub type NodeResult<T> = Result<T, NodeError>;
 
-/// An error that can occur when launching a anvil instance
+/// An error that can occur when launching an anvil instance
 #[derive(Debug, thiserror::Error)]
 pub enum NodeError {
     #[error(transparent)]
