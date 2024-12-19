@@ -285,6 +285,7 @@ list() {
 }
 
 use() {
+  [ -z "$FOUNDRYUP_VERSION" ] && err "no version provided"
   FOUNDRY_VERSION_DIR="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
   if [ -d "$FOUNDRY_VERSION_DIR" ]; then
     for bin in "${BINS[@]}"; do
