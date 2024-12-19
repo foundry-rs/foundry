@@ -12,8 +12,9 @@ contract SkipTest is DSTest {
         revert("Should not reach this revert");
     }
 
-    function testFailNotSkip() public {
+    function testRevertIfNotSkip() public {
         vm.skip(false);
+        vm.expectRevert("This test should fail");
         revert("This test should fail");
     }
 
@@ -22,8 +23,9 @@ contract SkipTest is DSTest {
         revert("Should not reach revert");
     }
 
-    function testFailFuzzSkip(uint256 x) public {
+    function testRevertIfFuzzSkip(uint256 x) public {
         vm.skip(false);
+        vm.expectRevert("This test should fail");
         revert("This test should fail");
     }
 
