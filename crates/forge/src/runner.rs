@@ -472,9 +472,21 @@ impl<'a> FunctionRunner<'a> {
             return self.result;
         }
 
+        let test_fail_warn_deprecation = |should_fail: bool| {
+            if should_fail {
+                let _ = sh_warn!("`testFail*` has been deprecated. Consider changing {} to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.", func.name);
+            }
+        };
+
         match kind {
-            TestFunctionKind::UnitTest { should_fail } => self.run_unit_test(func, should_fail),
-            TestFunctionKind::FuzzTest { should_fail } => self.run_fuzz_test(func, should_fail),
+            TestFunctionKind::UnitTest { should_fail } => {
+                test_fail_warn_deprecation(should_fail);
+                self.run_unit_test(func, should_fail)
+            }
+            TestFunctionKind::FuzzTest { should_fail } => {
+                test_fail_warn_deprecation(should_fail);
+                self.run_fuzz_test(func, should_fail)
+            }
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }
