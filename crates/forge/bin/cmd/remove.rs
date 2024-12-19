@@ -4,8 +4,11 @@ use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
+use foundry_common::fs;
 use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
+
+use super::install::FOUNDRY_LOCK;
 
 /// CLI arguments for `forge remove`.
 #[derive(Clone, Debug, Parser)]
@@ -30,17 +33,25 @@ impl_figment_convert_basic!(RemoveArgs);
 impl RemoveArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
-        let (root, paths) = super::update::dependencies_paths(&self.dependencies, &config)?;
+        let (root, paths, _) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");
 
+        let git = Git::new(&root);
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+        let (mut foundry_lock, _) =
+            crate::cmd::install::read_or_generate_foundry_lock(&foundry_lock_path, Some(&git))?;
+
         // remove all the dependencies by invoking `git rm` only once with all the paths
-        Git::new(&root).rm(self.force, &paths)?;
+        git.rm(self.force, &paths)?;
 
         // remove all the dependencies from .git/modules
         for (Dependency { name, url, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
             sh_println!("Removing '{name}' in {}, (url: {url:?}, tag: {tag:?})", path.display())?;
+            let _ = foundry_lock.remove(path);
             std::fs::remove_dir_all(git_modules.join(path))?;
         }
+
+        fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
 
         Ok(())
     }

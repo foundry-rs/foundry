@@ -1,14 +1,16 @@
+use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig},
+    utils::{CommandUtils, Git, LoadConfig, TagType},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use regex::Regex;
 use semver::Version;
 use std::{
+    collections::hash_map::Entry,
     io::IsTerminal,
     path::{Path, PathBuf},
     str,
@@ -18,6 +20,8 @@ use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
+
+pub const FOUNDRY_LOCK: &str = "foundry.lock";
 
 /// CLI arguments for `forge install`.
 #[derive(Clone, Debug, Parser)]
@@ -115,6 +119,13 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+
+        let (mut foundry_lock, out_of_sync) = read_or_generate_foundry_lock(
+            &foundry_lock_path,
+            if no_git { None } else { Some(&git) },
+        )?;
+
         if dependencies.is_empty() && !self.no_git {
             // Use the root of the git repository to look for submodules.
             let root = Git::root_of(git.root)?;
@@ -124,6 +135,11 @@ impl DependencyInstallOpts {
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
+
+                    if out_of_sync || !foundry_lock_path.exists() {
+                        // write foundry.lock
+                        fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
+                    }
                 }
 
                 Err(err) => {
@@ -153,6 +169,7 @@ impl DependencyInstallOpts {
 
             // this tracks the actual installed tag
             let installed_tag;
+            let mut tag_type = None;
             if no_git {
                 installed_tag = installer.install_as_folder(&dep, &path)?;
             } else {
@@ -162,20 +179,32 @@ impl DependencyInstallOpts {
                 installed_tag = installer.install_as_submodule(&dep, &path)?;
 
                 // Pin branch to submodule if branch is used
-                if let Some(branch) = &installed_tag {
+                if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    if git.has_branch(branch, &path)? {
+                    tag_type = TagType::resolve_type(&git, &path, tag_or_branch).ok();
+                    if git.has_branch(tag_or_branch, &path)? {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
-                            .args(["submodule", "set-branch", "-b", branch])
+                            .args(["submodule", "set-branch", "-b", tag_or_branch])
                             .arg(rel_path)
                             .exec()?;
+
+                        // Resolve tag type should be TagType::Branch
+                        tag_type = Some(TagType::Branch(tag_or_branch.clone()));
                     }
 
+                    trace!(?tag_type, ?tag_or_branch, "resolved tag type");
+                    if let Some(tag_type) = &tag_type {
+                        foundry_lock.insert(rel_path.to_path_buf(), tag_type.clone());
+                    }
                     // update .gitmodules which is at the root of the repo,
                     // not necessarily at the root of the current Foundry project
                     let root = Git::root_of(git.root)?;
                     git.root(&root).add(Some(".gitmodules"))?;
+                }
+
+                if !foundry_lock.is_empty() {
+                    fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
                 }
 
                 // commit the installation
@@ -184,8 +213,17 @@ impl DependencyInstallOpts {
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
                     if let Some(tag) = &installed_tag {
-                        msg.push_str("\n\n");
-                        msg.push_str(tag);
+                        if let Some(tag_type) = &tag_type {
+                            msg.push_str("\n\n");
+                            msg.push_str(tag_type.to_string().as_str());
+                        } else {
+                            msg.push_str("\n\n");
+                            msg.push_str(tag);
+                        }
+                    }
+
+                    if !foundry_lock.is_empty() {
+                        git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
                     }
                     git.commit(&msg)?;
                 }
@@ -193,8 +231,13 @@ impl DependencyInstallOpts {
 
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
             if let Some(tag) = dep.tag.or(installed_tag) {
-                msg.push(' ');
-                msg.push_str(tag.as_str());
+                if let Some(tag_type) = tag_type {
+                    msg.push(' ');
+                    msg.push_str(tag_type.to_string().as_str());
+                } else {
+                    msg.push(' ');
+                    msg.push_str(tag.as_str());
+                }
             }
             sh_println!("{msg}")?;
         }
@@ -204,6 +247,7 @@ impl DependencyInstallOpts {
             config.libs.push(install_lib_dir.to_path_buf());
             config.update_libs()?;
         }
+
         Ok(())
     }
 }
@@ -509,6 +553,55 @@ impl Installer<'_> {
 fn match_yn(input: String) -> bool {
     let s = input.trim().to_lowercase();
     matches!(s.as_str(), "" | "y" | "yes")
+}
+
+/// Reads and syncs the foundry.lock file with the current state of the submodules.
+///
+/// Takes the absolute path to the foundry.lock file and an optional Git instance.
+///
+/// Returns a tuple of the foundry.lock HashMap.
+pub fn read_or_generate_foundry_lock(
+    path: &Path,
+    git: Option<&Git<'_>>,
+) -> Result<(HashMap<PathBuf, TagType>, bool)> {
+    let mut lock: HashMap<PathBuf, TagType> = if !path.exists() {
+        HashMap::default()
+    } else {
+        let str_lock = fs::read_to_string(path)?;
+        let lock: HashMap<PathBuf, TagType> = serde_json::from_str(&str_lock).unwrap_or_default();
+        lock
+    };
+
+    trace!(?lock, "read foundry.lock");
+
+    let mut out_of_sync = false;
+
+    if git.is_none() {
+        return Ok((lock, out_of_sync))
+    }
+
+    let git = git.unwrap();
+    // Check if foundry.lock is in sync with the current state of the submodules
+    let submodules = git.submodules()?;
+    for sub in &submodules {
+        let rel_path = sub.path();
+        let rev = sub.rev();
+
+        let tag = if let Ok(Some(tag)) = git.tag_for_commit(rev, &git.root.join(rel_path)) {
+            TagType::Tag(tag)
+        } else {
+            TagType::Rev(rev.to_string())
+        };
+
+        let entry = lock.entry(rel_path.to_path_buf());
+
+        if let Entry::Vacant(e) = entry {
+            out_of_sync = true;
+            e.insert(tag);
+        }
+    }
+
+    Ok((lock, out_of_sync))
 }
 
 #[cfg(test)]
