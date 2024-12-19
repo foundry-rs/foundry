@@ -129,6 +129,7 @@ pub struct InputState {
 pub struct CastTxBuilder<T, P, S> {
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
+    input_only_input: bool,
     legacy: bool,
     blob: bool,
     auth: Option<CliAuthorizationList>,
@@ -152,6 +153,7 @@ where
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
         let legacy = tx_opts.legacy || chain.is_legacy();
+        let input_only_input = tx_opts.input_only_input;
 
         if let Some(gas_limit) = tx_opts.gas_limit {
             tx.set_gas_limit(gas_limit.to());
@@ -186,6 +188,7 @@ where
         Ok(Self {
             provider,
             tx,
+            input_only_input,
             legacy,
             blob: tx_opts.blob,
             chain,
@@ -203,6 +206,7 @@ where
         Ok(CastTxBuilder {
             provider: self.provider,
             tx: self.tx,
+            input_only_input: self.input_only_input,
             legacy: self.legacy,
             blob: self.blob,
             chain: self.chain,
@@ -264,6 +268,7 @@ where
         Ok(CastTxBuilder {
             provider: self.provider,
             tx: self.tx,
+            input_only_input: self.input_only_input,
             legacy: self.legacy,
             blob: self.blob,
             chain: self.chain,
@@ -311,7 +316,11 @@ where
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
         let input = Bytes::copy_from_slice(&self.state.input);
-        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+        // add input_only_input field because hardhat does not support both data and input fields: <https://github.com/NomicFoundation/edr/pull/444>
+        match self.input_only_input {
+            true => self.tx.input = TransactionInput { input: Some(input), data: None },
+            false => self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) }
+        }
 
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
