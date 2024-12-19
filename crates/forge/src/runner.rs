@@ -474,7 +474,7 @@ impl<'a> FunctionRunner<'a> {
 
         let test_fail_warn_deprecation = |should_fail: bool| {
             if should_fail {
-                let _ = sh_warn!("`testFail*` has been deprecated. Consider changing {} to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.", func.name);
+                let _ = sh_warn!("`testFail*` has been deprecated and will be removed in the next release. Consider changing {} to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.", func.name);
             }
         };
 
