@@ -2807,3 +2807,72 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]],
     );
 });
+
+// expect revert //
+
+forgetest_init!(expect_revert_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    let expect_revert_failure_tests = include_str!("../fixtures/ExpectRevertFailures.t.sol");
+
+    prj.add_source("ExpectRevertFailures.sol", expect_revert_failure_tests).unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectRevertFailureTest"])
+        .assert_failure()
+        .stdout_eq(
+            r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: next call did not revert as expected] testShouldFailExpectRevertAnyRevertDidNotRevert() ([GAS])
+[FAIL: next call did not revert as expected] testShouldFailExpectRevertDangling() ([GAS])
+[FAIL: next call did not revert as expected] testShouldFailExpectRevertDidNotRevert() ([GAS])
+[FAIL: Error != expected error: but reverts with this message != should revert with this message] testShouldFailExpectRevertErrorDoesNotMatch() ([GAS])
+[FAIL: revert: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
+[FAIL: revert: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#,
+        );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectRevertWithReverterFailureTest"])
+        .assert_failure()
+        .stdout_eq(
+            r#"No files changed, compilation skipped
+...
+[FAIL: next call did not revert as expected] testShouldFailExpectRevertsNotOnImmediateNextCall() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#,
+        );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectRevertCountFailureTest"])
+        .assert_failure()
+        .stdout_eq(
+            r#"No files changed, compilation skipped
+...
+[FAIL: call reverted when it was expected not to revert] testShouldFailNoRevert() ([GAS])
+[FAIL: expected 0 reverts with reason: revert, but got one] testShouldFailNoRevertSpecific() ([GAS])
+[FAIL: Error != expected error: second-revert != revert] testShouldFailReverCountSpecifc() ([GAS])
+[FAIL: next call did not revert as expected] testShouldFailRevertCountAny() ([GAS])
+[FAIL: Error != expected error: wrong revert != called a function and then reverted] testShouldFailRevertCountCallsThenReverts() ([GAS])
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#,
+        );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectRevertCountWithReverterFailures"])
+        .assert_failure()
+        .stdout_eq(r#"No files changed, compilation skipped
+...
+[FAIL: expected 0 reverts from address: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but got one] testShouldFailNoRevertWithReverter() ([GAS])
+[FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailRevertCountWithReverter() ([GAS])
+[FAIL: Error != expected error: wrong revert != revert] testShouldFailReverterCountWithWrongData() ([GAS])
+[FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailWrongReverterCountWithData() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#);
+});
