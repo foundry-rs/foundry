@@ -58,8 +58,8 @@
         }
     ],
     "ignore_labels": ["L-ignore"],
-    "template": "${{CHANGELOG}}\n## Other\n\n${{UNCATEGORIZED}}\n## Full diff:\n\n ${{RELEASE_DIFF}}\n## Contributors:\n\n${{CONTRIBUTORS}}",
-    "pr_template": "- ${{TITLE}} (#${{NUMBER}})",
+    "template": "${{CHANGELOG}}\n## Other\n\n${{UNCATEGORIZED}}\n## Full Changelog:\n ${{RELEASE_DIFF}}",
+    "pr_template": "- ${{TITLE}} (#${{NUMBER}}) by @${{AUTHOR}}",
     "empty_template": "- No changes",
     "max_pull_requests": 100,
     "max_back_track_time_days": 60
