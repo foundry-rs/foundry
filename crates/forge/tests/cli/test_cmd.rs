@@ -2824,12 +2824,9 @@ forgetest!(test_fail_deprecation_warning, |prj, cmd| {
     )
     .unwrap();
 
-    cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args(["test", "--mc", "WarnDeprecationTestFail"])
         .assert_success()
-        .stderr_eq(
-            r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing testFail_deprecated to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.
-"#,
-        );
+        .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated.
+"#);
 });

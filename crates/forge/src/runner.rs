@@ -402,6 +402,24 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
+        let test_fail_deprecations = self
+            .contract
+            .abi
+            .functions()
+            .filter_map(|func| {
+                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
+                    .is_any_test_fail()
+                    .then_some(func.name.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if !test_fail_deprecations.is_empty() {
+            warnings.push(format!(
+                "`testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): {}.",
+                test_fail_deprecations
+            ));
+        }
         SuiteResult::new(duration, test_results, warnings)
     }
 }
@@ -472,21 +490,9 @@ impl<'a> FunctionRunner<'a> {
             return self.result;
         }
 
-        let test_fail_warn_deprecation = |should_fail: bool| {
-            if should_fail {
-                let _ = sh_warn!("`testFail*` has been deprecated and will be removed in the next release. Consider changing {} to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.", func.name);
-            }
-        };
-
         match kind {
-            TestFunctionKind::UnitTest { should_fail } => {
-                test_fail_warn_deprecation(should_fail);
-                self.run_unit_test(func, should_fail)
-            }
-            TestFunctionKind::FuzzTest { should_fail } => {
-                test_fail_warn_deprecation(should_fail);
-                self.run_fuzz_test(func, should_fail)
-            }
+            TestFunctionKind::UnitTest { should_fail } => self.run_unit_test(func, should_fail),
+            TestFunctionKind::FuzzTest { should_fail } => self.run_fuzz_test(func, should_fail),
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }
