@@ -2819,6 +2819,10 @@ forgetest!(test_fail_deprecation_warning, |prj, cmd| {
         function testFail_deprecated() public {
             revert("deprecated");
         }
+
+        function testFail_deprecated2() public {
+            revert("deprecated2");
+        }
     }
     "#,
     )
@@ -2827,6 +2831,6 @@ forgetest!(test_fail_deprecation_warning, |prj, cmd| {
     cmd.forge_fuse()
         .args(["test", "--mc", "WarnDeprecationTestFail"])
         .assert_success()
-        .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated.
+        .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated, testFail_deprecated2.
 "#);
 });
