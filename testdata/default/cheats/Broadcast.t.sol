@@ -155,7 +155,8 @@ contract BroadcastTest is DSTest {
         vm.stopBroadcast();
     }
 
-    function testFailNoBroadcast() public {
+    function testRevertIfNoBroadcast() public {
+        vm.expectRevert();
         vm.stopBroadcast();
     }
 }

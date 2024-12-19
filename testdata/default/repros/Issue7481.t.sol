@@ -9,7 +9,8 @@ import "cheats/Vm.sol";
 contract Issue7481Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testFailTransact() public {
+    function testRevertTransact() public {
+        vm.expectRevert("vm.createSelectFork: invalid rpc url: mainnet");
         vm.createSelectFork("mainnet", 19514903);
 
         // Transfer some funds to sender of tx being transacted to ensure that it appears in journaled state
