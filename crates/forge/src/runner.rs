@@ -416,8 +416,7 @@ impl<'a> ContractRunner<'a> {
 
         if !test_fail_deprecations.is_empty() {
             warnings.push(format!(
-                "`testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): {}.",
-                test_fail_deprecations
+                "`testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): {test_fail_deprecations}.",
             ));
         }
         SuiteResult::new(duration, test_results, warnings)
