@@ -15,7 +15,7 @@ use foundry_common::{
     abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
-    abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
+    abi::{console, Vm},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
@@ -153,23 +153,6 @@ impl CallTraceDecoder {
     }
 
     fn init() -> Self {
-        /// All functions from the Hardhat console ABI.
-        ///
-        /// See [`HARDHAT_CONSOLE_SELECTOR_PATCHES`] for more details.
-        fn hh_funcs() -> impl Iterator<Item = (Selector, Function)> {
-            let functions = HardhatConsole::abi::functions();
-            let mut functions: Vec<_> =
-                functions.into_values().flatten().map(|func| (func.selector(), func)).collect();
-            let len = functions.len();
-            // `functions` is the list of all patched functions; duplicate the unpatched ones
-            for (unpatched, patched) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
-                if let Some((_, func)) = functions[..len].iter().find(|(sel, _)| sel == patched) {
-                    functions.push((unpatched.into(), func.clone()));
-                }
-            }
-            functions.into_iter()
-        }
-
         Self {
             contracts: Default::default(),
             labels: HashMap::from_iter([
@@ -192,16 +175,13 @@ impl CallTraceDecoder {
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
 
-            functions: hh_funcs()
-                .chain(
-                    Vm::abi::functions()
-                        .into_values()
-                        .flatten()
-                        .map(|func| (func.selector(), func)),
-                )
-                .map(|(selector, func)| (selector, vec![func]))
+            functions: console::hh::abi::functions()
+                .into_values()
+                .chain(Vm::abi::functions().into_values())
+                .flatten()
+                .map(|func| (func.selector(), vec![func]))
                 .collect(),
-            events: Console::abi::events()
+            events: console::ds::abi::events()
                 .into_values()
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
