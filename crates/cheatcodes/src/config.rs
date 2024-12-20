@@ -5,7 +5,7 @@ use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
-    ResolvedRpcEndpoints,
+    ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
 };
 use foundry_evm_core::opts::EvmOpts;
 use semver::Version;
@@ -185,33 +185,28 @@ impl CheatsConfig {
     ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
     ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
     ///    `ws` `scheme` and is not a path to an existing file
-    pub fn rpc_url(&self, url_or_alias: &str) -> Result<String> {
-        match self.rpc_endpoints.get(url_or_alias) {
-            Some(Ok(url)) => Ok(url.clone()),
-            Some(Err(err)) => {
-                // try resolve again, by checking if env vars are now set
-                err.try_resolve().map_err(Into::into)
-            }
-            None => {
-                // check if it's a URL or a path to an existing file to an ipc socket
-                if url_or_alias.starts_with("http") ||
-                    url_or_alias.starts_with("ws") ||
-                    // check for existing ipc file
-                    Path::new(url_or_alias).exists()
-                {
-                    Ok(url_or_alias.into())
-                } else {
-                    Err(fmt_err!("invalid rpc url: {url_or_alias}"))
-                }
+    pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
+        if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
+            Ok(endpoint.clone().try_resolve())
+        } else {
+            // check if it's a URL or a path to an existing file to an ipc socket
+            if url_or_alias.starts_with("http") ||
+                url_or_alias.starts_with("ws") ||
+                // check for existing ipc file
+                Path::new(url_or_alias).exists()
+            {
+                let url = RpcEndpointUrl::Env(url_or_alias.to_string());
+                Ok(RpcEndpoint::new(url).resolve())
+            } else {
+                Err(fmt_err!("invalid rpc url: {url_or_alias}"))
             }
         }
     }
-
     /// Returns all the RPC urls and their alias.
     pub fn rpc_urls(&self) -> Result<Vec<Rpc>> {
         let mut urls = Vec::with_capacity(self.rpc_endpoints.len());
         for alias in self.rpc_endpoints.keys() {
-            let url = self.rpc_url(alias)?;
+            let url = self.rpc_endpoint(alias)?.url()?;
             urls.push(Rpc { key: alias.clone(), url });
         }
         Ok(urls)

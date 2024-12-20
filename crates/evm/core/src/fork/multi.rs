@@ -514,6 +514,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
         ProviderBuilder::new(fork.url.as_str())
             .maybe_max_retry(fork.evm_opts.fork_retries)
             .maybe_initial_backoff(fork.evm_opts.fork_retry_backoff)
+            .maybe_headers(fork.evm_opts.fork_headers.clone())
             .compute_units_per_second(fork.evm_opts.get_compute_units_per_second())
             .build()?,
     );

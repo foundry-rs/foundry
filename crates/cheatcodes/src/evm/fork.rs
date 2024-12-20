@@ -226,7 +226,7 @@ impl Cheatcode for rpc_0Call {
 impl Cheatcode for rpc_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { urlOrAlias, method, params } = self;
-        let url = state.config.rpc_url(urlOrAlias)?;
+        let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
         rpc_call(&url, method, params)
     }
 }
@@ -326,9 +326,15 @@ fn create_fork_request(
 ) -> Result<CreateFork> {
     persist_caller(ccx);
 
-    let url = ccx.state.config.rpc_url(url_or_alias)?;
+    let rpc_endpoint = ccx.state.config.rpc_endpoint(url_or_alias)?;
+    let url = rpc_endpoint.url()?;
     let mut evm_opts = ccx.state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
+    evm_opts.fork_retries = rpc_endpoint.config.retries;
+    evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
+    if let Some(Ok(auth)) = rpc_endpoint.auth {
+        evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
+    }
     let fork = CreateFork {
         enable_caching: !ccx.state.config.no_storage_caching &&
             ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
