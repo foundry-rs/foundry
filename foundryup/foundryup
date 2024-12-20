@@ -244,7 +244,7 @@ The installer for Foundry.
 
 Update or revert to a specific Foundry version with ease.
 
-By default, the latest nightly version is installed from built binaries.
+By default, the latest stable version is installed from built binaries.
 
 USAGE:
     foundryup <OPTIONS>
