@@ -90,16 +90,16 @@ main() {
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
-    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
-    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
+    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly || "$FOUNDRYUP_VERSION" == "latest" ]]; then
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       # Add v prefix
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
-      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
     fi
+
+    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
