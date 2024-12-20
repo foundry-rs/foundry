@@ -2850,7 +2850,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 251997,
+      "gas": 251985,
       "size": 739
     },
     "functions": {
