@@ -89,7 +89,7 @@ main() {
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
