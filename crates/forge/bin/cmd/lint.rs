@@ -1,6 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use forge_fmt::{format_to, parse};
+use forge_lint::{ForgeLint, Input};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::fs;
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
@@ -8,6 +9,7 @@ use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use solar_ast::{ast, interface::Session};
+use solar_interface::ColorChoice;
 use std::{
     fmt::{self, Write},
     io,
@@ -45,7 +47,6 @@ impl LintArgs {
 
         let cwd = std::env::current_dir()?;
 
-        // TODO: This logic is borrowed from `forge fmt`. This can be packaged and reused
         let input = match &self.paths[..] {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones.
@@ -86,60 +87,8 @@ impl LintArgs {
             }
         };
 
-        let lints = match input {
-            Input::Stdin(source) => {
-                // Create a new session with a buffer emitter.
-                // This is required to capture the emitted diagnostics and to return them at the end.
-                let sess = Session::builder()
-                    .with_buffer_emitter(solar::interface::ColorChoice::Auto)
-                    .build();
-
-                // Enter the context and parse the file.
-                let _ = sess.enter(|| -> solar::interface::Result<()> {
-                    // Set up the parser.
-                    let arena = ast::Arena::new();
-
-                    let mut parser =
-                        solar_parse::Parser::from_file(&sess, &arena, &Path::new(&source))
-                            .expect("TODO:");
-
-                    // Parse the file.
-                    let ast = parser.parse_file().map_err(|e| e.emit()).expect("TODO:");
-
-                    Ok(())
-                });
-
-                todo!("lint");
-            }
-
-            Input::Paths(paths) => {
-                if paths.is_empty() {
-                    sh_warn!(
-                        "Nothing to lint.\n\
-                         HINT: If you are working outside of the project, \
-                         try providing paths to your source files: `forge fmt <paths>`"
-                    )?;
-                    return Ok(());
-                }
-
-                // TODO: rayon
-
-                todo!("lint");
-                // paths
-                //     .par_iter()
-                //     .map(|path| {
-                //         let source = fs::read_to_string(path)?;
-                //     })
-                //     .collect()
-            }
-        };
+        ForgeLint::new(input).lint();
 
         Ok(())
     }
-}
-
-#[derive(Debug)]
-enum Input {
-    Stdin(String),
-    Paths(Vec<PathBuf>),
 }

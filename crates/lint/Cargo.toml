@@ -16,4 +16,5 @@ workspace = true
 [dependencies]
 solar-parse.workspace = true
 solar-ast.workspace = true
+solar-interface.workspace = true
 regex = "1.11"

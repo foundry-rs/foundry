@@ -147,6 +147,7 @@ forge = { path = "crates/forge" }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
+forge-lint = { path = "crates/lint" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }
 forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
@@ -176,6 +177,7 @@ foundry-fork-db = "0.9.0"
 solang-parser = "=0.3.3"
 solar-ast = { version = "=0.1.0", default-features = false }
 solar-parse = { version = "=0.1.0", default-features = false }
+solar-interface = { version = "=0.1.0", default-features = false }
 
 ## revm
 revm = { version = "18.0.0", default-features = false }

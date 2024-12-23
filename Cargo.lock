@@ -3454,6 +3454,7 @@ dependencies = [
  "eyre",
  "forge-doc",
  "forge-fmt",
+ "forge-lint",
  "forge-script",
  "forge-script-sequence",
  "forge-sol-macro-gen",
@@ -3493,6 +3494,7 @@ dependencies = [
  "similar-asserts",
  "solang-parser",
  "solar-ast",
+ "solar-interface",
  "solar-parse",
  "soldeer-commands",
  "strum",
@@ -3558,6 +3560,7 @@ version = "0.3.0"
 dependencies = [
  "regex",
  "solar-ast",
+ "solar-interface",
  "solar-parse",
 ]
 
