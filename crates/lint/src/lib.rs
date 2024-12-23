@@ -1,4 +1,6 @@
+pub mod optimization;
 pub mod qa;
+pub mod vulnerability;
 
 use std::path::{Path, PathBuf};
 
@@ -100,7 +102,7 @@ macro_rules! declare_lints {
         }
 
         $(
-            #[derive(Debug)]
+            #[derive(Debug, Default)]
             pub struct $name {
                 pub items: Vec<Span>,
             }
@@ -117,7 +119,9 @@ macro_rules! declare_lints {
 // TODO: Group by opts, vulns, qa, add description for each lint
 declare_lints!(
     //Optimizations
+    Keccak256,
     // Vunlerabilities
+    DivideBeforeMultiply,
     // QA
     VariableCamelCase,
     VariableCapsCase,

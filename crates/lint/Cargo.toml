@@ -17,4 +17,5 @@ workspace = true
 solar-parse.workspace = true
 solar-ast.workspace = true
 solar-interface.workspace = true
+eyre.workspace = true
 regex = "1.11"
