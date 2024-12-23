@@ -14,7 +14,6 @@ impl<'ast> Visit<'ast> for Keccak256 {
                 }
             }
         }
-
         self.walk_expr(expr);
     }
 }
