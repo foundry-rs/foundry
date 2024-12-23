@@ -125,6 +125,6 @@ declare_lints!(
     // QA
     VariableCamelCase,
     VariableCapsCase,
-    VariablePascalCase,
+    StructPascalCase,
     FunctionCamelCase,
 );

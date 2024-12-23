@@ -5,7 +5,7 @@ use solar_ast::{
     visit::Visit,
 };
 
-use crate::{FunctionCamelCase, VariableCamelCase, VariableCapsCase, VariablePascalCase};
+use crate::{FunctionCamelCase, StructPascalCase, VariableCamelCase, VariableCapsCase};
 
 impl<'ast> Visit<'ast> for VariableCamelCase {
     fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
@@ -37,7 +37,7 @@ impl<'ast> Visit<'ast> for VariableCapsCase {
     }
 }
 
-impl<'ast> Visit<'ast> for VariablePascalCase {
+impl<'ast> Visit<'ast> for StructPascalCase {
     fn visit_item_struct(&mut self, strukt: &'ast ItemStruct<'ast>) {
         if !is_pascal_case(strukt.name.as_str()) {
             self.items.push(strukt.name.span);
