@@ -3553,6 +3553,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-lint"
+version = "0.3.0"
+dependencies = [
+ "regex",
+ "solar-ast",
+ "solar-parse",
+]
+
+[[package]]
 name = "forge-script"
 version = "0.3.0"
 dependencies = [

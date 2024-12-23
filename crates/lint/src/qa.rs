@@ -1,0 +1,91 @@
+use regex::Regex;
+use solar_ast::{
+    ast::{FunctionHeader, ItemStruct, Span, VariableDefinition},
+    visit::Visit,
+};
+
+pub struct VariableCamelCase {
+    items: Vec<Span>,
+}
+
+impl<'ast> Visit<'ast> for VariableCamelCase {
+    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+        if let Some(mutability) = var.mutability {
+            if !mutability.is_constant() && !mutability.is_immutable() {
+                if let Some(name) = var.name {
+                    if !is_camel_case(name.as_str()) {
+                        self.items.push(var.span);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub struct VariableCapsCase {
+    items: Vec<Span>,
+}
+
+impl<'ast> Visit<'ast> for VariableCapsCase {
+    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+        if let Some(mutability) = var.mutability {
+            if mutability.is_constant() || mutability.is_immutable() {
+                if let Some(name) = var.name {
+                    if !is_caps_case(name.as_str()) {
+                        self.items.push(var.span);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub struct VariablePascalCase {
+    items: Vec<Span>,
+}
+
+impl<'ast> Visit<'ast> for VariablePascalCase {
+    fn visit_item_struct(&mut self, strukt: &'ast ItemStruct<'ast>) {
+        if !is_pascal_case(strukt.name.as_str()) {
+            self.items.push(strukt.name.span);
+        }
+    }
+
+    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+        if let Some(mutability) = var.mutability {
+            if mutability.is_constant() || mutability.is_immutable() {
+                if let Some(name) = var.name {
+                    if !is_caps_case(name.as_str()) {
+                        self.items.push(var.span);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub struct FunctionCamelCase {
+    items: Vec<Span>,
+}
+
+impl<'ast> Visit<'ast> for FunctionCamelCase {
+    //TODO: visit item
+}
+
+// Check if a string is camelCase
+pub fn is_camel_case(s: &str) -> bool {
+    let re = Regex::new(r"^[a-z_][a-zA-Z0-9]*$").unwrap();
+    re.is_match(s) && s.chars().any(|c| c.is_uppercase())
+}
+
+// Check if a string is PascalCase
+pub fn is_pascal_case(s: &str) -> bool {
+    let re = Regex::new(r"^[A-Z0-9][a-zA-Z0-9]*$").unwrap();
+    re.is_match(s)
+}
+
+// Check if a string is SCREAMING_SNAKE_CASE
+pub fn is_caps_case(s: &str) -> bool {
+    let re = Regex::new(r"^[A-Z][A-Z0-9_]*$").unwrap();
+    re.is_match(s) && s.contains('_')
+}
