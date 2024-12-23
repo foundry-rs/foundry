@@ -1,16 +1,24 @@
-use solar_ast::Span;
-
 pub mod qa;
 
+use solar_ast::ast::Span;
+
 pub struct ForgeLint {
-    //TODO: settings
+    pub lints: Vec<Lint>,
 }
 
 impl ForgeLint {}
 
 macro_rules! declare_lints {
     ($($name:ident),* $(,)?) => {
+        #[derive(Debug)]
+        pub enum Lint {
+            $(
+                $name($name),
+            )*
+        }
+
         $(
+            #[derive(Debug)]
             pub struct $name {
                 pub items: Vec<Span>,
             }

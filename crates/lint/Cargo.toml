@@ -16,8 +16,4 @@ workspace = true
 [dependencies]
 solar-parse.workspace = true
 solar-ast.workspace = true
-solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", rev = "bb81e5d4cc8ab28568a163ea6b2506c3a0d1a6d3", features = [
-    "nightly",
-] }
-
 regex = "1.11"
