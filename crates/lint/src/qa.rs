@@ -1,6 +1,6 @@
 use regex::Regex;
 use solar_ast::{
-    ast::{ItemStruct, Span, VariableDefinition},
+    ast::{ItemStruct, VariableDefinition},
     visit::Visit,
 };
 
@@ -17,6 +17,7 @@ impl<'ast> Visit<'ast> for VariableCamelCase {
                 }
             }
         }
+        // TODO: Walk
     }
 }
 
@@ -31,6 +32,7 @@ impl<'ast> Visit<'ast> for VariableCapsCase {
                 }
             }
         }
+        // TODO: Walk
     }
 }
 
@@ -39,18 +41,8 @@ impl<'ast> Visit<'ast> for VariablePascalCase {
         if !is_pascal_case(strukt.name.as_str()) {
             self.items.push(strukt.name.span);
         }
-    }
 
-    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
-        if let Some(mutability) = var.mutability {
-            if mutability.is_constant() || mutability.is_immutable() {
-                if let Some(name) = var.name {
-                    if !is_caps_case(name.as_str()) {
-                        self.items.push(var.span);
-                    }
-                }
-            }
-        }
+        // TODO: Walk
     }
 }
 
