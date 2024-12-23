@@ -1,22 +1,14 @@
 use clap::{Parser, ValueHint};
-use eyre::{Context, Result};
-use forge_fmt::{format_to, parse};
+use eyre::Result;
 use forge_lint::{ForgeLint, Input};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::fs;
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
-use rayon::prelude::*;
-use similar::{ChangeTag, TextDiff};
-use solar_ast::{ast, interface::Session};
-use solar_interface::ColorChoice;
 use std::{
-    fmt::{self, Write},
     io,
-    io::{Read, Write as _},
+    io::Read,
     path::{Path, PathBuf},
 };
-use yansi::{Color, Paint, Style};
 
 /// CLI arguments for `forge fmt`.
 #[derive(Clone, Debug, Parser)]
