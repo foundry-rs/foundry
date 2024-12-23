@@ -1,13 +1,19 @@
+use std::ops::ControlFlow;
+
 use regex::Regex;
-use solar_ast::{
-    ast::{ItemStruct, VariableDefinition},
-    visit::Visit,
-};
+
+use solar_ast::{visit::Visit, ItemStruct, VariableDefinition};
+use solar_data_structures::Never;
 
 use crate::{FunctionCamelCase, VariableCamelCase, VariableCapsCase, VariablePascalCase};
 
 impl<'ast> Visit<'ast> for VariableCamelCase {
-    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+    type BreakValue = Never;
+
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         if let Some(mutability) = var.mutability {
             if !mutability.is_constant() && !mutability.is_immutable() {
                 if let Some(name) = var.name {
@@ -17,12 +23,17 @@ impl<'ast> Visit<'ast> for VariableCamelCase {
                 }
             }
         }
-        // TODO: Walk
+        self.walk_variable_definition(var)
     }
 }
 
 impl<'ast> Visit<'ast> for VariableCapsCase {
-    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+    type BreakValue = Never;
+
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         if let Some(mutability) = var.mutability {
             if mutability.is_constant() || mutability.is_immutable() {
                 if let Some(name) = var.name {
@@ -32,21 +43,28 @@ impl<'ast> Visit<'ast> for VariableCapsCase {
                 }
             }
         }
-        // TODO: Walk
+        self.walk_variable_definition(var)
     }
 }
 
 impl<'ast> Visit<'ast> for VariablePascalCase {
-    fn visit_item_struct(&mut self, strukt: &'ast ItemStruct<'ast>) {
+    type BreakValue = Never;
+
+    fn visit_item_struct(
+        &mut self,
+        strukt: &'ast ItemStruct<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         if !is_pascal_case(strukt.name.as_str()) {
             self.items.push(strukt.name.span);
         }
 
-        // TODO: Walk
+        self.walk_item_struct(strukt)
     }
 }
 
 impl<'ast> Visit<'ast> for FunctionCamelCase {
+    type BreakValue = Never;
+
     //TODO: visit item
 }
 

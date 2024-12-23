@@ -1,6 +1,6 @@
-pub mod qa;
+use solar_ast::Span;
 
-use solar_ast::ast::Span;
+pub mod qa;
 
 pub struct ForgeLint {
     //TODO: settings
@@ -24,6 +24,7 @@ macro_rules! declare_lints {
     };
 }
 
+// TODO: update macro to include descriptions. Group by opts, vulns, qa
 declare_lints!(
     //Optimizations
     // Vunlerabilities
