@@ -1,12 +1,10 @@
 use regex::Regex;
 use solar_ast::{
-    ast::{FunctionHeader, ItemStruct, Span, VariableDefinition},
+    ast::{ItemStruct, Span, VariableDefinition},
     visit::Visit,
 };
 
-pub struct VariableCamelCase {
-    items: Vec<Span>,
-}
+use crate::{FunctionCamelCase, VariableCamelCase, VariableCapsCase, VariablePascalCase};
 
 impl<'ast> Visit<'ast> for VariableCamelCase {
     fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
@@ -22,10 +20,6 @@ impl<'ast> Visit<'ast> for VariableCamelCase {
     }
 }
 
-pub struct VariableCapsCase {
-    items: Vec<Span>,
-}
-
 impl<'ast> Visit<'ast> for VariableCapsCase {
     fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
         if let Some(mutability) = var.mutability {
@@ -38,10 +32,6 @@ impl<'ast> Visit<'ast> for VariableCapsCase {
             }
         }
     }
-}
-
-pub struct VariablePascalCase {
-    items: Vec<Span>,
 }
 
 impl<'ast> Visit<'ast> for VariablePascalCase {
@@ -62,10 +52,6 @@ impl<'ast> Visit<'ast> for VariablePascalCase {
             }
         }
     }
-}
-
-pub struct FunctionCamelCase {
-    items: Vec<Span>,
 }
 
 impl<'ast> Visit<'ast> for FunctionCamelCase {
