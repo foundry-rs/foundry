@@ -34,13 +34,10 @@ mod test {
             let arena = ast::Arena::new();
 
             let mut parser =
-                solar_parse::Parser::from_file(&sess, &arena, Path::new("testdata/Keccak256.sol"))
-                    .expect("TODO:");
+                solar_parse::Parser::from_file(&sess, &arena, Path::new("testdata/Keccak256.sol"))?;
 
             // Parse the file.
-            let ast = parser.parse_file().map_err(|e| e.emit()).expect("TODO:");
-
-            dbg!(&ast);
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             let mut pattern = Keccak256::default();
             pattern.visit_source_unit(&ast);
