@@ -1,6 +1,6 @@
-pub mod optimization;
-pub mod qa;
-pub mod vulnerability;
+pub mod gas;
+pub mod info;
+pub mod med;
 
 use std::path::{Path, PathBuf};
 
@@ -36,8 +36,14 @@ impl Linter {
         Self { input, lints: Lint::all() }
     }
 
-    pub fn with_severity(self, severity: Vec<Severity>) -> Self {
-        todo!()
+    pub fn with_severity(self, severity: Option<Vec<Severity>>) -> Self {
+        if let Some(severity) = severity {
+            for lint in self.lints {
+                //TODO: remove if lint sev is not in list
+            }
+        }
+
+        self
     }
 
     pub fn lint(self) {
@@ -67,7 +73,7 @@ impl Linter {
 }
 
 macro_rules! declare_lints {
-    ($($name:ident),* $(,)?) => {
+    ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
         #[derive(Debug)]
         pub enum Lint {
             $(
@@ -75,12 +81,26 @@ macro_rules! declare_lints {
             )*
         }
 
-
         impl Lint {
+            /// Returns all available lints as a vector
             pub fn all() -> Vec<Self> {
                 vec![
                     $(
                         Lint::$name($name::new()),
+                    )*
+                ]
+            }
+
+            /// Returns the metadata for all lints
+            pub fn metadata() -> Vec<(String, Severity, String, String)> {
+                vec![
+                    $(
+                        (
+                            stringify!($name).to_string(),  // Struct name
+                            $severity,                     // Severity
+                            $lint_name.to_string(),        // Lint name
+                            $description.to_string(),      // Description
+                        ),
                     )*
                 ]
             }
@@ -106,20 +126,36 @@ macro_rules! declare_lints {
                 pub fn new() -> Self {
                     Self { items: Vec::new() }
                 }
+
+                /// Returns the severity of the lint
+                pub fn severity() -> Severity {
+                    $severity
+                }
+
+                /// Returns the name of the lint
+                pub fn lint_name() -> &'static str {
+                    $lint_name
+                }
+
+                /// Returns the description of the lint
+                pub fn description() -> &'static str {
+                    $description
+                }
             }
         )*
     };
 }
 
-// TODO: Group by opts, vulns, qa, add description for each lint
 declare_lints!(
-    //Optimizations
-    Keccak256,
-    // Vunlerabilities
-    DivideBeforeMultiply,
-    // QA
-    VariableCamelCase,
-    VariableCapsCase,
-    StructPascalCase,
-    FunctionCamelCase,
+    // Gas Optimizations
+    (Keccak256, Severity::Gas, "Keccak256", "TODO:"),
+    //High
+    // Med
+    (DivideBeforeMultiply, Severity::Med, "Divide Before Multiply", "TODO:"),
+    // Low
+    // Info
+    (VariableCamelCase, Severity::Info, "Variable Camel Case", "TODO:"),
+    (VariableCapsCase, Severity::Info, "Variable Caps Case", "TODO:"),
+    (StructPascalCase, Severity::Info, "Struct Pascal Case", "TODO:"),
+    (FunctionCamelCase, Severity::Info, "Function Camel Case", "TODO:")
 );
