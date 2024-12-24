@@ -28,17 +28,23 @@ pub enum Severity {
 pub struct Linter {
     pub input: Vec<PathBuf>,
     pub lints: Vec<Lint>,
+    pub description: bool,
 }
 
 impl Linter {
     pub fn new(input: Vec<PathBuf>) -> Self {
-        Self { input, lints: Lint::all() }
+        Self { input, lints: Lint::all(), description: false }
     }
 
-    pub fn with_severity(mut self, severities: Option<Vec<Severity>>) -> Self {
-        if let Some(severities) = severities {
-            self.lints.retain(|lint| severities.contains(&lint.severity()));
+    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
+        if let Some(severity) = severity {
+            self.lints.retain(|lint| severity.contains(&lint.severity()));
         }
+        self
+    }
+
+    pub fn with_description(mut self, description: bool) -> Self {
+        self.description = description;
         self
     }
 

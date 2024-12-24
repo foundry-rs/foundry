@@ -68,7 +68,10 @@ impl LintArgs {
             paths.retain(|path| !exclude_set.contains(path));
         }
 
-        Linter::new(paths).lint();
+        Linter::new(paths)
+            .with_severity(self.severity)
+            .with_description(self.with_description)
+            .lint();
 
         Ok(())
     }
