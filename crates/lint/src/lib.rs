@@ -16,12 +16,12 @@ pub enum Input {
     Paths(Vec<PathBuf>),
 }
 
-pub struct ForgeLint {
+pub struct Linter {
     pub input: Input,
     pub lints: Vec<Lint>,
 }
 
-impl ForgeLint {
+impl Linter {
     // TODO: Add config specifying which lints to run
     pub fn new(input: Input) -> Self {
         Self { input, lints: Lint::all() }
