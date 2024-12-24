@@ -8,19 +8,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use clap::ValueEnum;
 use solar_ast::{
     ast::{self, SourceUnit, Span},
     interface::{ColorChoice, Session},
     visit::Visit,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ValueEnum)]
 pub enum OutputFormat {
     Json,
     Markdown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Severity {
     High,
     Med,
@@ -79,7 +80,16 @@ impl Linter {
                 }
             }
 
-            // TODO: Output the findings
+            // TODO: make the output nicer
+            for finding in findings {
+                let (lint, results) = finding;
+                let description = if self.description { lint.description() } else { "" };
+
+                println!("{}: {}", lint.name(), description);
+                for result in results {
+                    println!("  - {:?}", result);
+                }
+            }
 
             Ok(())
         });
@@ -191,14 +201,14 @@ macro_rules! declare_lints {
 
 declare_lints!(
     // Gas Optimizations
-    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO:"),
+    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO: description"),
     //High
     // Med
-    (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO:"),
+    (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO: description"),
     // Low
     // Info
-    (VariableCamelCase, Severity::Info, "variable-camel-case", "TODO:"),
-    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO:"),
-    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO:"),
-    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO:")
+    (VariableCamelCase, Severity::Info, "variable-camel-case", "TODO: description"),
+    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description"),
+    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description"),
+    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description")
 );
