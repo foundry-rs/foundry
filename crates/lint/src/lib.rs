@@ -206,8 +206,6 @@ macro_rules! declare_lints {
 }
 
 declare_lints!(
-    // Gas Optimizations
-    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO: description"),
     //High
     // Med
     (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO: description"),
@@ -216,5 +214,7 @@ declare_lints!(
     (VariableCamelCase, Severity::Info, "variable-camel-case", "TODO: description"),
     (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description"),
     (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description"),
-    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description")
+    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description"),
+    // Gas Optimizations
+    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO: description"),
 );
