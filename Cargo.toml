@@ -176,8 +176,8 @@ solar-ast = { version = "=0.1.0", default-features = false }
 solar-parse = { version = "=0.1.0", default-features = false }
 
 ## revm
-revm = { version = "18.0.0", default-features = false }
-revm-primitives = { version = "14.0.0", default-features = false }
+revm = { version = "17.0.0", default-features = false }
+revm-primitives = { version = "13.0.0", default-features = false }
 revm-inspectors = { version = "0.13.0", features = ["serde"] }
 
 ## ethers
