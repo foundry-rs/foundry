@@ -4,6 +4,7 @@ pub mod med;
 
 use std::{
     collections::HashMap,
+    hash::Hasher,
     path::{Path, PathBuf},
 };
 
@@ -87,7 +88,7 @@ impl Linter {
 
 macro_rules! declare_lints {
     ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         pub enum Lint {
             $(
                 $name($name),
@@ -151,6 +152,13 @@ macro_rules! declare_lints {
             }
         }
 
+
+        impl std::hash::Hash for Lint {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.name().hash(state);
+            }
+        }
+
         $(
             #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
             pub struct $name {
@@ -183,14 +191,14 @@ macro_rules! declare_lints {
 
 declare_lints!(
     // Gas Optimizations
-    (Keccak256, Severity::Gas, "Keccak256", "TODO:"),
+    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO:"),
     //High
     // Med
-    (DivideBeforeMultiply, Severity::Med, "Divide Before Multiply", "TODO:"),
+    (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO:"),
     // Low
     // Info
-    (VariableCamelCase, Severity::Info, "Variable Camel Case", "TODO:"),
-    (VariableCapsCase, Severity::Info, "Variable Caps Case", "TODO:"),
-    (StructPascalCase, Severity::Info, "Struct Pascal Case", "TODO:"),
-    (FunctionCamelCase, Severity::Info, "Function Camel Case", "TODO:")
+    (VariableCamelCase, Severity::Info, "variable-camel-case", "TODO:"),
+    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO:"),
+    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO:"),
+    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO:")
 );

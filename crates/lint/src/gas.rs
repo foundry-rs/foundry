@@ -3,9 +3,9 @@ use solar_ast::{
     visit::Visit,
 };
 
-use crate::Keccak256;
+use crate::AsmKeccak256;
 
-impl<'ast> Visit<'ast> for Keccak256 {
+impl<'ast> Visit<'ast> for AsmKeccak256 {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
         if let ExprKind::Call(expr, _) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
@@ -24,7 +24,7 @@ mod test {
     use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
-    use crate::Keccak256;
+    use crate::AsmKeccak256;
 
     #[test]
     fn test_keccak256() -> eyre::Result<()> {
@@ -39,7 +39,7 @@ mod test {
             // Parse the file.
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            let mut pattern = Keccak256::default();
+            let mut pattern = AsmKeccak256::default();
             pattern.visit_source_unit(&ast);
 
             assert_eq!(pattern.items.len(), 2);
