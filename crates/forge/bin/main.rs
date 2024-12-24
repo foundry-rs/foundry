@@ -100,6 +100,7 @@ fn run() -> Result<()> {
             }
         }
         ForgeSubcommand::Fmt(cmd) => cmd.run(),
+        ForgeSubcommand::Lint(cmd) => cmd.run(),
         ForgeSubcommand::Config(cmd) => cmd.run(),
         ForgeSubcommand::Flatten(cmd) => cmd.run(),
         ForgeSubcommand::Inspect(cmd) => cmd.run(),
