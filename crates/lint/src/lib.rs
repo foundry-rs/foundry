@@ -16,7 +16,7 @@ pub enum OutputFormat {
     Markdown,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Severity {
     High,
     Med,
@@ -31,18 +31,14 @@ pub struct Linter {
 }
 
 impl Linter {
-    // TODO: Add config specifying which lints to run
     pub fn new(input: Vec<PathBuf>) -> Self {
         Self { input, lints: Lint::all() }
     }
 
-    pub fn with_severity(self, severity: Option<Vec<Severity>>) -> Self {
-        if let Some(severity) = severity {
-            for lint in self.lints {
-                //TODO: remove if lint sev is not in list
-            }
+    pub fn with_severity(mut self, severities: Option<Vec<Severity>>) -> Self {
+        if let Some(severities) = severities {
+            self.lints.retain(|lint| severities.contains(&lint.severity()));
         }
-
         self
     }
 
@@ -82,7 +78,6 @@ macro_rules! declare_lints {
         }
 
         impl Lint {
-            /// Returns all available lints as a vector
             pub fn all() -> Vec<Self> {
                 vec![
                     $(
@@ -91,18 +86,28 @@ macro_rules! declare_lints {
                 ]
             }
 
-            /// Returns the metadata for all lints
-            pub fn metadata() -> Vec<(String, Severity, String, String)> {
-                vec![
+            pub fn severity(&self) -> Severity {
+                match self {
                     $(
-                        (
-                            stringify!($name).to_string(),  // Struct name
-                            $severity,                     // Severity
-                            $lint_name.to_string(),        // Lint name
-                            $description.to_string(),      // Description
-                        ),
+                        Lint::$name(_) => $severity,
                     )*
-                ]
+                }
+            }
+
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $(
+                        Lint::$name(_) => $lint_name,
+                    )*
+                }
+            }
+
+            pub fn description(&self) -> &'static str {
+                match self {
+                    $(
+                        Lint::$name(_) => $description,
+                    )*
+                }
             }
         }
 
@@ -133,7 +138,7 @@ macro_rules! declare_lints {
                 }
 
                 /// Returns the name of the lint
-                pub fn lint_name() -> &'static str {
+                pub fn name() -> &'static str {
                     $lint_name
                 }
 
