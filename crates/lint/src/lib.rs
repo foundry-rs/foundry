@@ -10,64 +10,59 @@ use solar_ast::{
     visit::Visit,
 };
 
-#[derive(Debug)]
-pub enum Input {
-    Stdin(String),
-    Paths(Vec<PathBuf>),
+#[derive(Clone, Debug)]
+pub enum OutputFormat {
+    Json,
+    Markdown,
+}
+
+#[derive(Clone, Debug)]
+pub enum Severity {
+    High,
+    Med,
+    Low,
+    Info,
+    Gas,
 }
 
 pub struct Linter {
-    pub input: Input,
+    pub input: Vec<PathBuf>,
     pub lints: Vec<Lint>,
 }
 
 impl Linter {
     // TODO: Add config specifying which lints to run
-    pub fn new(input: Input) -> Self {
+    pub fn new(input: Vec<PathBuf>) -> Self {
         Self { input, lints: Lint::all() }
     }
 
+    pub fn with_severity(self, severity: Vec<Severity>) -> Self {
+        todo!()
+    }
+
     pub fn lint(self) {
-        match self.input {
-            Input::Stdin(source) => {
-                // Create a new session with a buffer emitter.
-                // This is required to capture the emitted diagnostics and to return them at the
-                // end.
-                let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+        // Create a new session with a buffer emitter.
+        // This is required to capture the emitted diagnostics and to return them at the
+        // end.
+        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
 
-                // Enter the context and parse the file.
-                let _ = sess.enter(|| -> solar_interface::Result<()> {
-                    // Set up the parser.
-                    let arena = ast::Arena::new();
+        // Enter the context and parse the file.
+        let _ = sess.enter(|| -> solar_interface::Result<()> {
+            // Set up the parser.
+            let arena = ast::Arena::new();
 
-                    let mut parser =
-                        solar_parse::Parser::from_file(&sess, &arena, &Path::new(&source))
-                            .expect("TODO:");
+            let mut parser =
+                solar_parse::Parser::from_file(&sess, &arena, &Path::new(&source)).expect("TODO:");
 
-                    // Parse the file.
-                    let ast = parser.parse_file().map_err(|e| e.emit()).expect("TODO:");
+            // Parse the file.
+            let ast = parser.parse_file().map_err(|e| e.emit()).expect("TODO:");
 
-                    for mut lint in self.lints {
-                        lint.visit_source_unit(&ast);
-                    }
-
-                    Ok(())
-                });
+            for mut lint in self.lints {
+                lint.visit_source_unit(&ast);
             }
 
-            Input::Paths(paths) => {
-                if paths.is_empty() {
-                    // sh_warn!(
-                    //     "Nothing to lint.\n\
-                    //      HINT: If you are working outside of the project, \
-                    //      try providing paths to your source files: `forge fmt <paths>`"
-                    // )?;
-                    todo!();
-                }
-
-                todo!();
-            }
-        };
+            Ok(())
+        });
     }
 }
 

@@ -1,32 +1,18 @@
 use clap::ValueEnum;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_lint::{Input, Linter};
+use forge_lint::Linter;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
+use std::collections::HashSet;
 use std::{
     io,
     io::Read,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, ValueEnum)]
-pub enum OutputFormat {
-    Json,
-    Markdown,
-}
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum Severity {
-    High,
-    Med,
-    Low,
-    Info,
-    Gas,
-}
-
-/// CLI arguments for `forge fmt`.
+/// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
     /// The project's root path.
@@ -50,6 +36,7 @@ pub struct LintArgs {
     #[arg(long, value_name = "FORMAT", default_value = "json")]
     format: OutputFormat,
 
+    // TODO: output file
     /// Use only selected severities for output.
     ///
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
@@ -68,56 +55,20 @@ impl_figment_convert_basic!(LintArgs);
 impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
+        let root = self.root.unwrap_or_else(|| std::env::current_dir().unwrap());
 
-        // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
-            .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
-            .collect::<Vec<_>>();
+        let mut paths: Vec<PathBuf> = if let Some(include_paths) = &self.include {
+            include_paths.iter().filter(|path| path.exists()).cloned().collect()
+        } else {
+            foundry_compilers::utils::source_files_iter(&root, &[".sol"]).collect()
+        };
 
-        let cwd = std::env::current_dir()?;
+        if let Some(exclude_paths) = &self.exclude {
+            let exclude_set = exclude_paths.iter().collect::<HashSet<_>>();
+            paths.retain(|path| !exclude_set.contains(path));
+        }
 
-        // let input = match &self.paths[..] {
-        //     [] => {
-        //         // Retrieve the project paths, and filter out the ignored ones.
-        //         let project_paths: Vec<PathBuf> = config
-        //             .project_paths::<SolcLanguage>()
-        //             .input_files_iter()
-        //             .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
-        //             .collect();
-        //         Input::Paths(project_paths)
-        //     }
-        //     [one] if one == Path::new("-") => {
-        //         let mut s = String::new();
-        //         io::stdin().read_to_string(&mut s).expect("Failed to read from stdin");
-        //         Input::Stdin(s)
-        //     }
-        //     paths => {
-        //         let mut inputs = Vec::with_capacity(paths.len());
-        //         for path in paths {
-        //             if !ignored.is_empty()
-        //                 && ((path.is_absolute() && ignored.contains(path))
-        //                     || ignored.contains(&cwd.join(path)))
-        //             {
-        //                 continue;
-        //             }
-
-        //             if path.is_dir() {
-        //                 inputs.extend(foundry_compilers::utils::source_files_iter(
-        //                     path,
-        //                     SOLC_EXTENSIONS,
-        //                 ));
-        //             } else if path.is_sol() {
-        //                 inputs.push(path.to_path_buf());
-        //             } else {
-        //                 warn!("Cannot process path {}", path.display());
-        //             }
-        //         }
-        //         Input::Paths(inputs)
-        //     }
-        // };
-
-        // Linter::new(input).lint();
+        Linter::new(paths).lint();
 
         Ok(())
     }
