@@ -92,11 +92,10 @@ impl Linter {
         // TODO: make the output nicer
         for finding in aggregated_findings {
             let (lint, results) = finding;
-            let description = if self.description { lint.description() } else { "" };
+            let _description = if self.description { lint.description() } else { "" };
 
-            println!("{}: {}", lint.name(), description);
-            for result in results {
-                println!("  - {:?}", result);
+            for _result in results {
+                // TODO: display the finding
             }
         }
     }
@@ -146,7 +145,7 @@ macro_rules! declare_lints {
 
 
             /// Lint a source unit and return the findings
-            pub fn lint<'ast>(&mut self, source_unit: &SourceUnit<'ast>) -> Vec<Span> {
+            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Vec<Span> {
                 match self {
                     $(
                         Lint::$name(lint) => {

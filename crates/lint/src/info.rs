@@ -47,7 +47,7 @@ impl<'ast> Visit<'ast> for StructPascalCase {
     }
 }
 
-impl<'ast> Visit<'ast> for FunctionCamelCase {
+impl Visit<'_> for FunctionCamelCase {
     //TODO: visit item
 }
 

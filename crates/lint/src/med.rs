@@ -8,7 +8,7 @@ use crate::DivideBeforeMultiply;
 impl<'ast> Visit<'ast> for DivideBeforeMultiply {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(left_expr, BinOp { kind: BinOpKind::Mul, .. }, _) = &expr.kind {
-            if self.contains_division(left_expr) {
+            if contains_division(left_expr) {
                 self.items.push(expr.span);
             }
         }
@@ -17,19 +17,17 @@ impl<'ast> Visit<'ast> for DivideBeforeMultiply {
     }
 }
 
-impl DivideBeforeMultiply {
-    fn contains_division<'ast>(&self, expr: &'ast Expr<'ast>) -> bool {
-        match &expr.kind {
-            ExprKind::Binary(_, BinOp { kind: BinOpKind::Div, .. }, _) => true,
-            ExprKind::Tuple(inner_exprs) => inner_exprs.iter().any(|opt_expr| {
-                if let Some(inner_expr) = opt_expr {
-                    self.contains_division(inner_expr)
-                } else {
-                    false
-                }
-            }),
-            _ => false,
-        }
+fn contains_division<'ast>(expr: &'ast Expr<'ast>) -> bool {
+    match &expr.kind {
+        ExprKind::Binary(_, BinOp { kind: BinOpKind::Div, .. }, _) => true,
+        ExprKind::Tuple(inner_exprs) => inner_exprs.iter().any(|opt_expr| {
+            if let Some(inner_expr) = opt_expr {
+                contains_division(inner_expr)
+            } else {
+                false
+            }
+        }),
+        _ => false,
     }
 }
 
