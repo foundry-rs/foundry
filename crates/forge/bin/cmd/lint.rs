@@ -1,8 +1,9 @@
 use clap::ValueEnum;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_lint::Linter;
+use forge_lint::{Linter, Severity};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
+use foundry_common::shell::OutputFormat;
 use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use std::collections::HashSet;

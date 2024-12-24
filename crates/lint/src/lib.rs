@@ -2,7 +2,10 @@ pub mod gas;
 pub mod info;
 pub mod med;
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use solar_ast::{
     ast::{self, SourceUnit, Span},
@@ -54,20 +57,28 @@ impl Linter {
         // end.
         let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
 
+        let mut findings = HashMap::new();
+
         // Enter the context and parse the file.
         let _ = sess.enter(|| -> solar_interface::Result<()> {
             // Set up the parser.
             let arena = ast::Arena::new();
 
-            let mut parser =
-                solar_parse::Parser::from_file(&sess, &arena, &Path::new(&source)).expect("TODO:");
+            for file in &self.input {
+                let lints = self.lints.clone();
 
-            // Parse the file.
-            let ast = parser.parse_file().map_err(|e| e.emit()).expect("TODO:");
+                let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)
+                    .expect("Failed to create parser");
+                let ast = parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
 
-            for mut lint in self.lints {
-                lint.visit_source_unit(&ast);
+                // Run all lints on the parsed AST
+                for mut lint in lints {
+                    let results = lint.lint(&ast);
+                    findings.entry(lint.clone()).or_insert_with(Vec::new).extend(results);
+                }
             }
+
+            // TODO: Output the findings
 
             Ok(())
         });
@@ -76,7 +87,7 @@ impl Linter {
 
 macro_rules! declare_lints {
     ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
-        #[derive(Debug)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum Lint {
             $(
                 $name($name),
@@ -115,6 +126,19 @@ macro_rules! declare_lints {
                     )*
                 }
             }
+
+
+            /// Lint a source unit and return the findings
+            pub fn lint<'ast>(&mut self, source_unit: &SourceUnit<'ast>) -> Vec<Span> {
+                match self {
+                    $(
+                        Lint::$name(lint) => {
+                            lint.visit_source_unit(source_unit);
+                            lint.items.clone()
+                        },
+                    )*
+                }
+            }
         }
 
         impl<'ast> Visit<'ast> for Lint {
@@ -128,7 +152,7 @@ macro_rules! declare_lints {
         }
 
         $(
-            #[derive(Debug, Default)]
+            #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
             pub struct $name {
                 pub items: Vec<Span>,
             }
