@@ -237,9 +237,7 @@ authorizationList       {}",
         }
 
         // additional captured fields
-        for (key, val) in other.iter() {
-            pretty.push_str(&format!("\n{key}             {val}"));
-        }
+        pretty.push_str(&other.pretty());
 
         pretty
     }
