@@ -2,11 +2,8 @@ pub mod gas;
 pub mod info;
 pub mod med;
 
-use std::{
-    collections::HashMap,
-    hash::Hasher,
-    path::{Path, PathBuf},
-};
+use rayon::prelude::*;
+use std::{collections::HashMap, hash::Hasher, path::PathBuf};
 
 use clap::ValueEnum;
 use solar_ast::{
@@ -54,45 +51,54 @@ impl Linter {
     }
 
     pub fn lint(self) {
-        // Create a new session with a buffer emitter.
-        // This is required to capture the emitted diagnostics and to return them at the
-        // end.
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
-
-        let mut findings = HashMap::new();
-
-        // Enter the context and parse the file.
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            // Set up the parser.
-            let arena = ast::Arena::new();
-
-            for file in &self.input {
+        let all_findings = self
+            .input
+            .par_iter()
+            .map(|file| {
                 let lints = self.lints.clone();
+                let mut local_findings = HashMap::new();
 
-                let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)
-                    .expect("Failed to create parser");
-                let ast = parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
+                // Create a new session for this file
+                let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+                let arena = ast::Arena::new();
 
-                // Run all lints on the parsed AST
-                for mut lint in lints {
-                    let results = lint.lint(&ast);
-                    findings.entry(lint.clone()).or_insert_with(Vec::new).extend(results);
-                }
+                // Enter the session context for this thread
+                let _ = sess.enter(|| -> solar_interface::Result<()> {
+                    let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
+
+                    let ast =
+                        parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
+
+                    // Run all lints on the parsed AST and collect findings
+                    for mut lint in lints {
+                        let results = lint.lint(&ast);
+                        local_findings.entry(lint).or_insert_with(Vec::new).extend(results);
+                    }
+
+                    Ok(())
+                });
+
+                local_findings
+            })
+            .collect::<Vec<HashMap<Lint, Vec<Span>>>>();
+
+        let mut aggregated_findings = HashMap::new();
+        for file_findings in all_findings {
+            for (lint, results) in file_findings {
+                aggregated_findings.entry(lint).or_insert_with(Vec::new).extend(results);
             }
+        }
 
-            // TODO: make the output nicer
-            for finding in findings {
-                let (lint, results) = finding;
-                let description = if self.description { lint.description() } else { "" };
+        // TODO: make the output nicer
+        for finding in aggregated_findings {
+            let (lint, results) = finding;
+            let description = if self.description { lint.description() } else { "" };
 
-                println!("{}: {}", lint.name(), description);
-                for result in results {
-                    println!("  - {:?}", result);
-                }
+            println!("{}: {}", lint.name(), description);
+            for result in results {
+                println!("  - {:?}", result);
             }
-
-            Ok(())
-        });
+        }
     }
 }
 

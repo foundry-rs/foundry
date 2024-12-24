@@ -3560,6 +3560,7 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "eyre",
+ "rayon",
  "regex",
  "solar-ast",
  "solar-interface",

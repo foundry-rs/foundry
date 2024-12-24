@@ -18,5 +18,7 @@ solar-parse.workspace = true
 solar-ast.workspace = true
 solar-interface.workspace = true
 eyre.workspace = true
+rayon.workspace = true
+
 regex = "1.11"
 clap = { version = "4", features = ["derive"] }
