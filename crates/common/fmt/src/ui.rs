@@ -1417,28 +1417,28 @@ value                0".to_string();
     #[test]
     fn test_receipt_other_fields_alignment() {
         let receipt_json = serde_json::json!(
-            {
-              "status": "0x1",
-              "cumulativeGasUsed": "0x74e483",
-              "logs": [],
-              "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-              "type": "0x2",
-              "transactionHash": "0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d",
-              "transactionIndex": "0x10",
-              "blockHash": "0x54bafb12e8cea9bb355fbf03a4ac49e42a2a1a80fa6cf4364b342e2de6432b5d",
-              "blockNumber": "0x7b1ab93",
-              "gasUsed": "0xc222",
-              "effectiveGasPrice": "0x18961",
-              "from": "0x2d815240a61731c75fa01b2793e1d3ed09f289d0",
-              "to": "0x4200000000000000000000000000000000000000",
-              "contractAddress": null,
-              "l1BaseFeeScalar": "0x146b",
-              "l1BlobBaseFee": "0x6a83078",
-              "l1BlobBaseFeeScalar": "0xf79c5",
-              "l1Fee": "0x51a9af7fd3",
-              "l1GasPrice": "0x972fe4acc",
-              "l1GasUsed": "0x640"
-            });
+        {
+          "status": "0x1",
+          "cumulativeGasUsed": "0x74e483",
+          "logs": [],
+          "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "type": "0x2",
+          "transactionHash": "0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d",
+          "transactionIndex": "0x10",
+          "blockHash": "0x54bafb12e8cea9bb355fbf03a4ac49e42a2a1a80fa6cf4364b342e2de6432b5d",
+          "blockNumber": "0x7b1ab93",
+          "gasUsed": "0xc222",
+          "effectiveGasPrice": "0x18961",
+          "from": "0x2d815240a61731c75fa01b2793e1d3ed09f289d0",
+          "to": "0x4200000000000000000000000000000000000000",
+          "contractAddress": null,
+          "l1BaseFeeScalar": "0x146b",
+          "l1BlobBaseFee": "0x6a83078",
+          "l1BlobBaseFeeScalar": "0xf79c5",
+          "l1Fee": "0x51a9af7fd3",
+          "l1GasPrice": "0x972fe4acc",
+          "l1GasUsed": "0x640"
+        });
 
         let receipt: AnyTransactionReceipt = serde_json::from_value(receipt_json).unwrap();
         let formatted = receipt.pretty();
