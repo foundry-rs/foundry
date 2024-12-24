@@ -88,7 +88,7 @@ impl UIfmt for TransactionReceiptWithRevertReason {
         if let Some(revert_reason) = &self.revert_reason {
             format!(
                 "{}
-revertReason            {}",
+revertReason         {}",
                 self.receipt.pretty(),
                 revert_reason
             )
