@@ -223,4 +223,11 @@ declare_lints!(
     (PackStructs, Severity::Gas, "pack-structs", "TODO: description"),
     (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description"),
     (UseImmutableVariable, Severity::Gas, "use-immutable-var", "TODO: description"),
+    (UseExternalVisibility, Severity::Gas, "use-external-visibility", "TODO: description"),
+    (
+        AvoidUsingThis,
+        Severity::Gas,
+        "avoid-using-this",
+        "Avoid using `this` to read public variables. This incurs an unncessary STATICCALL."
+    ),
 );
