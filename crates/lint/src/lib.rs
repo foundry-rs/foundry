@@ -1,4 +1,5 @@
 pub mod gas;
+pub mod high;
 pub mod info;
 pub mod med;
 
@@ -206,6 +207,8 @@ macro_rules! declare_lints {
 
 declare_lints!(
     //High
+    (IncorrectShift, Severity::High, "incorrect-shift", "TODO: description"),
+    (ArbitraryTransferFrom, Severity::High, "arbitrary-transfer-from", "TODO: description"),
     // Med
     (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO: description"),
     // Low
@@ -216,4 +219,8 @@ declare_lints!(
     (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description"),
     // Gas Optimizations
     (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO: description"),
+    (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description"),
+    (PackStructs, Severity::Gas, "pack-structs", "TODO: description"),
+    (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description"),
+    (UseImmutableVariable, Severity::Gas, "use-immutable-var", "TODO: description"),
 );

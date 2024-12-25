@@ -48,7 +48,9 @@ impl<'ast> Visit<'ast> for StructPascalCase {
 }
 
 impl Visit<'_> for FunctionCamelCase {
-    //TODO: visit item
+    fn visit_function_header(&mut self, header: &'_ solar_ast::ast::FunctionHeader<'_>) {
+        todo!()
+    }
 }
 
 // Check if a string is camelCase

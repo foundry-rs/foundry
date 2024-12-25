@@ -3,7 +3,9 @@ use solar_ast::{
     visit::Visit,
 };
 
-use crate::AsmKeccak256;
+use crate::{
+    AsmKeccak256, PackStorageVariables, PackStructs, UseConstantVariable, UseImmutableVariable,
+};
 
 impl<'ast> Visit<'ast> for AsmKeccak256 {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
@@ -17,6 +19,34 @@ impl<'ast> Visit<'ast> for AsmKeccak256 {
         self.walk_expr(expr);
     }
 }
+
+impl<'ast> Visit<'ast> for PackStorageVariables {
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
+        todo!()
+    }
+}
+
+impl<'ast> Visit<'ast> for PackStructs {
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
+        todo!()
+    }
+}
+
+impl<'ast> Visit<'ast> for UseConstantVariable {
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
+        todo!()
+    }
+}
+
+impl<'ast> Visit<'ast> for UseImmutableVariable {
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
+        todo!()
+    }
+}
+
+// TODO: public function could be declared external
+
+// TODO: avoid using `this` to read public variables
 
 #[cfg(test)]
 mod test {
