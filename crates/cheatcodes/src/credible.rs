@@ -1,11 +1,10 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_primitives::TxKind;
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{sol, SolValue};
+use assertion_executor::db::fork_db::ForkDb;
 use assertion_executor::{store::AssertionStore, AssertionExecutorBuilder};
-use foundry_common::TransactionMaybeSigned;
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
-use revm::primitives::{AccountInfo, Address, Bytecode, OptimismFields, TxEnv, B256, U256};
+use revm::primitives::{AccountInfo, Address, Bytecode, TxEnv, B256, U256};
 use revm::DatabaseRef;
 use std::sync::{ Arc, Mutex};
 use tokio;
@@ -27,6 +26,15 @@ impl<'a> ThreadSafeDb<'a> {
     /// Creates a new thread-safe database wrapper
     pub fn new(db: &'a mut dyn DatabaseExt) -> Self {
         Self { db: Arc::new(Mutex::new(db)) }
+    }
+}
+
+sol ! {
+    struct SimpleTransaction {
+        address from;
+        address to;
+        uint256 value;
+        bytes data;
     }
 }
 
@@ -69,50 +77,40 @@ impl Cheatcode for assertionExCall {
                 .map(|bytes| Bytecode::LegacyRaw(bytes.to_owned().into()))
                 .collect(),
         )];
+
+        let decoded_tx= SimpleTransaction::abi_decode(&tx, true)?;
+        let tx = TxEnv {
+            caller: decoded_tx.from,
+            gas_limit: 1000000,
+            gas_price: U256::from(0),
+            gas_priority_fee: None,
+            transact_to: TxKind::Call(decoded_tx.to),
+            value: decoded_tx.value,
+            data: decoded_tx.data,
+            chain_id: Some(ccx.ecx.env.cfg.chain_id),
+            nonce:  None,
+            .. Default::default()
+        };
         
-        // Store assertions
-        store.writer().write(block_number, assertions);
         
-        // Execute assertions
-        let assertion_executor = AssertionExecutorBuilder::new(db, store.reader()).build();
         
         // TODO: Add a function in assertion executor which returns:
         // 1. Which assertions were touched by which assertions
         // 2. Which assertion invalidated which transaction
 
-        let transactions  = ccx.state.broadcastable_transactions;
-        let results = transactions.into_iter().map(|btx| {
-            let tx = btx.transaction;
-            let cloned_db = db.clone();
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(async move {
-                    assertion_executor
-                        .validate_transaction(block, envelope_to_environment(&tx), cloned_db)
-                        .await
-                })
-                .expect("Assertion execution failed")
-                .is_some()
-            }).collect();
-        Ok(results.abi_encode())
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async move {
+                // Store assertions
+                let _ = store.writer().write(block_number, assertions).await.expect("Failed to store assertions");
+                let mut assertion_executor = AssertionExecutorBuilder::new(db.clone(), store.reader()).build();
+                assertion_executor
+                    .validate_transaction(block, tx, &mut ForkDb::new(db))
+                    .await
+            })
+            .expect("Assertion execution failed")
+            .is_some();
+        Ok(result.abi_encode())
     }
 }
 
-pub fn envelope_to_environment(tx: &TransactionMaybeSigned) -> TxEnv {
-    match tx {
-        TransactionMaybeSigned::Signed{ tx, from} => 
-            TxEnv {
-            caller: *from,
-            gas_limit: tx.gas_limit(),
-            gas_price: U256::from(0),
-            gas_priority_fee: None,
-            transact_to: if tx.is_create() { TxKind::Create } else { TxKind::Call(tx.to().unwrap()) },
-            value: tx.value(),
-            data: tx.input().clone(),
-            chain_id: tx.chain_id(),
-            nonce: Some(tx.nonce()),
-            .. Default::default()
-        },
-        _ => todo!(),
-    }
-}
