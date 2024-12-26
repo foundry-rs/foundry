@@ -2,9 +2,7 @@ use std::{any::Any, fmt::Debug};
 
 use alloy_primitives::{Address, U256};
 use eyre::Result;
-// use foundry_cheatcodes::strategy::{
-//     CheatcodeInspectorStrategy, EvmCheatcodeInspectorStrategyRunner,
-// };
+use foundry_cheatcodes::{CheatcodeInspectorStrategy, EvmCheatcodeInspectorStrategyRunner};
 use foundry_evm_core::backend::{Backend, BackendResult, BackendStrategy, CowBackend};
 use revm::{
     primitives::{EnvWithHandlerCfg, ResultAndState},
@@ -103,10 +101,10 @@ pub trait ExecutorStrategyRunner: Debug + Send + Sync {
 
     fn new_backend_strategy(&self, ctx: &dyn ExecutorStrategyContext) -> BackendStrategy;
 
-    // fn new_cheatcode_inspector_strategy(
-    //     &self,
-    //     ctx: &dyn ExecutorStrategyContext,
-    // ) -> foundry_cheatcodes::strategy::CheatcodeInspectorStrategy;
+    fn new_cheatcode_inspector_strategy(
+        &self,
+        ctx: &dyn ExecutorStrategyContext,
+    ) -> CheatcodeInspectorStrategy;
 }
 
 /// Implements [ExecutorStrategyRunner] for EVM.
@@ -180,15 +178,12 @@ impl ExecutorStrategyRunner for EvmExecutorStrategyRunner {
         BackendStrategy::new_evm()
     }
 
-    // fn new_cheatcode_inspector_strategy(
-    //     &self,
-    //     _ctx: &dyn ExecutorStrategyContext,
-    // ) -> CheatcodeInspectorStrategy {
-    //     CheatcodeInspectorStrategy {
-    //         runner: Box::new(EvmCheatcodeInspectorStrategyRunner::default()),
-    //         context: Box::new(()),
-    //     }
-    // }
+    fn new_cheatcode_inspector_strategy(
+        &self,
+        _ctx: &dyn ExecutorStrategyContext,
+    ) -> CheatcodeInspectorStrategy {
+        CheatcodeInspectorStrategy::new_evm()
+    }
 }
 
 impl Clone for Box<dyn ExecutorStrategyRunner> {

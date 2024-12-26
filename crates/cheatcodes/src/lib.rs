@@ -51,6 +51,9 @@ mod json;
 mod script;
 pub use script::{Wallets, WalletsInner};
 
+mod strategy;
+pub use strategy::{CheatcodeInspectorStrategy, EvmCheatcodeInspectorStrategyRunner};
+
 mod string;
 
 mod test;

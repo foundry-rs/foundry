@@ -180,7 +180,7 @@ impl Cheatcode for mockFunctionCall {
     }
 }
 
-fn mock_call(
+pub fn mock_call(
     state: &mut Cheatcodes,
     callee: &Address,
     cdata: &Bytes,
@@ -210,7 +210,7 @@ fn mock_calls(
 
 // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
 // check Solidity might perform.
-fn make_acc_non_empty(callee: &Address, ecx: InnerEcx) -> Result {
+pub fn make_acc_non_empty(callee: &Address, ecx: InnerEcx) -> Result {
     let acc = ecx.load_account(*callee)?;
 
     let empty_bytecode = acc.info.code.as_ref().is_none_or(Bytecode::is_empty);
