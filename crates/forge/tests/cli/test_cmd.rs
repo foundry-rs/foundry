@@ -1322,8 +1322,7 @@ contract SimpleContractTest is Test {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vvvv", "--decode-internal", "test"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
   [406629] SimpleContractTest::test()
@@ -1335,8 +1334,7 @@ Traces:
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 ...
-"#
-    ]]);
+"#]]);
 });
 
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
@@ -2277,13 +2275,6 @@ Use --match-contract and --match-path to further limit the search.
 "#]]);
 });
 
-forgetest_init!(deprecated_regex_arg, |prj, cmd| {
-    cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
-Warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
-
-"#]]);
-});
-
 // Test a script that calls vm.rememberKeys
 forgetest_init!(script_testing, |prj, cmd| {
     prj
@@ -2452,7 +2443,7 @@ contract Dummy {
 
     let dump_path = prj.root().join("dump.json");
 
-    cmd.args(["test", "--debug", "testDummy", "--dump", dump_path.to_str().unwrap()]);
+    cmd.args(["test", "--mt", "testDummy", "--debug", "--dump", dump_path.to_str().unwrap()]);
     cmd.assert_success();
 
     assert!(dump_path.exists());
