@@ -631,7 +631,9 @@ impl ScriptConfig {
                 stack
                     .cheatcodes(
                         CheatsConfig::new(
-                            strategy.runner.new_cheatcode_inspector_strategy(strategy.context.as_ref()),
+                            strategy
+                                .runner
+                                .new_cheatcode_inspector_strategy(strategy.context.as_ref()),
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),

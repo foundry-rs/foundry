@@ -6,13 +6,18 @@ use crate::{
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
         DealRecord, GasRecord, RecordAccess,
-    }, script::{Broadcast, Wallets}, test::{
+    },
+    script::{Broadcast, Wallets},
+    test::{
         assume::AssumeNoRevert,
         expect::{
             self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmitTracker,
             ExpectedRevert, ExpectedRevertKind,
         },
-    }, utils::IgnoredTraces, CheatcodeInspectorStrategy, CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm::{self, AccountAccess}
+    },
+    utils::IgnoredTraces,
+    CheatcodeInspectorStrategy, CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
 };
 use alloy_primitives::{
     hex,
@@ -482,7 +487,7 @@ pub struct Cheatcodes {
     pub wallets: Option<Wallets>,
 
     /// Cheatcode inspector behavior.
-    pub strategy: CheatcodeInspectorStrategy
+    pub strategy: CheatcodeInspectorStrategy,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
