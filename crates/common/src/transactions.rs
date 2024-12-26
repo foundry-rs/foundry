@@ -2,12 +2,13 @@
 
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_eips::eip7702::SignedAuthorization;
+use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
 };
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -87,7 +88,7 @@ impl UIfmt for TransactionReceiptWithRevertReason {
         if let Some(revert_reason) = &self.revert_reason {
             format!(
                 "{}
-revertReason            {}",
+revertReason         {}",
                 self.receipt.pretty(),
                 revert_reason
             )

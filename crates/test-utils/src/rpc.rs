@@ -101,53 +101,109 @@ fn next<T>(list: &[T]) -> &T {
     &list[next_idx() % list.len()]
 }
 
-/// Returns the next _mainnet_ rpc endpoint in inline
+/// Returns the next _mainnet_ rpc URL in inline
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_http_rpc_endpoint() -> String {
     next_rpc_endpoint(NamedChain::Mainnet)
 }
 
-/// Returns the next _mainnet_ rpc endpoint in inline
+/// Returns the next _mainnet_ rpc URL in inline
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_ws_rpc_endpoint() -> String {
     next_ws_endpoint(NamedChain::Mainnet)
 }
 
-/// Returns the next HTTP RPC endpoint.
+/// Returns the next HTTP RPC URL.
 pub fn next_rpc_endpoint(chain: NamedChain) -> String {
     next_url(false, chain)
 }
 
-/// Returns the next WS RPC endpoint.
+/// Returns the next WS RPC URL.
 pub fn next_ws_endpoint(chain: NamedChain) -> String {
     next_url(true, chain)
 }
 
-/// Returns endpoint that has access to archive state
-pub fn next_http_archive_rpc_endpoint() -> String {
-    next_archive_endpoint(false)
+/// Returns a websocket URL that has access to archive state
+pub fn next_http_archive_rpc_url() -> String {
+    next_archive_url(false)
 }
 
-/// Returns endpoint that has access to archive state
-pub fn next_ws_archive_rpc_endpoint() -> String {
-    next_archive_endpoint(true)
+/// Returns an HTTP URL that has access to archive state
+pub fn next_ws_archive_rpc_url() -> String {
+    next_archive_url(true)
 }
 
-/// Returns endpoint that has access to archive state, http or ws.
-/// Use env vars (comma separated urls) or default inline keys (Alchemy for ws, Infura for http).
-fn next_archive_endpoint(is_ws: bool) -> String {
-    let env_urls = if is_ws { ENV_WS_ARCHIVE_ENDPOINTS } else { ENV_HTTP_ARCHIVE_ENDPOINTS };
-
-    let rpc_env_vars = env::var(env_urls).unwrap_or_default();
-    if !rpc_env_vars.is_empty() {
-        let urls = rpc_env_vars.split(',').collect::<Vec<&str>>();
-        next(&urls).to_string()
-    } else if is_ws {
-        format!("wss://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
+/// Returns a URL that has access to archive state.
+///
+/// Uses either environment variables (comma separated urls) or default keys.
+fn next_archive_url(is_ws: bool) -> String {
+    let urls = archive_urls(is_ws);
+    let url = if env_archive_urls(is_ws).is_empty() {
+        next(urls)
     } else {
-        format!("https://eth-mainnet.g.alchemy.com/v2/{}", next(&ALCHEMY_KEYS))
+        urls.choose_weighted(&mut rand::thread_rng(), |url| {
+            if url.contains("reth") {
+                2usize
+            } else {
+                1usize
+            }
+        })
+        .unwrap()
+    };
+    eprintln!("--- next_archive_url(is_ws={is_ws}) = {url} ---");
+    url.clone()
+}
+
+fn archive_urls(is_ws: bool) -> &'static [String] {
+    static WS: LazyLock<Vec<String>> = LazyLock::new(|| get(true));
+    static HTTP: LazyLock<Vec<String>> = LazyLock::new(|| get(false));
+
+    fn get(is_ws: bool) -> Vec<String> {
+        let env_urls = env_archive_urls(is_ws);
+        if !env_urls.is_empty() {
+            let mut urls = env_urls.to_vec();
+            urls.shuffle(&mut rand::thread_rng());
+            return urls;
+        }
+
+        let mut urls = Vec::new();
+        for &key in ALCHEMY_KEYS.iter() {
+            if is_ws {
+                urls.push(format!("wss://eth-mainnet.g.alchemy.com/v2/{key}"));
+            } else {
+                urls.push(format!("https://eth-mainnet.g.alchemy.com/v2/{key}"));
+            }
+        }
+        urls
+    }
+
+    if is_ws {
+        &WS
+    } else {
+        &HTTP
+    }
+}
+
+fn env_archive_urls(is_ws: bool) -> &'static [String] {
+    static WS: LazyLock<Vec<String>> = LazyLock::new(|| get(true));
+    static HTTP: LazyLock<Vec<String>> = LazyLock::new(|| get(false));
+
+    fn get(is_ws: bool) -> Vec<String> {
+        let env = if is_ws { ENV_WS_ARCHIVE_ENDPOINTS } else { ENV_HTTP_ARCHIVE_ENDPOINTS };
+        let env = env::var(env).unwrap_or_default();
+        let env = env.trim();
+        if env.is_empty() {
+            return vec![];
+        }
+        env.split(',').map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string).collect()
+    }
+
+    if is_ws {
+        &WS
+    } else {
+        &HTTP
     }
 }
 
@@ -162,7 +218,9 @@ pub fn next_etherscan_api_key(chain: NamedChain) -> String {
         Optimism => &ETHERSCAN_OPTIMISM_KEYS,
         _ => &ETHERSCAN_MAINNET_KEYS,
     };
-    next(keys).to_string()
+    let key = next(keys).to_string();
+    eprintln!("--- next_etherscan_api_key(chain={chain:?}) = {key} ---");
+    key
 }
 
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
@@ -206,12 +264,14 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
     };
     let full = if prefix.is_empty() { network.to_string() } else { format!("{prefix}-{network}") };
 
-    match (is_ws, is_infura) {
+    let url = match (is_ws, is_infura) {
         (false, true) => format!("https://{full}.infura.io/v3/{key}"),
         (true, true) => format!("wss://{full}.infura.io/ws/v3/{key}"),
         (false, false) => format!("https://{full}.g.alchemy.com/v2/{key}"),
         (true, false) => format!("wss://{full}.g.alchemy.com/v2/{key}"),
-    }
+    };
+    eprintln!("--- next_url(is_ws={is_ws}, chain={chain:?}) = {url} ---");
+    url
 }
 
 #[cfg(test)]

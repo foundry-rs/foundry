@@ -380,14 +380,16 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
-            let address: Address = stdin::unwrap_line(address)?.parse()?;
+            let address = stdin::unwrap_line(address)?;
             let computed = Cast::new(provider).compute_address(address, nonce).await?;
             sh_println!("Computed Address: {}", computed.to_checksum(None))?
         }
         CastSubcommand::Disassemble { bytecode } => {
+            let bytecode = stdin::unwrap_line(bytecode)?;
             sh_println!("{}", SimpleCast::disassemble(&hex::decode(bytecode)?)?)?
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
+            let bytecode = stdin::unwrap_line(bytecode)?;
             let functions = SimpleCast::extract_functions(&bytecode)?;
             let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
             let max_mutability_len = functions.iter().map(|r| r.2.len()).max().unwrap_or(0);
@@ -423,11 +425,11 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let id = stdin::unwrap_line(id)?;
             sh_println!("{}", foundry_common::erc7201(&id))?;
         }
-        CastSubcommand::Implementation { block, who, rpc } => {
+        CastSubcommand::Implementation { block, beacon, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).implementation(who, block).await?)?;
+            sh_println!("{}", Cast::new(provider).implementation(who, beacon, block).await?)?;
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);

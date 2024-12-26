@@ -14,7 +14,7 @@ use forge::{
         identifier::SignaturesIdentifier,
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use foundry_cli::{
     opts::{CoreBuildArgs, GlobalOpts},
@@ -23,7 +23,10 @@ use foundry_cli::{
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
-    compilers::{multi::MultiCompilerLanguage, Language},
+    compilers::{
+        multi::{MultiCompiler, MultiCompilerLanguage},
+        Language,
+    },
     utils::source_files_iter,
     ProjectCompileOutput,
 };
@@ -50,13 +53,10 @@ use yansi::Paint;
 
 mod filter;
 mod summary;
-
-use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::TestSummaryReporter;
-
-use crate::cmd::test::summary::print_invariant_metrics;
 pub use filter::FilterArgs;
 use forge::{result::TestKind, traces::render_trace_arena_inner};
+use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
+use summary::{print_invariant_metrics, TestSummaryReport};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_args);
@@ -79,7 +79,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"], value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
     debug: Option<Option<Regex>>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
@@ -123,7 +123,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report"], help_heading = "Display options")]
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
 
     /// Stop running tests after the first failure.
@@ -135,7 +135,7 @@ pub struct TestArgs {
     etherscan_api_key: Option<String>,
 
     /// List tests instead of running them.
-    #[arg(long, short, help_heading = "Display options")]
+    #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
@@ -154,7 +154,7 @@ pub struct TestArgs {
     pub fuzz_input_file: Option<String>,
 
     /// Show test execution progress.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
     pub show_progress: bool,
 
     #[command(flatten)]
@@ -317,9 +317,6 @@ impl TestArgs {
             }
         }
 
-        let config = Arc::new(config);
-        let test_options = TestOptions::new(&output, config.clone())?;
-
         let should_debug = self.debug.is_some();
         let should_draw = self.flamegraph || self.flamechart;
 
@@ -346,6 +343,7 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
+        let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -353,10 +351,9 @@ impl TestArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
-            .alphanet(evm_opts.alphanet)
-            .build(project_root, &output, env, evm_opts)?;
+            .odyssey(evm_opts.odyssey)
+            .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
         let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {
             if let Some(Some(regex)) = maybe_regex {
@@ -471,7 +468,7 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json();
+        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -499,7 +496,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && shell::is_json() {
+        if !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter);
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
@@ -559,7 +556,7 @@ impl TestArgs {
 
         if self.decode_internal.is_some() {
             let sources =
-                ContractSources::from_project_output(output, &config.root.0, Some(&libraries))?;
+                ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
         }
         let mut decoder = builder.build();
@@ -609,9 +606,7 @@ impl TestArgs {
                     sh_println!("{}", result.short_result(name))?;
 
                     // Display invariant metrics if invariant kind.
-                    if let TestKind::Invariant { runs: _, calls: _, reverts: _, metrics } =
-                        &result.kind
-                    {
+                    if let TestKind::Invariant { metrics, .. } = &result.kind {
                         print_invariant_metrics(metrics);
                     }
 
@@ -797,14 +792,13 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !silent && !outcome.results.is_empty() {
+        if !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
+        }
 
-            if self.summary {
-                let mut summary_table = TestSummaryReporter::new(self.detailed);
-                sh_println!("\n\nTest Summary:")?;
-                summary_table.print_summary(&outcome);
-            }
+        if self.summary && !outcome.results.is_empty() {
+            let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+            sh_println!("{}", &summary_report)?;
         }
 
         // Reattach the task.

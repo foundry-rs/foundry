@@ -349,8 +349,8 @@ impl TraceMode {
         }
     }
 
-    pub fn with_verbosity(self, verbosiy: u8) -> Self {
-        if verbosiy >= 3 {
+    pub fn with_verbosity(self, verbosity: u8) -> Self {
+        if verbosity >= 3 {
             std::cmp::max(self, Self::Call)
         } else {
             self

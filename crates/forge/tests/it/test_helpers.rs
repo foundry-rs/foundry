@@ -2,17 +2,16 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{
-    revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
-};
+use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
+    compilers::multi::MultiCompiler,
     utils::RuntimeOrHandle,
     Project, ProjectCompileOutput, SolcConfig, Vyper,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
-    InvariantConfig, RpcEndpoint, RpcEndpoints,
+    InvariantConfig, RpcEndpointUrl, RpcEndpoints,
 };
 use foundry_evm::{constants::CALLER, opts::EvmOpts};
 use foundry_test_utils::{fd_lock, init_tracing, rpc::next_rpc_endpoint};
@@ -177,9 +176,7 @@ impl ForgeTestData {
     pub fn base_runner(&self) -> MultiContractRunnerBuilder {
         init_tracing();
         let config = self.config.clone();
-        let mut runner = MultiContractRunnerBuilder::new(config.clone())
-            .sender(self.config.sender)
-            .with_test_options(TestOptions::new_unparsed(config));
+        let mut runner = MultiContractRunnerBuilder::new(config).sender(self.config.sender);
         if self.profile.is_paris() {
             runner = runner.evm_spec(SpecId::MERGE);
         }
@@ -216,8 +213,7 @@ impl ForgeTestData {
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)
-            .with_test_options(TestOptions::new(&self.output, config.clone()).unwrap())
-            .build(root, &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(root, &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -226,7 +222,7 @@ impl ForgeTestData {
         let mut opts = config_evm_opts(&self.config);
         opts.verbosity = 5;
         self.base_runner()
-            .build(self.project.root(), &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(self.project.root(), &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -242,7 +238,7 @@ impl ForgeTestData {
 
         self.base_runner()
             .with_fork(fork)
-            .build(self.project.root(), &self.output, env, opts)
+            .build::<MultiCompiler>(self.project.root(), &self.output, env, opts)
             .unwrap()
     }
 }
@@ -343,14 +339,15 @@ pub fn manifest_root() -> &'static Path {
 /// the RPC endpoints used during tests
 pub fn rpc_endpoints() -> RpcEndpoints {
     RpcEndpoints::new([
-        ("mainnet", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Mainnet))),
-        ("mainnet2", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Mainnet))),
-        ("sepolia", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Sepolia))),
-        ("optimism", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Optimism))),
-        ("arbitrum", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
-        ("polygon", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Polygon))),
-        ("avaxTestnet", RpcEndpoint::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
-        ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".into())),
+        ("mainnet", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Mainnet))),
+        ("mainnet2", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Mainnet))),
+        ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
+        ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
+        ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
+        ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
+        ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
+        ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),
     ])
 }
 

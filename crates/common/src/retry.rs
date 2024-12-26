@@ -16,13 +16,18 @@ pub enum RetryError<E = Report> {
 #[derive(Clone, Debug)]
 pub struct Retry {
     retries: u32,
-    delay: Option<Duration>,
+    delay: Duration,
 }
 
 impl Retry {
     /// Creates a new `Retry` instance.
-    pub fn new(retries: u32, delay: Option<Duration>) -> Self {
+    pub fn new(retries: u32, delay: Duration) -> Self {
         Self { retries, delay }
+    }
+
+    /// Creates a new `Retry` instance with no delay between retries.
+    pub fn new_no_delay(retries: u32) -> Self {
+        Self::new(retries, Duration::ZERO)
     }
 
     /// Runs the given closure in a loop, retrying if it fails up to the specified number of times.
@@ -31,8 +36,8 @@ impl Retry {
             match callback() {
                 Err(e) if self.retries > 0 => {
                     self.handle_err(e);
-                    if let Some(delay) = self.delay {
-                        std::thread::sleep(delay);
+                    if !self.delay.is_zero() {
+                        std::thread::sleep(self.delay);
                     }
                 }
                 res => return res,
@@ -51,8 +56,8 @@ impl Retry {
             match callback().await {
                 Err(e) if self.retries > 0 => {
                     self.handle_err(e);
-                    if let Some(delay) = self.delay {
-                        tokio::time::sleep(delay).await;
+                    if !self.delay.is_zero() {
+                        tokio::time::sleep(self.delay).await;
                     }
                 }
                 res => return res,
@@ -71,8 +76,8 @@ impl Retry {
             match callback().await {
                 Err(RetryError::Retry(e)) if self.retries > 0 => {
                     self.handle_err(e);
-                    if let Some(delay) = self.delay {
-                        tokio::time::sleep(delay).await;
+                    if !self.delay.is_zero() {
+                        tokio::time::sleep(self.delay).await;
                     }
                 }
                 Err(RetryError::Retry(e) | RetryError::Break(e)) => return Err(e),
@@ -82,7 +87,17 @@ impl Retry {
     }
 
     fn handle_err(&mut self, err: Error) {
+        debug_assert!(self.retries > 0);
         self.retries -= 1;
-        let _ = sh_warn!("{} ({} tries remaining)", err.root_cause(), self.retries);
+        let _ = sh_warn!(
+            "{msg}{delay} ({retries} tries remaining)",
+            msg = crate::errors::display_chain(&err),
+            delay = if self.delay.is_zero() {
+                String::new()
+            } else {
+                format!("; waiting {} seconds before trying again", self.delay.as_secs())
+            },
+            retries = self.retries,
+        );
     }
 }

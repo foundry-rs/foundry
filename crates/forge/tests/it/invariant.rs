@@ -929,24 +929,38 @@ contract AnotherCounterHandler is Test {
 
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/SelectorMetricsTest.t.sol:CounterTest
 [PASS] invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+
+╭-----------------------+----------------+-------+---------+----------╮
 | Contract              | Selector       | Calls | Reverts | Discards |
-|-----------------------|----------------|-------|---------|----------|
-| AnotherCounterHandler | doWork         |  [..] |    [..]   |   [..]   |
-| AnotherCounterHandler | doWorkThing    |  [..] |    [..]   |   [..]   |
-| CounterHandler        | doAnotherThing |  [..] |    [..]   |   [..]   |
-| CounterHandler        | doSomething    |  [..] |    [..]   |   [..]   |
++=====================================================================+
+| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     |
+|-----------------------+----------------+-------+---------+----------|
+| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     |
+|-----------------------+----------------+-------+---------+----------|
+| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     |
+|-----------------------+----------------+-------+---------+----------|
+| CounterHandler        | doSomething    | [..]  | [..]    | [..]     |
+╰-----------------------+----------------+-------+---------+----------╯
 
 [PASS] invariant_counter2() (runs: 10, calls: 5000, reverts: [..])
-| Contract              | Selector       | Calls | Reverts | Discards |
-|-----------------------|----------------|-------|---------|----------|
-| AnotherCounterHandler | doWork         |  [..] |    [..]   |   [..]   |
-| AnotherCounterHandler | doWorkThing    |  [..] |    [..]   |   [..]   |
-| CounterHandler        | doAnotherThing |  [..] |    [..]   |   [..]   |
-| CounterHandler        | doSomething    |  [..] |    [..]   |   [..]   |
 
-...
+╭-----------------------+----------------+-------+---------+----------╮
+| Contract              | Selector       | Calls | Reverts | Discards |
++=====================================================================+
+| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     |
+|-----------------------+----------------+-------+---------+----------|
+| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     |
+|-----------------------+----------------+-------+---------+----------|
+| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     |
+|-----------------------+----------------+-------+---------+----------|
+| CounterHandler        | doSomething    | [..]  | [..]    | [..]     |
+╰-----------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
 "#]]);
 });
 
