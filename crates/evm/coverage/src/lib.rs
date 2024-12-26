@@ -6,18 +6,19 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
-extern crate foundry_common;
-
-#[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{map::HashMap, Bytes, B256};
-use eyre::{Context, Result};
+use alloy_primitives::{
+    map::{B256HashMap, HashMap},
+    Bytes,
+};
+use eyre::Result;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt::Display,
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     sync::Arc,
@@ -119,22 +120,21 @@ impl CoverageReport {
         is_deployed_code: bool,
     ) -> Result<()> {
         // Add bytecode level hits
-        let e = self
-            .bytecode_hits
+        self.bytecode_hits
             .entry(contract_id.clone())
-            .or_insert_with(|| HitMap::new(hit_map.bytecode.clone()));
-        e.merge(hit_map).wrap_err_with(|| format!("{contract_id:?}"))?;
+            .and_modify(|m| m.merge(hit_map))
+            .or_insert_with(|| hit_map.clone());
 
         // Add source level hits
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for anchor in anchors {
-                if let Some(&hits) = hit_map.hits.get(&anchor.instruction) {
+                if let Some(hits) = hit_map.get(anchor.instruction) {
                     self.items
                         .get_mut(&contract_id.version)
                         .and_then(|items| items.get_mut(anchor.item_id))
                         .expect("Anchor refers to non-existent coverage item")
-                        .hits += hits;
+                        .hits += hits.get();
                 }
             }
         }
@@ -160,9 +160,10 @@ impl CoverageReport {
 
 /// A collection of [`HitMap`]s.
 #[derive(Clone, Debug, Default)]
-pub struct HitMaps(pub HashMap<B256, HitMap>);
+pub struct HitMaps(pub B256HashMap<HitMap>);
 
 impl HitMaps {
+    /// Merges two `Option<HitMaps>`.
     pub fn merge_opt(a: &mut Option<Self>, b: Option<Self>) {
         match (a, b) {
             (_, None) => {}
@@ -171,17 +172,15 @@ impl HitMaps {
         }
     }
 
+    /// Merges two `HitMaps`.
     pub fn merge(&mut self, other: Self) {
-        for (code_hash, hit_map) in other.0 {
-            if let Some(HitMap { hits: extra_hits, .. }) = self.insert(code_hash, hit_map) {
-                for (pc, hits) in extra_hits {
-                    self.entry(code_hash)
-                        .and_modify(|map| *map.hits.entry(pc).or_default() += hits);
-                }
-            }
+        self.reserve(other.len());
+        for (code_hash, other) in other.0 {
+            self.entry(code_hash).and_modify(|e| e.merge(&other)).or_insert(other);
         }
     }
 
+    /// Merges two `HitMaps`.
     pub fn merged(mut self, other: Self) -> Self {
         self.merge(other);
         self
@@ -189,7 +188,7 @@ impl HitMaps {
 }
 
 impl Deref for HitMaps {
-    type Target = HashMap<B256, HitMap>;
+    type Target = B256HashMap<HitMap>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -207,40 +206,70 @@ impl DerefMut for HitMaps {
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
 #[derive(Clone, Debug)]
 pub struct HitMap {
-    pub bytecode: Bytes,
-    pub hits: BTreeMap<usize, u64>,
+    bytecode: Bytes,
+    hits: HashMap<u32, u32>,
 }
 
 impl HitMap {
+    /// Create a new hitmap with the given bytecode.
+    #[inline]
     pub fn new(bytecode: Bytes) -> Self {
-        Self { bytecode, hits: BTreeMap::new() }
+        Self { bytecode, hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
     }
 
-    /// Increase the hit counter for the given program counter.
+    /// Returns the bytecode.
+    #[inline]
+    pub fn bytecode(&self) -> &Bytes {
+        &self.bytecode
+    }
+
+    /// Returns the number of hits for the given program counter.
+    #[inline]
+    pub fn get(&self, pc: usize) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.hits.get(&Self::cvt_pc(pc)).copied().unwrap_or(0))
+    }
+
+    /// Increase the hit counter by 1 for the given program counter.
+    #[inline]
     pub fn hit(&mut self, pc: usize) {
-        *self.hits.entry(pc).or_default() += 1;
+        self.hits(pc, 1)
+    }
+
+    /// Increase the hit counter by `hits` for the given program counter.
+    #[inline]
+    pub fn hits(&mut self, pc: usize, hits: u32) {
+        *self.hits.entry(Self::cvt_pc(pc)).or_default() += hits;
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
-    pub fn merge(&mut self, other: &Self) -> Result<(), eyre::Report> {
-        for (pc, hits) in &other.hits {
-            *self.hits.entry(*pc).or_default() += hits;
+    pub fn merge(&mut self, other: &Self) {
+        self.hits.reserve(other.len());
+        for (pc, hits) in other.iter() {
+            self.hits(pc, hits);
         }
-        Ok(())
     }
 
-    pub fn consistent_bytecode(&self, hm1: &Self, hm2: &Self) -> bool {
-        // Consider the bytecodes consistent if they are the same out as far as the
-        // recorded hits
-        let len1 = hm1.hits.last_key_value();
-        let len2 = hm2.hits.last_key_value();
-        if let (Some(len1), Some(len2)) = (len1, len2) {
-            let len = std::cmp::max(len1.0, len2.0);
-            let ok = hm1.bytecode.0[..*len] == hm2.bytecode.0[..*len];
-            let _ = sh_println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
-            return ok;
-        }
-        true
+    /// Returns an iterator over all the program counters and their hit counts.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        self.hits.iter().map(|(&pc, &hits)| (pc as usize, hits))
+    }
+
+    /// Returns the number of program counters hit in the hitmap.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.hits.len()
+    }
+
+    /// Returns `true` if the hitmap is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.hits.is_empty()
+    }
+
+    #[inline]
+    fn cvt_pc(pc: usize) -> u32 {
+        pc.try_into().expect("4GiB bytecode")
     }
 }
 
@@ -311,7 +340,7 @@ pub struct CoverageItem {
     /// The location of the item in the source code.
     pub loc: SourceLocation,
     /// The number of times this item was hit.
-    pub hits: u64,
+    pub hits: u32,
 }
 
 impl Display for CoverageItem {

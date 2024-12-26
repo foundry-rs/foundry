@@ -180,6 +180,9 @@ test_repro!(3753);
 // https://github.com/foundry-rs/foundry/issues/3792
 test_repro!(3792);
 
+// https://github.com/foundry-rs/foundry/issues/4232
+test_repro!(4232);
+
 // https://github.com/foundry-rs/foundry/issues/4402
 test_repro!(4402);
 
@@ -299,7 +302,7 @@ test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
-    let path = config.runner.config.root.0.join("out/default/Issue6554.t.sol");
+    let path = config.runner.config.root.join("out/default/Issue6554.t.sol");
 
     let mut prj_config = Config::clone(&config.runner.config);
     prj_config.fs_permissions.add(PathPermission::read_write(path));
@@ -383,3 +386,6 @@ test_repro!(8971; |config| {
   prj_config.isolate = true;
   config.runner.config = Arc::new(prj_config);
 });
+
+// https://github.com/foundry-rs/foundry/issues/8639
+test_repro!(8639);

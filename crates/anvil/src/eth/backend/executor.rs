@@ -28,7 +28,7 @@ use foundry_evm::{
         },
     },
     traces::CallTraceNode,
-    utils::alphanet_handler_register,
+    utils::odyssey_handler_register,
 };
 use revm::{db::WrapDatabaseRef, primitives::MAX_BLOB_GAS_PER_BLOCK};
 use std::sync::Arc;
@@ -106,7 +106,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// Cumulative blob gas used by all executed transactions
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
-    pub alphanet: bool,
+    pub odyssey: bool,
     pub print_logs: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
@@ -314,7 +314,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         let exec_result = {
-            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.alphanet);
+            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -398,20 +398,20 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     }
 }
 
-/// Creates a database with given database and inspector, optionally enabling alphanet features.
+/// Creates a database with given database and inspector, optionally enabling odyssey features.
 pub fn new_evm_with_inspector<DB: revm::Database>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: &mut dyn revm::Inspector<DB>,
-    alphanet: bool,
+    odyssey: bool,
 ) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
     let EnvWithHandlerCfg { env, handler_cfg } = env;
 
     let mut handler = revm::Handler::new(handler_cfg);
 
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    if alphanet {
-        handler.append_handler_register_plain(alphanet_handler_register);
+    if odyssey {
+        handler.append_handler_register_plain(odyssey_handler_register);
     }
 
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
@@ -424,10 +424,10 @@ pub fn new_evm_with_inspector_ref<'a, DB>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
-    alphanet: bool,
+    odyssey: bool,
 ) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
 where
     DB: revm::DatabaseRef,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, alphanet)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, odyssey)
 }

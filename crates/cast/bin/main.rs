@@ -425,11 +425,11 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let id = stdin::unwrap_line(id)?;
             sh_println!("{}", foundry_common::erc7201(&id))?;
         }
-        CastSubcommand::Implementation { block, who, rpc } => {
+        CastSubcommand::Implementation { block, beacon, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).implementation(who, block).await?)?;
+            sh_println!("{}", Cast::new(provider).implementation(who, beacon, block).await?)?;
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);

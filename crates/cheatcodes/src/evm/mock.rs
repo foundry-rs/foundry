@@ -213,7 +213,7 @@ fn mock_calls(
 fn make_acc_non_empty(callee: &Address, ecx: InnerEcx) -> Result {
     let acc = ecx.load_account(*callee)?;
 
-    let empty_bytecode = acc.info.code.as_ref().map_or(true, Bytecode::is_empty);
+    let empty_bytecode = acc.info.code.as_ref().is_none_or(Bytecode::is_empty);
     if empty_bytecode {
         let code = Bytecode::new_raw(Bytes::from_static(&[0u8]));
         ecx.journaled_state.set_code(*callee, code);

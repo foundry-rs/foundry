@@ -1,9 +1,10 @@
 //! Coverage reports.
 
 use alloy_primitives::map::HashMap;
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
+use semver::Version;
 use std::{
     collections::hash_map,
     io::Write,
@@ -18,24 +19,31 @@ pub trait CoverageReporter {
 }
 
 /// A simple summary reporter that prints the coverage results in a table.
-pub struct SummaryReporter {
+pub struct CoverageSummaryReporter {
     /// The summary table.
     table: Table,
     /// The total coverage of the entire project.
     total: CoverageSummary,
 }
 
-impl Default for SummaryReporter {
+impl Default for CoverageSummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
-        table.set_header(["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+
+        table.set_header(vec![
+            Cell::new("File"),
+            Cell::new("% Lines"),
+            Cell::new("% Statements"),
+            Cell::new("% Branches"),
+            Cell::new("% Funcs"),
+        ]);
 
         Self { table, total: CoverageSummary::default() }
     }
 }
 
-impl SummaryReporter {
+impl CoverageSummaryReporter {
     fn add_row(&mut self, name: impl Into<Cell>, summary: CoverageSummary) {
         let mut row = Row::new();
         row.add_cell(name.into())
@@ -47,7 +55,7 @@ impl SummaryReporter {
     }
 }
 
-impl CoverageReporter for SummaryReporter {
+impl CoverageReporter for CoverageSummaryReporter {
     fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total.merge(&summary);
@@ -55,7 +63,7 @@ impl CoverageReporter for SummaryReporter {
         }
 
         self.add_row("Total", self.total.clone());
-        sh_println!("{}", self.table)?;
+        sh_println!("\n{}", self.table)?;
         Ok(())
     }
 }
@@ -83,17 +91,19 @@ fn format_cell(hits: usize, total: usize) -> Cell {
 /// [tracefile format]: https://man.archlinux.org/man/geninfo.1.en#TRACEFILE_FORMAT
 pub struct LcovReporter<'a> {
     out: &'a mut (dyn Write + 'a),
+    version: Version,
 }
 
 impl<'a> LcovReporter<'a> {
     /// Create a new LCOV reporter.
-    pub fn new(out: &'a mut (dyn Write + 'a)) -> Self {
-        Self { out }
+    pub fn new(out: &'a mut (dyn Write + 'a), version: Version) -> Self {
+        Self { out, version }
     }
 }
 
 impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
+        let mut fn_index = 0usize;
         for (path, items) in report.items_by_file() {
             let summary = CoverageSummary::from_items(items.iter().copied());
 
@@ -108,8 +118,19 @@ impl CoverageReporter for LcovReporter<'_> {
                 match item.kind {
                     CoverageItemKind::Function { ref name } => {
                         let name = format!("{}.{name}", item.loc.contract_name);
-                        writeln!(self.out, "FN:{line},{end_line},{name}")?;
-                        writeln!(self.out, "FNDA:{hits},{name}")?;
+                        if self.version >= Version::new(2, 2, 0) {
+                            // v2.2 changed the FN format.
+                            writeln!(self.out, "FNL:{fn_index},{line},{end_line}")?;
+                            writeln!(self.out, "FNA:{fn_index},{hits},{name}")?;
+                            fn_index += 1;
+                        } else if self.version >= Version::new(2, 0, 0) {
+                            // v2.0 added end_line to FN.
+                            writeln!(self.out, "FN:{line},{end_line},{name}")?;
+                            writeln!(self.out, "FNDA:{hits},{name}")?;
+                        } else {
+                            writeln!(self.out, "FN:{line},{name}")?;
+                            writeln!(self.out, "FNDA:{hits},{name}")?;
+                        }
                     }
                     CoverageItemKind::Line => {
                         writeln!(self.out, "DA:{line},{hits}")?;
@@ -212,7 +233,7 @@ impl CoverageReporter for BytecodeReporter {
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
-            let ops = disassemble_bytes(hits.bytecode.to_vec())?;
+            let ops = disassemble_bytes(hits.bytecode().to_vec())?;
             let mut formatted = String::new();
 
             let source_elements =
@@ -220,8 +241,7 @@ impl CoverageReporter for BytecodeReporter {
 
             for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
                 let hits = hits
-                    .hits
-                    .get(&(code.offset as usize))
+                    .get(code.offset as usize)
                     .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();

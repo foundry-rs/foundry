@@ -278,7 +278,7 @@ impl ScriptArgs {
                 .execution_result
                 .transactions
                 .as_ref()
-                .map_or(true, |txs| txs.is_empty())
+                .is_none_or(|txs| txs.is_empty())
             {
                 return Ok(());
             }
@@ -615,10 +615,10 @@ impl ScriptConfig {
             .inspectors(|stack| {
                 stack
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
-                    .alphanet(self.evm_opts.alphanet)
+                    .odyssey(self.evm_opts.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec(self.config.evm_spec_id())
+            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 

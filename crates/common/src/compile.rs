@@ -6,11 +6,11 @@ use crate::{
     term::SpinnerReporter,
     TestFunctionExt,
 };
-use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
 use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, BytecodeObject, Source},
+    artifacts::{remappings::Remapping, BytecodeObject, Contract, Source},
     compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
@@ -129,7 +129,10 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
+    pub fn compile<C: Compiler<CompilerContract = Contract>>(
+        mut self,
+        project: &Project<C>,
+    ) -> Result<ProjectCompileOutput<C>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
@@ -163,7 +166,10 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    fn compile_with<C: Compiler, F>(self, f: F) -> Result<ProjectCompileOutput<C>>
+    fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
+        self,
+        f: F,
+    ) -> Result<ProjectCompileOutput<C>>
     where
         F: FnOnce() -> Result<ProjectCompileOutput<C>>,
     {
@@ -202,7 +208,10 @@ impl ProjectCompiler {
     }
 
     /// If configured, this will print sizes or names
-    fn handle_output<C: Compiler>(&self, output: &ProjectCompileOutput<C>) {
+    fn handle_output<C: Compiler<CompilerContract = Contract>>(
+        &self,
+        output: &ProjectCompileOutput<C>,
+    ) {
         let print_names = self.print_names.unwrap_or(false);
         let print_sizes = self.print_sizes.unwrap_or(false);
 
@@ -332,9 +341,8 @@ impl SizeReport {
 impl Display for SizeReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self.report_kind {
-            ReportKind::Markdown => {
-                let table = self.format_table_output();
-                writeln!(f, "{table}")?;
+            ReportKind::Text => {
+                writeln!(f, "\n{}", self.format_table_output())?;
             }
             ReportKind::JSON => {
                 writeln!(f, "{}", self.format_json_output())?;
@@ -369,13 +377,14 @@ impl SizeReport {
 
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
-        table.set_header([
-            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Runtime Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Initcode Size (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Runtime Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Initcode Margin (B)").add_attribute(Attribute::Bold).fg(Color::Blue),
+        table.apply_modifier(UTF8_ROUND_CORNERS);
+
+        table.set_header(vec![
+            Cell::new("Contract"),
+            Cell::new("Runtime Size (B)"),
+            Cell::new("Initcode Size (B)"),
+            Cell::new("Runtime Margin (B)"),
+            Cell::new("Initcode Margin (B)"),
         ]);
 
         // Filters out dev contracts (Test or Script)
@@ -402,19 +411,11 @@ impl SizeReport {
 
             let locale = &Locale::en;
             table.add_row([
-                Cell::new(name).fg(Color::Blue),
-                Cell::new(contract.runtime_size.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(runtime_color),
-                Cell::new(contract.init_size.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(init_color),
-                Cell::new(runtime_margin.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(runtime_color),
-                Cell::new(init_margin.to_formatted_string(locale))
-                    .set_alignment(CellAlignment::Right)
-                    .fg(init_color),
+                Cell::new(name),
+                Cell::new(contract.runtime_size.to_formatted_string(locale)).fg(runtime_color),
+                Cell::new(contract.init_size.to_formatted_string(locale)).fg(init_color),
+                Cell::new(runtime_margin.to_formatted_string(locale)).fg(runtime_color),
+                Cell::new(init_margin.to_formatted_string(locale)).fg(init_color),
             ]);
         }
 
@@ -465,7 +466,7 @@ pub struct ContractInfo {
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 ///
 /// **Note:** this expects the `target_path` to be absolute
-pub fn compile_target<C: Compiler>(
+pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
     target_path: &Path,
     project: &Project<C>,
     quiet: bool,
