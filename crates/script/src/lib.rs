@@ -28,7 +28,7 @@ use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
 use foundry_cli::{
     opts::{CoreBuildArgs, GlobalOpts},
-    utils::LoadConfig,
+    utils::{self, LoadConfig},
 };
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -592,13 +592,17 @@ impl ScriptConfig {
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
         let env = self.evm_opts.evm_env().await?;
+        let strategy = utils::get_executor_strategy(&self.config);
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
                 Some(db) => db.clone(),
                 None => {
                     let fork = self.evm_opts.get_fork(&self.config, env.clone());
-                    let backend = Backend::spawn(fork);
+                    let backend = Backend::spawn(
+                        strategy.runner.new_backend_strategy(strategy.context.as_ref()),
+                        fork,
+                    );
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
                 }
@@ -607,7 +611,7 @@ impl ScriptConfig {
             // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
             // no need to cache it, since there won't be any onchain simulation that we'd need
             // to cache the backend for.
-            Backend::spawn(None)
+            Backend::spawn(strategy.runner.new_backend_strategy(strategy.context.as_ref()), None)
         };
 
         // We need to enable tracing to decode contract names: local or external.
@@ -640,7 +644,7 @@ impl ScriptConfig {
             });
         }
 
-        Ok(ScriptRunner::new(builder.build(env, db), self.evm_opts.clone()))
+        Ok(ScriptRunner::new(builder.build(strategy, env, db), self.evm_opts.clone()))
     }
 }
 
