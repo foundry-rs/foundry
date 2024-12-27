@@ -16,7 +16,7 @@ use crate::{
         },
     },
     utils::IgnoredTraces,
-    CheatcodeInspectorStrategy, CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    CheatcodesStrategy, CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
 };
 use alloy_primitives::{
@@ -487,7 +487,7 @@ pub struct Cheatcodes {
     pub wallets: Option<Wallets>,
 
     /// Cheatcode inspector behavior.
-    pub strategy: CheatcodeInspectorStrategy,
+    pub strategy: CheatcodesStrategy,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second

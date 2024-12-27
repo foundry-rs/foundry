@@ -2,7 +2,7 @@ use std::{any::Any, fmt::Debug};
 
 use alloy_primitives::{Address, U256};
 use eyre::Result;
-use foundry_cheatcodes::{CheatcodeInspectorStrategy, EvmCheatcodeInspectorStrategyRunner};
+use foundry_cheatcodes::CheatcodesStrategy;
 use foundry_evm_core::backend::{Backend, BackendResult, BackendStrategy, CowBackend};
 use revm::{
     primitives::{EnvWithHandlerCfg, ResultAndState},
@@ -13,6 +13,7 @@ use crate::inspectors::InspectorStack;
 
 use super::Executor;
 
+/// Context for [ExecutorStrategy].
 pub trait ExecutorStrategyContext: Debug + Send + Sync + Any {
     /// Clone the strategy context.
     fn new_cloned(&self) -> Box<dyn ExecutorStrategyContext>;
@@ -22,6 +23,13 @@ pub trait ExecutorStrategyContext: Debug + Send + Sync + Any {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
+impl Clone for Box<dyn ExecutorStrategyContext> {
+    fn clone(&self) -> Self {
+        self.new_cloned()
+    }
+}
+
+/// Default strategy context object.
 impl ExecutorStrategyContext for () {
     fn new_cloned(&self) -> Box<dyn ExecutorStrategyContext> {
         Box::new(())
@@ -36,30 +44,19 @@ impl ExecutorStrategyContext for () {
     }
 }
 
-#[derive(Debug)]
-pub struct ExecutorStrategy {
-    /// Strategy runner.
-    pub runner: Box<dyn ExecutorStrategyRunner>,
-    /// Strategy context.
-    pub context: Box<dyn ExecutorStrategyContext>,
-}
-
-impl ExecutorStrategy {
-    pub fn new_evm() -> Self {
-        Self { runner: Box::new(EvmExecutorStrategyRunner::default()), context: Box::new(()) }
-    }
-}
-
-impl Clone for ExecutorStrategy {
-    fn clone(&self) -> Self {
-        Self { runner: self.runner.new_cloned(), context: self.context.new_cloned() }
-    }
-}
-
+/// Stateless strategy runner for [ExecutorStrategy].
 pub trait ExecutorStrategyRunner: Debug + Send + Sync {
+    /// Strategy name used when printing.
     fn name(&self) -> &'static str;
 
+    /// Clone the strategy runner.
     fn new_cloned(&self) -> Box<dyn ExecutorStrategyRunner>;
+
+    /// Creates a new [BackendStrategy].
+    fn new_backend_strategy(&self, ctx: &dyn ExecutorStrategyContext) -> BackendStrategy;
+
+    /// Creates a new [CheatcodesStrategy].
+    fn new_cheatcodes_strategy(&self, ctx: &dyn ExecutorStrategyContext) -> CheatcodesStrategy;
 
     /// Set the balance of an account.
     fn set_balance(
@@ -98,18 +95,17 @@ pub trait ExecutorStrategyRunner: Debug + Send + Sync {
         executor_env: &EnvWithHandlerCfg,
         inspector: &mut InspectorStack,
     ) -> Result<ResultAndState>;
+}
 
-    fn new_backend_strategy(&self, ctx: &dyn ExecutorStrategyContext) -> BackendStrategy;
-
-    fn new_cheatcode_inspector_strategy(
-        &self,
-        ctx: &dyn ExecutorStrategyContext,
-    ) -> CheatcodeInspectorStrategy;
+impl Clone for Box<dyn ExecutorStrategyRunner> {
+    fn clone(&self) -> Self {
+        self.new_cloned()
+    }
 }
 
 /// Implements [ExecutorStrategyRunner] for EVM.
 #[derive(Debug, Default, Clone)]
-pub struct EvmExecutorStrategyRunner {}
+pub struct EvmExecutorStrategyRunner;
 
 impl ExecutorStrategyRunner for EvmExecutorStrategyRunner {
     fn name(&self) -> &'static str {
@@ -178,16 +174,29 @@ impl ExecutorStrategyRunner for EvmExecutorStrategyRunner {
         BackendStrategy::new_evm()
     }
 
-    fn new_cheatcode_inspector_strategy(
-        &self,
-        _ctx: &dyn ExecutorStrategyContext,
-    ) -> CheatcodeInspectorStrategy {
-        CheatcodeInspectorStrategy::new_evm()
+    fn new_cheatcodes_strategy(&self, _ctx: &dyn ExecutorStrategyContext) -> CheatcodesStrategy {
+        CheatcodesStrategy::new_evm()
     }
 }
 
-impl Clone for Box<dyn ExecutorStrategyRunner> {
+/// Defines the strategy for an [Executor].
+#[derive(Debug)]
+pub struct ExecutorStrategy {
+    /// Strategy runner.
+    pub runner: Box<dyn ExecutorStrategyRunner>,
+    /// Strategy context.
+    pub context: Box<dyn ExecutorStrategyContext>,
+}
+
+impl ExecutorStrategy {
+    /// Creates a new EVM strategy for the [Executor].
+    pub fn new_evm() -> Self {
+        Self { runner: Box::new(EvmExecutorStrategyRunner), context: Box::new(()) }
+    }
+}
+
+impl Clone for ExecutorStrategy {
     fn clone(&self) -> Self {
-        self.new_cloned()
+        Self { runner: self.runner.clone(), context: self.context.clone() }
     }
 }

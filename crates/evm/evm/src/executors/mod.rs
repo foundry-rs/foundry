@@ -54,7 +54,9 @@ mod trace;
 pub use trace::TracingExecutor;
 
 mod strategy;
-pub use strategy::ExecutorStrategy;
+pub use strategy::{
+    EvmExecutorStrategyRunner, ExecutorStrategy, ExecutorStrategyContext, ExecutorStrategyRunner,
+};
 
 sol! {
     interface ITest {

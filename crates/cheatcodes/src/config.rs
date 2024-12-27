@@ -1,5 +1,5 @@
 use super::Result;
-use crate::{CheatcodeInspectorStrategy, Vm::Rpc};
+use crate::{CheatcodesStrategy, Vm::Rpc};
 use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -58,13 +58,13 @@ pub struct CheatsConfig {
     /// Optional seed for the RNG algorithm.
     pub seed: Option<U256>,
     /// Cheatcode inspector behavior.
-    pub strategy: CheatcodeInspectorStrategy,
+    pub strategy: CheatcodesStrategy,
 }
 
 impl CheatsConfig {
     /// Extracts the necessary settings from the Config
     pub fn new(
-        strategy: CheatcodeInspectorStrategy,
+        strategy: CheatcodesStrategy,
         config: &Config,
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
@@ -239,7 +239,7 @@ impl Default for CheatsConfig {
             running_version: Default::default(),
             assertions_revert: true,
             seed: None,
-            strategy: CheatcodeInspectorStrategy::new_evm(),
+            strategy: CheatcodesStrategy::new_evm(),
         }
     }
 }
@@ -251,7 +251,7 @@ mod tests {
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
-            CheatcodeInspectorStrategy::new_evm(),
+            CheatcodesStrategy::new_evm(),
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
             None,

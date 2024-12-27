@@ -336,7 +336,7 @@ impl SessionSource {
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
                     CheatsConfig::new(
-                        strategy.runner.new_cheatcode_inspector_strategy(strategy.context.as_ref()),
+                        strategy.runner.new_cheatcodes_strategy(strategy.context.as_ref()),
                         &self.config.foundry_config,
                         self.config.evm_opts.clone(),
                         None,
