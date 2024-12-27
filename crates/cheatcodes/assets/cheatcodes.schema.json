@@ -227,6 +227,13 @@
       "description": "Cheatcode groups.\nInitially derived and modified from inline comments in [`forge-std`'s `Vm.sol`][vmsol].\n\n[vmsol]: https://github.com/foundry-rs/forge-std/blob/dcb0d52bc4399d37a6545848e3b8f9d03c77b98d/src/Vm.sol",
       "oneOf": [
         {
+          "description": "Cheatcodes that are related to the Phylax Credible Layer\n\nExamples: `assertionEx`.\n\nSafety: safe",
+          "type": "string",
+          "enum": [
+            "credible"
+          ]
+        },
+        {
           "description": "Cheatcodes that read from, or write to the current EVM execution state.\n\nExamples: any of the `record` cheatcodes, `chainId`, `coinbase`.\n\nSafety: ambiguous, depends on whether the cheatcode is read-only or not.",
           "type": "string",
           "const": "evm"
