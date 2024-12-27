@@ -61,20 +61,19 @@ impl<'a> DatabaseRef for ThreadSafeDb<'a> {
 
 impl Cheatcode for assertionExCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { tx, assertionAdopter, assertionBytecode } = self.clone();
+        let Self { tx, assertionAdopter, assertions} = self.clone();
         
         // Setup assertion store and database
-        let store = AssertionStore::new(100);
         let db = ThreadSafeDb::new(ccx.ecx.db);
         
         // Prepare assertions data
         let block_number = ccx.ecx.env.block.number;
         let block = ccx.ecx.env.block.clone();
-        let assertions = vec![(
+        let associated_assertions= vec![(
             assertionAdopter,
-            assertionBytecode
+           assertions 
                 .iter()
-                .map(|bytes| Bytecode::LegacyRaw(bytes.to_owned().into()))
+                .map(|bytes| Bytecode::LegacyRaw(bytes.to_vec().into()))
                 .collect(),
         )];
 
@@ -92,8 +91,6 @@ impl Cheatcode for assertionExCall {
             .. Default::default()
         };
         
-        
-        
         // TODO: Add a function in assertion executor which returns:
         // 1. Which assertions were touched by which assertions
         // 2. Which assertion invalidated which transaction
@@ -101,8 +98,9 @@ impl Cheatcode for assertionExCall {
         let result = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(async move {
+                let store = AssertionStore::new(100);
                 // Store assertions
-                let _ = store.writer().write(block_number, assertions).await.expect("Failed to store assertions");
+                let _ = store.writer().write(block_number, associated_assertions).await.expect("Failed to store assertions");
                 let mut assertion_executor = AssertionExecutorBuilder::new(db.clone(), store.reader()).build();
                 assertion_executor
                     .validate_transaction(block, tx, &mut ForkDb::new(db))

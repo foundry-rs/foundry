@@ -58,3 +58,7 @@ bsc = "${RPC_BSC}"
 avaxTestnet = "https://api.avax-test.network/ext/bc/C/rpc"
 moonbeam = "https://moonbeam-rpc.publicnode.com"
 rpcEnvAlias = "${RPC_ENV_ALIAS}"
+
+[profile.credible]
+src = "./credible"
+test = "./credible"
