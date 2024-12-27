@@ -925,11 +925,11 @@ async fn test_mine_blk_with_prev_timestamp() {
     let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
     let third_blk_num = block.header.number;
-    let third_blk_timestmap = block.header.timestamp;
+    let third_blk_timestamp = block.header.timestamp;
 
     assert_eq!(third_blk_num, init_number + 2);
-    assert_ne!(third_blk_timestmap, next_blk_timestamp);
-    assert!(third_blk_timestmap > next_blk_timestamp);
+    assert_ne!(third_blk_timestamp, next_blk_timestamp);
+    assert!(third_blk_timestamp > next_blk_timestamp);
 }
 
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp

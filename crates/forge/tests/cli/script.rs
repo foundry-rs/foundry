@@ -2295,7 +2295,7 @@ Script ran successfully.
 "#]]);
 });
 
-forgetest_init!(can_remeber_keys, |prj, cmd| {
+forgetest_init!(can_remember_keys, |prj, cmd| {
     let script = prj
         .add_source(
             "Foo",
