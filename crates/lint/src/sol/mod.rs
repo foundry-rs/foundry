@@ -1,3 +1,8 @@
+pub mod gas;
+pub mod high;
+pub mod info;
+pub mod med;
+
 use std::path::PathBuf;
 
 use eyre::Error;
@@ -10,31 +15,13 @@ use thiserror::Error;
 
 use crate::{Lint, Linter, LinterOutput, SourceLocation};
 
-pub mod gas;
-pub mod high;
-pub mod info;
-pub mod med;
-
-#[derive(Debug, Hash)]
-pub enum SolLint {}
-
-impl Lint for SolLint {
-    fn results(&self) -> Vec<SourceLocation> {
-        todo!()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SolidityLinter {}
 
-#[derive(Error, Debug)]
-pub enum SolLintError {}
-
 impl Linter for SolidityLinter {
-    // TODO: update this to be a solar error
-    type LinterError = SolLintError;
     type Lint = SolLint;
     type Language = SolcLanguage;
+    type LinterError = SolLintError;
 
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError> {
         // let all_findings = input
@@ -70,3 +57,15 @@ impl Linter for SolidityLinter {
         todo!()
     }
 }
+
+#[derive(Debug, Hash)]
+pub enum SolLint {}
+
+impl Lint for SolLint {
+    fn results(&self) -> Vec<SourceLocation> {
+        todo!()
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum SolLintError {}
