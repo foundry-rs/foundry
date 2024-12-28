@@ -2,7 +2,7 @@ use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::TxKind;
 use alloy_sol_types::{sol, SolValue};
 use assertion_executor::db::fork_db::ForkDb;
-use assertion_executor::{store::AssertionStore, AssertionExecutorBuilder};
+use assertion_executor::{store::InMemoryStore, AssertionExecutorBuilder};
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
 use revm::primitives::{AccountInfo, Address, Bytecode, TxEnv, B256, U256};
 use revm::DatabaseRef;
@@ -61,21 +61,25 @@ impl<'a> DatabaseRef for ThreadSafeDb<'a> {
 
 impl Cheatcode for assertionExCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { tx, assertionAdopter, assertions} = self.clone();
+        let Self { tx, assertionAdopter: assertion_adopter, assertions} = self;
         
+        let spec_id = ccx.ecx.spec_id();
+
         // Setup assertion store and database
         let db = ThreadSafeDb::new(ccx.ecx.db);
         
         // Prepare assertions data
-        let block_number = ccx.ecx.env.block.number;
         let block = ccx.ecx.env.block.clone();
-        let associated_assertions= vec![(
-            assertionAdopter,
-           assertions 
+        let assertions_bytecode = assertions 
                 .iter()
                 .map(|bytes| Bytecode::LegacyRaw(bytes.to_vec().into()))
-                .collect(),
-        )];
+                .collect();
+
+        let mut store = InMemoryStore::new(spec_id);
+        store.insert(*assertion_adopter, assertions_bytecode).expect("Failed to store assertions");
+
+        let mut assertion_executor = AssertionExecutorBuilder::new(db.clone(), store.reader()).build();
+
 
         let decoded_tx= SimpleTransaction::abi_decode(&tx, true)?;
         let tx = TxEnv {
@@ -98,10 +102,7 @@ impl Cheatcode for assertionExCall {
         let result = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(async move {
-                let store = AssertionStore::new(100);
                 // Store assertions
-                let _ = store.writer().write(block_number, associated_assertions).await.expect("Failed to store assertions");
-                let mut assertion_executor = AssertionExecutorBuilder::new(db.clone(), store.reader()).build();
                 assertion_executor
                     .validate_transaction(block, tx, &mut ForkDb::new(db))
                     .await
