@@ -52,6 +52,10 @@ impl_figment_convert_basic!(LintArgs);
 impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
+
+        // Set up the project.
+        let project = config.project()?;
+
         let root = if let Some(root) = &self.root { root } else { &config.root };
 
         // Expand ignore globs and canonicalize paths
@@ -95,13 +99,4 @@ impl LintArgs {
 
         Ok(())
     }
-}
-
-pub struct ProjectLinter {}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SourceLocation {
-    pub file: String,
-    pub start: i32,
-    pub end: i32,
 }
