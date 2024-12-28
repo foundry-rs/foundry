@@ -75,12 +75,12 @@ where
 
 /// The main linter abstraction trait
 pub trait Linter: Send + Sync + Clone {
+    /// Enum of languages supported by the linter.
+    type Language: Language;
     // TODO: Add docs. This represents linter settings. (ex. Default, OP Stack, etc.
     // type Settings: LinterSettings<Self>;
     type Lint: Lint;
     type LinterError: Error;
-    /// Enum of languages supported by the linter.
-    type Language: Language;
 
     /// Main entrypoint for the linter.
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError>;

@@ -28,8 +28,8 @@ use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 pub struct SolidityLinter {}
 
 impl Linter for SolidityLinter {
-    type Lint = SolLint;
     type Language = SolcLanguage;
+    type Lint = SolLint;
     type LinterError = SolLintError;
 
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError> {
