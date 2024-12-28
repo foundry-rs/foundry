@@ -135,6 +135,66 @@ pub struct SourceLocation {
     pub span: Span,
 }
 
+// TODO: amend to display source location
+// /// Tries to mimic Solidity's own error formatting.
+// ///
+// /// <https://github.com/ethereum/solidity/blob/a297a687261a1c634551b1dac0e36d4573c19afe/liblangutil/SourceReferenceFormatter.cpp#L105>
+// impl fmt::Display for Error {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         let mut short_msg = self.message.trim();
+//         let fmtd_msg = self.formatted_message.as_deref().unwrap_or("");
+
+//         if short_msg.is_empty() {
+//             // if the message is empty, try to extract the first line from the formatted message
+//             if let Some(first_line) = fmtd_msg.lines().next() {
+//                 // this is something like `ParserError: <short_message>`
+//                 if let Some((_, s)) = first_line.split_once(':') {
+//                     short_msg = s.trim_start();
+//                 } else {
+//                     short_msg = first_line;
+//                 }
+//             }
+//         }
+
+//         // Error (XXXX): Error Message
+//         styled(f, self.severity.color().bold(), |f| self.fmt_severity(f))?;
+//         fmt_msg(f, short_msg)?;
+
+//         let mut lines = fmtd_msg.lines();
+
+//         // skip the first line if it contains the same message as the one we just formatted,
+//         // unless it also contains a source location, in which case the entire error message is an
+//         // old style error message, like:
+//         //     path/to/file:line:column: ErrorType: message
+//         if lines
+//             .clone()
+//             .next()
+//             .is_some_and(|l| l.contains(short_msg) && l.bytes().filter(|b| *b == b':').count() < 3)
+//         {
+//             let _ = lines.next();
+//         }
+
+//         // format the main source location
+//         fmt_source_location(f, &mut lines)?;
+
+//         // format remaining lines as secondary locations
+//         while let Some(line) = lines.next() {
+//             f.write_str("\n")?;
+
+//             if let Some((note, msg)) = line.split_once(':') {
+//                 styled(f, Self::secondary_style(), |f| f.write_str(note))?;
+//                 fmt_msg(f, msg)?;
+//             } else {
+//                 f.write_str(line)?;
+//             }
+
+//             fmt_source_location(f, &mut lines)?;
+//         }
+
+//         Ok(())
+//     }
+// }
+
 // impl Linter {
 //     pub fn new(input: Vec<PathBuf>) -> Self {
 //         Self { input, lints: Lint::all(), description: false }
