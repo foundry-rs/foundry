@@ -13,7 +13,7 @@ impl<'ast> Visit<'ast> for VariableCamelCase {
             if !mutability.is_constant() && !mutability.is_immutable() {
                 if let Some(name) = var.name {
                     if !is_camel_case(name.as_str()) {
-                        self.items.push(var.span);
+                        self.results.push(var.span);
                     }
                 }
             }
@@ -28,7 +28,7 @@ impl<'ast> Visit<'ast> for VariableCapsCase {
             if mutability.is_constant() || mutability.is_immutable() {
                 if let Some(name) = var.name {
                     if !is_caps_case(name.as_str()) {
-                        self.items.push(var.span);
+                        self.results.push(var.span);
                     }
                 }
             }
@@ -40,7 +40,7 @@ impl<'ast> Visit<'ast> for VariableCapsCase {
 impl<'ast> Visit<'ast> for StructPascalCase {
     fn visit_item_struct(&mut self, strukt: &'ast ItemStruct<'ast>) {
         if !is_pascal_case(strukt.name.as_str()) {
-            self.items.push(strukt.name.span);
+            self.results.push(strukt.name.span);
         }
 
         self.walk_item_struct(strukt);

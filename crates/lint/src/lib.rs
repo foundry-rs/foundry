@@ -16,26 +16,7 @@ use std::{
 };
 
 use clap::ValueEnum;
-use solar_ast::{
-    ast::{self, SourceUnit, Span},
-    interface::{ColorChoice, Session},
-    visit::Visit,
-};
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum OutputFormat {
-    Json,
-    Markdown,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub enum Severity {
-    High,
-    Med,
-    Low,
-    Info,
-    Gas,
-}
+use solar_ast::ast::{self, SourceUnit, Span};
 
 pub struct ProjectLinter<L>
 where
@@ -68,7 +49,7 @@ where
 
     /// Lints the project.
     pub fn lint<C: Compiler<CompilerContract = Contract>>(
-        mut self,
+        self,
         project: &Project<C>,
     ) -> eyre::Result<LinterOutput<L>> {
         if !project.paths.has_input_files() && self.files.is_empty() {
@@ -85,9 +66,7 @@ where
 
         let input = sources.into_iter().map(|(path, _)| path).collect::<Vec<PathBuf>>();
 
-        // Ok(self.linter.lint(&input)?)
-
-        todo!()
+        Ok(self.linter.lint(&input).expect("TODO: handle error"))
     }
 }
 
@@ -117,11 +96,28 @@ pub struct LinterOutput<L: Linter> {
 }
 
 pub trait Lint: Hash {
-    fn results(&self) -> Vec<SourceLocation>;
+    fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+    fn severity(&self) -> Severity;
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum OutputFormat {
+    Json,
+    Markdown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Severity {
+    High,
+    Med,
+    Low,
+    Info,
+    Gas,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
+    // TODO: should this be path buf?
     pub file: String,
     pub span: Span,
 }
@@ -183,73 +179,5 @@ pub struct SourceLocation {
 //         }
 
 //         Ok(())
-//     }
-// }
-
-// impl Linter {
-//     pub fn new(input: Vec<PathBuf>) -> Self {
-//         Self { input, lints: Lint::all(), description: false }
-//     }
-
-//     pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
-//         if let Some(severity) = severity {
-//             self.lints.retain(|lint| severity.contains(&lint.severity()));
-//         }
-//         self
-//     }
-
-//     pub fn with_description(mut self, description: bool) -> Self {
-//         self.description = description;
-//         self
-//     }
-
-//     pub fn lint(self) {
-//         let all_findings = self
-//             .input
-//             .par_iter()
-//             .map(|file| {
-//                 let lints = self.lints.clone();
-//                 let mut local_findings = HashMap::new();
-
-//                 // Create a new session for this file
-//                 let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
-//                 let arena = ast::Arena::new();
-
-//                 // Enter the session context for this thread
-//                 let _ = sess.enter(|| -> solar_interface::Result<()> {
-//                     let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
-
-//                     let ast =
-//                         parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
-
-//                     // Run all lints on the parsed AST and collect findings
-//                     for mut lint in lints {
-//                         let results = lint.lint(&ast);
-//                         local_findings.entry(lint).or_insert_with(Vec::new).extend(results);
-//                     }
-
-//                     Ok(())
-//                 });
-
-//                 local_findings
-//             })
-//             .collect::<Vec<HashMap<Lint, Vec<Span>>>>();
-
-//         let mut aggregated_findings = HashMap::new();
-//         for file_findings in all_findings {
-//             for (lint, results) in file_findings {
-//                 aggregated_findings.entry(lint).or_insert_with(Vec::new).extend(results);
-//             }
-//         }
-
-//         // TODO: make the output nicer
-//         for finding in aggregated_findings {
-//             let (lint, results) = finding;
-//             let _description = if self.description { lint.description() } else { "" };
-
-//             for _result in results {
-//                 // TODO: display the finding
-//             }
-//         }
 //     }
 // }

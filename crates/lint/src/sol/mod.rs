@@ -62,12 +62,6 @@ impl Linter for SolidityLinter {
     }
 }
 
-impl Lint for SolLint {
-    fn results(&self) -> Vec<SourceLocation> {
-        todo!()
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum SolLintError {}
 
@@ -89,37 +83,12 @@ macro_rules! declare_sol_lints {
                 ]
             }
 
-            pub fn severity(&self) -> Severity {
-                match self {
-                    $(
-                        SolLint::$name(_) => $severity,
-                    )*
-                }
-            }
-
-            pub fn name(&self) -> &'static str {
-                match self {
-                    $(
-                        SolLint::$name(_) => $lint_name,
-                    )*
-                }
-            }
-
-            pub fn description(&self) -> &'static str {
-                match self {
-                    $(
-                        SolLint::$name(_) => $description,
-                    )*
-                }
-            }
-
             /// Lint a source unit and return the findings
-            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Vec<Span> {
+            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) {
                 match self {
                     $(
                         SolLint::$name(lint) => {
                             lint.visit_source_unit(source_unit);
-                            lint.items.clone()
                         },
                     )*
                 }
@@ -142,15 +111,43 @@ macro_rules! declare_sol_lints {
             }
         }
 
+        impl Lint for SolLint {
+            fn name(&self) -> &'static str {
+                match self {
+                    $(
+                        SolLint::$name(_) => $lint_name,
+                    )*
+                }
+            }
+
+            fn description(&self) -> &'static str {
+                match self {
+                    $(
+                        SolLint::$name(_) => $description,
+                    )*
+                }
+            }
+
+            fn severity(&self) -> Severity {
+                match self {
+                    $(
+                        SolLint::$name(_) => $severity,
+                    )*
+                }
+            }
+        }
+
+
         $(
             #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
             pub struct $name {
-                pub items: Vec<Span>,
+                // TODO: make source location and option
+                pub results: Vec<Span>,
             }
 
             impl $name {
                 pub fn new() -> Self {
-                    Self { items: Vec::new() }
+                    Self { results: Vec::new() }
                 }
 
                 /// Returns the severity of the lint

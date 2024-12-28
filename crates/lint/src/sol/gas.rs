@@ -13,7 +13,7 @@ impl<'ast> Visit<'ast> for AsmKeccak256 {
         if let ExprKind::Call(expr, _) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
                 if ident.name.as_str() == "keccak256" {
-                    self.items.push(expr.span);
+                    self.results.push(expr.span);
                 }
             }
         }
@@ -83,7 +83,7 @@ mod test {
             let mut pattern = AsmKeccak256::default();
             pattern.visit_source_unit(&ast);
 
-            assert_eq!(pattern.items.len(), 2);
+            assert_eq!(pattern.results.len(), 2);
 
             Ok(())
         });
