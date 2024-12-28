@@ -4,7 +4,12 @@ pub mod info;
 pub mod med;
 
 use rayon::prelude::*;
-use std::{collections::HashMap, hash::Hasher, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    error::Error,
+    hash::Hasher,
+    path::PathBuf,
+};
 
 use clap::ValueEnum;
 use solar_ast::{
@@ -26,6 +31,45 @@ pub enum Severity {
     Low,
     Info,
     Gas,
+}
+
+pub struct ProjectLinter {}
+
+/// The main compiler abstraction trait.
+///
+/// Currently mostly represents a wrapper around compiler binary aware of the version and able to
+/// compile given input into [`CompilerOutput`] including artifacts and errors.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait Linter: Send + Sync + Clone {
+    // TODO: keep this
+    /// Input type for the compiler. Contains settings and sources to be compiled.
+    type Input: CompilerInput<Settings = Self::Settings, Language = Self::Language>;
+    /// Compiler settings.
+    type Settings: LinterSettings;
+
+    type LinterError: Error;
+    /// Enum of languages supported by the linter.
+    type Language: Language;
+    /// Main entrypoint for the linter.
+    fn lint(&self, input: &Self::Input) -> Result<LinterOutput, Self::LinterError>;
+}
+
+pub struct LinterOutput {
+    pub results: BTreeMap<Lint, Vec<SourceLocation>>,
+}
+
+/// Linter for languages supported by the Solc compiler
+pub struct SolcLinter {}
+
+impl Language for SolcLinter {
+    const FILE_EXTENSIONS: &'static [&'static str] = SOLC_EXTENSIONS;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceLocation {
+    pub file: String,
+    pub start: i32,
+    pub end: i32,
 }
 
 pub struct Linter {

@@ -87,6 +87,7 @@ impl LintArgs {
             bail!("No source files found in path");
         }
 
+        // TODO: maybe compile and lint on the aggreagted compiler output?
         Linter::new(input)
             .with_severity(self.severity)
             .with_description(self.with_description)
@@ -94,4 +95,13 @@ impl LintArgs {
 
         Ok(())
     }
+}
+
+pub struct ProjectLinter {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceLocation {
+    pub file: String,
+    pub start: i32,
+    pub end: i32,
 }
