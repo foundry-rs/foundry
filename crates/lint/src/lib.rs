@@ -56,6 +56,16 @@ where
         Self { linter, files: Vec::new(), severity: None, description: false }
     }
 
+    pub fn with_description(mut self, description: bool) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
+        self.severity = severity;
+        self
+    }
+
     /// Lints the project.
     pub fn lint<C: Compiler<CompilerContract = Contract>>(
         mut self,
@@ -67,17 +77,6 @@ where
             std::process::exit(0);
         }
 
-        // // Taking is fine since we don't need these in `compile_with`.
-        // let files = std::mem::take(&mut self.files);
-        // self.compile_with(|| {
-        //     let sources = if !files.is_empty() {
-        //         Source::read_all(files)?
-        //     } else {
-        //         project.paths.read_input_files()?
-        //     };
-
-        // })
-
         let sources = if !self.files.is_empty() {
             Source::read_all(self.files.clone())?
         } else {
@@ -86,17 +85,7 @@ where
 
         let input = sources.into_iter().map(|(path, _)| path).collect::<Vec<PathBuf>>();
 
-        todo!()
-    }
-
-    pub fn with_description(mut self, description: bool) -> Self {
-        self.description = description;
-        self
-    }
-
-    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
-        self.severity = severity;
-        self
+        Ok(self.linter.lint(&input)?)
     }
 }
 
