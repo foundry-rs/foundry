@@ -1,9 +1,11 @@
-pub mod gas;
-pub mod high;
-pub mod info;
-pub mod med;
+pub mod sol;
 
+use foundry_common::sh_println;
+use foundry_compilers::{
+    artifacts::Contract, Compiler, CompilerContract, CompilerInput, Language, Project,
+};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
@@ -38,6 +40,10 @@ pub struct ProjectLinter<L>
 where
     L: Linter,
 {
+    /// Extra files to include, that are not necessarily in the project's source dir.
+    files: Vec<PathBuf>,
+    severity: Option<Vec<Severity>>,
+    description: bool,
     // TODO: remove later
     phantom: PhantomData<L>,
 }
@@ -46,63 +52,73 @@ impl<L> ProjectLinter<L>
 where
     L: Linter,
 {
-    // pub fn new() -> Self {
-    //     Self {}
-    // }
-
     /// Lints the project.
     pub fn lint<C: Compiler<CompilerContract = Contract>>(
         mut self,
         project: &Project<C>,
-    ) -> Result<LinterOutput, LinterError> {
+    ) -> eyre::Result<LinterOutput<L>> {
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
             // nothing to do here
             std::process::exit(0);
         }
 
-        // Taking is fine since we don't need these in `compile_with`.
-        let files = std::mem::take(&mut self.files);
-        self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
-                project.paths.read_input_files()?
-            };
+        // // Taking is fine since we don't need these in `compile_with`.
+        // let files = std::mem::take(&mut self.files);
+        // self.compile_with(|| {
+        //     let sources = if !files.is_empty() {
+        //         Source::read_all(files)?
+        //     } else {
+        //         project.paths.read_input_files()?
+        //     };
 
-            todo!()
-        })
+        // })
+
+        todo!()
+    }
+
+    pub fn with_description(mut self, description: bool) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
+        self.severity = severity;
+        self
     }
 }
 
+// NOTE: add some way to specify linter profiles. For example having a profile adhering to the op stack, base, etc.
+// This can probably also be accomplished via the foundry.toml. Maybe have generic profile/settings
+
 /// The main linter abstraction trait
-#[auto_impl::auto_impl(&, Box, Arc)]
 pub trait Linter: Send + Sync + Clone {
-    // TODO: keep this
     /// Input type for the compiler. Contains settings and sources to be compiled.
-    type Input: CompilerInput<Settings = Self::Settings, Language = Self::Language>;
-    /// Compiler settings.
-    type Settings: LinterSettings;
+    type Input: CompilerInput<Language = Self::Language>;
+
+    // TODO: probably remove
+    // /// TODO: Add docs. This represents linter settings. (ex. Default, OP Stack, etc.)
+    // type Settings: LinterSettings<Self>;
+    type Lint: Lint;
     type LinterError: Error;
     /// Enum of languages supported by the linter.
     type Language: Language;
 
     /// Main entrypoint for the linter.
-    fn lint(&self, input: &Self::Input) -> Result<LinterOutput, Self::LinterError>;
+    fn lint(&self, input: &Self::Input) -> Result<LinterOutput<Self>, Self::LinterError>;
 }
 
-// TODO: make Lint a generic
-pub struct LinterOutput<L: Lint> {
-    pub results: BTreeMap<L, Vec<SourceLocation>>,
+// TODO: probably remove
+pub trait LinterSettings<L: Linter> {
+    fn lints() -> Vec<L::Lint>;
 }
 
-pub trait Lint: Hash {}
+pub struct LinterOutput<L: Linter> {
+    pub results: BTreeMap<L::Lint, Vec<SourceLocation>>,
+}
 
-/// Linter for languages supported by the Solc compiler
-pub struct SolcLinter {}
-
-impl Language for SolcLinter {
-    const FILE_EXTENSIONS: &'static [&'static str] = SOLC_EXTENSIONS;
+pub trait Lint: Hash {
+    fn results(&self) -> Vec<SourceLocation>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -110,12 +126,6 @@ pub struct SourceLocation {
     pub file: String,
     pub span: Span,
 }
-
-// pub struct Linter {
-//     pub input: Vec<PathBuf>,
-//     pub lints: Vec<Lint>,
-//     pub description: bool,
-// }
 
 // impl Linter {
 //     pub fn new(input: Vec<PathBuf>) -> Self {
