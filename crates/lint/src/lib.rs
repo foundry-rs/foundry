@@ -107,6 +107,7 @@ pub enum OutputFormat {
     Markdown,
 }
 
+// TODO: impl color for severity
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Severity {
     High,
