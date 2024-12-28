@@ -24,6 +24,7 @@ solar-interface.workspace = true
 
 eyre.workspace = true
 rayon.workspace = true
+thiserror.workspace = true
 serde_json.workspace = true
 auto_impl.workspace = true
 serde = { workspace = true, features = ["derive"] }

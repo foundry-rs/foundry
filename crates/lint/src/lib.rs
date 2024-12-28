@@ -2,7 +2,8 @@ pub mod sol;
 
 use foundry_common::sh_println;
 use foundry_compilers::{
-    artifacts::Contract, Compiler, CompilerContract, CompilerInput, Language, Project,
+    artifacts::{Contract, Source},
+    Compiler, CompilerContract, CompilerInput, Language, Project,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -40,18 +41,21 @@ pub struct ProjectLinter<L>
 where
     L: Linter,
 {
+    pub linter: L,
     /// Extra files to include, that are not necessarily in the project's source dir.
-    files: Vec<PathBuf>,
-    severity: Option<Vec<Severity>>,
-    description: bool,
-    // TODO: remove later
-    phantom: PhantomData<L>,
+    pub files: Vec<PathBuf>,
+    pub severity: Option<Vec<Severity>>,
+    pub description: bool,
 }
 
 impl<L> ProjectLinter<L>
 where
     L: Linter,
 {
+    pub fn new(linter: L) -> Self {
+        Self { linter, files: Vec::new(), severity: None, description: false }
+    }
+
     /// Lints the project.
     pub fn lint<C: Compiler<CompilerContract = Contract>>(
         mut self,
@@ -74,6 +78,14 @@ where
 
         // })
 
+        let sources = if !self.files.is_empty() {
+            Source::read_all(self.files.clone())?
+        } else {
+            project.paths.read_input_files()?
+        };
+
+        let input = sources.into_iter().map(|(path, _)| path).collect::<Vec<PathBuf>>();
+
         todo!()
     }
 
@@ -89,15 +101,11 @@ where
 }
 
 // NOTE: add some way to specify linter profiles. For example having a profile adhering to the op stack, base, etc.
-// This can probably also be accomplished via the foundry.toml. Maybe have generic profile/settings
+// This can probably also be accomplished via the foundry.toml or some functions. Maybe have generic profile/settings
 
 /// The main linter abstraction trait
 pub trait Linter: Send + Sync + Clone {
-    /// Input type for the compiler. Contains settings and sources to be compiled.
-    type Input: CompilerInput<Language = Self::Language>;
-
-    // TODO: probably remove
-    // /// TODO: Add docs. This represents linter settings. (ex. Default, OP Stack, etc.)
+    // TODO: Add docs. This represents linter settings. (ex. Default, OP Stack, etc.
     // type Settings: LinterSettings<Self>;
     type Lint: Lint;
     type LinterError: Error;
@@ -105,7 +113,7 @@ pub trait Linter: Send + Sync + Clone {
     type Language: Language;
 
     /// Main entrypoint for the linter.
-    fn lint(&self, input: &Self::Input) -> Result<LinterOutput<Self>, Self::LinterError>;
+    fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError>;
 }
 
 // TODO: probably remove

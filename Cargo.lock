@@ -3570,6 +3570,7 @@ dependencies = [
  "solar-ast",
  "solar-interface",
  "solar-parse",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
