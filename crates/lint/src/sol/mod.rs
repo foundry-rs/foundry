@@ -33,38 +33,48 @@ impl Linter for SolidityLinter {
     type LinterError = SolLintError;
 
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError> {
-        let all_findings = input.into_par_iter().map(|file| {
-            // NOTE: use all solidity lints for now but this should be configurable via SolidityLinter
-            let lints = SolLint::all();
+        let all_findings = input
+            .into_par_iter()
+            .map(|file| {
+                // NOTE: use all solidity lints for now but this should be configurable via SolidityLinter
+                let mut lints = SolLint::all();
 
-            // Initialize session and parsing environment
-            let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
-            let arena = Arena::new();
+                // Initialize session and parsing environment
+                let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+                let arena = Arena::new();
 
-            // Enter the session context for this thread
-            let _ = sess.enter(|| -> solar_interface::Result<LinterOutput<Self>> {
-                let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
-                let ast = parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
+                // Enter the session context for this thread
+                let _ = sess.enter(|| -> solar_interface::Result<()> {
+                    let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
+                    let ast =
+                        parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
 
-                let mut local_findings = LinterOutput::new();
-                // Run all lints on the parsed AST and collect findings
-                for mut lint in lints.into_iter() {
-                    let findings = lint.lint(&ast);
-                    if !findings.is_empty() {
-                        let source_locations = findings
-                            .into_iter()
-                            .map(|span| SourceLocation::new(file.to_owned(), span))
-                            .collect::<Vec<_>>();
-
-                        local_findings.insert(lint, source_locations);
+                    // Run all lints on the parsed AST and collect findings
+                    for lint in lints.iter_mut() {
+                        lint.lint(&ast);
                     }
-                }
 
-                Ok(local_findings)
-            });
-        });
+                    Ok(())
+                });
 
-        todo!()
+                (file.to_owned(), lints)
+            })
+            .collect::<Vec<(PathBuf, Vec<SolLint>)>>();
+
+        let mut output = LinterOutput::new();
+        for (file, lints) in all_findings {
+            for lint in lints {
+                let source_locations = lint
+                    .results()
+                    .iter()
+                    .map(|span| SourceLocation::new(file.clone(), *span))
+                    .collect::<Vec<_>>();
+
+                output.insert(lint, source_locations);
+            }
+        }
+
+        Ok(output)
     }
 }
 
@@ -89,6 +99,14 @@ macro_rules! declare_sol_lints {
                         SolLint::$name($name::new()),
                     )*
                 ]
+            }
+
+            pub fn results(&self) -> &[Span] {
+                match self {
+                    $(
+                        SolLint::$name(lint) => &lint.results,
+                    )*
+                }
             }
 
             /// Lint a source unit and return the findings

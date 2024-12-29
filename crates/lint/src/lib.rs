@@ -80,7 +80,7 @@ pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     // TODO: Add docs. This represents linter settings. (ex. Default, OP Stack, etc.
     // type Settings: LinterSettings<Self>;
-    type Lint: Lint;
+    type Lint: Lint + Ord;
     type LinterError: Error;
 
     /// Main entrypoint for the linter.
@@ -112,6 +112,14 @@ impl<L: Linter> Deref for LinterOutput<L> {
 impl<L: Linter> DerefMut for LinterOutput<L> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<L: Linter> Extend<(L::Lint, Vec<SourceLocation>)> for LinterOutput<L> {
+    fn extend<T: IntoIterator<Item = (L::Lint, Vec<SourceLocation>)>>(&mut self, iter: T) {
+        for (lint, findings) in iter {
+            self.0.entry(lint).or_insert_with(Vec::new).extend(findings);
+        }
     }
 }
 
