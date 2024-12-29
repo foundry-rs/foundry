@@ -4,14 +4,14 @@ pub mod info;
 pub mod med;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     hash::{Hash, Hasher},
     path::PathBuf,
 };
 
 use eyre::Error;
 use foundry_compilers::solc::SolcLanguage;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use solar_ast::{
     ast::{Arena, SourceUnit},
     visit::Visit,
@@ -33,28 +33,33 @@ impl Linter for SolidityLinter {
     type LinterError = SolLintError;
 
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError> {
-        let all_findings = input.par_iter().map(|file| {
+        let all_findings = input.into_par_iter().map(|file| {
             // NOTE: use all solidity lints for now but this should be configurable via SolidityLinter
-            let mut lints = SolLint::all();
+            let lints = SolLint::all();
 
             // Initialize session and parsing environment
             let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
             let arena = Arena::new();
-            let mut local_findings = BTreeMap::new();
 
             // Enter the session context for this thread
-            let _ = sess.enter(|| -> solar_interface::Result<()> {
+            let _ = sess.enter(|| -> solar_interface::Result<LinterOutput<Self>> {
                 let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
-
                 let ast = parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
 
+                let mut local_findings = LinterOutput::new();
                 // Run all lints on the parsed AST and collect findings
-                for mut lint in lints {
-                    let results = lint.lint(&ast);
-                    local_findings.entry(lint).or_insert_with(Vec::new).extend(results);
+                for mut lint in lints.into_iter() {
+                    if let Some(findings) = lint.lint(&ast) {
+                        let findings = findings
+                            .into_iter()
+                            .map(|span| SourceLocation::new(file.to_owned(), span))
+                            .collect::<Vec<_>>();
+
+                        local_findings.insert(lint, findings);
+                    }
                 }
 
-                Ok(())
+                Ok(local_findings)
             });
         });
 
@@ -67,7 +72,9 @@ pub enum SolLintError {}
 
 macro_rules! declare_sol_lints {
     ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
-        #[derive(Debug, Clone, PartialEq, Eq)]
+
+        // TODO: ord based on severity
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
         pub enum SolLint {
             $(
                 $name($name),
@@ -84,11 +91,12 @@ macro_rules! declare_sol_lints {
             }
 
             /// Lint a source unit and return the findings
-            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) {
+            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Option<Vec<Span>> {
                 match self {
                     $(
                         SolLint::$name(lint) => {
                             lint.visit_source_unit(source_unit);
+                            lint.results.clone()
                         },
                     )*
                 }
@@ -139,15 +147,15 @@ macro_rules! declare_sol_lints {
 
 
         $(
-            #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+            #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
             pub struct $name {
                 // TODO: make source location and option
-                pub results: Vec<Span>,
+                pub results: Option<Vec<Span>>,
             }
 
             impl $name {
                 pub fn new() -> Self {
-                    Self { results: Vec::new() }
+                    Self { results: None }
                 }
 
                 /// Returns the severity of the lint

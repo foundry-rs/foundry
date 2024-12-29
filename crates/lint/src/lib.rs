@@ -12,6 +12,7 @@ use std::{
     error::Error,
     hash::{Hash, Hasher},
     marker::PhantomData,
+    ops::{Deref, DerefMut},
     path::PathBuf,
 };
 
@@ -91,8 +92,27 @@ pub trait LinterSettings<L: Linter> {
     fn lints() -> Vec<L::Lint>;
 }
 
-pub struct LinterOutput<L: Linter> {
-    pub results: BTreeMap<L::Lint, Vec<SourceLocation>>,
+pub struct LinterOutput<L: Linter>(pub BTreeMap<L::Lint, Vec<SourceLocation>>);
+
+impl<L: Linter> LinterOutput<L> {
+    // Optional: You can still provide a `new` method for convenience
+    pub fn new() -> Self {
+        LinterOutput(BTreeMap::new())
+    }
+}
+
+impl<L: Linter> Deref for LinterOutput<L> {
+    type Target = BTreeMap<L::Lint, Vec<SourceLocation>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<L: Linter> DerefMut for LinterOutput<L> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 pub trait Lint: Hash {
@@ -119,8 +139,14 @@ pub enum Severity {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
     // TODO: should this be path buf?
-    pub file: String,
+    pub file: PathBuf,
     pub span: Span,
+}
+
+impl SourceLocation {
+    pub fn new(file: PathBuf, span: Span) -> Self {
+        Self { file, span }
+    }
 }
 
 // TODO: amend to display source location
