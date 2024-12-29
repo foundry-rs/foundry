@@ -140,6 +140,7 @@ pub fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
     write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
 }
 
+#[allow(clippy::literal_string_with_formatting_args)]
 pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new(len);
     let mut template =

@@ -800,7 +800,7 @@ impl NodeConfig {
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
     pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
-        self.fork_chain_id = fork_chain_id.map(Into::into);
+        self.fork_chain_id = fork_chain_id;
         self
     }
 

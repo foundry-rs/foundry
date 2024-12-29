@@ -25,6 +25,7 @@ pub struct GenerateTestArgs {
 }
 
 impl GenerateTestArgs {
+    #[allow(clippy::literal_string_with_formatting_args)]
     pub fn run(self) -> Result<()> {
         let contract_name = format_identifier(&self.contract_name, true);
         let instance_name = format_identifier(&self.contract_name, false);
