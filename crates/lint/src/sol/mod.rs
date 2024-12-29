@@ -49,13 +49,14 @@ impl Linter for SolidityLinter {
                 let mut local_findings = LinterOutput::new();
                 // Run all lints on the parsed AST and collect findings
                 for mut lint in lints.into_iter() {
-                    if let Some(findings) = lint.lint(&ast) {
-                        let findings = findings
+                    let findings = lint.lint(&ast);
+                    if !findings.is_empty() {
+                        let source_locations = findings
                             .into_iter()
                             .map(|span| SourceLocation::new(file.to_owned(), span))
                             .collect::<Vec<_>>();
 
-                        local_findings.insert(lint, findings);
+                        local_findings.insert(lint, source_locations);
                     }
                 }
 
@@ -91,7 +92,7 @@ macro_rules! declare_sol_lints {
             }
 
             /// Lint a source unit and return the findings
-            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Option<Vec<Span>> {
+            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Vec<Span> {
                 match self {
                     $(
                         SolLint::$name(lint) => {
@@ -149,13 +150,12 @@ macro_rules! declare_sol_lints {
         $(
             #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
             pub struct $name {
-                // TODO: make source location and option
-                pub results: Option<Vec<Span>>,
+                pub results: Vec<Span>,
             }
 
             impl $name {
                 pub fn new() -> Self {
-                    Self { results: None }
+                    Self { results: Vec::new() }
                 }
 
                 /// Returns the severity of the lint
