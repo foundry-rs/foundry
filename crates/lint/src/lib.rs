@@ -7,6 +7,7 @@ use foundry_compilers::{
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use sol::SolidityLinter;
 use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
@@ -51,11 +52,37 @@ where
     /// Lints the project.
     pub fn lint<C: Compiler<CompilerContract = Contract>>(
         self,
-        project: &Project<C>,
+        mut project: &Project<C>,
     ) -> eyre::Result<LinterOutput<L>> {
+        // TODO: infer linter from project
+
+        // // Expand ignore globs and canonicalize paths
+        // let mut ignored = expand_globs(&root, config.fmt.ignore.iter())?
+        //     .iter()
+        //     .flat_map(foundry_common::fs::canonicalize_path)
+        //     .collect::<HashSet<_>>();
+
+        // // Add explicitly excluded paths to the ignored set
+        // if let Some(exclude_paths) = &self.exclude {
+        //     ignored.extend(exclude_paths.iter().flat_map(foundry_common::fs::canonicalize_path));
+        // }
+
+        // let mut input: Vec<PathBuf> = if let Some(include_paths) = &self.include {
+        //     include_paths.iter().filter(|path| path.exists()).cloned().collect()
+        // } else {
+        //     source_files_iter(&root, SOLC_EXTENSIONS)
+        //         .filter(|p| !(ignored.contains(p) || ignored.contains(&root.join(p))))
+        //         .collect()
+        // };
+
+        // input.retain(|path| !ignored.contains(path));
+
+        // if input.is_empty() {
+        //     bail!("No source files found in path");
+        // }
+
         if !project.paths.has_input_files() && self.files.is_empty() {
-            sh_println!("Nothing to compile")?;
-            // nothing to do here
+            sh_println!("Nothing to lint")?;
             std::process::exit(0);
         }
 
@@ -146,7 +173,6 @@ pub enum Severity {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
-    // TODO: should this be path buf?
     pub file: PathBuf,
     pub span: Span,
 }

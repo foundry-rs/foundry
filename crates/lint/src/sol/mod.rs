@@ -4,28 +4,29 @@ pub mod info;
 pub mod med;
 
 use std::{
-    collections::{BTreeMap, HashMap},
     hash::{Hash, Hasher},
     path::PathBuf,
 };
 
-use eyre::Error;
 use foundry_compilers::solc::SolcLanguage;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{
     ast::{Arena, SourceUnit},
     visit::Visit,
 };
-use solar_interface::{
-    diagnostics::{DiagnosticBuilder, ErrorGuaranteed},
-    ColorChoice, Session, Span,
-};
+use solar_interface::{ColorChoice, Session, Span};
 use thiserror::Error;
 
 use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 
-#[derive(Debug, Clone)]
-pub struct SolidityLinter {}
+#[derive(Debug, Clone, Default)]
+pub struct SolidityLinter;
+
+impl SolidityLinter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 impl Linter for SolidityLinter {
     type Language = SolcLanguage;

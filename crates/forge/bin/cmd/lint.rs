@@ -1,7 +1,9 @@
 use clap::{Parser, ValueHint};
 use eyre::{bail, Result};
-use forge_lint::{Linter, OutputFormat, Severity};
+use forge_lint::sol::SolidityLinter;
+use forge_lint::{Linter, OutputFormat, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
+use foundry_common::shell;
 use foundry_compilers::utils::{source_files_iter, SOLC_EXTENSIONS};
 use foundry_config::filter::expand_globs;
 use foundry_config::impl_figment_convert_basic;
@@ -52,50 +54,17 @@ impl_figment_convert_basic!(LintArgs);
 impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
-
-        // Set up the project.
         let project = config.project()?;
 
-        let root = if let Some(root) = &self.root { root } else { &config.root };
+        // TODO: Update this to infer the linter from the project, just hard coding to solidity for now
+        let linter = SolidityLinter::new();
+        let output = ProjectLinter::new(linter).lint(&project)?;
 
-        // Expand ignore globs and canonicalize paths
-        let mut ignored = expand_globs(&root, config.fmt.ignore.iter())?
-            .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
-            .collect::<HashSet<_>>();
+        // let format_json = shell::is_json();
 
-        // Add explicitly excluded paths to the ignored set
-        if let Some(exclude_paths) = &self.exclude {
-            ignored.extend(exclude_paths.iter().flat_map(foundry_common::fs::canonicalize_path));
-        }
-
-        let entries = fs::read_dir(root).unwrap();
-        println!("Files in directory: {}", root.display());
-        for entry in entries {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            println!("{}", path.display());
-        }
-
-        let mut input: Vec<PathBuf> = if let Some(include_paths) = &self.include {
-            include_paths.iter().filter(|path| path.exists()).cloned().collect()
-        } else {
-            source_files_iter(&root, SOLC_EXTENSIONS)
-                .filter(|p| !(ignored.contains(p) || ignored.contains(&root.join(p))))
-                .collect()
-        };
-
-        input.retain(|path| !ignored.contains(path));
-
-        if input.is_empty() {
-            bail!("No source files found in path");
-        }
-
-        // TODO: maybe compile and lint on the aggreagted compiler output?
-        Linter::new(input)
-            .with_severity(self.severity)
-            .with_description(self.with_description)
-            .lint();
+        // if format_json && !self.names && !self.sizes {
+        //     sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
+        // }
 
         Ok(())
     }
