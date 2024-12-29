@@ -25,8 +25,6 @@ where
     L: Linter,
 {
     pub linter: L,
-    /// Extra files to include, that are not necessarily in the project's source dir.
-    pub files: Vec<PathBuf>,
     pub severity: Option<Vec<Severity>>,
     pub description: bool,
 }
@@ -36,7 +34,7 @@ where
     L: Linter,
 {
     pub fn new(linter: L) -> Self {
-        Self { linter, files: Vec::new(), severity: None, description: false }
+        Self { linter, severity: None, description: false }
     }
 
     pub fn with_description(mut self, description: bool) -> Self {
@@ -50,50 +48,7 @@ where
     }
 
     /// Lints the project.
-    pub fn lint<C: Compiler<CompilerContract = Contract>>(
-        self,
-        mut project: &Project<C>,
-    ) -> eyre::Result<LinterOutput<L>> {
-        // TODO: infer linter from project
-
-        // // Expand ignore globs and canonicalize paths
-        // let mut ignored = expand_globs(&root, config.fmt.ignore.iter())?
-        //     .iter()
-        //     .flat_map(foundry_common::fs::canonicalize_path)
-        //     .collect::<HashSet<_>>();
-
-        // // Add explicitly excluded paths to the ignored set
-        // if let Some(exclude_paths) = &self.exclude {
-        //     ignored.extend(exclude_paths.iter().flat_map(foundry_common::fs::canonicalize_path));
-        // }
-
-        // let mut input: Vec<PathBuf> = if let Some(include_paths) = &self.include {
-        //     include_paths.iter().filter(|path| path.exists()).cloned().collect()
-        // } else {
-        //     source_files_iter(&root, SOLC_EXTENSIONS)
-        //         .filter(|p| !(ignored.contains(p) || ignored.contains(&root.join(p))))
-        //         .collect()
-        // };
-
-        // input.retain(|path| !ignored.contains(path));
-
-        // if input.is_empty() {
-        //     bail!("No source files found in path");
-        // }
-
-        if !project.paths.has_input_files() && self.files.is_empty() {
-            sh_println!("Nothing to lint")?;
-            std::process::exit(0);
-        }
-
-        let sources = if !self.files.is_empty() {
-            Source::read_all(self.files.clone())?
-        } else {
-            project.paths.read_input_files()?
-        };
-
-        let input = sources.into_iter().map(|(path, _)| path).collect::<Vec<PathBuf>>();
-
+    pub fn lint(self, input: &[PathBuf]) -> eyre::Result<LinterOutput<L>> {
         Ok(self.linter.lint(&input).expect("TODO: handle error"))
     }
 }

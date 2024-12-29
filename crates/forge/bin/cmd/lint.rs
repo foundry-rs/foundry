@@ -3,7 +3,9 @@ use eyre::Result;
 use forge_lint::sol::SolidityLinter;
 use forge_lint::{OutputFormat, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
+use foundry_compilers::artifacts::Source;
 use foundry_config::impl_figment_convert_basic;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -51,10 +53,41 @@ impl LintArgs {
         let config = self.try_load_config_emit_warnings()?;
         let project = config.project()?;
 
-        // TODO: Update this to infer the linter from the project, just hard coding to solidity for now
-        let linter = SolidityLinter::new();
-        let output = ProjectLinter::new(linter).lint(&project)?;
+        // Get all source files from the project
+        let mut sources =
+            project.paths.read_input_files()?.keys().cloned().collect::<Vec<PathBuf>>();
 
+        // Add included paths to sources
+        if let Some(include_paths) = &self.include {
+            let included = include_paths
+                .iter()
+                .filter(|path| sources.contains(path))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            sources = included;
+        }
+
+        // Remove excluded files from sources
+        if let Some(exclude_paths) = &self.exclude {
+            let excluded = exclude_paths.iter().cloned().collect::<HashSet<_>>();
+            sources.retain(|path| !excluded.contains(path));
+        }
+
+        if sources.is_empty() {
+            sh_println!("Nothing to lint")?;
+            std::process::exit(0);
+        }
+
+        let linter = if project.compiler.solc.is_some() {
+            SolidityLinter::new()
+        } else {
+            todo!("Linting not supported for this language");
+        };
+
+        let output = ProjectLinter::new(linter).lint(&sources)?;
+
+        // TODO: display output
         // let format_json = shell::is_json();
 
         // if format_json && !self.names && !self.sizes {
