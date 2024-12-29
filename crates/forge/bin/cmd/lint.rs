@@ -3,7 +3,6 @@ use eyre::Result;
 use forge_lint::sol::SolidityLinter;
 use forge_lint::{OutputFormat, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::artifacts::Source;
 use foundry_config::impl_figment_convert_basic;
 use std::collections::HashSet;
 use std::path::PathBuf;

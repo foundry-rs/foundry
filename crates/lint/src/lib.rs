@@ -18,7 +18,7 @@ use std::{
 };
 
 use clap::ValueEnum;
-use solar_ast::ast::{self, SourceUnit, Span};
+use solar_ast::ast::Span;
 
 pub struct ProjectLinter<L>
 where
@@ -138,6 +138,7 @@ impl SourceLocation {
     }
 }
 
+// TODO:  Update to implement Display for LinterOutput, model after compiler error display
 // impl fmt::Display for Error {
 //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 //         let mut short_msg = self.message.trim();
