@@ -14,11 +14,19 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# lib
+foundry-common.workspace = true
+foundry-compilers.workspace = true
+
 solar-parse.workspace = true
 solar-ast.workspace = true
 solar-interface.workspace = true
+
 eyre.workspace = true
 rayon.workspace = true
-
+thiserror.workspace = true
+serde_json.workspace = true
+auto_impl.workspace = true
+serde = { workspace = true, features = ["derive"] }
 regex = "1.11"
 clap = { version = "4", features = ["derive"] }

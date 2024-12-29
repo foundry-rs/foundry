@@ -1,17 +1,88 @@
-pub mod gas;
-pub mod high;
-pub mod info;
-pub mod med;
+pub mod sol;
 
-use rayon::prelude::*;
-use std::{collections::HashMap, hash::Hasher, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    hash::Hash,
+    ops::{Deref, DerefMut},
+    path::PathBuf,
+};
 
 use clap::ValueEnum;
-use solar_ast::{
-    ast::{self, SourceUnit, Span},
-    interface::{ColorChoice, Session},
-    visit::Visit,
-};
+use foundry_compilers::Language;
+use solar_ast::ast::Span;
+
+pub struct ProjectLinter<L>
+where
+    L: Linter,
+{
+    pub linter: L,
+}
+
+impl<L> ProjectLinter<L>
+where
+    L: Linter,
+{
+    pub fn new(linter: L) -> Self {
+        Self { linter }
+    }
+
+    pub fn lint(self, input: &[PathBuf]) -> eyre::Result<LinterOutput<L>> {
+        Ok(self.linter.lint(&input).expect("TODO: handle error"))
+    }
+}
+
+// NOTE: add some way to specify linter profiles. For example having a profile adhering to the op
+// stack, base, etc. This can probably also be accomplished via the foundry.toml or some functions.
+// Maybe have generic profile/settings
+
+// TODO: maybe add a way to specify the linter "profile" (ex. Default, OP Stack, etc.)
+pub trait Linter: Send + Sync + Clone {
+    /// Enum of languages supported by the linter.
+    type Language: Language;
+    type Lint: Lint + Ord;
+    type LinterError: Error;
+
+    /// Main entrypoint for the linter.
+    fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError>;
+}
+
+pub struct LinterOutput<L: Linter>(pub BTreeMap<L::Lint, Vec<SourceLocation>>);
+
+impl<L: Linter> LinterOutput<L> {
+    // Optional: You can still provide a `new` method for convenience
+    pub fn new() -> Self {
+        LinterOutput(BTreeMap::new())
+    }
+}
+
+impl<L: Linter> Deref for LinterOutput<L> {
+    type Target = BTreeMap<L::Lint, Vec<SourceLocation>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<L: Linter> DerefMut for LinterOutput<L> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<L: Linter> Extend<(L::Lint, Vec<SourceLocation>)> for LinterOutput<L> {
+    fn extend<T: IntoIterator<Item = (L::Lint, Vec<SourceLocation>)>>(&mut self, iter: T) {
+        for (lint, findings) in iter {
+            self.0.entry(lint).or_insert_with(Vec::new).extend(findings);
+        }
+    }
+}
+
+pub trait Lint: Hash {
+    fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+    fn severity(&self) -> Severity;
+}
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum OutputFormat {
@@ -19,6 +90,7 @@ pub enum OutputFormat {
     Markdown,
 }
 
+// TODO: impl color for severity
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Severity {
     High,
@@ -27,207 +99,71 @@ pub enum Severity {
     Info,
     Gas,
 }
-
-pub struct Linter {
-    pub input: Vec<PathBuf>,
-    pub lints: Vec<Lint>,
-    pub description: bool,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceLocation {
+    pub file: PathBuf,
+    pub span: Span,
 }
 
-impl Linter {
-    pub fn new(input: Vec<PathBuf>) -> Self {
-        Self { input, lints: Lint::all(), description: false }
-    }
-
-    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
-        if let Some(severity) = severity {
-            self.lints.retain(|lint| severity.contains(&lint.severity()));
-        }
-        self
-    }
-
-    pub fn with_description(mut self, description: bool) -> Self {
-        self.description = description;
-        self
-    }
-
-    pub fn lint(self) {
-        let all_findings = self
-            .input
-            .par_iter()
-            .map(|file| {
-                let lints = self.lints.clone();
-                let mut local_findings = HashMap::new();
-
-                // Create a new session for this file
-                let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
-                let arena = ast::Arena::new();
-
-                // Enter the session context for this thread
-                let _ = sess.enter(|| -> solar_interface::Result<()> {
-                    let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
-
-                    let ast =
-                        parser.parse_file().map_err(|e| e.emit()).expect("Failed to parse file");
-
-                    // Run all lints on the parsed AST and collect findings
-                    for mut lint in lints {
-                        let results = lint.lint(&ast);
-                        local_findings.entry(lint).or_insert_with(Vec::new).extend(results);
-                    }
-
-                    Ok(())
-                });
-
-                local_findings
-            })
-            .collect::<Vec<HashMap<Lint, Vec<Span>>>>();
-
-        let mut aggregated_findings = HashMap::new();
-        for file_findings in all_findings {
-            for (lint, results) in file_findings {
-                aggregated_findings.entry(lint).or_insert_with(Vec::new).extend(results);
-            }
-        }
-
-        // TODO: make the output nicer
-        for finding in aggregated_findings {
-            let (lint, results) = finding;
-            let _description = if self.description { lint.description() } else { "" };
-
-            for _result in results {
-                // TODO: display the finding
-            }
-        }
+impl SourceLocation {
+    pub fn new(file: PathBuf, span: Span) -> Self {
+        Self { file, span }
     }
 }
 
-macro_rules! declare_lints {
-    ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        pub enum Lint {
-            $(
-                $name($name),
-            )*
-        }
+// TODO:  Update to implement Display for LinterOutput, model after compiler error display
+// impl fmt::Display for Error {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         let mut short_msg = self.message.trim();
+//         let fmtd_msg = self.formatted_message.as_deref().unwrap_or("");
 
-        impl Lint {
-            pub fn all() -> Vec<Self> {
-                vec![
-                    $(
-                        Lint::$name($name::new()),
-                    )*
-                ]
-            }
+//         if short_msg.is_empty() {
+//             // if the message is empty, try to extract the first line from the formatted message
+//             if let Some(first_line) = fmtd_msg.lines().next() {
+//                 // this is something like `ParserError: <short_message>`
+//                 if let Some((_, s)) = first_line.split_once(':') {
+//                     short_msg = s.trim_start();
+//                 } else {
+//                     short_msg = first_line;
+//                 }
+//             }
+//         }
 
-            pub fn severity(&self) -> Severity {
-                match self {
-                    $(
-                        Lint::$name(_) => $severity,
-                    )*
-                }
-            }
+//         // Error (XXXX): Error Message
+//         styled(f, self.severity.color().bold(), |f| self.fmt_severity(f))?;
+//         fmt_msg(f, short_msg)?;
 
-            pub fn name(&self) -> &'static str {
-                match self {
-                    $(
-                        Lint::$name(_) => $lint_name,
-                    )*
-                }
-            }
+//         let mut lines = fmtd_msg.lines();
 
-            pub fn description(&self) -> &'static str {
-                match self {
-                    $(
-                        Lint::$name(_) => $description,
-                    )*
-                }
-            }
+//         // skip the first line if it contains the same message as the one we just formatted,
+//         // unless it also contains a source location, in which case the entire error message is
+// an         // old style error message, like:
+//         //     path/to/file:line:column: ErrorType: message
+//         if lines
+//             .clone()
+//             .next()
+//             .is_some_and(|l| l.contains(short_msg) && l.bytes().filter(|b| *b == b':').count() <
+// 3)         {
+//             let _ = lines.next();
+//         }
 
+//         // format the main source location
+//         fmt_source_location(f, &mut lines)?;
 
-            /// Lint a source unit and return the findings
-            pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Vec<Span> {
-                match self {
-                    $(
-                        Lint::$name(lint) => {
-                            lint.visit_source_unit(source_unit);
-                            lint.items.clone()
-                        },
-                    )*
-                }
-            }
-        }
+//         // format remaining lines as secondary locations
+//         while let Some(line) = lines.next() {
+//             f.write_str("\n")?;
 
-        impl<'ast> Visit<'ast> for Lint {
-            fn visit_source_unit(&mut self, source_unit: &SourceUnit<'ast>) {
-                match self {
-                    $(
-                        Lint::$name(lint) => lint.visit_source_unit(source_unit),
-                    )*
-                }
-            }
-        }
+//             if let Some((note, msg)) = line.split_once(':') {
+//                 styled(f, Self::secondary_style(), |f| f.write_str(note))?;
+//                 fmt_msg(f, msg)?;
+//             } else {
+//                 f.write_str(line)?;
+//             }
 
+//             fmt_source_location(f, &mut lines)?;
+//         }
 
-        impl std::hash::Hash for Lint {
-            fn hash<H: Hasher>(&self, state: &mut H) {
-                self.name().hash(state);
-            }
-        }
-
-        $(
-            #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-            pub struct $name {
-                pub items: Vec<Span>,
-            }
-
-            impl $name {
-                pub fn new() -> Self {
-                    Self { items: Vec::new() }
-                }
-
-                /// Returns the severity of the lint
-                pub fn severity() -> Severity {
-                    $severity
-                }
-
-                /// Returns the name of the lint
-                pub fn name() -> &'static str {
-                    $lint_name
-                }
-
-                /// Returns the description of the lint
-                pub fn description() -> &'static str {
-                    $description
-                }
-            }
-        )*
-    };
-}
-
-declare_lints!(
-    //High
-    (IncorrectShift, Severity::High, "incorrect-shift", "TODO: description"),
-    (ArbitraryTransferFrom, Severity::High, "arbitrary-transfer-from", "TODO: description"),
-    // Med
-    (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO: description"),
-    // Low
-    // Info
-    (VariableCamelCase, Severity::Info, "variable-camel-case", "TODO: description"),
-    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description"),
-    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description"),
-    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description"),
-    // Gas Optimizations
-    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO: description"),
-    (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description"),
-    (PackStructs, Severity::Gas, "pack-structs", "TODO: description"),
-    (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description"),
-    (UseImmutableVariable, Severity::Gas, "use-immutable-var", "TODO: description"),
-    (UseExternalVisibility, Severity::Gas, "use-external-visibility", "TODO: description"),
-    (
-        AvoidUsingThis,
-        Severity::Gas,
-        "avoid-using-this",
-        "Avoid using `this` to read public variables. This incurs an unncessary STATICCALL."
-    ),
-);
+//         Ok(())
+//     }
+// }

@@ -1,13 +1,9 @@
 use clap::{Parser, ValueHint};
-use eyre::{bail, Result};
-use forge_lint::{Linter, OutputFormat, Severity};
+use eyre::Result;
+use forge_lint::{sol::SolidityLinter, OutputFormat, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::utils::{source_files_iter, SOLC_EXTENSIONS};
-use foundry_config::filter::expand_globs;
 use foundry_config::impl_figment_convert_basic;
-use std::collections::HashSet;
-use std::fs;
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 /// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
@@ -52,45 +48,50 @@ impl_figment_convert_basic!(LintArgs);
 impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
-        let root = if let Some(root) = &self.root { root } else { &config.root };
+        let project = config.project()?;
 
-        // Expand ignore globs and canonicalize paths
-        let mut ignored = expand_globs(&root, config.fmt.ignore.iter())?
-            .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
-            .collect::<HashSet<_>>();
+        // Get all source files from the project
+        let mut sources =
+            project.paths.read_input_files()?.keys().cloned().collect::<Vec<PathBuf>>();
 
-        // Add explicitly excluded paths to the ignored set
+        // Add included paths to sources
+        if let Some(include_paths) = &self.include {
+            let included = include_paths
+                .iter()
+                .filter(|path| sources.contains(path))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            sources = included;
+        }
+
+        // Remove excluded files from sources
         if let Some(exclude_paths) = &self.exclude {
-            ignored.extend(exclude_paths.iter().flat_map(foundry_common::fs::canonicalize_path));
+            let excluded = exclude_paths.iter().cloned().collect::<HashSet<_>>();
+            sources.retain(|path| !excluded.contains(path));
         }
 
-        let entries = fs::read_dir(root).unwrap();
-        println!("Files in directory: {}", root.display());
-        for entry in entries {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            println!("{}", path.display());
+        if sources.is_empty() {
+            sh_println!("Nothing to lint")?;
+            std::process::exit(0);
         }
 
-        let mut input: Vec<PathBuf> = if let Some(include_paths) = &self.include {
-            include_paths.iter().filter(|path| path.exists()).cloned().collect()
+        let linter = if project.compiler.solc.is_some() {
+            SolidityLinter::new()
+                .with_severity(self.severity)
+                .with_description(self.with_description)
         } else {
-            source_files_iter(&root, SOLC_EXTENSIONS)
-                .filter(|p| !(ignored.contains(p) || ignored.contains(&root.join(p))))
-                .collect()
+            todo!("Linting not supported for this language");
         };
 
-        input.retain(|path| !ignored.contains(path));
+        let output = ProjectLinter::new(linter).lint(&sources)?;
 
-        if input.is_empty() {
-            bail!("No source files found in path");
-        }
+        // TODO: display output
+        // let format_json = shell::is_json();
 
-        Linter::new(input)
-            .with_severity(self.severity)
-            .with_description(self.with_description)
-            .lint();
+        // if format_json && !self.names && !self.sizes {
+        //     sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
+        // }
 
         Ok(())
     }

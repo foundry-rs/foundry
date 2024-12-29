@@ -3,13 +3,13 @@ use solar_ast::{
     visit::Visit,
 };
 
-use crate::DivideBeforeMultiply;
+use super::DivideBeforeMultiply;
 
 impl<'ast> Visit<'ast> for DivideBeforeMultiply {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(left_expr, BinOp { kind: BinOpKind::Mul, .. }, _) = &expr.kind {
             if contains_division(left_expr) {
-                self.items.push(expr.span);
+                self.results.push(expr.span);
             }
         }
 
@@ -37,7 +37,7 @@ mod test {
     use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
-    use crate::DivideBeforeMultiply;
+    use super::DivideBeforeMultiply;
 
     #[test]
     fn test_divide_before_multiply() -> eyre::Result<()> {
@@ -58,7 +58,7 @@ mod test {
             let mut pattern = DivideBeforeMultiply::default();
             pattern.visit_source_unit(&ast);
 
-            assert_eq!(pattern.items.len(), 6);
+            assert_eq!(pattern.results.len(), 6);
 
             Ok(())
         });
