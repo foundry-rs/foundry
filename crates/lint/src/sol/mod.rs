@@ -50,7 +50,8 @@ impl Linter for SolidityLinter {
         let all_findings = input
             .into_par_iter()
             .map(|file| {
-                // NOTE: use all solidity lints for now but this should be configurable via SolidityLinter
+                // NOTE: use all solidity lints for now but this should be configurable via
+                // SolidityLinter
                 let mut lints = SolLint::all();
 
                 // Initialize session and parsing environment

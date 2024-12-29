@@ -32,8 +32,9 @@ where
     }
 }
 
-// NOTE: add some way to specify linter profiles. For example having a profile adhering to the op stack, base, etc.
-// This can probably also be accomplished via the foundry.toml or some functions. Maybe have generic profile/settings
+// NOTE: add some way to specify linter profiles. For example having a profile adhering to the op
+// stack, base, etc. This can probably also be accomplished via the foundry.toml or some functions.
+// Maybe have generic profile/settings
 
 // TODO: maybe add a way to specify the linter "profile" (ex. Default, OP Stack, etc.)
 pub trait Linter: Send + Sync + Clone {
@@ -135,14 +136,14 @@ impl SourceLocation {
 //         let mut lines = fmtd_msg.lines();
 
 //         // skip the first line if it contains the same message as the one we just formatted,
-//         // unless it also contains a source location, in which case the entire error message is an
-//         // old style error message, like:
+//         // unless it also contains a source location, in which case the entire error message is
+// an         // old style error message, like:
 //         //     path/to/file:line:column: ErrorType: message
 //         if lines
 //             .clone()
 //             .next()
-//             .is_some_and(|l| l.contains(short_msg) && l.bytes().filter(|b| *b == b':').count() < 3)
-//         {
+//             .is_some_and(|l| l.contains(short_msg) && l.bytes().filter(|b| *b == b':').count() <
+// 3)         {
 //             let _ = lines.next();
 //         }
 
