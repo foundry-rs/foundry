@@ -80,6 +80,8 @@ impl LintArgs {
 
         let linter = if project.compiler.solc.is_some() {
             SolidityLinter::new()
+                .with_severity(self.severity)
+                .with_description(self.with_description)
         } else {
             todo!("Linting not supported for this language");
         };

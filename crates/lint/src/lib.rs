@@ -1,23 +1,15 @@
 pub mod sol;
 
-use foundry_common::sh_println;
-use foundry_compilers::{
-    artifacts::{Contract, Source},
-    Compiler, CompilerContract, CompilerInput, Language, Project,
-};
-use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
-use sol::SolidityLinter;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     error::Error,
-    hash::{Hash, Hasher},
-    marker::PhantomData,
+    hash::Hash,
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
 
 use clap::ValueEnum;
+use foundry_compilers::Language;
 use solar_ast::ast::Span;
 
 pub struct ProjectLinter<L>
@@ -25,8 +17,6 @@ where
     L: Linter,
 {
     pub linter: L,
-    pub severity: Option<Vec<Severity>>,
-    pub description: bool,
 }
 
 impl<L> ProjectLinter<L>
@@ -34,20 +24,9 @@ where
     L: Linter,
 {
     pub fn new(linter: L) -> Self {
-        Self { linter, severity: None, description: false }
+        Self { linter }
     }
 
-    pub fn with_description(mut self, description: bool) -> Self {
-        self.description = description;
-        self
-    }
-
-    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
-        self.severity = severity;
-        self
-    }
-
-    /// Lints the project.
     pub fn lint(self, input: &[PathBuf]) -> eyre::Result<LinterOutput<L>> {
         Ok(self.linter.lint(&input).expect("TODO: handle error"))
     }
@@ -56,22 +35,15 @@ where
 // NOTE: add some way to specify linter profiles. For example having a profile adhering to the op stack, base, etc.
 // This can probably also be accomplished via the foundry.toml or some functions. Maybe have generic profile/settings
 
-/// The main linter abstraction trait
+// TODO: maybe add a way to specify the linter "profile" (ex. Default, OP Stack, etc.)
 pub trait Linter: Send + Sync + Clone {
     /// Enum of languages supported by the linter.
     type Language: Language;
-    // TODO: Add docs. This represents linter settings. (ex. Default, OP Stack, etc.
-    // type Settings: LinterSettings<Self>;
     type Lint: Lint + Ord;
     type LinterError: Error;
 
     /// Main entrypoint for the linter.
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError>;
-}
-
-// TODO: probably remove
-pub trait LinterSettings<L: Linter> {
-    fn lints() -> Vec<L::Lint>;
 }
 
 pub struct LinterOutput<L: Linter>(pub BTreeMap<L::Lint, Vec<SourceLocation>>);

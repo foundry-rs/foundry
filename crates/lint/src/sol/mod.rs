@@ -20,11 +20,24 @@ use thiserror::Error;
 use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 
 #[derive(Debug, Clone, Default)]
-pub struct SolidityLinter;
+pub struct SolidityLinter {
+    pub severity: Option<Vec<Severity>>,
+    pub description: bool,
+}
 
 impl SolidityLinter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_description(mut self, description: bool) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
+        self.severity = severity;
+        self
     }
 }
 
