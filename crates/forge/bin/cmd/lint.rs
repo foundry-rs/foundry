@@ -1,14 +1,9 @@
 use clap::{Parser, ValueHint};
-use eyre::{bail, Result};
+use eyre::Result;
 use forge_lint::sol::SolidityLinter;
-use forge_lint::{Linter, OutputFormat, ProjectLinter, Severity};
+use forge_lint::{OutputFormat, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
-use foundry_common::shell;
-use foundry_compilers::utils::{source_files_iter, SOLC_EXTENSIONS};
-use foundry_config::filter::expand_globs;
 use foundry_config::impl_figment_convert_basic;
-use std::collections::HashSet;
-use std::fs;
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.

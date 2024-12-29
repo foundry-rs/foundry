@@ -183,10 +183,6 @@ impl SourceLocation {
     }
 }
 
-// TODO: amend to display source location
-// /// Tries to mimic Solidity's own error formatting.
-// ///
-// /// <https://github.com/ethereum/solidity/blob/a297a687261a1c634551b1dac0e36d4573c19afe/liblangutil/SourceReferenceFormatter.cpp#L105>
 // impl fmt::Display for Error {
 //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 //         let mut short_msg = self.message.trim();
