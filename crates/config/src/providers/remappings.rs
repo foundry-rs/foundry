@@ -322,3 +322,131 @@ impl Provider for RemappingsProvider<'_> {
         Some(Config::selected_profile())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sol_file_remappings() {
+        let mut remappings = Remappings::new();
+
+        // First valid remapping
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "implementations/Contract1.sol".to_string(),
+        });
+
+        // Same source to different target (should be rejected)
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "implementations/Contract2.sol".to_string(),
+        });
+
+        // Different source to same target (should be allowed)
+        remappings.push(Remapping {
+            context: None,
+            name: "OtherContract.sol".to_string(),
+            path: "implementations/Contract1.sol".to_string(),
+        });
+
+        // Exact duplicate (should be silently ignored)
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "implementations/Contract1.sol".to_string(),
+        });
+
+        // Invalid .sol remapping (target not .sol)
+        remappings.push(Remapping {
+            context: None,
+            name: "Invalid.sol".to_string(),
+            path: "implementations/Contract1.txt".to_string(),
+        });
+
+        let result = remappings.into_inner();
+        assert_eq!(result.len(), 2, "Should only have 2 valid remappings");
+
+        // Verify the correct remappings exist
+        assert!(
+            result
+                .iter()
+                .any(|r| r.name == "MyContract.sol" && r.path == "implementations/Contract1.sol"),
+            "Should keep first mapping of MyContract.sol"
+        );
+        assert!(
+            !result
+                .iter()
+                .any(|r| r.name == "MyContract.sol" && r.path == "implementations/Contract2.sol"),
+            "Should keep first mapping of MyContract.sol"
+        );
+        assert!(result.iter().any(|r| r.name == "OtherContract.sol" && r.path == "implementations/Contract1.sol"),
+            "Should allow different source to same target");
+
+        // Verify the rejected remapping doesn't exist
+        assert!(
+            !result
+                .iter()
+                .any(|r| r.name == "MyContract.sol" && r.path == "implementations/Contract2.sol"),
+            "Should reject same source to different target"
+        );
+    }
+
+    #[test]
+    fn test_mixed_remappings() {
+        let mut remappings = Remappings::new();
+
+        remappings.push(Remapping {
+            context: None,
+            name: "@openzeppelin/".to_string(),
+            path: "lib/openzeppelin/".to_string(),
+        });
+        remappings.push(Remapping {
+            context: None,
+            name: "@openzeppelin/contracts/".to_string(),
+            path: "lib/openzeppelin/contracts/".to_string(),
+        });
+
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "os/Contract.sol".to_string(),
+        });
+
+        let result = remappings.into_inner();
+
+        assert_eq!(result.len(), 3, "Should have 3 remappings");
+        assert!(result.iter().any(
+            |r| r.name == "@openzeppelin/contracts/" && r.path == "lib/openzeppelin/contracts/"
+        ));
+        assert!(result.iter().any(|r| r.name == "MyContract.sol" && r.path == "os/Contract.sol"));
+    }
+
+    #[test]
+    fn test_remappings_with_context() {
+        let mut remappings = Remappings::new();
+
+        // Same name but different contexts
+        remappings.push(Remapping {
+            context: Some("test/".to_string()),
+            name: "MyContract.sol".to_string(),
+            path: "test/Contract.sol".to_string(),
+        });
+        remappings.push(Remapping {
+            context: Some("prod/".to_string()),
+            name: "MyContract.sol".to_string(),
+            path: "prod/Contract.sol".to_string(),
+        });
+
+        let result = remappings.into_inner();
+        assert_eq!(result.len(), 2, "Should allow same name with different contexts");
+        assert!(result
+            .iter()
+            .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol"));
+        assert!(result
+            .iter()
+            .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol"));
+    }
+}
