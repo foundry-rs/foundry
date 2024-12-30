@@ -507,8 +507,8 @@ impl UIfmt for AnyTxEnvelope {
             Self::Unknown(tx) => {
                 format!(
                     "
-hash {}
-type {}
+hash                 {}
+type                 {}
 {}
                     ",
                     tx.hash.pretty(),
