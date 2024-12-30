@@ -1,7 +1,7 @@
 use crate::utils::http_provider;
 use alloy_consensus::{transaction::TxEip7702, SignableTransaction};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::bytes;
+use alloy_primitives::{bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -44,7 +44,7 @@ async fn can_send_eip7702_tx() {
 
     let contract = receipt.contract_address.unwrap();
     let authorization = Authorization {
-        chain_id: 31337u64,
+        chain_id: U256::from(31337u64),
         address: contract,
         nonce: provider.get_transaction_count(from).await.unwrap(),
     };
