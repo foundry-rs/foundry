@@ -254,14 +254,14 @@ forgetest_init!(evm_version, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("test").arg("--evm-version=cancun").assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--evm-version=cancun", "-j1"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/inline.sol:FunctionConfig
+Ran 2 tests for test/inline.sol:ContractConfig
 [PASS] test_new() ([GAS])
 [PASS] test_old() ([GAS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 2 tests for test/inline.sol:ContractConfig
+Ran 2 tests for test/inline.sol:FunctionConfig
 [PASS] test_new() ([GAS])
 [PASS] test_old() ([GAS])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
