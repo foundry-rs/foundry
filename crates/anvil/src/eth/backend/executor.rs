@@ -284,6 +284,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
+        // check that we comply with the block's blob gas limit
+        let max_blob_gas = self.blob_gas_used.saturating_add(
+            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
+        );
+        if max_blob_gas > alloy_eips::eip4844::MAX_DATA_GAS_PER_BLOCK {
+            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
+        }
+
         // validate before executing
         if let Err(err) = self.validator.validate_pool_transaction_for(
             &transaction.pending_transaction,
