@@ -30,7 +30,7 @@ use foundry_evm::{
     traces::CallTraceNode,
     utils::odyssey_handler_register,
 };
-use revm::{db::WrapDatabaseRef, primitives::MAX_BLOB_GAS_PER_BLOCK};
+use revm::db::WrapDatabaseRef;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -57,7 +57,7 @@ impl ExecutedTransaction {
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
         let receipt_with_bloom: ReceiptWithBloom = Receipt {
             status: (status_code == 1).into(),
-            cumulative_gas_used: *cumulative_gas_used as u128,
+            cumulative_gas_used: *cumulative_gas_used,
             logs,
         }
         .into();
@@ -282,14 +282,6 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
         if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u64>() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
-        }
-
-        // check that we comply with the block's blob gas limit
-        let max_blob_gas = self.blob_gas_used.saturating_add(
-            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
-        );
-        if max_blob_gas > MAX_BLOB_GAS_PER_BLOCK {
-            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 
         // validate before executing

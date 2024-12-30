@@ -619,7 +619,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
                 TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-                _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
             },
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
@@ -1269,7 +1268,7 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
 }
 
 impl TypedReceipt {
-    pub fn cumulative_gas_used(&self) -> u128 {
+    pub fn cumulative_gas_used(&self) -> u64 {
         self.as_receipt_with_bloom().cumulative_gas_used()
     }
 

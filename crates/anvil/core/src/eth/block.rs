@@ -65,7 +65,6 @@ impl Block {
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
                 requests_hash: partial_header.requests_hash,
-                target_blobs_per_block: None,
             },
             transactions,
             ommers: vec![],

@@ -498,10 +498,10 @@ impl NodeConfig {
             blob_excess_gas_and_price.clone()
         } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
         {
-            BlobExcessGasAndPrice::new(excess_blob_gas as u64)
+            BlobExcessGasAndPrice::new(excess_blob_gas, false)
         } else {
             // If no excess blob gas is configured, default to 0
-            BlobExcessGasAndPrice::new(0)
+            BlobExcessGasAndPrice::new(0, false)
         }
     }
 
@@ -1213,11 +1213,12 @@ latest block number: {latest_block}"
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
                 env.block.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas));
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
                 let next_block_blob_excess_gas = fees
                     .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
+                    false,
                 ));
             }
         }
