@@ -70,8 +70,7 @@ impl Remappings {
 
     /// Push an element to the remappings vector, but only if it's not already present.
     pub fn push(&mut self, remapping: Remapping) {
-        // Special handling for .sol file remappings,
-        // only validate that target path is also a .sol file.
+        // Special handling for .sol file remappings, only allow one remapping per source file.
         if remapping.name.ends_with(".sol") && !remapping.path.ends_with(".sol") {
             return;
         }
@@ -87,9 +86,8 @@ impl Remappings {
             // What we're doing here is filtering for ambiguous paths. For example, if we have
             // @prb/math/=node_modules/@prb/math/src/ as existing, and
             // @prb/=node_modules/@prb/ as the one being checked,
-            // we want to keep the already existing one, which is the first one. This way we
-            // avoid having to deal with ambiguous paths which is unwanted when
-            // autodetecting remappings.
+            // we want to keep the already existing one, which is the first one. This way we avoid
+            // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
             existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
             return;
