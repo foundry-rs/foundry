@@ -29,6 +29,8 @@ pub enum LinkerError {
     InvalidAddress(<Address as std::str::FromStr>::Err),
     #[error("cyclic dependency found, can't link libraries via CREATE2")]
     CyclicDependency,
+    #[error("linking failed for library {name} at {file}")]
+    LinkingFailed { file: String, name: String },
 }
 
 pub struct Linker<'a> {
@@ -253,12 +255,22 @@ impl<'a> Linker<'a> {
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
                 if let Some(bytecode) = contract.bytecode.as_mut() {
-                    bytecode.to_mut().link(&file.to_string_lossy(), name, address);
+                    if !bytecode.to_mut().link(&file.to_string_lossy(), name, address) {
+                        return Err(LinkerError::LinkingFailed {
+                            file: file.to_string_lossy().into(),
+                            name: name.clone(),
+                        });
+                    }
                 }
                 if let Some(deployed_bytecode) =
                     contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
                 {
-                    deployed_bytecode.link(&file.to_string_lossy(), name, address);
+                    if !deployed_bytecode.link(&file.to_string_lossy(), name, address) {
+                        return Err(LinkerError::LinkingFailed {
+                            file: file.to_string_lossy().into(),
+                            name: name.clone(),
+                        });
+                    }
                 }
             }
         }
