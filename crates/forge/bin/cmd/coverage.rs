@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
-        analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles},
+        analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles, SourceIdentifier},
         anchors::find_anchors,
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
@@ -26,6 +26,7 @@ use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::{
+    borrow::Cow,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -107,7 +108,28 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let mut project = config.create_project(false, false)?;
+        let mut project = config.create_project(config.cache, false)?;
+
+        // Set a different artifacts path for coverage. `out/coverage`.
+        // This is done to avoid overwriting the artifacts of the main build that maybe built with
+        // different optimizer settings or --via-ir. Optimizer settings are disabled for
+        // coverage builds.
+        let coverage_artifacts_path = project.artifacts_path().join("coverage");
+        project.paths.artifacts = coverage_artifacts_path.clone();
+        project.paths.build_infos = coverage_artifacts_path.join("build-info");
+
+        // Set a different compiler cache path for coverage. `cache/coverage`.
+        let cache_file = project
+            .paths
+            .cache
+            .components()
+            .last()
+            .ok_or_else(|| eyre::eyre!("Cache path is empty"))?;
+
+        let cache_dir =
+            project.paths.cache.parent().ok_or_else(|| eyre::eyre!("Cache path is empty"))?;
+        project.paths.cache = cache_dir.join("coverage").join(cache_file);
+
         if self.ir_minimum {
             // print warning message
             sh_warn!("{}", concat!(
@@ -139,6 +161,8 @@ impl CoverageArgs {
             project.settings.solc.via_ir = None;
         }
 
+        sh_warn!("optimizer settings have been disabled for accurate coverage reports")?;
+
         let output = ProjectCompiler::default()
             .compile(&project)?
             .with_stripped_file_prefixes(project.root());
@@ -150,32 +174,39 @@ impl CoverageArgs {
     #[instrument(name = "prepare", skip_all)]
     fn prepare(&self, project: &Project, output: &ProjectCompileOutput) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
-
         // Collect source files.
         let project_paths = &project.paths;
-        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
-        for (path, source_file, version) in output.output().sources.sources_with_version() {
-            report.add_source(version.clone(), source_file.id as usize, path.clone());
 
+        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
+        // Account cached and freshly compiled sources
+        for (id, artifact) in output.artifact_ids() {
             // Filter out dependencies
-            if !self.include_libs && project_paths.has_library_ancestor(path) {
+            if !self.include_libs && project_paths.has_library_ancestor(&id.source) {
                 continue;
             }
 
-            if let Some(ast) = &source_file.ast {
-                let file = project_paths.root.join(path);
+            let build_id = id.build_id;
+            let source_file = if let Some(source_file) = artifact.source_file() {
+                source_file
+            } else {
+                sh_warn!("ast source file not found for {}", id.source.display())?;
+                continue;
+            };
+
+            let identifier = SourceIdentifier::new(source_file.id as usize, build_id.clone());
+            report.add_source(id.version.clone(), identifier.clone(), id.source.clone());
+
+            if let Some(ast) = source_file.ast {
+                let file = project_paths.root.join(id.source);
                 trace!(root=?project_paths.root, ?file, "reading source file");
 
                 let source = SourceFile {
-                    ast,
+                    ast: Cow::Owned(ast),
                     source: Source::read(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 };
-                versioned_sources
-                    .entry(version.clone())
-                    .or_default()
-                    .sources
-                    .insert(source_file.id as usize, source);
+
+                versioned_sources.entry(id.version).or_default().sources.insert(identifier, source);
             }
         }
 
@@ -189,9 +220,9 @@ impl CoverageArgs {
             })
             .collect();
 
-        // Add coverage items
-        for (version, sources) in &versioned_sources {
-            let source_analysis = SourceAnalyzer::new(sources).analyze()?;
+        for (_version, sources) in versioned_sources {
+            // Add coverage items
+            let source_analysis = SourceAnalyzer::new(&sources).analyze()?;
 
             // Build helper mapping used by `find_anchors`
             let mut items_by_source_id = HashMap::<_, Vec<_>>::with_capacity_and_hasher(
@@ -200,23 +231,29 @@ impl CoverageArgs {
             );
 
             for (item_id, item) in source_analysis.items.iter().enumerate() {
-                items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
+                items_by_source_id.entry(item.loc.source_id.clone()).or_default().push(item_id);
             }
 
             let anchors = artifacts
                 .par_iter()
-                .filter(|artifact| artifact.contract_id.version == *version)
+                .filter(|artifact| sources.sources.contains_key(&artifact.contract_id.source_id))
                 .map(|artifact| {
-                    let creation_code_anchors =
-                        artifact.creation.find_anchors(&source_analysis, &items_by_source_id);
-                    let deployed_code_anchors =
-                        artifact.deployed.find_anchors(&source_analysis, &items_by_source_id);
+                    let creation_code_anchors = artifact.creation.find_anchors(
+                        &source_analysis,
+                        &items_by_source_id,
+                        &artifact.contract_id.source_id,
+                    );
+                    let deployed_code_anchors = artifact.deployed.find_anchors(
+                        &source_analysis,
+                        &items_by_source_id,
+                        &artifact.contract_id.source_id,
+                    );
                     (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
                 })
                 .collect::<Vec<_>>();
 
             report.add_anchors(anchors);
-            report.add_items(version.clone(), source_analysis.items);
+            report.add_items(source_analysis.items);
         }
 
         report.add_source_maps(artifacts.into_iter().map(|artifact| {
@@ -280,8 +317,10 @@ impl CoverageArgs {
             {
                 report.add_hit_map(
                     &ContractId {
-                        version: artifact_id.version.clone(),
-                        source_id,
+                        source_id: SourceIdentifier::new(
+                            source_id.source_id,
+                            artifact_id.build_id.clone(),
+                        ),
                         contract_name: artifact_id.name.as_str().into(),
                     },
                     map,
@@ -360,13 +399,13 @@ pub struct ArtifactData {
 }
 
 impl ArtifactData {
-    pub fn new(id: &ArtifactId, source_id: usize, artifact: &impl Artifact) -> Option<Self> {
+    pub fn new(
+        id: &ArtifactId,
+        source_id: SourceIdentifier,
+        artifact: &impl Artifact,
+    ) -> Option<Self> {
         Some(Self {
-            contract_id: ContractId {
-                version: id.version.clone(),
-                source_id,
-                contract_name: id.name.as_str().into(),
-            },
+            contract_id: ContractId { source_id, contract_name: id.name.as_str().into() },
             creation: BytecodeData::new(
                 artifact.get_source_map()?.ok()?,
                 artifact
@@ -405,7 +444,8 @@ impl BytecodeData {
     pub fn find_anchors(
         &self,
         source_analysis: &SourceAnalysis,
-        items_by_source_id: &HashMap<usize, Vec<usize>>,
+        items_by_source_id: &HashMap<SourceIdentifier, Vec<usize>>,
+        source_id: &SourceIdentifier,
     ) -> Vec<ItemAnchor> {
         find_anchors(
             &self.bytecode,
@@ -413,6 +453,7 @@ impl BytecodeData {
             &self.ic_pc_map,
             &source_analysis.items,
             items_by_source_id,
+            source_id,
         )
     }
 }
