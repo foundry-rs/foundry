@@ -32,6 +32,10 @@ main() {
       -j|--jobs)        shift; FOUNDRYUP_JOBS=$1;;
       --arch)           shift; FOUNDRYUP_ARCH=$1;;
       --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
+      --self-update)
+        self_update
+        exit 0
+        ;;
       -h|--help)
         usage
         exit 0
@@ -262,6 +266,7 @@ OPTIONS:
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, and darwin)
+    --self-update   Update foundryup to the latest version
 EOF
 }
 
@@ -298,6 +303,19 @@ use() {
   else
     err "version $FOUNDRYUP_VERSION not installed"
   fi
+}
+
+self_update() {
+  say "updating foundryup..."
+  BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
+  BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+
+  # Download and replace the current foundryup
+  ensure download "$BIN_URL" "$BIN_PATH"
+  ensure chmod +x "$BIN_PATH"
+
+  say "successfully updated foundryup"
+  exit 0
 }
 
 say() {
