@@ -13,7 +13,8 @@ on:
 env:
     REGISTRY: ghcr.io
     # Will resolve to foundry-rs/foundry
-    IMAGE_NAME: ${{ github.repository }}
+    # IMAGE_NAME: ${{ github.repository }}
+    IMAGE_NAME: jsvisa/foundry
 
 jobs:
     container:
