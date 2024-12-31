@@ -697,4 +697,37 @@ mod tests {
                 );
         });
     }
+
+    #[test]
+    fn linking_failure() {
+        let linker = LinkerTest::new("../../testdata/default/linking/simple", true);
+        let linker_instance =
+            Linker::new(linker.project.root(), linker.output.artifact_ids().collect());
+
+        // Create a libraries object with an incorrect library name that won't match any references
+        let mut libraries = Libraries::default();
+        libraries.libs.entry("default/linking/simple/Simple.t.sol".into()).or_default().insert(
+            "NonExistentLib".to_string(),
+            "0x5a443704dd4b594b382c22a083e2bd3090a6fef3".to_string(),
+        );
+
+        // Try to link the LibraryConsumer contract with incorrect library
+        let artifact_id = linker_instance
+            .contracts
+            .keys()
+            .find(|id| id.name == "LibraryConsumer")
+            .expect("LibraryConsumer contract not found");
+
+        // Attempt to link should fail
+        let result = linker_instance.link(artifact_id, &libraries);
+
+        // Verify we get a LinkingFailed error
+        match result {
+            Err(LinkerError::LinkingFailed { file, name }) => {
+                assert_eq!(file, "default/linking/simple/Simple.t.sol");
+                assert_eq!(name, "NonExistentLib");
+            }
+            _ => panic!("Expected LinkingFailed error, got: {result:?}"),
+        }
+    }
 }
