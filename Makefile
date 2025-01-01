@@ -5,6 +5,8 @@
 
 # Cargo profile for builds.
 PROFILE ?= dev
+# The docker image name
+DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry:latest
 
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
@@ -38,12 +40,12 @@ build: ## Build the project.
 build-%:
 	cross build --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
 
-
-# The docker image name
-DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry
-
-# Create a cross-arch Docker image with the given tags and push it
-define docker_build_push
+# Note: This requires a buildx builder with emulation support. For example:
+#
+# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
+# `docker buildx create --use --driver docker-container --name cross-builder`
+.PHONY: docker-build-push
+docker-build-push: ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
 	$(MAKE) build-x86_64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/amd64
 	cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/{anvil,cast,chisel,forge} $(BIN_DIR)/amd64/
@@ -54,11 +56,9 @@ define docker_build_push
 
 	docker buildx build --file ./Dockerfile.cross . \
 		--platform linux/amd64,linux/arm64 \
-		--tag $(DOCKER_IMAGE_NAME):$(1) \
-		--tag $(DOCKER_IMAGE_NAME):$(2) \
+		$(foreach tag,$(subst $(comma), ,$(DOCKER_IMAGE_NAME)),--tag $(tag)) \
 		--provenance=false \
 		--push
-endef
 
 ##@ Other
 
