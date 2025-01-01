@@ -4,7 +4,6 @@ contract Contract0 {
     }
 
     function solidityHash(uint256 a, uint256 b) public view {
-        //unoptimized
         keccak256(abi.encodePacked(a, b));
     }
 
