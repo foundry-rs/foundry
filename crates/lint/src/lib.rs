@@ -180,7 +180,7 @@ impl Severity {
     pub fn color(&self, message: &str) -> String {
         match self {
             Self::High => Paint::red(message).bold().to_string(),
-            Self::Med => Paint::magenta(message).bold().to_string(),
+            Self::Med => Paint::rgb(message, 255, 135, 61).bold().to_string(),
             Self::Low => Paint::yellow(message).bold().to_string(),
             Self::Info => Paint::cyan(message).bold().to_string(),
             Self::Gas => Paint::green(message).bold().to_string(),
