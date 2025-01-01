@@ -2,6 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_lint::{sol::SolidityLinter, OutputFormat, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
+use foundry_common::shell;
 use foundry_config::impl_figment_convert_basic;
 use std::{collections::HashSet, path::PathBuf};
 
@@ -47,6 +48,8 @@ impl_figment_convert_basic!(LintArgs);
 
 impl LintArgs {
     pub fn run(self) -> Result<()> {
+        let now = std::time::Instant::now();
+
         let config = self.try_load_config_emit_warnings()?;
         let project = config.project()?;
 
@@ -56,13 +59,9 @@ impl LintArgs {
 
         // Add included paths to sources
         if let Some(include_paths) = &self.include {
-            let included = include_paths
-                .iter()
-                .filter(|path| sources.contains(path))
-                .cloned()
-                .collect::<Vec<_>>();
-
-            sources = included;
+            let included =
+                include_paths.iter().filter(|path| path.exists()).cloned().collect::<Vec<_>>();
+            sources.extend(included);
         }
 
         // Remove excluded files from sources
@@ -85,13 +84,9 @@ impl LintArgs {
         };
 
         let output = ProjectLinter::new(linter).lint(&sources)?;
+        sh_println!("{}", &output)?;
 
-        // TODO: display output
-        // let format_json = shell::is_json();
-
-        // if format_json && !self.names && !self.sizes {
-        //     sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
-        // }
+        dbg!(now.elapsed());
 
         Ok(())
     }

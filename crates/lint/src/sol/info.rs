@@ -48,8 +48,9 @@ impl<'ast> Visit<'ast> for StructPascalCase {
 }
 
 impl Visit<'_> for FunctionCamelCase {
-    fn visit_function_header(&mut self, header: &'_ solar_ast::ast::FunctionHeader<'_>) {
-        todo!()
+    fn visit_function_header(&mut self, header: &solar_ast::ast::FunctionHeader<'_>) {
+        // TODO:
+        // self.walk_function_header(header);
     }
 }
 

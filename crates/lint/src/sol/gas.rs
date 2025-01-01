@@ -23,37 +23,43 @@ impl<'ast> Visit<'ast> for AsmKeccak256 {
 
 impl<'ast> Visit<'ast> for PackStorageVariables {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
-        todo!()
+        // TODO:
+        self.walk_expr(expr);
     }
 }
 
 impl<'ast> Visit<'ast> for PackStructs {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
-        todo!()
+        // TODO:
+        self.walk_expr(expr);
     }
 }
 
 impl<'ast> Visit<'ast> for UseConstantVariable {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
-        todo!()
+        // TODO:
+        self.walk_expr(expr);
     }
 }
 
 impl<'ast> Visit<'ast> for UseImmutableVariable {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
-        todo!()
+        // TODO:
+        self.walk_expr(expr);
     }
 }
 
 impl<'ast> Visit<'ast> for UseExternalVisibility {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
-        todo!()
+        // TODO:
+        self.walk_expr(expr);
     }
 }
 
 impl<'ast> Visit<'ast> for AvoidUsingThis {
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
-        todo!()
+        // TODO:
+        self.walk_expr(expr);
     }
 }
 

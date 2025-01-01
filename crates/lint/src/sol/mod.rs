@@ -85,6 +85,10 @@ impl Linter for SolidityLinter {
                     .map(|span| SourceLocation::new(file.clone(), *span))
                     .collect::<Vec<_>>();
 
+                if source_locations.is_empty() {
+                    continue;
+                }
+
                 output.insert(lint, source_locations);
             }
         }
