@@ -190,7 +190,6 @@ pub enum Severity {
 }
 
 impl Severity {
-    // TODO: update colors
     pub fn color(&self, message: &str) -> String {
         match self {
             Self::High => Paint::red(message).bold().to_string(),

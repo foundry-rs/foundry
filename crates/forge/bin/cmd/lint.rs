@@ -8,11 +8,18 @@ use std::{collections::HashSet, path::PathBuf};
 /// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
-    /// Include additional files to lint.
+    /// The project's root path.
+    ///
+    /// By default root of the Git repository, if in one,
+    /// or the current working directory.
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
+    root: Option<PathBuf>,
+
+    /// Include only the specified files when linting.
     #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
     include: Option<Vec<PathBuf>>,
 
-    /// Exclude specified files when linting.
+    /// Exclude the specified files when linting.
     #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
     exclude: Option<Vec<PathBuf>>,
 

@@ -220,22 +220,20 @@ macro_rules! declare_sol_lints {
 
 declare_sol_lints!(
     //High
-    (IncorrectShift, Severity::High, "incorrect-shift", "TODO: description", ""),
-    (ArbitraryTransferFrom, Severity::High, "arbitrary-transfer-from", "TODO: description", ""),
+    (IncorrectShift, Severity::High, "incorrect-shift", "The order of args in a shift operation is incorrect.", ""),
     // Med
     (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "Multiplication should occur before division to avoid loss of precision.", ""),
     // Low
     // Info
-    (VariableCamelCase, Severity::Info, "variable-camel-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables.", ""),
-    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description", ""),
-    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description", ""),
-    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description", ""),
+    (VariableMixedCase, Severity::Info, "variable-mixed-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables.", ""),
+    (VariableCapsCase, Severity::Info, "variable-caps-case", "Constants should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#contract-and-library-names"),
+    (StructPascalCase, Severity::Info, "struct-pascal-case", "Structs should be named using CapWords style. Examples: MyCoin, Position", "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"),
+    (FunctionMixedCase, Severity::Info, "function-mixed-case", "Constants should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#function-names"),
     // Gas Optimizations
     (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas.", "https://placeholder.xyz"),
-    (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description", ""),
-    (PackStructs, Severity::Gas, "pack-structs", "TODO: description", ""),
-    (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description", ""),
-    (UseImmutableVariable, Severity::Gas, "use-immutable-var", "TODO: description", ""),
-    (UseExternalVisibility, Severity::Gas, "use-external-visibility", "TODO: description", ""),
-    (AvoidUsingThis, Severity::Gas, "avoid-using-this", "Avoid using `this` to read public variables. This incurs an unncessary STATICCALL.", ""),
+    // TODO: PackStorageVariables
+    // TODO: PackStructs
+    // TODO: UseConstantVariable
+    // TODO: UseImmutableVariable
+    // TODO: UseCalldataInsteadOfMemory
 );
