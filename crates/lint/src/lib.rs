@@ -5,7 +5,7 @@ use core::fmt;
 use foundry_compilers::Language;
 use solar_ast::ast::Span;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     error::Error,
     hash::Hash,
     ops::{Deref, DerefMut},
@@ -81,9 +81,14 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
             let name = lint.name();
             let description = lint.description();
 
+            let mut file_contents = HashMap::new();
+
             for location in locations {
-                let file_content = std::fs::read_to_string(&location.file)
-                    .expect("Could not read file for source location");
+                let file_content =
+                    file_contents.entry(location.file.clone()).or_insert_with(|| {
+                        std::fs::read_to_string(&location.file)
+                            .expect("Could not read file for source location")
+                    });
 
                 let ((start_line, start_column), (end_line, end_column)) =
                     match location.location(&file_content) {
@@ -116,23 +121,24 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
                     width = max_line_number_width + 1
                 )?;
 
-                let lines: Vec<&str> = file_content.lines().collect();
-                let display_start_line = if start_line > 1 { start_line - 1 } else { start_line };
-                let display_end_line = if end_line < lines.len() { end_line + 1 } else { end_line };
-
-                for line_number in display_start_line..=display_end_line {
+                let lines = file_content.lines().collect::<Vec<&str>>();
+                for line_number in start_line..=end_line {
                     let line = lines.get(line_number - 1).unwrap_or(&"");
 
-                    if line_number == start_line {
-                        writeln!(
-                            f,
-                            "{:>width$} {} {}",
-                            line_number,
-                            Paint::blue("|").bold(),
-                            line,
-                            width = max_line_number_width
-                        )?;
+                    writeln!(
+                        f,
+                        "{:>width$} {} {}",
+                        if line_number == start_line {
+                            line_number.to_string()
+                        } else {
+                            String::new()
+                        },
+                        Paint::blue("|").bold(),
+                        line,
+                        width = max_line_number_width
+                    )?;
 
+                    if line_number == start_line {
                         let caret = severity.color(&"^".repeat(end_column - start_column + 1));
                         writeln!(
                             f,
@@ -143,25 +149,8 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
                             caret,
                             width = max_line_number_width + 1
                         )?;
-                    } else {
-                        writeln!(
-                            f,
-                            "{:width$}{} {}",
-                            "",
-                            Paint::blue("|").bold(),
-                            line,
-                            width = max_line_number_width + 1
-                        )?;
                     }
                 }
-
-                writeln!(
-                    f,
-                    "{:width$}{}",
-                    "",
-                    Paint::blue("|").bold(),
-                    width = max_line_number_width + 1
-                )?;
 
                 writeln!(f)?;
             }
