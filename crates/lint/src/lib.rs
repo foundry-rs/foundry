@@ -13,14 +13,11 @@ use std::{
 };
 use yansi::Paint;
 
-// TODO: maybe add a way to specify the linter "profile" (ex. Default, OP Stack, etc.)
 pub trait Linter: Send + Sync + Clone {
-    /// Enum of languages supported by the linter.
     type Language: Language;
     type Lint: Lint + Ord;
     type LinterError: Error;
 
-    /// Main entrypoint for the linter.
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError>;
 }
 
@@ -44,15 +41,10 @@ where
     }
 }
 
-// NOTE: add some way to specify linter profiles. For example having a profile adhering to the op
-// stack, base, etc. This can probably also be accomplished via the foundry.toml or some functions.
-// Maybe have generic profile/settings
-
 #[derive(Default)]
 pub struct LinterOutput<L: Linter>(pub BTreeMap<L::Lint, Vec<SourceLocation>>);
 
 impl<L: Linter> LinterOutput<L> {
-    // Optional: You can still provide a `new` method for convenience
     pub fn new() -> Self {
         Self(BTreeMap::new())
     }
@@ -185,7 +177,6 @@ pub trait Lint: Hash {
     fn severity(&self) -> Severity;
 }
 
-// TODO: impl color for severity
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Severity {
     High,

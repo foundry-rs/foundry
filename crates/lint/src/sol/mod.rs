@@ -50,8 +50,7 @@ impl Linter for SolidityLinter {
         let all_findings = input
             .into_par_iter()
             .map(|file| {
-                // NOTE: use all solidity lints for now but this should be configurable via
-                // SolidityLinter
+                // TODO: this should be configurable
                 let mut lints = SolLint::all();
 
                 // Initialize session and parsing environment
@@ -103,7 +102,6 @@ pub enum SolLintError {}
 macro_rules! declare_sol_lints {
     ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
 
-        // TODO: ord based on severity
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
         pub enum SolLint {
             $(
