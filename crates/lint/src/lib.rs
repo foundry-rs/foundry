@@ -152,6 +152,18 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
                     }
                 }
 
+                if let Some(help) = lint.help() {
+                    writeln!(
+                        f,
+                        "{:width$}{} {}{}",
+                        "",
+                        Paint::blue("=").bold(),
+                        Paint::white("help:").bold(),
+                        help,
+                        width = max_line_number_width + 1
+                    )?;
+                }
+
                 writeln!(f)?;
             }
         }
@@ -163,6 +175,7 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
 pub trait Lint: Hash {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
+    fn help(&self) -> Option<&'static str>;
     fn severity(&self) -> Severity;
 }
 

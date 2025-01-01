@@ -135,14 +135,6 @@ macro_rules! declare_sol_lints {
                     )*
                 }
             }
-
-            pub fn help(&self) -> Option<&'static str> {
-                match self {
-                    $(
-                        SolLint::$name(_) => $name::help(),
-                    )*
-                }
-            }
         }
 
         impl<'ast> Visit<'ast> for SolLint {
@@ -185,6 +177,11 @@ macro_rules! declare_sol_lints {
                     )*
                 }
             }
+
+            // TODO:
+            fn help(&self) -> Option<&'static str> {
+                None
+            }
         }
 
         $(
@@ -198,22 +195,6 @@ macro_rules! declare_sol_lints {
                     Self { results: Vec::new() }
                 }
 
-                pub fn severity() -> Severity {
-                    $severity
-                }
-
-                pub fn name() -> &'static str {
-                    $lint_name
-                }
-
-                pub fn description() -> &'static str {
-                    $description
-                }
-
-                pub const fn help() -> Option<&'static str> {
-                    $(Some($help))?
-                    None
-                }
             }
         )*
     };
