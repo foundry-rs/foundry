@@ -40,8 +40,6 @@ impl_figment_convert_basic!(LintArgs);
 
 impl LintArgs {
     pub fn run(self) -> Result<()> {
-        let now = std::time::Instant::now();
-
         let config = self.try_load_config_emit_warnings()?;
         let project = config.project()?;
 
@@ -76,7 +74,6 @@ impl LintArgs {
         };
 
         let output = ProjectLinter::new(linter).lint(&sources)?;
-
         sh_println!("{}", &output)?;
 
         Ok(())
