@@ -219,15 +219,20 @@ declare_sol_lints!(
     (IncorrectShift, Severity::High, "incorrect-shift", "TODO: description"),
     (ArbitraryTransferFrom, Severity::High, "arbitrary-transfer-from", "TODO: description"),
     // Med
-    (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "TODO: description"),
+    (
+        DivideBeforeMultiply,
+        Severity::Med,
+        "divide-before-multiply",
+        "Multiplication should occur before division to avoid loss of precision."
+    ),
     // Low
     // Info
-    (VariableCamelCase, Severity::Info, "variable-camel-case", "TODO: description"),
+    (VariableCamelCase, Severity::Info, "variable-camel-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables."),
     (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description"),
     (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description"),
     (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description"),
     // Gas Optimizations
-    (AsmKeccak256, Severity::Gas, "asm-keccak256", "TODO: description"),
+    (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas."),
     (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description"),
     (PackStructs, Severity::Gas, "pack-structs", "TODO: description"),
     (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description"),

@@ -101,7 +101,13 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
 
                 let max_line_number_width = start_line.to_string().len();
 
-                writeln!(f, "{severity}: {name}: {description}")?;
+                writeln!(
+                    f,
+                    "{}: {}: {}",
+                    severity,
+                    Paint::white(name).bold(),
+                    Paint::white(description).bold()
+                )?;
                 writeln!(
                     f,
                     "{}  {}:{}:{}",
