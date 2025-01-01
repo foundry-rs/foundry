@@ -1,8 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_lint::{sol::SolidityLinter, OutputFormat, ProjectLinter, Severity};
+use forge_lint::{sol::SolidityLinter, ProjectLinter, Severity};
 use foundry_cli::utils::LoadConfig;
-use foundry_common::shell;
 use foundry_config::impl_figment_convert_basic;
 use std::{collections::HashSet, path::PathBuf};
 
@@ -23,13 +22,6 @@ pub struct LintArgs {
     /// Exclude the specified files when linting.
     #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
     exclude: Option<Vec<PathBuf>>,
-
-    // TODO: support writing to output file
-    /// Format of the output.
-    ///
-    /// Supported values: `json` or `markdown`.
-    #[arg(long, value_name = "FORMAT", default_value = "json")]
-    format: OutputFormat,
 
     /// Specifies which lints to run based on severity.
     ///
@@ -84,9 +76,8 @@ impl LintArgs {
         };
 
         let output = ProjectLinter::new(linter).lint(&sources)?;
-        sh_println!("{}", &output)?;
 
-        dbg!(now.elapsed());
+        sh_println!("{}", &output)?;
 
         Ok(())
     }
