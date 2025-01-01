@@ -34,7 +34,6 @@ jobs:
               id: buildx
               with:
                   install: true
-                  platforms: linux/amd64,linux/arm64
 
             # Login against a Docker registry except on PR
             # https://github.com/docker/login-action
@@ -87,7 +86,6 @@ jobs:
               with:
                   context: .
                   push: true
-                  platforms: linux/amd64,linux/arm64
                   tags: ${{ steps.docker_tagging.outputs.docker_tags }}
                   labels: ${{ steps.meta.outputs.labels }}
                   cache-from: type=gha
