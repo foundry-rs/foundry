@@ -50,8 +50,11 @@ impl Linter for SolidityLinter {
         let all_findings = input
             .into_par_iter()
             .map(|file| {
-                // TODO: this should be configurable
-                let mut lints = SolLint::all();
+                let mut lints = if let Some(severity) = &self.severity {
+                    SolLint::with_severity(severity.to_owned())
+                } else {
+                    SolLint::all()
+                };
 
                 // Initialize session and parsing environment
                 let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
@@ -100,7 +103,7 @@ impl Linter for SolidityLinter {
 pub enum SolLintError {}
 
 macro_rules! declare_sol_lints {
-    ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr $(, $help:expr)?)),* $(,)?) => {
+    ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr, $url:expr)),* $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
         pub enum SolLint {
             $(
@@ -123,6 +126,13 @@ macro_rules! declare_sol_lints {
                         SolLint::$name(lint) => &lint.results,
                     )*
                 }
+            }
+
+            pub fn with_severity(severity: Vec<Severity>) -> Vec<Self> {
+                Self::all()
+                .into_iter()
+                .filter(|lint| severity.contains(&lint.severity()))
+                .collect()
             }
 
             pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Vec<Span> {
@@ -178,9 +188,18 @@ macro_rules! declare_sol_lints {
                 }
             }
 
-            // TODO:
-            fn help(&self) -> Option<&'static str> {
-                None
+            fn url(&self) -> Option<&'static str> {
+                match self {
+                    $(
+                        SolLint::$name(_) => {
+                            if !$url.is_empty() {
+                                Some($url)
+                            } else {
+                                None
+                            }
+                        },
+                    )*
+                }
             }
         }
 
@@ -194,7 +213,6 @@ macro_rules! declare_sol_lints {
                 pub fn new() -> Self {
                     Self { results: Vec::new() }
                 }
-
             }
         )*
     };
@@ -202,32 +220,22 @@ macro_rules! declare_sol_lints {
 
 declare_sol_lints!(
     //High
-    (IncorrectShift, Severity::High, "incorrect-shift", "TODO: description"),
-    (ArbitraryTransferFrom, Severity::High, "arbitrary-transfer-from", "TODO: description"),
+    (IncorrectShift, Severity::High, "incorrect-shift", "TODO: description", ""),
+    (ArbitraryTransferFrom, Severity::High, "arbitrary-transfer-from", "TODO: description", ""),
     // Med
-    (
-        DivideBeforeMultiply,
-        Severity::Med,
-        "divide-before-multiply",
-        "Multiplication should occur before division to avoid loss of precision."
-    ),
+    (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "Multiplication should occur before division to avoid loss of precision.", ""),
     // Low
     // Info
-    (VariableCamelCase, Severity::Info, "variable-camel-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables."),
-    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description"),
-    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description"),
-    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description"),
+    (VariableCamelCase, Severity::Info, "variable-camel-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables.", ""),
+    (VariableCapsCase, Severity::Info, "variable-caps-case", "TODO: description", ""),
+    (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description", ""),
+    (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description", ""),
     // Gas Optimizations
-    (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas.", "for further information visit https://xyz.com"),
-    (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description"),
-    (PackStructs, Severity::Gas, "pack-structs", "TODO: description"),
-    (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description"),
-    (UseImmutableVariable, Severity::Gas, "use-immutable-var", "TODO: description"),
-    (UseExternalVisibility, Severity::Gas, "use-external-visibility", "TODO: description"),
-    (
-        AvoidUsingThis,
-        Severity::Gas,
-        "avoid-using-this",
-        "Avoid using `this` to read public variables. This incurs an unncessary STATICCALL."
-    ),
+    (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas.", "https://placeholder.xyz"),
+    (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description", ""),
+    (PackStructs, Severity::Gas, "pack-structs", "TODO: description", ""),
+    (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description", ""),
+    (UseImmutableVariable, Severity::Gas, "use-immutable-var", "TODO: description", ""),
+    (UseExternalVisibility, Severity::Gas, "use-external-visibility", "TODO: description", ""),
+    (AvoidUsingThis, Severity::Gas, "avoid-using-this", "Avoid using `this` to read public variables. This incurs an unncessary STATICCALL.", ""),
 );

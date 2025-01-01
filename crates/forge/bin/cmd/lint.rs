@@ -8,18 +8,11 @@ use std::{collections::HashSet, path::PathBuf};
 /// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
-    /// The project's root path.
-    ///
-    /// By default root of the Git repository, if in one,
-    /// or the current working directory.
-    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
-    root: Option<PathBuf>,
-
-    /// Include only the specified files when linting.
+    /// Include additional files to lint.
     #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
     include: Option<Vec<PathBuf>>,
 
-    /// Exclude the specified files when linting.
+    /// Exclude specified files when linting.
     #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
     exclude: Option<Vec<PathBuf>>,
 
@@ -28,12 +21,6 @@ pub struct LintArgs {
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
     #[arg(long, value_name = "SEVERITY", num_args(1..))]
     severity: Option<Vec<Severity>>,
-
-    /// Show descriptions in the output.
-    ///
-    /// Disabled by default to avoid long console output.
-    #[arg(long)]
-    with_description: bool,
 }
 
 impl_figment_convert_basic!(LintArgs);
@@ -66,9 +53,7 @@ impl LintArgs {
         }
 
         let linter = if project.compiler.solc.is_some() {
-            SolidityLinter::new()
-                .with_severity(self.severity)
-                .with_description(self.with_description)
+            SolidityLinter::new().with_severity(self.severity)
         } else {
             todo!("Linting not supported for this language");
         };

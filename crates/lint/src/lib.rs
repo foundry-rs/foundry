@@ -152,14 +152,15 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
                     }
                 }
 
-                if let Some(help) = lint.help() {
+                if let Some(url) = lint.url() {
                     writeln!(
                         f,
-                        "{:width$}{} {}{}",
+                        "{:width$}{} {} {} {}",
                         "",
                         Paint::blue("=").bold(),
                         Paint::white("help:").bold(),
-                        help,
+                        Paint::white("for further information visit"),
+                        url,
                         width = max_line_number_width + 1
                     )?;
                 }
@@ -175,7 +176,7 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
 pub trait Lint: Hash {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
-    fn help(&self) -> Option<&'static str>;
+    fn url(&self) -> Option<&'static str>;
     fn severity(&self) -> Severity;
 }
 
