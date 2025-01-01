@@ -96,123 +96,85 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
             let description = lint.description();
 
             for location in locations {
-                let file_content = std::fs::read_to_string(&location.file)
-                    .expect("Could not read file for source location");
-                let lo_offset = location.span.lo().0 as usize;
-                let hi_offset = location.span.hi().0 as usize;
-
-                if lo_offset > file_content.len() || hi_offset > file_content.len() {
-                    continue; // Skip if offsets are out of bounds
-                }
-
-                let mut offset = 0;
-                let mut start_line = None;
-                let mut start_column = None;
-                let mut end_line = None;
-                let mut end_column = None;
-
-                for (line_number, line) in file_content.lines().enumerate() {
-                    let line_length = line.len() + 1;
-
-                    // Calculate start position
-                    if start_line.is_none() &&
-                        offset <= lo_offset &&
-                        lo_offset < offset + line_length
+                if let Some(file_contents) = location.file_contents() {
+                    if let Some(((start_line, start_column), (end_line, end_column))) =
+                        location.location(&file_contents)
                     {
-                        start_line = Some(line_number + 1);
-                        start_column = Some(lo_offset - offset + 1);
-                    }
+                        dbg!(start_line, start_column, end_line, end_column);
+                        let max_line_number_width = end_line.to_string().len();
 
-                    // Calculate end position
-                    if end_line.is_none() && offset <= hi_offset && hi_offset < offset + line_length
-                    {
-                        end_line = Some(line_number + 1);
-                        end_column = Some(hi_offset - offset + 1);
-                        break;
-                    }
+                        writeln!(f, "{severity}: {name}: {description}")?;
 
-                    offset += line_length;
-                }
-
-                let (start_line, start_column) = (
-                    start_line.expect("Start line not found"),
-                    start_column.expect("Start column not found"),
-                );
-                let (end_line, end_column) = (
-                    end_line.expect("End line not found"),
-                    end_column.expect("End column not found"),
-                );
-
-                let max_line_number_width = start_line.to_string().len();
-
-                writeln!(f, "{severity}: {name}: {description}")?;
-
-                writeln!(
-                    f,
-                    "{}  {}:{}:{}",
-                    Paint::blue(" -->").bold(),
-                    location.file.display(),
-                    start_line,
-                    start_column
-                )?;
-
-                writeln!(
-                    f,
-                    "{:width$}{}",
-                    "",
-                    Paint::blue("|").bold(),
-                    width = max_line_number_width + 1
-                )?;
-
-                let lines = file_content.lines().collect::<Vec<&str>>();
-                let display_start_line = if start_line > 1 { start_line - 1 } else { start_line };
-                let display_end_line = if end_line < lines.len() { end_line + 1 } else { end_line };
-
-                for line_number in display_start_line..=display_end_line {
-                    let line = lines.get(line_number - 1).unwrap_or(&"");
-
-                    if line_number == start_line {
                         writeln!(
                             f,
-                            "{:>width$} {} {}",
-                            line_number,
-                            Paint::blue("|").bold(),
-                            line,
-                            width = max_line_number_width
+                            "{}  {}:{}:{}",
+                            Paint::blue(" -->").bold(),
+                            location.file.display(),
+                            start_line,
+                            start_column
                         )?;
 
-                        let caret =
-                            severity.color(&"^".repeat((end_column - start_column + 1) as usize));
                         writeln!(
                             f,
-                            "{:width$}{} {}{}",
+                            "{:width$}{}",
                             "",
                             Paint::blue("|").bold(),
-                            " ".repeat((start_column - 1) as usize),
-                            caret,
                             width = max_line_number_width + 1
                         )?;
-                    } else {
+
+                        let lines = file_contents.lines().collect::<Vec<&str>>();
+                        let display_start_line =
+                            if start_line > 1 { start_line - 1 } else { start_line };
+                        let display_end_line =
+                            if end_line < lines.len() { end_line + 1 } else { end_line };
+
+                        for line_number in display_start_line..=display_end_line {
+                            let line = lines.get(line_number - 1).unwrap_or(&"");
+
+                            if line_number == start_line {
+                                writeln!(
+                                    f,
+                                    "{:>width$} {} {}",
+                                    line_number,
+                                    Paint::blue("|").bold(),
+                                    line,
+                                    width = max_line_number_width
+                                )?;
+
+                                let caret = severity
+                                    .color(&"^".repeat((end_column - start_column + 1) as usize));
+                                writeln!(
+                                    f,
+                                    "{:width$}{} {}{}",
+                                    "",
+                                    Paint::blue("|").bold(),
+                                    " ".repeat((start_column - 1) as usize),
+                                    caret,
+                                    width = max_line_number_width + 1
+                                )?;
+                            } else {
+                                writeln!(
+                                    f,
+                                    "{:width$}{} {}",
+                                    "",
+                                    Paint::blue("|").bold(),
+                                    line,
+                                    width = max_line_number_width + 1
+                                )?;
+                            }
+                        }
+
                         writeln!(
                             f,
-                            "{:width$}{} {}",
+                            "{:width$}{}",
                             "",
                             Paint::blue("|").bold(),
-                            line,
                             width = max_line_number_width + 1
                         )?;
+
+                        writeln!(f, "")?;
                     }
                 }
-
-                writeln!(
-                    f,
-                    "{:width$}{}",
-                    "",
-                    Paint::blue("|").bold(),
-                    width = max_line_number_width + 1
-                )?;
-
-                writeln!(f, "")?;
             }
         }
 
@@ -272,13 +234,16 @@ impl SourceLocation {
         Self { file, span }
     }
 
+    pub fn file_contents(&self) -> Option<String> {
+        fs::read_to_string(&self.file).ok()
+    }
+
     /// Compute the line and column for the start and end of the span.
-    pub fn location(&self) -> Option<((usize, usize), (usize, usize))> {
-        let file_content = fs::read_to_string(&self.file).ok()?;
+    pub fn location(&self, file_contents: &str) -> Option<((usize, usize), (usize, usize))> {
         let lo = self.span.lo().0 as usize;
         let hi = self.span.hi().0 as usize;
 
-        if lo > file_content.len() || hi > file_content.len() {
+        if lo > file_contents.len() || hi > file_contents.len() {
             return None;
         }
 
@@ -286,7 +251,7 @@ impl SourceLocation {
         let mut start_line = None;
         let mut start_column = None;
 
-        for (line_number, line) in file_content.lines().enumerate() {
+        for (line_number, line) in file_contents.lines().enumerate() {
             let line_length = line.len() + 1;
 
             // If start line and column is already found, look for end line and column
