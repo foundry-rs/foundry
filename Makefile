@@ -26,6 +26,40 @@ help: ## Display this help.
 build: ## Build the project.
 	cargo build --features "$(FEATURES)" --profile "$(PROFILE)"
 
+# The following commands use `cross` to build a cross-compile.
+#
+# These commands require that:
+#
+# - `cross` is installed (`cargo install cross`).
+# - Docker is running.
+# - The current user is in the `docker` group.
+#
+# The resulting binaries will be created in the `target/` directory.
+build-%:
+	cross build --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
+
+
+# The docker image name
+DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry
+
+# Create a cross-arch Docker image with the given tags and push it
+define docker_build_push
+	$(MAKE) build-x86_64-unknown-linux-gnu
+	mkdir -p $(BIN_DIR)/amd64
+	cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/{anvil,cast,chisel,forge} $(BIN_DIR)/amd64/
+
+	$(MAKE) build-aarch64-unknown-linux-gnu
+	mkdir -p $(BIN_DIR)/arm64
+	cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/{anvil,cast,chisel,forge} $(BIN_DIR)/arm64/
+
+	docker buildx build --file ./Dockerfile.cross . \
+		--platform linux/amd64,linux/arm64 \
+		--tag $(DOCKER_IMAGE_NAME):$(1) \
+		--tag $(DOCKER_IMAGE_NAME):$(2) \
+		--provenance=false \
+		--push
+endef
+
 ##@ Other
 
 .PHONY: clean
