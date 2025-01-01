@@ -16,7 +16,7 @@ use yansi::Paint;
 pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     type Lint: Lint + Ord;
-    type LinterError: Error;
+    type LinterError: Error + Send + Sync + 'static;
 
     fn lint(&self, input: &[PathBuf]) -> Result<LinterOutput<Self>, Self::LinterError>;
 }
@@ -37,7 +37,7 @@ where
     }
 
     pub fn lint(self, input: &[PathBuf]) -> eyre::Result<LinterOutput<L>> {
-        Ok(self.linter.lint(input).expect("TODO: handle error"))
+        Ok(self.linter.lint(input)?)
     }
 }
 

@@ -100,8 +100,7 @@ impl Linter for SolidityLinter {
 pub enum SolLintError {}
 
 macro_rules! declare_sol_lints {
-    ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr)),* $(,)?) => {
-
+    ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr $(, $help:expr)?)),* $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
         pub enum SolLint {
             $(
@@ -126,7 +125,6 @@ macro_rules! declare_sol_lints {
                 }
             }
 
-            /// Lint a source unit and return the findings
             pub fn lint(&mut self, source_unit: &SourceUnit<'_>) -> Vec<Span> {
                 match self {
                     $(
@@ -134,6 +132,14 @@ macro_rules! declare_sol_lints {
                             lint.visit_source_unit(source_unit);
                             lint.results.clone()
                         },
+                    )*
+                }
+            }
+
+            pub fn help(&self) -> Option<&'static str> {
+                match self {
+                    $(
+                        SolLint::$name(_) => $name::help(),
                     )*
                 }
             }
@@ -181,7 +187,6 @@ macro_rules! declare_sol_lints {
             }
         }
 
-
         $(
             #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
             pub struct $name {
@@ -193,19 +198,21 @@ macro_rules! declare_sol_lints {
                     Self { results: Vec::new() }
                 }
 
-                /// Returns the severity of the lint
                 pub fn severity() -> Severity {
                     $severity
                 }
 
-                /// Returns the name of the lint
                 pub fn name() -> &'static str {
                     $lint_name
                 }
 
-                /// Returns the description of the lint
                 pub fn description() -> &'static str {
                     $description
+                }
+
+                pub const fn help() -> Option<&'static str> {
+                    $(Some($help))?
+                    None
                 }
             }
         )*
@@ -230,7 +237,7 @@ declare_sol_lints!(
     (StructPascalCase, Severity::Info, "struct-pascal-case", "TODO: description"),
     (FunctionCamelCase, Severity::Info, "function-camel-case", "TODO: description"),
     // Gas Optimizations
-    (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas."),
+    (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas.", "for further information visit https://xyz.com"),
     (PackStorageVariables, Severity::Gas, "pack-storage-variables", "TODO: description"),
     (PackStructs, Severity::Gas, "pack-structs", "TODO: description"),
     (UseConstantVariable, Severity::Gas, "use-constant-var", "TODO: description"),
