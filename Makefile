@@ -7,6 +7,8 @@
 PROFILE ?= dev
 # The docker image name
 DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry:latest
+BIN_DIR = dist/bin
+CARGO_TARGET_DIR ?= target
 
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
@@ -40,25 +42,30 @@ build: ## Build the project.
 build-%:
 	cross build --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
 
-# Note: This requires a buildx builder with emulation support. For example:
-#
-# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
-# `docker buildx create --use --driver docker-container --name cross-builder`
 .PHONY: docker-build-push
-docker-build-push: ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
+docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
 	$(MAKE) build-x86_64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/amd64
-	cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/{anvil,cast,chisel,forge} $(BIN_DIR)/amd64/
+	for bin in anvil cast chisel forge; do \
+		cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/amd64/; \
+	done
 
 	$(MAKE) build-aarch64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/arm64
-	cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/{anvil,cast,chisel,forge} $(BIN_DIR)/arm64/
+	for bin in anvil cast chisel forge; do \
+		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
+	done
 
 	docker buildx build --file ./Dockerfile.cross . \
 		--platform linux/amd64,linux/arm64 \
-		$(foreach tag,$(subst $(comma), ,$(DOCKER_IMAGE_NAME)),--tag $(tag)) \
+		$(foreach tag,$(shell echo $(DOCKER_IMAGE_NAME) | tr ',' ' '),--tag $(tag))
 		--provenance=false \
 		--push
+
+.PHONY: docker-build-prepare
+docker-build-prepare: ## Prepare the Docker build environment.
+	docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64
+	docker buildx create --use --driver docker-container --name cross-builder
 
 ##@ Other
 

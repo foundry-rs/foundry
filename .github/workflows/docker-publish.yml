@@ -74,9 +74,5 @@ jobs:
             echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
             echo "LABELS -> ${{ steps.meta.outputs.labels }}"
 
-      - name: Set up Docker builder
-        run: |
-          docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64
-          docker buildx create --use --name cross-builder
       - name: Build and push reth image, tag as "latest"
         run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} PROFILE=maxperf docker-build-push
