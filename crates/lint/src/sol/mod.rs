@@ -17,7 +17,7 @@ use solar_ast::{
 use solar_interface::{ColorChoice, Session, Span};
 use thiserror::Error;
 
-use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
+use crate::linter::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.

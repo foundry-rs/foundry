@@ -1,6 +1,9 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge_lint::{sol::SolidityLinter, ProjectLinter, Severity};
+use forge_lint::{
+    linter::{ProjectLinter, Severity},
+    sol::SolidityLinter,
+};
 use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
 use std::{collections::HashSet, path::PathBuf};
