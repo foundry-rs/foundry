@@ -5,7 +5,7 @@ use solar_ast::{
     visit::Visit,
 };
 
-use super::{FunctionMixedCase, ScreamingSnakeCase, StructPascalCase, VariableMixedCase};
+use super::{ScreamingSnakeCase, StructPascalCase, VariableMixedCase};
 
 impl<'ast> Visit<'ast> for VariableMixedCase {
     fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
@@ -46,13 +46,6 @@ impl<'ast> Visit<'ast> for StructPascalCase {
     }
 }
 
-impl Visit<'_> for FunctionMixedCase {
-    fn visit_function_header(&mut self, _header: &solar_ast::ast::FunctionHeader<'_>) {
-        // TODO:
-        // self.walk_function_header(header);
-    }
-}
-
 // Check if a string is mixedCase
 pub fn is_mixed_case(s: &str) -> bool {
     let re = Regex::new(r"^[a-z_][a-zA-Z0-9]*$").unwrap();
@@ -77,7 +70,7 @@ mod test {
     use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
-    use crate::sol::{FunctionMixedCase, StructPascalCase};
+    use crate::sol::StructPascalCase;
 
     use super::{ScreamingSnakeCase, VariableMixedCase};
 
@@ -152,32 +145,6 @@ mod test {
             pattern.visit_source_unit(&ast);
 
             assert_eq!(pattern.results.len(), 5);
-
-            Ok(())
-        });
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_function_mixed_case() -> eyre::Result<()> {
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
-
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = ast::Arena::new();
-
-            let mut parser = solar_parse::Parser::from_file(
-                &sess,
-                &arena,
-                Path::new("testdata/FunctionMixedCase.sol"),
-            )?;
-
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-            let mut pattern = FunctionMixedCase::default();
-            pattern.visit_source_unit(&ast);
-
-            assert_eq!(pattern.results.len(), 3);
 
             Ok(())
         });

@@ -220,15 +220,19 @@ macro_rules! declare_sol_lints {
 
 declare_sol_lints!(
     //High
+    
     (IncorrectShift, Severity::High, "incorrect-shift", "The order of args in a shift operation is incorrect.", ""),
     // Med
+
     (DivideBeforeMultiply, Severity::Med, "divide-before-multiply", "Multiplication should occur before division to avoid loss of precision.", ""),
     // Low
+
     // Info
     (VariableMixedCase, Severity::Info, "variable-mixed-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables.", ""),
     (ScreamingSnakeCase, Severity::Info, "screaming-snake-case", "Constants and immutables should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#contract-and-library-names"),
     (StructPascalCase, Severity::Info, "struct-pascal-case", "Structs should be named using PascalCase. Examples: MyCoin, Position", "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"),
-    (FunctionMixedCase, Severity::Info, "function-mixed-case", "Constants should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#function-names"),
+    // TODO: FunctionMixedCase
+
     // Gas Optimizations
     (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas.", "https://placeholder.xyz"),
     // TODO: PackStorageVariables
