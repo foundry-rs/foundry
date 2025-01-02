@@ -7,6 +7,11 @@ use foundry_compilers::{
 use itertools::Itertools;
 use serde_json::Value;
 use solang_parser::{helpers::CodeLocation, pt};
+use solar_ast::{
+    ast::{Arena, CommentKind, ItemKind},
+    interface::{self, Session},
+};
+use solar_parse::Parser;
 use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations
@@ -276,6 +281,96 @@ impl SolangParser {
     }
 }
 
+struct SolarParser {
+    _private: (),
+}
+
+impl SolarParser {
+    fn new() -> Self {
+        Self { _private: () }
+    }
+
+    fn parse(
+        &self,
+        natspecs: &mut Vec<NatSpec>,
+        src: &str,
+        contract_id: &str,
+        contract_name: &str,
+    ) {
+        // Fast path to avoid parsing the file.
+        if !src.contains(INLINE_CONFIG_PREFIX) {
+            return;
+        }
+
+        // Instantiate solar session
+        let sess = Session::builder()
+            .with_silent_emitter(Some("Inline config parsing failed".to_string()))
+            .build();
+
+        let res = sess.enter(|| -> interface::Result<()> {
+            let arena = Arena::new();
+
+            let mut parser = Parser::from_source_code(
+                &sess,
+                &arena,
+                interface::source_map::FileName::Custom(contract_name.to_string()),
+                src.to_string(),
+            )?;
+
+            let source_unit = parser.parse_file().map_err(|e| e.emit())?;
+
+            let mut prev_item_end = 0;
+            for item in source_unit.items {
+                let ItemKind::Contract(ref c) = item.kind else {
+                    prev_item_end = item.span.hi().0;
+                    continue
+                };
+
+                if c.name.as_str() != contract_name {
+                    prev_item_end = item.span.hi().0;
+                    continue
+                };
+
+                // Parse the doccomments for the item here.
+                let mut prev_end = item.span.lo().0;
+                for part in c.body.iter() {
+                    let ItemKind::Function(ref f) = part.kind else { continue };
+
+                    let docs = part
+                        .docs
+                        .iter()
+                        .filter(|d| d.symbol.as_str().contains(INLINE_CONFIG_PREFIX))
+                        .map(|d| match d.kind {
+                            CommentKind::Line => d.symbol.as_str().trim().to_string(),
+                            CommentKind::Block => d
+                                .symbol
+                                .as_str()
+                                .lines()
+                                .map(|line| line.trim_start().trim_start_matches('*').trim())
+                                .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        })
+                        .join("\n");
+
+                    let natspec = NatSpec {
+                        contract: contract_id.to_string(),
+                        function: f.header.name.map(|f| f.to_string()),
+                        docs,
+                        line: "0:0:0".to_string(), // TODO
+                    };
+
+                    natspecs.push(natspec);
+
+                    // prev_end = f.span.hi().0;
+                }
+            }
+
+            Ok(())
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,10 +431,10 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
 }
 ";
         let mut natspecs = vec![];
-        let solang = SolangParser::new();
         let id = || "path.sol:C".to_string();
         let default_line = || "0:0:0".to_string();
-        solang.parse(&mut natspecs, src, &id(), "C");
+        let solar_parser = SolarParser::new();
+        solar_parser.parse(&mut natspecs, src, &id(), "C");
         assert_eq!(
             natspecs,
             [

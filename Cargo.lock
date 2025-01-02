@@ -3999,6 +3999,8 @@ dependencies = [
  "serde_regex",
  "similar-asserts",
  "solang-parser",
+ "solar-ast",
+ "solar-parse",
  "tempfile",
  "thiserror 2.0.9",
  "toml 0.8.19",
