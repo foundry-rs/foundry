@@ -17,7 +17,7 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalOpts},
+    opts::{CoreBuildArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
@@ -67,7 +67,7 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_args);
 pub struct TestArgs {
     // Include global options for users of this struct.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     /// The contract file you want to test, it's a shortcut for --match-path.
     #[arg(value_hint = ValueHint::FilePath)]

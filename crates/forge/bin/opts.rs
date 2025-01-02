@@ -8,7 +8,7 @@ use crate::cmd::{
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
-use foundry_cli::opts::GlobalOpts;
+use foundry_cli::opts::GlobalArgs;
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -29,9 +29,9 @@ const VERSION_MESSAGE: &str = concat!(
     next_display_order = None,
 )]
 pub struct Forge {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: ForgeSubcommand,

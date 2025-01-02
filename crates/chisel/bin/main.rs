@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use eyre::Context;
 use foundry_cli::{
     handler,
-    opts::{CoreBuildArgs, GlobalOpts},
+    opts::{CoreBuildArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{evm::EvmArgs, fs};
@@ -50,9 +50,9 @@ const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: Option<ChiselSubcommand>,
