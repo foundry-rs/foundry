@@ -755,17 +755,15 @@ where {
             if ecx.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match revert_handlers::handle_expect_revert(
                     false,
                     true,
-                    &mut expected_revert,
+                    &expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
-                );
-
-                return match handler_result {
+                ) {
                     Ok((address, retdata)) => {
                         expected_revert.actual_count += 1;
                         if expected_revert.actual_count < expected_revert.count {
@@ -1360,17 +1358,15 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 };
 
                 if needs_processing {
-                    let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                     return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        &mut expected_revert,
+                        &expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
-                    );
-
-                    return match handler_result {
+                    ) {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;
