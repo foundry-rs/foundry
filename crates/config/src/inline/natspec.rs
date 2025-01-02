@@ -229,17 +229,22 @@ impl SolarParser {
         let handle_docs = |item: &Item<'_>| {
             item.docs
                 .iter()
-                .filter(|d| d.symbol.as_str().contains(INLINE_CONFIG_PREFIX))
-                .map(|d| match d.kind {
-                    CommentKind::Line => d.symbol.as_str().trim().to_string(),
-                    CommentKind::Block => d
-                        .symbol
-                        .as_str()
-                        .lines()
-                        .map(|line| line.trim_start().trim_start_matches('*').trim())
-                        .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                .filter_map(|d| {
+                    if !d.symbol.as_str().contains(INLINE_CONFIG_PREFIX) {
+                        return None
+                    }
+                    match d.kind {
+                        CommentKind::Line => Some(d.symbol.as_str().trim().to_string()),
+                        CommentKind::Block => Some(
+                            d.symbol
+                                .as_str()
+                                .lines()
+                                .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
+                                .map(|line| line.trim_start().trim_start_matches('*').trim())
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        ),
+                    }
                 })
                 .join("\n")
         };
