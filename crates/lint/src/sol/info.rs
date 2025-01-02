@@ -11,7 +11,8 @@ impl<'ast> Visit<'ast> for VariableMixedCase {
     fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
         if var.mutability.is_none() {
             if let Some(name) = var.name {
-                if !is_mixed_case(name.as_str()) {
+                let name = name.as_str();
+                if !is_mixed_case(name) && name.len() > 1 {
                     self.results.push(var.span);
                 }
             }
@@ -26,7 +27,8 @@ impl<'ast> Visit<'ast> for ScreamingSnakeCase {
         if let Some(mutability) = var.mutability {
             if mutability.is_constant() || mutability.is_immutable() {
                 if let Some(name) = var.name {
-                    if !is_screaming_snake_case(name.as_str()) {
+                    let name = name.as_str();
+                    if !is_screaming_snake_case(name) && name.len() > 1 {
                         self.results.push(var.span);
                     }
                 }
@@ -38,7 +40,9 @@ impl<'ast> Visit<'ast> for ScreamingSnakeCase {
 
 impl<'ast> Visit<'ast> for StructPascalCase {
     fn visit_item_struct(&mut self, strukt: &'ast ItemStruct<'ast>) {
-        if !is_pascal_case(strukt.name.as_str()) {
+        let name = strukt.name.as_str();
+
+        if !is_pascal_case(name) && name.len() > 1 {
             self.results.push(strukt.name.span);
         }
 
