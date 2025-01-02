@@ -1,4 +1,4 @@
-contract Contract0 {
+contract AsmKeccak256 {
     constructor(uint256 a, uint256 b) {
         keccak256(abi.encodePacked(a, b));
     }

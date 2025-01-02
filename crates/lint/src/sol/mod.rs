@@ -226,8 +226,8 @@ declare_sol_lints!(
     // Low
     // Info
     (VariableMixedCase, Severity::Info, "variable-mixed-case", "Variables should follow `camelCase` naming conventions unless they are constants or immutables.", ""),
-    (VariableCapsCase, Severity::Info, "variable-caps-case", "Constants should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#contract-and-library-names"),
-    (StructPascalCase, Severity::Info, "struct-pascal-case", "Structs should be named using CapWords style. Examples: MyCoin, Position", "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"),
+    (ScreamingSnakeCase, Severity::Info, "screaming-snake-case", "Constants and immutables should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#contract-and-library-names"),
+    (StructPascalCase, Severity::Info, "struct-pascal-case", "Structs should be named using PascalCase. Examples: MyCoin, Position", "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"),
     (FunctionMixedCase, Severity::Info, "function-mixed-case", "Constants should be named with all capital letters with underscores separating words.", "https://docs.soliditylang.org/en/latest/style-guide.html#function-names"),
     // Gas Optimizations
     (AsmKeccak256, Severity::Gas, "asm-keccak256", "Hashing via keccak256 can be done with inline assembly to save gas.", "https://placeholder.xyz"),

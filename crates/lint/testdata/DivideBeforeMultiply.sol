@@ -1,4 +1,4 @@
-contract Contract0 {
+contract DivideBeforeMultiply {
     function arithmetic() public {
         (1 / 2) * 3; // Unsafe
         (1 * 2) / 3; // Safe

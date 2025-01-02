@@ -139,7 +139,7 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
                     )?;
 
                     if line_number == start_line {
-                        let caret = severity.color(&"^".repeat(end_column - start_column + 1));
+                        let caret = severity.color(&"^".repeat(end_column - start_column));
                         writeln!(
                             f,
                             "{:width$}{} {}{}",
