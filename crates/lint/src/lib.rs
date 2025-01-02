@@ -13,6 +13,20 @@ use std::{
 };
 use yansi::Paint;
 
+/// Trait representing a generic linter for analyzing and reporting issues in smart contract source
+/// code files. A linter can be implemented for any smart contract lanugage supported by Foundry.
+///
+/// # Type Parameters
+///
+/// - `Language`: Represents the target programming language. Must implement the [`Language`] trait.
+/// - `Lint`: Represents the types of lints performed by the linter. Must implement the [`Lint`]
+///   trait.
+/// - `LinterError`: Represents errors that can occur during the linting process.
+///
+/// # Required Methods
+///
+/// - `lint`: Scans the provided source files and returns a [`LinterOutput`] containing categorized
+///   findings or an error if linting fails.
 pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     type Lint: Lint + Ord;
@@ -214,6 +228,7 @@ impl fmt::Display for Severity {
     }
 }
 
+/// Represents the location of a specific AST node in the specified `file`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
     pub file: PathBuf,
@@ -224,7 +239,8 @@ impl SourceLocation {
     pub fn new(file: PathBuf, span: Span) -> Self {
         Self { file, span }
     }
-    /// Compute the line and column for the start and end of the span.
+
+    /// Find the start and end position of the span in the file content.
     pub fn location(&self, file_content: &str) -> Option<((usize, usize), (usize, usize))> {
         let lo = self.span.lo().0 as usize;
         let hi = self.span.hi().0 as usize;

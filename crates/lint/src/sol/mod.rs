@@ -19,6 +19,9 @@ use thiserror::Error;
 
 use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 
+
+/// A linter implementation to analyze Solidity source code responsible for identifying vulnerabilities
+/// gas optimizations, and best practices.
 #[derive(Debug, Clone, Default)]
 pub struct SolidityLinter {
     pub severity: Option<Vec<Severity>>,
@@ -102,6 +105,20 @@ impl Linter for SolidityLinter {
 #[derive(Error, Debug)]
 pub enum SolLintError {}
 
+
+/// Macro for defining lints and relevant metadata for the Solidity linter.
+///
+/// This macro generates the [`SolLint`] enum with each lint along with utility methods and 
+/// corresponding structs for each lint specified.
+///
+/// # Parameters
+///
+/// Each lint is defined as a tuple with the following fields:
+/// - `$name`: Identitifier used for the struct and enum variant created for the lint.
+/// - `$severity`: The [`Severity`] of the lint (e.g. `High`, `Med`, `Low`, `Info`, `Gas`).
+/// - `$lint_name`: A string identifier for the lint used during reporting.
+/// - `$description`: A short description of the lint.
+/// - `$url`: URL providing additional information about the lint or best practices.
 macro_rules! declare_sol_lints {
     ($(($name:ident, $severity:expr, $lint_name:expr, $description:expr, $url:expr)),* $(,)?) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
