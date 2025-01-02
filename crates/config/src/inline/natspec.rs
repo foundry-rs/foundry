@@ -8,7 +8,7 @@ use itertools::Itertools;
 use serde_json::Value;
 use solang_parser::{helpers::CodeLocation, pt};
 use solar_ast::{
-    ast::{Arena, CommentKind, ItemKind},
+    ast::{Arena, CommentKind, Item, ItemKind},
     interface::{self, Session},
 };
 use solar_parse::Parser;
@@ -302,12 +302,30 @@ impl SolarParser {
             return;
         }
 
+        let handle_docs = |item: &Item<'_>| {
+            item.docs
+                .iter()
+                .filter(|d| d.symbol.as_str().contains(INLINE_CONFIG_PREFIX))
+                .map(|d| match d.kind {
+                    CommentKind::Line => d.symbol.as_str().trim().to_string(),
+                    CommentKind::Block => d
+                        .symbol
+                        .as_str()
+                        .lines()
+                        .map(|line| line.trim_start().trim_start_matches('*').trim())
+                        .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                })
+                .join("\n")
+        };
+
         // Instantiate solar session
         let sess = Session::builder()
             .with_silent_emitter(Some("Inline config parsing failed".to_string()))
             .build();
 
-        let res = sess.enter(|| -> interface::Result<()> {
+        let _ = sess.enter(|| -> interface::Result<()> {
             let arena = Arena::new();
 
             let mut parser = Parser::from_source_code(
@@ -319,50 +337,37 @@ impl SolarParser {
 
             let source_unit = parser.parse_file().map_err(|e| e.emit())?;
 
-            let mut prev_item_end = 0;
             for item in source_unit.items {
-                let ItemKind::Contract(ref c) = item.kind else {
-                    prev_item_end = item.span.hi().0;
-                    continue
-                };
+                let ItemKind::Contract(ref c) = item.kind else { continue };
 
                 if c.name.as_str() != contract_name {
-                    prev_item_end = item.span.hi().0;
                     continue
                 };
 
+                // Handle contract level doc comments
+                let docs = handle_docs(&item);
+                if !docs.is_empty() {
+                    natspecs.push(NatSpec {
+                        contract: contract_id.to_string(),
+                        function: None,
+                        line: "0:0:0".to_string(), // TODO
+                        docs,
+                    });
+                }
+
                 // Parse the doccomments for the item here.
-                let mut prev_end = item.span.lo().0;
                 for part in c.body.iter() {
                     let ItemKind::Function(ref f) = part.kind else { continue };
 
-                    let docs = part
-                        .docs
-                        .iter()
-                        .filter(|d| d.symbol.as_str().contains(INLINE_CONFIG_PREFIX))
-                        .map(|d| match d.kind {
-                            CommentKind::Line => d.symbol.as_str().trim().to_string(),
-                            CommentKind::Block => d
-                                .symbol
-                                .as_str()
-                                .lines()
-                                .map(|line| line.trim_start().trim_start_matches('*').trim())
-                                .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                        })
-                        .join("\n");
-
-                    let natspec = NatSpec {
-                        contract: contract_id.to_string(),
-                        function: f.header.name.map(|f| f.to_string()),
-                        docs,
-                        line: "0:0:0".to_string(), // TODO
-                    };
-
-                    natspecs.push(natspec);
-
-                    // prev_end = f.span.hi().0;
+                    let docs = handle_docs(&part);
+                    if !docs.is_empty() {
+                        natspecs.push(NatSpec {
+                            contract: contract_id.to_string(),
+                            function: f.header.name.map(|f| f.to_string()),
+                            line: "0:0:0".to_string(), // TODO
+                            docs,
+                        });
+                    }
                 }
             }
 
@@ -624,10 +629,10 @@ contract FuzzInlineConf is DSTest {
     function testInlineConfFuzz2() {}
 }"#;
         let mut natspecs = vec![];
-        let solang = SolangParser::new();
+        let solar = SolarParser::new();
         let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
         let default_line = || "0:0:0".to_string();
-        solang.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
+        solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
         assert_eq!(
             natspecs,
             [
