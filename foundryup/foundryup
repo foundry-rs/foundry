@@ -6,6 +6,8 @@ FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
 FOUNDRY_VERSIONS_DIR="$FOUNDRY_DIR/versions"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
+FOUNDRY_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
+FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 FOUNDRYUP_JOBS=""
 
@@ -30,12 +32,9 @@ main() {
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
       -j|--jobs)        shift; FOUNDRYUP_JOBS=$1;;
+      -U|--update)      shift; update;;
       --arch)           shift; FOUNDRYUP_ARCH=$1;;
       --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
-      --self-update)
-        self_update
-        exit 0
-        ;;
       -h|--help)
         usage
         exit 0
@@ -264,9 +263,9 @@ OPTIONS:
     -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
+    -U, --update    Update foundryup to the latest version
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, and darwin)
-    --self-update   Update foundryup to the latest version
 EOF
 }
 
@@ -305,14 +304,12 @@ use() {
   fi
 }
 
-self_update() {
+update() {
   say "updating foundryup..."
-  BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
-  BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
   # Download and replace the current foundryup
-  ensure download "$BIN_URL" "$BIN_PATH"
-  ensure chmod +x "$BIN_PATH"
+  ensure download "$FOUNDRY_BIN_URL" "$FOUNDRY_BIN_PATH"
+  ensure chmod +x "$FOUNDRY_BIN_PATH"
 
   say "successfully updated foundryup"
   exit 0
