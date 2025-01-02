@@ -471,7 +471,7 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
     }
 
     #[test]
-    fn parse_solang_2() {
+    fn parse_solar_2() {
         let src = r#"
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.8.0;
@@ -489,10 +489,10 @@ contract FuzzInlineConf is DSTest {
 }
         "#;
         let mut natspecs = vec![];
-        let solang = SolangParser::new();
+        let solar = SolarParser::new();
         let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
         let default_line = || "0:0:0".to_string();
-        solang.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
+        solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
         assert_eq!(
             natspecs,
             [
