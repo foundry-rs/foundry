@@ -105,7 +105,7 @@ impl<L: Linter> fmt::Display for LinterOutput<L> {
                     });
 
                 let ((start_line, start_column), (end_line, end_column)) =
-                    match location.location(&file_content) {
+                    match location.location(file_content) {
                         Some(pos) => pos,
                         None => continue,
                     };

@@ -20,7 +20,7 @@ use thiserror::Error;
 use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 
 
-/// A linter implementation to analyze Solidity source code responsible for identifying vulnerabilities
+/// Linter implementation to analyze Solidity source code responsible for identifying vulnerabilities
 /// gas optimizations, and best practices.
 #[derive(Debug, Clone, Default)]
 pub struct SolidityLinter {
