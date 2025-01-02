@@ -21,7 +21,6 @@ alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 revm-primitives.workspace = true
 
-solang-parser.workspace = true
 solar-parse.workspace = true
 solar-ast.workspace = true
 

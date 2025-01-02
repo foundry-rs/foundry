@@ -6,7 +6,6 @@ use foundry_compilers::{
 };
 use itertools::Itertools;
 use serde_json::Value;
-use solang_parser::{helpers::CodeLocation, pt};
 use solar_ast::{
     ast::{Arena, CommentKind, Item, ItemKind},
     interface::{self, Session},
@@ -35,7 +34,7 @@ impl NatSpec {
         let mut natspecs: Vec<Self> = vec![];
 
         let solc = SolcParser::new();
-        let solang = SolangParser::new();
+        let solar = SolarParser::new();
         for (id, artifact) in output.artifact_ids() {
             let abs_path = id.source.as_path();
             let path = abs_path.strip_prefix(root).unwrap_or(abs_path);
@@ -53,7 +52,7 @@ impl NatSpec {
 
             if !used_solc_ast {
                 if let Ok(src) = std::fs::read_to_string(abs_path) {
-                    solang.parse(&mut natspecs, &src, &contract, contract_name);
+                    solar.parse(&mut natspecs, &src, &contract, contract_name);
                 }
             }
         }
@@ -206,81 +205,6 @@ impl SolcParser {
     }
 }
 
-struct SolangParser {
-    _private: (),
-}
-
-impl SolangParser {
-    fn new() -> Self {
-        Self { _private: () }
-    }
-
-    fn parse(
-        &self,
-        natspecs: &mut Vec<NatSpec>,
-        src: &str,
-        contract_id: &str,
-        contract_name: &str,
-    ) {
-        // Fast path to avoid parsing the file.
-        if !src.contains(INLINE_CONFIG_PREFIX) {
-            return;
-        }
-
-        let Ok((pt, comments)) = solang_parser::parse(src, 0) else { return };
-
-        // Collects natspects from the given range.
-        let mut handle_docs = |contract: &str, func: Option<&str>, start, end| {
-            let docs = solang_parser::doccomment::parse_doccomments(&comments, start, end);
-            natspecs.extend(
-                docs.into_iter()
-                    .flat_map(|doc| doc.into_comments())
-                    .filter(|doc| doc.value.contains(INLINE_CONFIG_PREFIX))
-                    .map(|doc| NatSpec {
-                        // not possible to obtain correct value due to solang-parser bug
-                        // https://github.com/hyperledger/solang/issues/1658
-                        line: "0:0:0".to_string(),
-                        contract: contract.to_string(),
-                        function: func.map(|f| f.to_string()),
-                        docs: doc.value,
-                    }),
-            );
-        };
-
-        let mut prev_item_end = 0;
-        for item in &pt.0 {
-            let pt::SourceUnitPart::ContractDefinition(c) = item else {
-                prev_item_end = item.loc().end();
-                continue
-            };
-            let Some(id) = c.name.as_ref() else {
-                prev_item_end = item.loc().end();
-                continue
-            };
-            if id.name != contract_name {
-                prev_item_end = item.loc().end();
-                continue
-            };
-
-            // Handle doc comments in between the previous contract and the current one.
-            handle_docs(contract_id, None, prev_item_end, item.loc().start());
-
-            let mut prev_end = c.loc.start();
-            for part in &c.parts {
-                let pt::ContractPart::FunctionDefinition(f) = part else { continue };
-                let start = f.loc.start();
-                // Handle doc comments in between the previous function and the current one.
-                if let Some(name) = &f.name {
-                    handle_docs(contract_id, Some(name.name.as_str()), prev_end, start);
-                }
-                prev_end = f.loc.end();
-            }
-
-            prev_item_end = item.loc().end();
-        }
-    }
-}
-
 struct SolarParser {
     _private: (),
 }
@@ -345,7 +269,7 @@ impl SolarParser {
                 };
 
                 // Handle contract level doc comments
-                let docs = handle_docs(&item);
+                let docs = handle_docs(item);
                 if !docs.is_empty() {
                     natspecs.push(NatSpec {
                         contract: contract_id.to_string(),
@@ -355,11 +279,10 @@ impl SolarParser {
                     });
                 }
 
-                // Parse the doccomments for the item here.
                 for part in c.body.iter() {
                     let ItemKind::Function(ref f) = part.kind else { continue };
 
-                    let docs = handle_docs(&part);
+                    let docs = handle_docs(part);
                     if !docs.is_empty() {
                         natspecs.push(NatSpec {
                             contract: contract_id.to_string(),
