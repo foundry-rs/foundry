@@ -485,7 +485,10 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to());
+        ccx.ecx.env.block.set_blob_excess_gas_and_price(
+            (*newBlobBaseFee).to(),
+            ccx.ecx.spec_id() >= SpecId::PRAGUE,
+        );
         Ok(Default::default())
     }
 }
