@@ -17,7 +17,7 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalArgs},
+    opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
@@ -59,7 +59,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{print_invariant_metrics, TestSummaryReport};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_args);
+foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
@@ -157,22 +157,10 @@ pub struct TestArgs {
     #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
     pub show_progress: bool,
 
-    #[command(flatten)]
-    filter: FilterArgs,
-
     /// Re-run recorded test failures from last run.
     /// If no failure recorded then regular test run is performed.
     #[arg(long)]
     pub rerun: bool,
-
-    #[command(flatten)]
-    evm_args: EvmArgs,
-
-    #[command(flatten)]
-    opts: CoreBuildArgs,
-
-    #[command(flatten)]
-    pub watch: WatchArgs,
 
     /// Print test summary table.
     #[arg(long, help_heading = "Display options")]
@@ -181,14 +169,21 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
+
+    #[command(flatten)]
+    filter: FilterArgs,
+
+    #[command(flatten)]
+    evm: EvmArgs,
+
+    #[command(flatten)]
+    pub build: BuildOpts,
+
+    #[command(flatten)]
+    pub watch: WatchArgs,
 }
 
 impl TestArgs {
-    /// Returns the flattened [`CoreBuildArgs`].
-    pub fn build_args(&self) -> &CoreBuildArgs {
-        &self.opts
-    }
-
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
         self.execute_tests().await
@@ -1002,7 +997,7 @@ mod tests {
     fn extract_chain() {
         let test = |arg: &str, expected: Chain| {
             let args = TestArgs::parse_from(["foundry-cli", arg]);
-            assert_eq!(args.evm_args.env.chain, Some(expected));
+            assert_eq!(args.evm.env.chain, Some(expected));
             let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
             assert_eq!(config.chain, Some(expected));
             assert_eq!(evm_opts.env.chain_id, Some(expected.id()));

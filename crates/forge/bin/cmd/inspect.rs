@@ -3,7 +3,7 @@ use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
-use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
+use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof, shell};
 use foundry_compilers::{
     artifacts::{
@@ -35,7 +35,7 @@ pub struct InspectArgs {
 
     /// All build arguments are supported
     #[command(flatten)]
-    build: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl InspectArgs {
@@ -58,8 +58,8 @@ impl InspectArgs {
         };
 
         // Build modified Args
-        let modified_build_args = CoreBuildArgs {
-            compiler: CompilerArgs { extra_output: cos, optimize: optimized, ..build.compiler },
+        let modified_build_args = BuildOpts {
+            compiler: CompilerOpts { extra_output: cos, optimize: optimized, ..build.compiler },
             ..build
         };
 

@@ -259,7 +259,7 @@ pub async fn watch_gas_snapshot(args: GasSnapshotArgs) -> Result<()> {
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// test`
 pub async fn watch_test(args: TestArgs) -> Result<()> {
-    let config: Config = args.build_args().into();
+    let config: Config = Config::from(&args.build);
     let filter = args.filter(&config);
     // Marker to check whether to override the command.
     let no_reconfigure = filter.args().test_pattern.is_some() ||

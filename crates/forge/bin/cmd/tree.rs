@@ -1,6 +1,6 @@
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::ProjectPathsArgs, utils::LoadConfig};
+use foundry_cli::{opts::ProjectPathOpts, utils::LoadConfig};
 use foundry_compilers::{
     resolver::{parse::SolData, Charset, TreeOptions},
     Graph,
@@ -20,10 +20,10 @@ pub struct TreeArgs {
     charset: Charset,
 
     #[command(flatten)]
-    opts: ProjectPathsArgs,
+    project_paths: ProjectPathOpts,
 }
 
-foundry_config::impl_figment_convert!(TreeArgs, opts);
+foundry_config::impl_figment_convert!(TreeArgs, project_paths);
 
 impl TreeArgs {
     pub fn run(self) -> Result<()> {

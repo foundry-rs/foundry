@@ -1,12 +1,12 @@
 use clap::{Parser, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::retry::RETRY_VERIFY_ON_CREATE;
-use foundry_cli::opts::CoreBuildArgs;
+use foundry_cli::opts::BuildOpts;
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(DebugArgs, opts, evm_args);
+foundry_config::impl_figment_convert!(DebugArgs, build, evm);
 
 /// CLI arguments for `forge debug`.
 #[derive(Clone, Debug, Parser)]
@@ -43,10 +43,10 @@ pub struct DebugArgs {
     pub dump: Option<PathBuf>,
 
     #[command(flatten)]
-    pub opts: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
-    pub evm_args: EvmArgs,
+    pub evm: EvmArgs,
 }
 
 impl DebugArgs {
@@ -57,8 +57,8 @@ impl DebugArgs {
             target_contract: self.target_contract,
             sig: self.sig,
             gas_estimate_multiplier: 130,
-            opts: self.opts,
-            evm_args: self.evm_args,
+            build: self.build,
+            evm: self.evm,
             debug: true,
             dump: self.dump,
             retry: RETRY_VERIFY_ON_CREATE,
