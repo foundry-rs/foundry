@@ -507,8 +507,8 @@ impl UIfmt for AnyTxEnvelope {
             Self::Unknown(tx) => {
                 format!(
                     "
-hash {}
-type {}
+hash                 {}
+type                 {}
 {}
                     ",
                     tx.hash.pretty(),
@@ -811,7 +811,6 @@ pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) 
             TxEnvelope::Eip4844(tx) => Some(tx.signature()),
             TxEnvelope::Eip7702(tx) => Some(tx.signature()),
             TxEnvelope::Legacy(tx) => Some(tx.signature()),
-            _ => None,
         },
         _ => None,
     };
@@ -899,7 +898,6 @@ fn pretty_block_basics<T>(block: &Block<T, alloy_rpc_types::Header<AnyHeader>>) 
                         excess_blob_gas,
                         parent_beacon_block_root,
                         requests_hash,
-                        target_blobs_per_block,
                     },
             },
         uncles: _,
@@ -931,8 +929,7 @@ withdrawalsRoot      {}
 totalDifficulty      {}
 blobGasUsed          {}
 excessBlobGas        {}
-requestsHash         {}
-targetBlobsPerBlock  {}",
+requestsHash         {}",
         base_fee_per_gas.pretty(),
         difficulty.pretty(),
         extra_data.pretty(),
@@ -960,7 +957,6 @@ targetBlobsPerBlock  {}",
         blob_gas_used.pretty(),
         excess_blob_gas.pretty(),
         requests_hash.pretty(),
-        target_blobs_per_block.pretty(),
     )
 }
 
