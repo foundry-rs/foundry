@@ -413,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_solang() {
+    fn parse_solar() {
         let src = "
 contract C { /// forge-config: default.fuzz.runs = 600
 
