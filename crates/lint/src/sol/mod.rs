@@ -19,9 +19,8 @@ use thiserror::Error;
 
 use crate::{Lint, Linter, LinterOutput, Severity, SourceLocation};
 
-
-/// Linter implementation to analyze Solidity source code responsible for identifying vulnerabilities
-/// gas optimizations, and best practices.
+/// Linter implementation to analyze Solidity source code responsible for identifying
+/// vulnerabilities gas optimizations, and best practices.
 #[derive(Debug, Clone, Default)]
 pub struct SolidityLinter {
     pub severity: Option<Vec<Severity>>,
@@ -105,10 +104,9 @@ impl Linter for SolidityLinter {
 #[derive(Error, Debug)]
 pub enum SolLintError {}
 
-
 /// Macro for defining lints and relevant metadata for the Solidity linter.
 ///
-/// This macro generates the [`SolLint`] enum with each lint along with utility methods and 
+/// This macro generates the [`SolLint`] enum with each lint along with utility methods and
 /// corresponding structs for each lint specified.
 ///
 /// # Parameters
@@ -237,7 +235,6 @@ macro_rules! declare_sol_lints {
 
 declare_sol_lints!(
     //High
-    
     (IncorrectShift, Severity::High, "incorrect-shift", "The order of args in a shift operation is incorrect.", ""),
     // Med
 
