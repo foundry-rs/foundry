@@ -561,7 +561,7 @@ contract FuzzInlineConf is DSTest {
     }
 
     #[test]
-    fn parse_solang_multiple_contracts_from_same_file() {
+    fn parse_solar_multiple_contracts_from_same_file() {
         let src = r#"
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.8.0;
@@ -579,10 +579,10 @@ contract FuzzInlineConf2 is DSTest {
 }
         "#;
         let mut natspecs = vec![];
-        let solang = SolangParser::new();
+        let solar = SolarParser::new();
         let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
         let default_line = || "0:0:0".to_string();
-        solang.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
+        solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
         assert_eq!(
             natspecs,
             [NatSpec {
@@ -595,7 +595,7 @@ contract FuzzInlineConf2 is DSTest {
 
         let mut natspecs = vec![];
         let id = || "inline/FuzzInlineConf2.t.sol:FuzzInlineConf2".to_string();
-        solang.parse(&mut natspecs, src, &id(), "FuzzInlineConf2");
+        solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf2");
         assert_eq!(
             natspecs,
             [NatSpec {
