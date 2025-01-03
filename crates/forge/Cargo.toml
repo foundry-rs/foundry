@@ -1,5 +1,5 @@
 [package]
-name = "forge"
+name = "phorge"
 description = "Fast and flexible Ethereum testing framework"
 
 version.workspace = true
