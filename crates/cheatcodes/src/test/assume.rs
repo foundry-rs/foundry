@@ -80,7 +80,7 @@ impl Cheatcode for assumeNoRevert_2Call {
         assume_no_revert(
             ccx.state,
             ccx.ecx.journaled_state.depth(),
-            potentialReverts.iter().map(|p| AcceptableRevertParameters::from(p)).collect(),
+            potentialReverts.iter().map(AcceptableRevertParameters::from).collect(),
         )
     }
 }
