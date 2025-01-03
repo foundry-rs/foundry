@@ -2,8 +2,7 @@ use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use spec::Vm::{
-    assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
-    assumeNoRevert_3Call, assumeNoRevert_4Call,
+    assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call, PotentialRevert,
 };
 use std::fmt::Debug;
 
@@ -34,6 +33,20 @@ pub struct AcceptableRevertParameters {
     pub reverter: Option<Address>,
 }
 
+impl AcceptableRevertParameters {
+    fn from(potential_revert: &PotentialRevert) -> Self {
+        Self {
+            reason: potential_revert.revertData.to_vec(),
+            partial_match: potential_revert.partialMatch,
+            reverter: if potential_revert.reverter == Address::ZERO {
+                None
+            } else {
+                Some(potential_revert.reverter)
+            },
+        }
+    }
+}
+
 impl Cheatcode for assumeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { condition } = self;
@@ -47,51 +60,27 @@ impl Cheatcode for assumeCall {
 
 impl Cheatcode for assumeNoRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth(), None, None)
+        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth(), vec![])
     }
 }
 
 impl Cheatcode for assumeNoRevert_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { revertData } = self;
+        let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
             ccx.ecx.journaled_state.depth(),
-            Some(revertData.to_vec()),
-            None,
+            vec![AcceptableRevertParameters::from(potentialRevert)],
         )
     }
 }
 impl Cheatcode for assumeNoRevert_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { revertData } = self;
+        let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,
             ccx.ecx.journaled_state.depth(),
-            Some(revertData.to_vec()),
-            None,
-        )
-    }
-}
-impl Cheatcode for assumeNoRevert_3Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { revertData, reverter } = self;
-        assume_no_revert(
-            ccx.state,
-            ccx.ecx.journaled_state.depth(),
-            Some(revertData.to_vec()),
-            Some(*reverter),
-        )
-    }
-}
-impl Cheatcode for assumeNoRevert_4Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { revertData, reverter } = self;
-        assume_no_revert(
-            ccx.state,
-            ccx.ecx.journaled_state.depth(),
-            Some(revertData.to_vec()),
-            Some(*reverter),
+            potentialReverts.iter().map(|p| AcceptableRevertParameters::from(p)).collect(),
         )
     }
 }
@@ -99,29 +88,12 @@ impl Cheatcode for assumeNoRevert_4Call {
 fn assume_no_revert(
     state: &mut Cheatcodes,
     depth: u64,
-    reason: Option<Vec<u8>>,
-    reverter: Option<Address>,
+    parameters: Vec<AcceptableRevertParameters>,
 ) -> Result {
     ensure!(state.expected_revert.is_none(), ASSUME_EXPECT_REJECT_MAGIC);
+    ensure!(state.assume_no_revert.is_none(), ASSUME_REJECT_MAGIC);
 
-    let params = reason.map(|reason| {
-        let partial_match = reason.len() == 4;
-        AcceptableRevertParameters { reason, partial_match, reverter }
-    });
-
-    match state.assume_no_revert {
-        Some(ref mut assume) => {
-            ensure!(!assume.reasons.is_empty() && params.is_some(), ASSUME_REJECT_MAGIC);
-            assume.reasons.push(params.unwrap());
-        }
-        None => {
-            state.assume_no_revert = Some(AssumeNoRevert {
-                depth,
-                reasons: if let Some(params) = params { vec![params] } else { vec![] },
-                reverted_by: None,
-            });
-        }
-    }
+    state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: parameters, reverted_by: None });
 
     Ok(Default::default())
 }

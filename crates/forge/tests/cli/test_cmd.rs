@@ -2468,15 +2468,18 @@ forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.add_source(
         "AssumeNoRevertTest.t.sol",
         r#"
-import {Test} from 'forge-std/Test.sol';
+import {Test} from "forge-std/Test.sol";
 
 interface Vm {
+    struct PotentialRevert {
+        address reverter;
+        bool partialMatch;
+        bytes revertData;
+    }
     function expectRevert() external;
     function assumeNoRevert() external pure;
-    function assumeNoRevert(bytes4 revertData) external pure;
-    function assumeNoRevert(bytes calldata revertData) external pure;
-    function assumeNoRevert(bytes4 revertData, address reverter) external pure;
-    function assumeNoRevert(bytes calldata revertData, address reverter) external pure;
+    function assumeNoRevert(PotentialRevert calldata revertData) external pure;
+    function assumeNoRevert(PotentialRevert[] calldata revertData) external pure;
 }
 
 contract ReverterB {
@@ -2545,34 +2548,39 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` does not reject an unanticipated error selector
     function testAssume_wrongSelector_fails(uint256 x) public view {
-        _vm.assumeNoRevert(Reverter.UnusedError.selector);
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.UnusedError.selector), partialMatch: false, reverter: address(0)}));
         reverter.revertIf2(x);
     }
 
     /// @dev Test that `assumeNoRevert` does not reject an unanticipated error with extra data
     function testAssume_wrongData_fails(uint256 x) public view {
-        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.RevertWithData.selector, 3));
+        
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 3), partialMatch: false, reverter: address(0)}));
         reverter.revertWithDataIf2(x);
     }
 
     /// @dev Test that `assumeNoRevert` correctly rejects an error selector from a different contract
     function testAssumeWithReverter_fails(uint256 x) public view {
         ReverterB subReverter = (reverter.subReverter());
-        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.MyRevert.selector), address(reverter));
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(reverter)}));
         subReverter.revertIf2(x);
     }
 
     /// @dev Test that `assumeNoRevert` correctly rejects one of two different error selectors when supplying a specific reverter
     function testMultipleAssumes_OneWrong_fails(uint256 x) public view {
-        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.MyRevert.selector), address(reverter));
-        _vm.assumeNoRevert(abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), address(reverter));
+        Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
+        revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(reverter)});
+        revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
+        _vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
     }
 
     /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
     function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
-        _vm.assumeNoRevert(Reverter.MyRevert.selector);
-        _vm.assumeNoRevert(Reverter.RevertWithData.selector, address(reverter));
+        Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
+        revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
+        revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
+        _vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
 
         reverter.twoPossibleReverts(2);
@@ -2580,20 +2588,18 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any specific reason is provided
     function testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {
-        _vm.assumeNoRevert(selector);
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encode(selector), partialMatch: false, reverter: address(0)}));
         _vm.assumeNoRevert();
         reverter.twoPossibleReverts(2);
     }
 
     /// @dev Test that calling `expectRevert` after `assumeNoRevert` results in an error
     function testAssumeThenExpect_fails(uint256) public {
-        _vm.assumeNoRevert(Reverter.MyRevert.selector);
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)}));
         _vm.expectRevert();
         reverter.revertIf2(1);
     }
-}
-    
-"#,
+}"#,
     )
     .unwrap();
     cmd.args(["test", "--mc", "ReverterTest"]).assert_failure().stdout_eq(str![[r#"
