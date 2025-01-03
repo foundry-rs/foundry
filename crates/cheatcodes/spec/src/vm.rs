@@ -324,6 +324,18 @@ interface Vm {
         address implementation;
     }
 
+    /// Represents a "potential" revert reason from a single subsequent call when using `vm.assumeNoReverts`.
+    /// Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced
+    /// as normal.
+    struct PotentialRevert {
+        /// The allowed origin of the revert opcode; address(0) allows reverts from any address
+        address reverter;
+        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        bool partialMatch;
+        /// The data to use to match encountered reverts
+        bytes revertData;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -893,6 +905,14 @@ interface Vm {
     /// Discard this run's fuzz inputs and generate new ones if next call reverted.
     #[cheatcode(group = Testing, safety = Safe)]
     function assumeNoRevert() external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverts with the any of the potential revert parameters.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
 
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
