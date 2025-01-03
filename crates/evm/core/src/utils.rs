@@ -6,7 +6,7 @@ use crate::{
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{Address, Selector, TxKind, B256, U256};
+use alloy_primitives::{address, Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
@@ -301,7 +301,10 @@ pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandle
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
 
-        loaded_precompiles.extend([ODYSSEY_P256]);
+        // For backwards compatibility, inject precompile at address 0x14.
+        let backwards_compat_p256 =
+            (address!("0000000000000000000000000000000000000014"), ODYSSEY_P256.1);
+        loaded_precompiles.extend([ODYSSEY_P256, backwards_compat_p256.into()]);
 
         loaded_precompiles
     });

@@ -52,7 +52,7 @@ pub const PRECOMPILES: &[Address] = &[
 /// [EIP-7212](https://eips.ethereum.org/EIPS/eip-7212) secp256r1 precompile address on Odyssey.
 ///
 /// <https://github.com/ithacaxyz/odyssey/blob/482f4547631ae5c64ebea6a4b4ef93184a4abfee/crates/node/src/evm.rs#L35-L35>
-pub const ODYSSEY_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000014");
+pub const ODYSSEY_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
 
 /// Wrapper around revm P256 precompile, matching EIP-7212 spec.
 ///
