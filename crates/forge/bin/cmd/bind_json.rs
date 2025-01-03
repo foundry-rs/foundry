@@ -16,11 +16,14 @@ use foundry_compilers::{
 use foundry_config::Config;
 use itertools::Itertools;
 use rayon::prelude::*;
-use solang_parser::pt as solang_ast;
+use solar_ast::{
+    ast::{Arena, FunctionKind, ItemKind, VarMut},
+    interface::source_map::FileName,
+};
+use solar_parse::{interface::Session, Parser as SolarParser};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt,
-    fmt::Write,
+    fmt::{self, Write},
     path::PathBuf,
     sync::Arc,
 };
@@ -93,72 +96,83 @@ impl BindJsonArgs {
                 .0
                 .into_par_iter()
                 .map(|(path, source)| {
-                    let mut locs_to_update = Vec::new();
                     let mut content = Arc::unwrap_or_clone(source.content);
-                    let (parsed, _) = solang_parser::parse(&content, 0)
-                        .map_err(|errors| eyre::eyre!("Parser failed: {errors:?}"))?;
+                    let sess = Session::builder()
+                        .with_silent_emitter(Some("parser failed".to_string()))
+                        .build();
 
-                    // All function definitions in the file
-                    let mut functions = Vec::new();
+                    sess.enter(|| -> eyre::Result<(PathBuf, Source)> {
+                        let arena = Arena::new();
+                        let mut funcs = Vec::new();
+                        let mut locs_to_update = Vec::new();
+                        let mut parser = SolarParser::from_source_code(
+                            &sess,
+                            &arena,
+                            FileName::Real(path.clone()),
+                            content.to_string(),
+                        )
+                        .map_err(|e| eyre::eyre!("Parser instantiation failed: {e:?}"))?;
 
-                    for part in &parsed.0 {
-                        if let solang_ast::SourceUnitPart::FunctionDefinition(def) = part {
-                            functions.push(def);
-                        }
-                        if let solang_ast::SourceUnitPart::ContractDefinition(contract) = part {
-                            for part in &contract.parts {
-                                match part {
-                                    solang_ast::ContractPart::FunctionDefinition(def) => {
-                                        functions.push(def);
-                                    }
-                                    // Remove `immutable` attributes
-                                    solang_ast::ContractPart::VariableDefinition(def) => {
-                                        for attr in &def.attrs {
-                                            if let solang_ast::VariableAttribute::Immutable(loc) =
-                                                attr
-                                            {
+                        let parsed = parser
+                            .parse_file()
+                            .map_err(|e| eyre::eyre!("Parser failed: {:?}", e.emit()))?;
+
+                        for item in parsed.items {
+                            if let ItemKind::Function(ref def) = item.kind {
+                                funcs.push(def);
+                            }
+                            if let ItemKind::Contract(ref contract) = item.kind {
+                                for part in contract.body.iter() {
+                                    match part.kind {
+                                        ItemKind::Function(ref def) => {
+                                            funcs.push(def);
+                                        }
+                                        ItemKind::Variable(ref def) => {
+                                            if let Some(VarMut::Immutable) = def.mutability {
                                                 locs_to_update.push((
-                                                    loc.start(),
-                                                    loc.end(),
+                                                    def.span.lo().0,
+                                                    def.span.hi().0,
                                                     String::new(),
                                                 ));
                                             }
                                         }
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
                             }
-                        };
-                    }
+                        }
 
-                    for def in functions {
-                        // If there's no body block, keep the function as is
-                        let Some(solang_ast::Statement::Block { loc, .. }) = def.body else {
-                            continue;
-                        };
-                        let new_body = match def.ty {
-                            solang_ast::FunctionTy::Modifier => "{ _; }",
-                            _ => "{ revert(); }",
-                        };
-                        let start = loc.start();
-                        let end = loc.end();
-                        locs_to_update.push((start, end + 1, new_body.to_string()));
-                    }
+                        for func in funcs {
+                            // If there's no body block, keep the function as is
+                            let Some(stmt) = &func.body else {
+                                continue;
+                            };
+                            let new_body = match func.kind {
+                                FunctionKind::Modifier => "{ _; }",
+                                _ => "{ revert(); }",
+                            };
+                            let start = stmt.first().map(|s| s.span.lo().0);
+                            let end = stmt.last().map(|s| s.span.hi().0);
+                            if let (Some(start), Some(end)) = (start, end) {
+                                locs_to_update.push((start, end + 1, new_body.to_string()));
+                            }
+                        }
 
-                    locs_to_update.sort_by_key(|(start, _, _)| *start);
+                        locs_to_update.sort_by_key(|(start, _, _)| *start);
 
-                    let mut shift = 0_i64;
+                        let mut shift = 0_i64;
 
-                    for (start, end, new) in locs_to_update {
-                        let start = ((start as i64) - shift) as usize;
-                        let end = ((end as i64) - shift) as usize;
+                        for (start, end, new) in locs_to_update {
+                            let start = ((start as i64) - shift) as usize;
+                            let end = ((end as i64) - shift) as usize;
 
-                        content.replace_range(start..end, new.as_str());
-                        shift += (end - start) as i64;
-                        shift -= new.len() as i64;
-                    }
+                            content.replace_range(start..end, new.as_str());
+                            shift += (end - start) as i64;
+                            shift -= new.len() as i64;
+                        }
 
-                    Ok((path, Source::new(content)))
+                        Ok((path, Source::new(content)))
+                    })
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?,
         );
