@@ -48,7 +48,6 @@ pub mod compiler;
 pub mod config;
 pub mod coverage;
 pub mod create;
-pub mod debug;
 pub mod doc;
 pub mod eip712;
 pub mod flatten;
