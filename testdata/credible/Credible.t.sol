@@ -3,64 +3,31 @@ pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
-
-//FIXME(Odysseas): Add Credible-std as a git submodule
-
-interface PhEvm {
-    //Forks to the state prior to the assertion triggering transaction.
-    function forkPreState() external;
-
-    //Forks to the state after the assertion triggering transaction.
-    function forkPostState() external;
-}
-
-/// @notice The Credible contract
-contract Credible {
-    //Precompile address -
-    PhEvm ph = PhEvm(address(uint160(uint256(keccak256("Kim Jong Un Sucks")))));
-}
-
-/// @notice Assertion interface for the PhEvm precompile
-abstract contract Assertion is Credible {
-    /// @notice The type of state change that triggers the assertion
-    enum TriggerType {
-        /// @notice The assertion is triggered by a storage change
-        STORAGE,
-        /// @notice The assertion is triggered by a transfer of ether
-        ETHER,
-        /// @notice The assertion is triggered by both a storage change and a transfer of ether
-        BOTH
-    }
-
-    /// @notice A struct that contains the type of state change and the function selector of the assertion function
-    struct Trigger {
-        /// @notice The type of state change that triggers the assertion
-        TriggerType triggerType;
-        /// @notice The assertion function selector
-        bytes4 fnSelector;
-    }
-
-    /// @notice Returns all the triggers for the assertion
-    /// @return An array of Trigger structs
-    function fnSelectors() external pure virtual returns (Trigger[] memory);
-}
+import {Assertion} from "credible-std/Assertion.sol";
 
 contract MockAssertion is Assertion {
-    function fnSelectors() external pure override returns (Trigger[] memory) {
-        Trigger[] memory triggers = new Trigger[](1);
-        triggers[0] = Trigger({
-            triggerType: TriggerType.STORAGE,
-            fnSelector: this.assertionTrue.selector
-        });
-        return triggers;
+    MockContract mockContract;
+
+    constructor(address mockContract_) {
+        mockContract = MockContract(mockContract_);
     }
 
-    function assertionTrue() external returns (bool) {
-        return true;
+    function fnSelectors() external pure override returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = this.assertIsOne.selector;
+    }
+
+    function assertIsOne() external view returns (bool) {
+        return mockContract.value() == 1;
     }
 }
 
 contract MockContract {
+    uint256 public value = 1;
+
+    function increment() public {
+        value++;
+    }
 }
 
 contract CredibleTest is DSTest {
@@ -68,6 +35,8 @@ contract CredibleTest is DSTest {
 
     address assertionAdopter;
     bytes[] assertions;
+
+    address constant caller = address(0xdead);
 
     struct SimpleTransaction {
         address from;
@@ -78,17 +47,27 @@ contract CredibleTest is DSTest {
 
     function setUp() public {
         assertionAdopter = address(new MockContract());
+        vm.deal(caller, 1 ether);
     }
 
     function testAssertionPass() public {
         SimpleTransaction memory transaction = SimpleTransaction({
-            from: address(0xbeef),
-            to: address(0),
+            from: address(caller),
+            to: address(assertionAdopter),
             value: 0,
-            data: bytes("")
+            data: abi.encodeWithSelector(MockContract.increment.selector)
         });
-        bytes memory assertionBytecode = abi.encodePacked(type(MockAssertion).creationCode);
-        assertions.push(assertionBytecode);
-        vm.assertionEx(abi.encode(transaction), assertionAdopter, assertions);
+
+        emit log_address(assertionAdopter);
+
+        assertions.push(abi.encodePacked(type(MockAssertion).creationCode, abi.encode(assertionAdopter)));
+
+        assertTrue(vm.assertionEx(abi.encode(transaction), assertionAdopter, assertions));
+        assertTrue(MockContract(assertionAdopter).value() == 1);
+
+        MockContract(assertionAdopter).increment();
+        assertTrue(MockContract(assertionAdopter).value() == 2);
+
+        assertTrue(vm.assertionEx(abi.encode(transaction), assertionAdopter, assertions));
     }
 }
