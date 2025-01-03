@@ -1,12 +1,13 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::TxKind;
 use alloy_sol_types::{sol, SolValue};
-use assertion_executor::db::fork_db::ForkDb;
-use assertion_executor::{store::InMemoryStore, AssertionExecutorBuilder};
+use assertion_executor::{db::fork_db::ForkDb, store::MockStore, AssertionExecutorBuilder};
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
-use revm::primitives::{AccountInfo, Address, Bytecode, TxEnv, B256, U256};
-use revm::DatabaseRef;
-use std::sync::{ Arc, Mutex};
+use revm::{
+    primitives::{AccountInfo, Address, Bytecode, TxEnv, B256, U256},
+    DatabaseCommit, DatabaseRef,
+};
+use std::sync::{Arc, Mutex};
 use tokio;
 
 /// Wrapper around DatabaseExt to make it thread-safe
@@ -29,7 +30,7 @@ impl<'a> ThreadSafeDb<'a> {
     }
 }
 
-sol ! {
+sol! {
     struct SimpleTransaction {
         address from;
         address to;
@@ -61,55 +62,62 @@ impl<'a> DatabaseRef for ThreadSafeDb<'a> {
 
 impl Cheatcode for assertionExCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { tx, assertionAdopter: assertion_adopter, assertions} = self;
-        
+        let Self { tx, assertionAdopter: assertion_adopter, assertions } = self;
+
         let spec_id = ccx.ecx.spec_id();
-
-        // Setup assertion store and database
-        let db = ThreadSafeDb::new(ccx.ecx.db);
-        
-        // Prepare assertions data
         let block = ccx.ecx.env.block.clone();
-        let assertions_bytecode = assertions 
-                .iter()
-                .map(|bytes| Bytecode::LegacyRaw(bytes.to_vec().into()))
-                .collect();
+        let state = ccx.ecx.journaled_state.state.clone();
+        let chain_id = ccx.ecx.env.cfg.chain_id;
 
-        let mut store = InMemoryStore::new(spec_id);
+        // Setup assertion database
+        let db = ThreadSafeDb::new(ccx.ecx.db);
+
+        // Prepare assertion store
+        let assertions_bytecode =
+            assertions.iter().map(|bytes| Bytecode::LegacyRaw(bytes.to_vec().into())).collect();
+
+        let mut store = MockStore::new(spec_id, chain_id.clone());
         store.insert(*assertion_adopter, assertions_bytecode).expect("Failed to store assertions");
 
-        let mut assertion_executor = AssertionExecutorBuilder::new(db.clone(), store.reader()).build();
+        let decoded_tx = SimpleTransaction::abi_decode(&tx, true)?;
 
-
-        let decoded_tx= SimpleTransaction::abi_decode(&tx, true)?;
-        let tx = TxEnv {
+        let tx_env = TxEnv {
             caller: decoded_tx.from,
-            gas_limit: 1000000,
-            gas_price: U256::from(0),
-            gas_priority_fee: None,
+            gas_limit: ccx.ecx.env.block.gas_limit.try_into().unwrap_or(u64::MAX),
             transact_to: TxKind::Call(decoded_tx.to),
             value: decoded_tx.value,
             data: decoded_tx.data,
-            chain_id: Some(ccx.ecx.env.cfg.chain_id),
-            nonce:  None,
-            .. Default::default()
+            chain_id: Some(chain_id),
+            ..Default::default()
         };
-        
-        // TODO: Add a function in assertion executor which returns:
-        // 1. Which assertions were touched by which assertions
-        // 2. Which assertion invalidated which transaction
 
-        let result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async move {
-                // Store assertions
-                assertion_executor
-                    .validate_transaction(block, tx, &mut ForkDb::new(db))
-                    .await
-            })
-            .expect("Assertion execution failed")
-            .is_some();
-        Ok(result.abi_encode())
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Execute the future, blocking the current thread until completion
+        match rt.block_on(async move {
+            let cancellation_token = tokio_util::sync::CancellationToken::new();
+
+            let (reader, handle) = store.cancellable_reader(cancellation_token.clone());
+
+            let mut assertion_executor =
+                AssertionExecutorBuilder::new(db, reader).with_chain_id(chain_id).build();
+
+            // Commit current journal state so that it is available for assertions and
+            // triggering tx
+            let mut fork_db = ForkDb::new(assertion_executor.db.clone());
+            fork_db.commit(state);
+
+            // Store assertions
+            let result = assertion_executor.validate_transaction(block, tx_env, &mut fork_db).await;
+
+            cancellation_token.cancel();
+
+            let _ = handle.await;
+
+            result
+        }) {
+            Ok(val) => Ok(val.is_some().abi_encode()),
+            Err(e) => Result::Err(format!("Error in assertionExCall: {:#?}", e).into()),
+        }
     }
 }
-
