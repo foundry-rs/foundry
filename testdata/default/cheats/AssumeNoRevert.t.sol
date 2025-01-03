@@ -150,17 +150,4 @@ contract ReverterTest is Test {
         _vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
     }
-
-    /// @dev Test that calling `assumeNoRevert` after `expectRevert` results in an error
-    function testExpectThenAssumeFails() public {
-        _vm._expectCheatcodeRevert();
-        _vm.assumeNoRevert(
-            Vm.PotentialRevert({
-                revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
-                partialMatch: false,
-                reverter: address(0)
-            })
-        );
-        reverter.revertIf2(1);
-    }
 }

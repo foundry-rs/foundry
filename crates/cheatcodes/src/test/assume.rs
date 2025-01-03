@@ -6,7 +6,6 @@ use spec::Vm::{
 };
 use std::fmt::Debug;
 
-pub const ASSUME_EXPECT_REJECT_MAGIC: &str = "Cannot combine an assumeNoRevert with expectRevert";
 pub const ASSUME_REJECT_MAGIC: &str =
     "Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons";
 
@@ -90,7 +89,6 @@ fn assume_no_revert(
     depth: u64,
     parameters: Vec<AcceptableRevertParameters>,
 ) -> Result {
-    ensure!(state.expected_revert.is_none(), ASSUME_EXPECT_REJECT_MAGIC);
     ensure!(state.assume_no_revert.is_none(), ASSUME_REJECT_MAGIC);
 
     state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: parameters, reverted_by: None });
