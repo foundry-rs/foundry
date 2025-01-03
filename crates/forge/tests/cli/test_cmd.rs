@@ -2480,6 +2480,7 @@ interface Vm {
     function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata revertData) external pure;
     function assumeNoRevert(PotentialRevert[] calldata revertData) external pure;
+    function expectRevert(bytes4 revertData, uint64 count) external;
 }
 
 contract ReverterB {
@@ -2503,6 +2504,7 @@ contract Reverter {
     error MyRevert();
     error RevertWithData(uint256 x);
     error UnusedError();
+    error ExpectedRevertCountZero();
 
     ReverterB public immutable subReverter;
 
@@ -2533,6 +2535,15 @@ contract Reverter {
             revert MyRevert();
         } else if (x == 3) {
             revert RevertWithData(3);
+        }
+        return true;
+    }
+
+    function revertIf2Or3ExpectedRevertZero(uint256 x) public pure returns (bool) {
+        if (x == 2) {
+            revert ExpectedRevertCountZero();
+        } else if (x == 3) {
+            revert MyRevert();
         }
         return true;
     }
@@ -2592,13 +2603,31 @@ contract ReverterTest is Test {
         _vm.assumeNoRevert();
         reverter.twoPossibleReverts(2);
     }
-
-    /// @dev Test that calling `expectRevert` after `assumeNoRevert` results in an error
-    function testAssumeThenExpect_fails(uint256) public {
-        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)}));
-        _vm.expectRevert();
-        reverter.revertIf2(1);
+    
+    function testAssumeThenExpectCountZeroFails(uint256 x) public {
+        _vm.assumeNoRevert(
+            Vm.PotentialRevert({
+                revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
+                partialMatch: false,
+                reverter: address(0)
+            })
+        );
+        _vm.expectRevert(Reverter.ExpectedRevertCountZero.selector, 0);
+        reverter.revertIf2Or3ExpectedRevertZero(x);
     }
+
+    function testExpectCountZeroThenAssumeFails(uint256 x) public {
+        _vm.expectRevert(Reverter.ExpectedRevertCountZero.selector, 0);
+        _vm.assumeNoRevert(
+            Vm.PotentialRevert({
+                revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
+                partialMatch: false,
+                reverter: address(0)
+            })
+        );
+        reverter.revertIf2Or3ExpectedRevertZero(x);
+    }
+
 }"#,
     )
     .unwrap();
@@ -2607,11 +2636,12 @@ contract ReverterTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 7 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: vm.expectRevert: Cannot expect a revert when using assumeNoRevert; counterexample: [..]] testAssumeThenExpect_fails(uint256) (runs: [..], [AVG_GAS])
+Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
+[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
 [FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: vm.assumeNoRevert: Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])

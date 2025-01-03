@@ -900,7 +900,6 @@ fn expect_revert(
         state.expected_revert.is_none(),
         "you must call another function prior to expecting a second revert"
     );
-    ensure!(state.assume_no_revert.is_none(), "Cannot expect a revert when using assumeNoRevert");
     state.expected_revert = Some(ExpectedRevert {
         reason: reason.map(<[_]>::to_vec),
         depth,
