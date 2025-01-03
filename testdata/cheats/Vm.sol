@@ -149,7 +149,7 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
-    function assumeNoRevert() external pure returns (PotentialRevert memory);
+    function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
     function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
     function attachDelegation(SignedDelegation calldata signedDelegation) external;

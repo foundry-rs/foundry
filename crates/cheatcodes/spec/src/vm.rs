@@ -904,7 +904,7 @@ interface Vm {
 
     /// Discard this run's fuzz inputs and generate new ones if next call reverted.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assumeNoRevert() external pure returns (PotentialRevert memory);
+    function assumeNoRevert() external pure;
 
     /// Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.
     #[cheatcode(group = Testing, safety = Safe)]

@@ -3112,7 +3112,7 @@
       "func": {
         "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
-        "declaration": "function assumeNoRevert() external pure returns (PotentialRevert memory);",
+        "declaration": "function assumeNoRevert() external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assumeNoRevert()",

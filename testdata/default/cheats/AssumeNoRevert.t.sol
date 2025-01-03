@@ -163,9 +163,4 @@ contract ReverterTest is Test {
         );
         reverter.revertIf2(1);
     }
-
-    function testAssumeNoRevert(uint256) public {
-        _vm.assumeNoRevert();
-        // assertTrue(true);
-    }
 }
