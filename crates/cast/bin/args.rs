@@ -22,7 +22,7 @@ const VERSION_MESSAGE: &str = concat!(
     ")"
 );
 
-/// Perform Ethereum RPC calls from the comfort of your command line.
+/// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
     name = "cast",
