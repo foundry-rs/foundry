@@ -604,6 +604,27 @@
           "description": "Address of the contract implementation that will be delegated to.\n Gets encoded into delegation code: 0xef0100 || implementation."
         }
       ]
+    },
+    {
+      "name": "PotentialRevert",
+      "description": "Represents a \"potential\" revert reason from a single subsequent call when using `vm.assumeNoReverts`.\n Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced\n as normal.",
+      "fields": [
+        {
+          "name": "reverter",
+          "ty": "address",
+          "description": "The allowed origin of the revert opcode; address(0) allows reverts from any address"
+        },
+        {
+          "name": "partialMatch",
+          "ty": "bool",
+          "description": "When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data"
+        },
+        {
+          "name": "revertData",
+          "ty": "bytes",
+          "description": "The data to use to match encountered reverts"
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -3091,7 +3112,7 @@
       "func": {
         "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
-        "declaration": "function assumeNoRevert() external pure;",
+        "declaration": "function assumeNoRevert() external pure returns (PotentialRevert memory);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assumeNoRevert()",
@@ -3110,17 +3131,17 @@
     {
       "func": {
         "id": "assumeNoRevert_1",
-        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with data starting with the given revert data. Call more than once to add multiple reasons.",
-        "declaration": "function assumeNoRevert(bytes4 revertData) external pure;",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.",
+        "declaration": "function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "assumeNoRevert(bytes4)",
-        "selector": "0x4303edfa",
+        "signature": "assumeNoRevert((address,bool,bytes))",
+        "selector": "0xd8591eeb",
         "selectorBytes": [
-          67,
-          3,
-          237,
-          250
+          216,
+          89,
+          30,
+          235
         ]
       },
       "group": "testing",
@@ -3130,57 +3151,17 @@
     {
       "func": {
         "id": "assumeNoRevert_2",
-        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons.",
-        "declaration": "function assumeNoRevert(bytes calldata revertData) external pure;",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverts with the any of the potential revert parameters.",
+        "declaration": "function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "assumeNoRevert(bytes)",
-        "selector": "0xbcf4eb10",
+        "signature": "assumeNoRevert((address,bool,bytes)[])",
+        "selector": "0x8a4592cc",
         "selectorBytes": [
-          188,
-          244,
-          235,
-          16
-        ]
-      },
-      "group": "testing",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "assumeNoRevert_3",
-        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with data starting with the given revert data. Call more than once to add multiple reasons.",
-        "declaration": "function assumeNoRevert(bytes4 revertData, address reverter) external pure;",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "assumeNoRevert(bytes4,address)",
-        "selector": "0x7ef98451",
-        "selectorBytes": [
-          126,
-          249,
-          132,
-          81
-        ]
-      },
-      "group": "testing",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "assumeNoRevert_4",
-        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted with the given revert data. Call more than once to add multiple reasons.",
-        "declaration": "function assumeNoRevert(bytes calldata revertData, address reverter) external pure;",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "assumeNoRevert(bytes,address)",
-        "selector": "0x01e52b3f",
-        "selectorBytes": [
-          1,
-          229,
-          43,
-          63
+          138,
+          69,
+          146,
+          204
         ]
       },
       "group": "testing",

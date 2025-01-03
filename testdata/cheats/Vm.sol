@@ -24,6 +24,7 @@ interface Vm {
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
     struct BroadcastTxSummary { bytes32 txHash; BroadcastTxType txType; address contractAddress; uint64 blockNumber; bool success; }
     struct SignedDelegation { uint8 v; bytes32 r; bytes32 s; uint64 nonce; address implementation; }
+    struct PotentialRevert { address reverter; bool partialMatch; bytes revertData; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -148,11 +149,9 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
-    function assumeNoRevert() external pure;
-    function assumeNoRevert(bytes4 revertData) external pure;
-    function assumeNoRevert(bytes calldata revertData) external pure;
-    function assumeNoRevert(bytes4 revertData, address reverter) external pure;
-    function assumeNoRevert(bytes calldata revertData, address reverter) external pure;
+    function assumeNoRevert() external pure returns (PotentialRevert memory);
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+    function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;

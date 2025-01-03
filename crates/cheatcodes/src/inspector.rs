@@ -1286,7 +1286,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             }
         }
 
-        // Handle assume not revert cheatcode.
+        // Handle assume no revert cheatcode.
         if let Some(assume_no_revert) = &mut self.assume_no_revert {
             // Record current reverter address before processing the expect revert if call reverted,
             // expect revert is set with expected reverter address and no actual reverter set yet.
