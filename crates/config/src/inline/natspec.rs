@@ -7,7 +7,7 @@ use foundry_compilers::{
 use itertools::Itertools;
 use serde_json::Value;
 use solar_ast::{
-    ast::{Arena, CommentKind, Item, ItemKind},
+    ast::{Arena, CommentKind, Item, ItemKind, Span},
     interface::{self, Session},
 };
 use solar_parse::Parser;
@@ -276,10 +276,12 @@ impl SolarParser {
                 // Handle contract level doc comments
                 let docs = handle_docs(item);
                 if !docs.is_empty() {
+                    let docs_span = item.docs.iter().fold(Span::DUMMY, |s, doc| s.to(doc.span));
+                    let line = format!("{}:{}:0", docs_span.lo().0, docs_span.hi().0);
                     natspecs.push(NatSpec {
                         contract: contract_id.to_string(),
                         function: None,
-                        line: "0:0:0".to_string(), // TODO
+                        line,
                         docs,
                     });
                 }
@@ -289,10 +291,12 @@ impl SolarParser {
 
                     let docs = handle_docs(part);
                     if !docs.is_empty() {
+                        let docs_span = part.docs.iter().fold(Span::DUMMY, |s, doc| s.to(doc.span));
+                        let line = format!("{}:{}:0", docs_span.lo().0, docs_span.hi().0);
                         natspecs.push(NatSpec {
                             contract: contract_id.to_string(),
                             function: f.header.name.map(|f| f.to_string()),
-                            line: "0:0:0".to_string(), // TODO
+                            line,
                             docs,
                         });
                     }
@@ -365,7 +369,6 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
 ";
         let mut natspecs = vec![];
         let id = || "path.sol:C".to_string();
-        let default_line = || "0:0:0".to_string();
         let solar_parser = SolarParser::new();
         solar_parser.parse(&mut natspecs, src, &id(), "C");
         assert_eq!(
@@ -375,28 +378,28 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
                 NatSpec {
                     contract: id(),
                     function: Some("f1".to_string()),
-                    line: default_line(),
+                    line: "0:134:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 600\nforge-config: default.fuzz.runs = 601".to_string(),
                 },
                 // f2
                 NatSpec {
                     contract: id(),
                     function: Some("f2".to_string()),
-                    line: default_line(),
+                    line: "0:208:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 700".to_string(),
                 },
                 // f3
                 NatSpec {
                     contract: id(),
                     function: Some("f3".to_string()),
-                    line: default_line(),
+                    line: "0:270:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 800".to_string(),
                 },
                 // f4
                 NatSpec {
                     contract: id(),
                     function: Some("f4".to_string()),
-                    line: default_line(),
+                    line: "0:391:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
                 },
             ]
@@ -424,7 +427,6 @@ contract FuzzInlineConf is DSTest {
         let mut natspecs = vec![];
         let solar = SolarParser::new();
         let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
-        let default_line = || "0:0:0".to_string();
         solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
         assert_eq!(
             natspecs,
@@ -432,7 +434,7 @@ contract FuzzInlineConf is DSTest {
                 NatSpec {
                     contract: id(),
                     function: Some("testInlineConfFuzz".to_string()),
-                    line: default_line(),
+                    line: "0:255:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
                 },
             ]
@@ -514,14 +516,13 @@ contract FuzzInlineConf2 is DSTest {
         let mut natspecs = vec![];
         let solar = SolarParser::new();
         let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
-        let default_line = || "0:0:0".to_string();
         solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
         assert_eq!(
             natspecs,
             [NatSpec {
                 contract: id(),
                 function: Some("testInlineConfFuzz1".to_string()),
-                line: default_line(),
+                line: "0:181:0".to_string(),
                 docs: "forge-config: default.fuzz.runs = 1".to_string(),
             },]
         );
@@ -534,7 +535,7 @@ contract FuzzInlineConf2 is DSTest {
             [NatSpec {
                 contract: id(),
                 function: Some("testInlineConfFuzz2".to_string()),
-                line: default_line(),
+                line: "0:303:0".to_string(),
                 // should not get config from previous contract
                 docs: "forge-config: default.fuzz.runs = 2".to_string(),
             },]
@@ -559,7 +560,6 @@ contract FuzzInlineConf is DSTest {
         let mut natspecs = vec![];
         let solar = SolarParser::new();
         let id = || "inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string();
-        let default_line = || "0:0:0".to_string();
         solar.parse(&mut natspecs, src, &id(), "FuzzInlineConf");
         assert_eq!(
             natspecs,
@@ -567,13 +567,13 @@ contract FuzzInlineConf is DSTest {
                 NatSpec {
                     contract: id(),
                     function: None,
-                    line: default_line(),
+                    line: "0:140:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 1".to_string(),
                 },
                 NatSpec {
                     contract: id(),
                     function: Some("testInlineConfFuzz1".to_string()),
-                    line: default_line(),
+                    line: "0:220:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 3".to_string(),
                 }
             ]
