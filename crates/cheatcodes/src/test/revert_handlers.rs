@@ -87,7 +87,7 @@ fn handle_revert(
 
     // Compare only the first 4 bytes if partial match.
     if revert_params.partial_match() && actual_revert.get(..4) == expected_reason.get(..4) {
-        return Ok(())
+        return Ok(());
     }
 
     // Try decoding as known errors.
@@ -96,7 +96,7 @@ fn handle_revert(
     if actual_revert == expected_reason ||
         (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
-        return Ok(())
+        Ok(())
     } else {
         let (actual, expected) = if let Some(contracts) = known_contracts {
             let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
