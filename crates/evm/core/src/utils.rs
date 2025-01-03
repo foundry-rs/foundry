@@ -6,7 +6,7 @@ use crate::{
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{address, Address, Selector, TxKind, B256, U256};
+use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
