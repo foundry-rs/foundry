@@ -226,8 +226,12 @@ impl SolarParser {
             return;
         }
 
-        let handle_docs = |item: &Item<'_>| {
-            item.docs
+        let mut handle_docs = |item: &Item<'_>| {
+            if item.docs.is_empty() {
+                return;
+            }
+            let lines = item
+                .docs
                 .iter()
                 .filter_map(|d| {
                     if !d.symbol.as_str().contains(INLINE_CONFIG_PREFIX) {
@@ -246,62 +250,54 @@ impl SolarParser {
                         ),
                     }
                 })
-                .join("\n")
+                .join("\n");
+            let span =
+                item.docs.iter().map(|doc| doc.span).reduce(|a, b| a.to(b)).unwrap_or_default();
+            natspecs.push(NatSpec {
+                contract: contract_id.to_string(),
+                function: if let ItemKind::Function(f) = &item.kind {
+                    Some(
+                        f.header
+                            .name
+                            .map(|sym| sym.to_string())
+                            .unwrap_or_else(|| f.kind.to_string()),
+                    )
+                } else {
+                    None
+                },
+                line: format!("{}:{}:0", span.lo().0, span.hi().0),
+                docs: lines,
+            });
         };
 
-        // Instantiate solar session
         let sess = Session::builder()
             .with_silent_emitter(Some("Inline config parsing failed".to_string()))
             .build();
-
         let _ = sess.enter(|| -> interface::Result<()> {
             let arena = Arena::new();
 
             let mut parser = Parser::from_source_code(
                 &sess,
                 &arena,
-                interface::source_map::FileName::Custom(contract_name.to_string()),
+                interface::source_map::FileName::Custom(contract_id.to_string()),
                 src.to_string(),
             )?;
 
             let source_unit = parser.parse_file().map_err(|e| e.emit())?;
 
-            for item in source_unit.items {
-                let ItemKind::Contract(ref c) = item.kind else { continue };
-
+            for item in source_unit.items.iter() {
+                let ItemKind::Contract(c) = &item.kind else { continue };
                 if c.name.as_str() != contract_name {
-                    continue
-                };
-
-                // Handle contract level doc comments
-                let docs = handle_docs(item);
-                if !docs.is_empty() {
-                    let docs_span =
-                        item.docs.iter().map(|doc| doc.span).reduce(|a, b| a.to(b)).unwrap();
-                    let line = format!("{}:{}:0", docs_span.lo().0, docs_span.hi().0);
-                    natspecs.push(NatSpec {
-                        contract: contract_id.to_string(),
-                        function: None,
-                        line,
-                        docs,
-                    });
+                    continue;
                 }
 
-                for part in c.body.iter() {
-                    let ItemKind::Function(ref f) = part.kind else { continue };
+                // Handle contract level doc comments.
+                handle_docs(item);
 
-                    let docs = handle_docs(part);
-                    if !docs.is_empty() {
-                        let docs_span =
-                            part.docs.iter().map(|doc| doc.span).reduce(|a, b| a.to(b)).unwrap();
-                        let line = format!("{}:{}:0", docs_span.lo().0, docs_span.hi().0);
-                        natspecs.push(NatSpec {
-                            contract: contract_id.to_string(),
-                            function: f.header.name.map(|f| f.to_string()),
-                            line,
-                            docs,
-                        });
-                    }
+                // Handle function level doc comments.
+                for item in c.body.iter() {
+                    let ItemKind::Function(_) = &item.kind else { continue };
+                    handle_docs(item);
                 }
             }
 
