@@ -11,10 +11,7 @@ use foundry_compilers::{
 use foundry_evm_core::utils::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar_parse::{
-    interface::{Pos, Session},
-    Parser,
-};
+use solar_parse::{interface::Session, Parser};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
