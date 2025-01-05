@@ -118,7 +118,7 @@ impl BindJsonArgs {
                             .map_err(|e| eyre::eyre!("Parser failed: {:?}", e.emit()))?;
 
                         for item in parsed.items {
-                            if let ItemKind::Function(ref def) = item.kind {
+                            if let ItemKind::Function(def) = &item.kind {
                                 funcs.push(def);
                             }
                             if let ItemKind::Contract(ref contract) = item.kind {
@@ -148,13 +148,13 @@ impl BindJsonArgs {
                                 continue;
                             };
                             let new_body = match func.kind {
-                                FunctionKind::Modifier => "{ _; }",
-                                _ => "{ revert(); }",
+                                FunctionKind::Modifier => "_;",
+                                _ => "revert();",
                             };
                             let start = stmt.first().map(|s| s.span.lo().0);
                             let end = stmt.last().map(|s| s.span.hi().0);
                             if let (Some(start), Some(end)) = (start, end) {
-                                locs_to_update.push((start, end + 1, new_body.to_string()));
+                                locs_to_update.push((start, end, new_body.to_string()));
                             }
                         }
 
