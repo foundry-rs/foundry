@@ -97,11 +97,9 @@ impl BindJsonArgs {
                 .into_par_iter()
                 .map(|(path, source)| {
                     let mut content = Arc::unwrap_or_clone(source.content);
-                    let sess = Session::builder()
-                        .with_silent_emitter(Some("parser failed".to_string()))
-                        .build();
+                    let sess = Session::builder().with_stderr_emitter().build();
 
-                    sess.enter(|| -> eyre::Result<(PathBuf, Source)> {
+                    let result = sess.enter(|| -> solar_ast::interface::Result<()> {
                         let arena = Arena::new();
                         let mut funcs = Vec::new();
                         let mut locs_to_update = Vec::new();
@@ -110,12 +108,9 @@ impl BindJsonArgs {
                             &arena,
                             FileName::Real(path.clone()),
                             content.to_string(),
-                        )
-                        .map_err(|e| eyre::eyre!("Parser instantiation failed: {e:?}"))?;
+                        )?;
 
-                        let parsed = parser
-                            .parse_file()
-                            .map_err(|e| eyre::eyre!("Parser failed: {:?}", e.emit()))?;
+                        let parsed = parser.parse_file().map_err(|e| e.emit())?;
 
                         for item in parsed.items {
                             if let ItemKind::Function(def) = &item.kind {
@@ -171,8 +166,12 @@ impl BindJsonArgs {
                             shift -= new.len() as i64;
                         }
 
-                        Ok((path, Source::new(content)))
-                    })
+                        Ok(())
+                    });
+
+                    eyre::ensure!(result.is_ok(), "parsing failed");
+
+                    Ok((path, Source::new(content)))
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?,
         );
