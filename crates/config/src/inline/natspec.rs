@@ -234,15 +234,14 @@ impl SolarParser {
                 .docs
                 .iter()
                 .filter_map(|d| {
-                    if !d.symbol.as_str().contains(INLINE_CONFIG_PREFIX) {
+                    let s = d.symbol.as_str();
+                    if !s.contains(INLINE_CONFIG_PREFIX) {
                         return None
                     }
                     match d.kind {
-                        CommentKind::Line => Some(d.symbol.as_str().trim().to_string()),
+                        CommentKind::Line => Some(s.trim().to_string()),
                         CommentKind::Block => Some(
-                            d.symbol
-                                .as_str()
-                                .lines()
+                            s.lines()
                                 .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
                                 .map(|line| line.trim_start().trim_start_matches('*').trim())
                                 .collect::<Vec<_>>()
@@ -251,6 +250,9 @@ impl SolarParser {
                     }
                 })
                 .join("\n");
+            if lines.is_empty() {
+                return;
+            }
             let span =
                 item.docs.iter().map(|doc| doc.span).reduce(|a, b| a.to(b)).unwrap_or_default();
             natspecs.push(NatSpec {
