@@ -7,7 +7,7 @@ use foundry_compilers::{
 use itertools::Itertools;
 use serde_json::Value;
 use solar_ast::{
-    ast::{Arena, CommentKind, Item, ItemKind, Span},
+    ast::{Arena, CommentKind, Item, ItemKind},
     interface::{self, Session},
 };
 use solar_parse::Parser;
@@ -276,7 +276,8 @@ impl SolarParser {
                 // Handle contract level doc comments
                 let docs = handle_docs(item);
                 if !docs.is_empty() {
-                    let docs_span = item.docs.iter().fold(Span::DUMMY, |s, doc| s.to(doc.span));
+                    let docs_span =
+                        item.docs.iter().map(|doc| doc.span).reduce(|a, b| a.to(b)).unwrap();
                     let line = format!("{}:{}:0", docs_span.lo().0, docs_span.hi().0);
                     natspecs.push(NatSpec {
                         contract: contract_id.to_string(),
@@ -291,7 +292,8 @@ impl SolarParser {
 
                     let docs = handle_docs(part);
                     if !docs.is_empty() {
-                        let docs_span = part.docs.iter().fold(Span::DUMMY, |s, doc| s.to(doc.span));
+                        let docs_span =
+                            part.docs.iter().map(|doc| doc.span).reduce(|a, b| a.to(b)).unwrap();
                         let line = format!("{}:{}:0", docs_span.lo().0, docs_span.hi().0);
                         natspecs.push(NatSpec {
                             contract: contract_id.to_string(),
@@ -378,28 +380,28 @@ function f2() {} /** forge-config: default.fuzz.runs = 800 */ function f3() {}
                 NatSpec {
                     contract: id(),
                     function: Some("f1".to_string()),
-                    line: "0:134:0".to_string(),
+                    line: "14:134:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 600\nforge-config: default.fuzz.runs = 601".to_string(),
                 },
                 // f2
                 NatSpec {
                     contract: id(),
                     function: Some("f2".to_string()),
-                    line: "0:208:0".to_string(),
+                    line: "164:208:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 700".to_string(),
                 },
                 // f3
                 NatSpec {
                     contract: id(),
                     function: Some("f3".to_string()),
-                    line: "0:270:0".to_string(),
+                    line: "226:270:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 800".to_string(),
                 },
                 // f4
                 NatSpec {
                     contract: id(),
                     function: Some("f4".to_string()),
-                    line: "0:391:0".to_string(),
+                    line: "289:391:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
                 },
             ]
@@ -434,7 +436,7 @@ contract FuzzInlineConf is DSTest {
                 NatSpec {
                     contract: id(),
                     function: Some("testInlineConfFuzz".to_string()),
-                    line: "0:255:0".to_string(),
+                    line: "141:255:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 1024\nforge-config: default.fuzz.max-test-rejects = 500".to_string(),
                 },
             ]
@@ -522,7 +524,7 @@ contract FuzzInlineConf2 is DSTest {
             [NatSpec {
                 contract: id(),
                 function: Some("testInlineConfFuzz1".to_string()),
-                line: "0:181:0".to_string(),
+                line: "142:181:0".to_string(),
                 docs: "forge-config: default.fuzz.runs = 1".to_string(),
             },]
         );
@@ -535,7 +537,7 @@ contract FuzzInlineConf2 is DSTest {
             [NatSpec {
                 contract: id(),
                 function: Some("testInlineConfFuzz2".to_string()),
-                line: "0:303:0".to_string(),
+                line: "264:303:0".to_string(),
                 // should not get config from previous contract
                 docs: "forge-config: default.fuzz.runs = 2".to_string(),
             },]
@@ -567,13 +569,13 @@ contract FuzzInlineConf is DSTest {
                 NatSpec {
                     contract: id(),
                     function: None,
-                    line: "0:140:0".to_string(),
+                    line: "101:140:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 1".to_string(),
                 },
                 NatSpec {
                     contract: id(),
                     function: Some("testInlineConfFuzz1".to_string()),
-                    line: "0:220:0".to_string(),
+                    line: "181:220:0".to_string(),
                     docs: "forge-config: default.fuzz.runs = 3".to_string(),
                 }
             ]
