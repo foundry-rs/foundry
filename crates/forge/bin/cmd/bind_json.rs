@@ -15,10 +15,10 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use itertools::Itertools;
-use rayon::prelude::*;
 use solar_ast::{
-    ast::{Arena, FunctionKind, ItemKind, VarMut},
+    ast::{self, Arena, FunctionKind, Span, VarMut},
     interface::source_map::FileName,
+    visit::Visit,
 };
 use solar_parse::{interface::Session, Parser as SolarParser};
 use std::{
@@ -88,95 +88,94 @@ impl BindJsonArgs {
             .unwrap()
             .1;
 
-        // Insert empty bindings file
+        let sess = Session::builder().with_stderr_emitter().build();
+        let result = sess.enter(|| -> solar_parse::interface::Result<()> {
+            // TODO: Switch back to par_iter_mut and `enter_parallel` after solar update.
+            sources.0.iter_mut().try_for_each(|(path, source)| {
+                let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
+
+                let arena = Arena::new();
+                let mut parser = SolarParser::from_source_code(
+                    &sess,
+                    &arena,
+                    FileName::Real(path.clone()),
+                    content.to_string(),
+                )?;
+                let ast = parser.parse_file().map_err(|e| e.emit())?;
+
+                let mut visitor = PreprocessorVisitor::new();
+                visitor.visit_source_unit(&ast);
+                visitor.update(&sess, &mut content);
+
+                source.content = Arc::new(content);
+                Ok(())
+            })
+        });
+        eyre::ensure!(result.is_ok(), "failed parsing");
+
+        // Insert empty bindings file.
         sources.insert(target_path.clone(), Source::new("library JsonBindings {}"));
 
-        let sources = Sources(
-            sources
-                .0
-                .into_par_iter()
-                .map(|(path, source)| {
-                    let mut content = Arc::unwrap_or_clone(source.content);
-                    let sess = Session::builder().with_stderr_emitter().build();
-
-                    let result = sess.enter(|| -> solar_ast::interface::Result<()> {
-                        let arena = Arena::new();
-                        let mut funcs = Vec::new();
-                        let mut locs_to_update = Vec::new();
-                        let mut parser = SolarParser::from_source_code(
-                            &sess,
-                            &arena,
-                            FileName::Real(path.clone()),
-                            content.to_string(),
-                        )?;
-
-                        let parsed = parser.parse_file().map_err(|e| e.emit())?;
-
-                        for item in parsed.items {
-                            if let ItemKind::Function(def) = &item.kind {
-                                funcs.push(def);
-                            }
-                            if let ItemKind::Contract(contract) = &item.kind {
-                                for part in contract.body.iter() {
-                                    match &part.kind {
-                                        ItemKind::Function(def) => {
-                                            funcs.push(def);
-                                        }
-                                        ItemKind::Variable(def) => {
-                                            if let Some(VarMut::Immutable) = def.mutability {
-                                                locs_to_update.push((
-                                                    def.span.lo().0,
-                                                    def.span.hi().0,
-                                                    String::new(),
-                                                ));
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-
-                        for func in funcs {
-                            // If there's no body block, keep the function as is
-                            let Some(stmt) = &func.body else {
-                                continue;
-                            };
-                            let new_body = match func.kind {
-                                FunctionKind::Modifier => "_;",
-                                _ => "revert();",
-                            };
-                            let start = stmt.first().map(|s| s.span.lo().0);
-                            let end = stmt.last().map(|s| s.span.hi().0);
-                            if let (Some(start), Some(end)) = (start, end) {
-                                locs_to_update.push((start, end, new_body.to_string()));
-                            }
-                        }
-
-                        locs_to_update.sort_by_key(|(start, _, _)| *start);
-
-                        let mut shift = 0_i64;
-
-                        for (start, end, new) in locs_to_update {
-                            let start = ((start as i64) - shift) as usize;
-                            let end = ((end as i64) - shift) as usize;
-
-                            content.replace_range(start..end, new.as_str());
-                            shift += (end - start) as i64;
-                            shift -= new.len() as i64;
-                        }
-
-                        Ok(())
-                    });
-
-                    eyre::ensure!(result.is_ok(), "parsing failed");
-
-                    Ok((path, Source::new(content)))
-                })
-                .collect::<Result<BTreeMap<_, _>>>()?,
-        );
-
         Ok(PreprocessedState { sources, target_path, project, config })
+    }
+}
+
+struct PreprocessorVisitor {
+    updates: Vec<(Span, &'static str)>,
+}
+
+impl PreprocessorVisitor {
+    fn new() -> Self {
+        Self { updates: Vec::new() }
+    }
+
+    fn update(mut self, sess: &Session, content: &mut String) {
+        if self.updates.is_empty() {
+            return;
+        }
+
+        let sf = sess.source_map().lookup_source_file(self.updates[0].0.lo());
+        let base = sf.start_pos.0;
+
+        self.updates.sort_by_key(|(span, _)| span.lo());
+        let mut shift = 0_i64;
+        for (span, new) in self.updates {
+            let lo = span.lo() - base;
+            let hi = span.hi() - base;
+            let start = ((lo.0 as i64) - shift) as usize;
+            let end = ((hi.0 as i64) - shift) as usize;
+
+            content.replace_range(start..end, new);
+            shift += (end - start) as i64;
+            shift -= new.len() as i64;
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for PreprocessorVisitor {
+    fn visit_item_function(&mut self, func: &'ast ast::ItemFunction<'ast>) {
+        // Replace function bodies with a noop statement.
+        if let Some(block) = &func.body {
+            if !block.is_empty() {
+                let span = block.first().unwrap().span.to(block.last().unwrap().span);
+                let new_body = match func.kind {
+                    FunctionKind::Modifier => "_;",
+                    _ => "revert();",
+                };
+                self.updates.push((span, new_body));
+            }
+        }
+
+        self.walk_item_function(func)
+    }
+
+    fn visit_variable_definition(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
+        // Remove `immutable` attributes.
+        if let Some(VarMut::Immutable) = var.mutability {
+            self.updates.push((var.span, ""));
+        }
+
+        self.walk_variable_definition(var)
     }
 }
 
