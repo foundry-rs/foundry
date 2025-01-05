@@ -116,13 +116,13 @@ impl BindJsonArgs {
                             if let ItemKind::Function(def) = &item.kind {
                                 funcs.push(def);
                             }
-                            if let ItemKind::Contract(ref contract) = item.kind {
+                            if let ItemKind::Contract(contract) = &item.kind {
                                 for part in contract.body.iter() {
-                                    match part.kind {
-                                        ItemKind::Function(ref def) => {
+                                    match &part.kind {
+                                        ItemKind::Function(def) => {
                                             funcs.push(def);
                                         }
-                                        ItemKind::Variable(ref def) => {
+                                        ItemKind::Variable(def) => {
                                             if let Some(VarMut::Immutable) = def.mutability {
                                                 locs_to_update.push((
                                                     def.span.lo().0,
