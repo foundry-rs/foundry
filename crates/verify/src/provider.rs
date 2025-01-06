@@ -158,8 +158,8 @@ impl fmt::Display for VerificationProviderType {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerificationProviderType {
-    #[default]
     Etherscan,
+    #[default]
     Sourcify,
     Blockscout,
     Oklink,
@@ -170,6 +170,9 @@ pub enum VerificationProviderType {
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
     pub fn client(&self, key: &Option<String>) -> Result<Box<dyn VerificationProvider>> {
+        if key.as_ref().is_some_and(|k| !k.is_empty()) && matches!(self, Self::Sourcify) {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
         match self {
             Self::Etherscan => {
                 if key.as_ref().is_none_or(|key| key.is_empty()) {
@@ -177,7 +180,12 @@ impl VerificationProviderType {
                 }
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
-            Self::Sourcify => Ok(Box::<SourcifyVerificationProvider>::default()),
+            Self::Sourcify => {
+                sh_println!(
+                    "Verifying on Sourcify, pass the ETHERSCAN_API_KEY to verify on etherscan OR use the --verifier flag to verify on any other provider"
+                )?;
+                Ok(Box::<SourcifyVerificationProvider>::default())
+            }
             Self::Blockscout => Ok(Box::<EtherscanVerificationProvider>::default()),
             Self::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
             Self::Custom => Ok(Box::<EtherscanVerificationProvider>::default()),
