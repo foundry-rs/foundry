@@ -77,10 +77,12 @@ impl FuzzedExecutor {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
+    #[allow(clippy::too_many_arguments)]
     pub fn fuzz(
         &self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
@@ -88,7 +90,7 @@ impl FuzzedExecutor {
     ) -> FuzzTestResult {
         // Stores the fuzz test execution data.
         let execution_data = RefCell::new(FuzzTestData::default());
-        let state = self.build_fuzz_state();
+        let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
@@ -274,11 +276,15 @@ impl FuzzedExecutor {
     }
 
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
-    pub fn build_fuzz_state(&self) -> EvmFuzzState {
+    pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(fork_db, self.config.dictionary)
+            EvmFuzzState::new(fork_db, self.config.dictionary, deployed_libs)
         } else {
-            EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary)
+            EvmFuzzState::new(
+                self.executor.backend().mem_db(),
+                self.config.dictionary,
+                deployed_libs,
+            )
         }
     }
 }

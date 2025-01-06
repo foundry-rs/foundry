@@ -79,7 +79,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"], value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
     debug: Option<Option<Regex>>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
@@ -123,7 +123,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report"], help_heading = "Display options")]
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
     pub junit: bool,
 
     /// Stop running tests after the first failure.
@@ -135,7 +135,7 @@ pub struct TestArgs {
     etherscan_api_key: Option<String>,
 
     /// List tests instead of running them.
-    #[arg(long, short, help_heading = "Display options")]
+    #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
     list: bool,
 
     /// Set seed used to generate randomness during your fuzz runs.
@@ -154,7 +154,7 @@ pub struct TestArgs {
     pub fuzz_input_file: Option<String>,
 
     /// Show test execution progress.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
     pub show_progress: bool,
 
     #[command(flatten)]

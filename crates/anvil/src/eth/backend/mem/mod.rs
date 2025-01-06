@@ -97,9 +97,7 @@ use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
-    primitives::{
-        calc_blob_gasprice, BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState,
-    },
+    primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
 };
 use std::{
     collections::BTreeMap,
@@ -922,10 +920,28 @@ impl Backend {
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             if let Some((number, hash)) = fork_num_and_hash {
-                // If loading state file on a fork, set best number to the fork block number.
-                // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
-                self.blockchain.storage.write().best_number = U64::from(number);
-                self.blockchain.storage.write().best_hash = hash;
+                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
+                // If the state.block_number is greater than the fork block number, set best number
+                // to the state block number.
+                // Ref: https://github.com/foundry-rs/foundry/issues/9539
+                if best_number.to::<u64>() > number {
+                    self.blockchain.storage.write().best_number = best_number;
+                    let best_hash =
+                        self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
+                            || {
+                                BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                                    "Best hash not found for best number {best_number}",
+                                )))
+                            },
+                        )?;
+                    self.blockchain.storage.write().best_hash = best_hash;
+                } else {
+                    // If loading state file on a fork, set best number to the fork block number.
+                    // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
+                    self.blockchain.storage.write().best_number = U64::from(number);
+                    self.blockchain.storage.write().best_hash = hash;
+                }
             } else {
                 let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
                 self.blockchain.storage.write().best_number = best_number;
@@ -1271,8 +1287,10 @@ impl Backend {
 
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee);
-        self.fees
-            .set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(next_block_excess_blob_gas));
+        self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+            next_block_excess_blob_gas,
+            false,
+        ));
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
@@ -2323,7 +2341,8 @@ impl Backend {
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
-        let blob_gas_price = calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
+        let blob_gas_price =
+            alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas();
 
         let effective_gas_price = match transaction.transaction {
@@ -2391,14 +2410,14 @@ impl Backend {
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),
-            gas_used: info.gas_used as u128,
+            gas_used: info.gas_used,
             contract_address: info.contract_address,
             effective_gas_price,
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
             blob_gas_price: Some(blob_gas_price),
-            blob_gas_used: blob_gas_used.map(|g| g as u128),
+            blob_gas_used,
             authorization_list: None,
         };
 
@@ -2791,7 +2810,7 @@ impl TransactionValidator for Backend {
 
             // Ensure the tx does not exceed the max blobs per block.
             if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs(MAX_BLOBS_PER_BLOCK, blob_count))
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count))
             }
 
             // Check for any blob validation errors
@@ -2966,7 +2985,6 @@ pub fn transaction_build(
             let new_signed = Signed::new_unchecked(t, sig, hash);
             AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
         }
-        _ => unreachable!("unknown tx type"),
     };
 
     let tx = Transaction {

@@ -485,7 +485,10 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to());
+        ccx.ecx.env.block.set_blob_excess_gas_and_price(
+            (*newBlobBaseFee).to(),
+            ccx.ecx.spec_id() >= SpecId::PRAGUE,
+        );
         Ok(Default::default())
     }
 }
@@ -855,11 +858,12 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
-
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
                 node.trace.steps = Vec::new();
+                node.logs = Vec::new();
+                node.ordering = Vec::new();
             });
         }
 

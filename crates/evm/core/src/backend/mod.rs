@@ -1281,7 +1281,7 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(&mut env, tx)?;
+            configure_tx_req_env(&mut env, tx, None)?;
             let env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
@@ -1921,7 +1921,8 @@ fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
-        env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas));
+        env.block.blob_excess_gas_and_price =
+            Some(BlobExcessGasAndPrice::new(excess_blob_gas, false));
     }
 }
 
