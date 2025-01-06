@@ -1,9 +1,10 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
-use alloy_network::TransactionResponse;
-use alloy_primitives::{b256, B256};
-use alloy_rpc_types::{BlockNumberOrTag, Index};
+use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_primitives::{address, b256, Bytes, B256};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file, forgetest, forgetest_async,
@@ -104,7 +105,6 @@ totalDifficulty      [..]
 blobGasUsed          [..]
 excessBlobGas        [..]
 requestsHash         [..]
-targetBlobsPerBlock  [..]
 transactions:        [
 ...
 ]
@@ -626,6 +626,46 @@ casttest!(rlp, |_prj, cmd| {
 "#]]);
 });
 
+// test that `cast impl` works correctly for both the implementation slot and the beacon slot
+casttest!(impl_slot, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast impl` for the implementation slot (AAVE Proxy)
+    cmd.args([
+        "impl",
+        "0x4965f6FA20fE9728deCf5165016fc338a5a85aBF",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--block",
+        "21422087",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xb61306c8eb34a2104d9eb8d84f1bb1001067fa4b
+
+"#]]);
+});
+
+casttest!(impl_slot_beacon, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast impl` for the beacon slot
+    cmd.args([
+        "impl",
+        "0xc63d9f0040d35f328274312fc8771a986fc4ba86",
+        "--beacon",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--block",
+        "21422087",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xa748ae65ba11606492a9c57effa0d4b7be551ec2
+
+"#]]);
+});
+
 // test for cast_rpc without arguments
 casttest!(rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -769,24 +809,24 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 
-blockHash               0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
-blockNumber             16239315
-contractAddress         
-cumulativeGasUsed       10743428
-effectiveGasPrice       10539984136
-from                    0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
-gasUsed                 21000
-logs                    []
-logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                    
-status                  1 (success)
-transactionHash         0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
-transactionIndex        116
-type                    0
-blobGasPrice            
-blobGasUsed             
-authorizationList       
-to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
+blockHash            0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
+blockNumber          16239315
+contractAddress      
+cumulativeGasUsed    10743428
+effectiveGasPrice    10539984136
+from                 0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
+gasUsed              21000
+logs                 []
+logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               1 (success)
+transactionHash      0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
+transactionIndex     116
+type                 0
+blobGasPrice         
+blobGasUsed          
+authorizationList    
+to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
 
@@ -803,25 +843,25 @@ to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
         .assert_success()
         .stdout_eq(str![[r#"
 
-blockHash               0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
-blockNumber             14839405
-contractAddress         
-cumulativeGasUsed       20273649
-effectiveGasPrice       21491736378
-from                    0x3cF412d970474804623bb4e3a42dE13F9bCa5436
-gasUsed                 24952
-logs                    []
-logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                    
-status                  0 (failed)
-transactionHash         0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
-transactionIndex        173
-type                    2
-blobGasPrice            
-blobGasUsed             
-authorizationList       
-to                      0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
-revertReason            Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
+blockHash            0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
+blockNumber          14839405
+contractAddress      
+cumulativeGasUsed    20273649
+effectiveGasPrice    21491736378
+from                 0x3cF412d970474804623bb4e3a42dE13F9bCa5436
+gasUsed              24952
+logs                 []
+logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               0 (failed)
+transactionHash      0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
+transactionIndex     173
+type                 2
+blobGasPrice         
+blobGasUsed          
+authorizationList    
+to                   0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
+revertReason         Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
 
 "#]]);
 });
@@ -1993,5 +2033,39 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
             "--chain",
             &chain_id.to_string(),
         ])
+        .assert_success();
+});
+
+// https://github.com/foundry-rs/foundry/issues/9541
+forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_auto_impersonate(true)
+            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+    )
+    .await;
+
+    let http_endpoint = handle.http_endpoint();
+
+    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
+
+    // send impersonated tx
+    let tx = TransactionRequest::default()
+        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_input(
+            Bytes::from_str(
+                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+            )
+            .unwrap(),
+        );
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    // run impersonated tx
+    cmd.cast_fuse()
+        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
         .assert_success();
 });

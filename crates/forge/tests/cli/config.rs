@@ -449,7 +449,6 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
 6 |        assembly {
   |        ^ (Relevant source part starts here and spans across multiple lines).
 
-
 "#]]);
 
     // disable yul optimizer explicitly

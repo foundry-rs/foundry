@@ -606,7 +606,8 @@ pub enum CastSubcommand {
         formula_id: String,
     },
 
-    /// Fetch the EIP-1967 implementation account
+    /// Fetch the EIP-1967 implementation for a contract
+    /// Can read from the implementation slot or the beacon slot.
     #[command(visible_alias = "impl")]
     Implementation {
         /// The block height to query at.
@@ -615,7 +616,13 @@ pub enum CastSubcommand {
         #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
-        /// The address to get the nonce for.
+        /// Fetch the implementation from the beacon slot.
+        ///
+        /// If not specified, the implementation slot is used.
+        #[arg(long)]
+        beacon: bool,
+
+        /// The address for which the implementation will be fetched.
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
@@ -632,7 +639,7 @@ pub enum CastSubcommand {
         #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
-        /// The address to get the nonce for.
+        /// The address from which the admin account will be fetched.
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
