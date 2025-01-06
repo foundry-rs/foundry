@@ -10,15 +10,16 @@ impl EyreHandler for Handler {
         if f.alternate() {
             return fmt::Debug::fmt(error, f)
         }
+        let errors = foundry_common::errors::dedup_chain(error);
+
+        let (error, sources) = errors.split_first().unwrap();
         write!(f, "{error}")?;
 
-        if let Some(cause) = error.source() {
+        if !sources.is_empty() {
             write!(f, "\n\nContext:")?;
 
-            let multiple = cause.source().is_some();
-            let errors = std::iter::successors(Some(cause), |e| (*e).source());
-
-            for (n, error) in errors.enumerate() {
+            let multiple = sources.len() > 1;
+            for (n, error) in sources.iter().enumerate() {
                 writeln!(f)?;
                 if multiple {
                     write!(f, "- Error #{n}: {error}")?;
