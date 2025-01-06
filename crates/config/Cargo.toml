@@ -22,7 +22,6 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 revm-primitives.workspace = true
 
 solar-parse.workspace = true
-solar-ast.workspace = true
 
 dirs-next = "2"
 dunce.workspace = true
