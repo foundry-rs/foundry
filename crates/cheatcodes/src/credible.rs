@@ -30,15 +30,6 @@ impl<'a> ThreadSafeDb<'a> {
     }
 }
 
-sol! {
-    struct SimpleTransaction {
-        address from;
-        address to;
-        uint256 value;
-        bytes data;
-    }
-}
-
 /// Keep DatabaseRef implementation separate
 impl<'a> DatabaseRef for ThreadSafeDb<'a> {
     type Error = DatabaseError;
@@ -79,7 +70,7 @@ impl Cheatcode for assertionExCall {
         let mut store = MockStore::new(spec_id, chain_id.clone());
         store.insert(*assertion_adopter, assertions_bytecode).expect("Failed to store assertions");
 
-        let decoded_tx = SimpleTransaction::abi_decode(&tx, true)?;
+        let decoded_tx = AssertionExTransaction::abi_decode(&tx, true)?;
 
         let tx_env = TxEnv {
             caller: decoded_tx.from,
