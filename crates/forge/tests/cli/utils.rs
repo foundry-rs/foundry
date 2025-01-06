@@ -114,8 +114,8 @@ impl EnvExternalities {
             chain: NamedChain::Sepolia,
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
-            etherscan: "".to_string(),
-            verifier: "".to_string(),
+            etherscan: String::new(),
+            verifier: String::new(),
         })
     }
 
