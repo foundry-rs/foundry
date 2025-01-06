@@ -65,7 +65,7 @@ forgetest!(invalid_profile, |prj, cmd| {
     .unwrap();
 
     cmd.arg("test").assert_failure().stderr_eq(str![[r#"
-Error: Inline config error at test/inline.sol:0:0:0: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
+Error: Inline config error at test/inline.sol:80:123:0: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
 
 "#]]);
 });
