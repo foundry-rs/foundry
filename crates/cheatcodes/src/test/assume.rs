@@ -73,6 +73,7 @@ impl Cheatcode for assumeNoRevert_1Call {
         )
     }
 }
+
 impl Cheatcode for assumeNoRevert_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { potentialReverts } = self;

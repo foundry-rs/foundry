@@ -31,6 +31,7 @@ fn stringify(data: &[u8]) -> String {
     }
     hex::encode_prefixed(data)
 }
+
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {
     fn reverter(&self) -> Option<Address>;
