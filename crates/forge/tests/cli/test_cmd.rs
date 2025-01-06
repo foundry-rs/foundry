@@ -2807,3 +2807,30 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]],
     );
 });
+
+forgetest!(test_fail_deprecation_warning, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "WarnDeprecationTestFail.t.sol",
+        r#"
+    import "./test.sol";
+    contract WarnDeprecationTestFail is DSTest {
+        function testFail_deprecated() public {
+            revert("deprecated");
+        }
+
+        function testFail_deprecated2() public {
+            revert("deprecated2");
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "WarnDeprecationTestFail"])
+        .assert_success()
+        .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated, testFail_deprecated2.
+"#);
+});

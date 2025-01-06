@@ -2,6 +2,8 @@
 
 Update or revert to a specific Foundry branch with ease.
 
+`foundryup` supports installing and managing multiple versions.
+
 ## Installing
 
 ```sh
@@ -16,10 +18,22 @@ To install the **nightly** version:
 foundryup
 ```
 
-To install a specific **version** (in this case the `nightly` version):
+To **install** a specific **version** (in this case the `nightly` version):
 
 ```sh
-foundryup --version nightly
+foundryup --install nightly
+```
+
+To **list** all **versions** installed:
+
+```sh
+foundryup --list
+```
+
+To switch between different versions and **use**:
+
+```sh
+foundryup --use nightly-00efa0d5965269149f374ba142fb1c3c7edd6c94
 ```
 
 To install a specific **branch** (in this case the `release/0.1.0` branch's latest commit):
@@ -62,6 +76,6 @@ foundryup --path ./git/foundry
 
 ---
 
-**Tip**: All flags have a single character shorthand equivalent! You can use `-v` instead of `--version`, etc.
+**Tip**: All flags have a single character shorthand equivalent! You can use `-i` instead of `--install`, etc.
 
 ---
