@@ -17,7 +17,7 @@ impl Cheatcode for toString_0Call {
 impl Cheatcode for toString_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { value } = self;
-        Ok(hex::encode_prefixed(value).abi_encode())
+        Ok(value.to_string().abi_encode())
     }
 }
 
@@ -95,7 +95,6 @@ impl Cheatcode for parseBoolCall {
     }
 }
 
-// toLowercase
 impl Cheatcode for toLowercaseCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
@@ -103,7 +102,6 @@ impl Cheatcode for toLowercaseCall {
     }
 }
 
-// toUppercase
 impl Cheatcode for toUppercaseCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
@@ -111,7 +109,6 @@ impl Cheatcode for toUppercaseCall {
     }
 }
 
-// trim
 impl Cheatcode for trimCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input } = self;
@@ -119,7 +116,6 @@ impl Cheatcode for trimCall {
     }
 }
 
-// Replace
 impl Cheatcode for replaceCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, from, to } = self;
@@ -127,7 +123,6 @@ impl Cheatcode for replaceCall {
     }
 }
 
-// Split
 impl Cheatcode for splitCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, delimiter } = self;
@@ -136,7 +131,6 @@ impl Cheatcode for splitCall {
     }
 }
 
-// indexOf
 impl Cheatcode for indexOfCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { input, key } = self;
@@ -144,7 +138,6 @@ impl Cheatcode for indexOfCall {
     }
 }
 
-// contains
 impl Cheatcode for containsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { subject, search } = self;
@@ -202,7 +195,7 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
         DynSolType::Uint(_) |
         DynSolType::FixedBytes(_) |
         DynSolType::Bytes => {
-            if !s.starts_with("0x") && s.chars().all(|c| c.is_ascii_hexdigit()) {
+            if !s.starts_with("0x") && hex::check_raw(s) {
                 return Some(Err("missing hex prefix (\"0x\") for hex string"));
             }
         }

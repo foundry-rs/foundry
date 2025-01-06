@@ -29,7 +29,9 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
-        root: Default::default(),
+        // `profiles` is not serialized.
+        profiles: vec![],
+        root: ".".into(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -107,6 +109,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
+        eth_rpc_headers: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -143,6 +146,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
+        create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
         skip: vec![],
         dependencies: Default::default(),
@@ -152,7 +156,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         eof_version: None,
-        alphanet: false,
+        odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -443,7 +447,6 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
   |
 6 |        assembly {
   |        ^ (Relevant source part starts here and spans across multiple lines).
-
 
 "#]]);
 
@@ -850,5 +853,38 @@ contract MyScript is BaseScript {
     ];
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+    cmd.forge_fuse().args(["build"]).assert_success();
+});
+
+// Tests that project remappings use config paths.
+// For `src=src/contracts` config, remapping should be `src/contracts/ = src/contracts/`.
+// For `src=src` config, remapping should be `src/ = src/`.
+// <https://github.com/foundry-rs/foundry/issues/9454>
+forgetest!(test_project_remappings, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let config = Config {
+        src: "src/contracts".into(),
+        remappings: vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add Counter.sol in `src/contracts` project dir.
+    let src_dir = &prj.root().join("src/contracts");
+    pretty_err(src_dir, fs::create_dir_all(src_dir));
+    pretty_err(
+        src_dir.join("Counter.sol"),
+        fs::write(src_dir.join("Counter.sol"), "contract Counter{}"),
+    );
+    prj.add_test(
+        "CounterTest.sol",
+        r#"
+import "contracts/Counter.sol";
+
+contract CounterTest {
+}
+   "#,
+    )
+    .unwrap();
     cmd.forge_fuse().args(["build"]).assert_success();
 });

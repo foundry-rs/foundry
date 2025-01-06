@@ -24,6 +24,7 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
+    InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -35,7 +36,10 @@ use revm::{
         ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
     },
 };
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -82,9 +86,7 @@ pub struct Executor {
     env: EnvWithHandlerCfg,
     /// The Revm inspector stack.
     inspector: InspectorStack,
-    /// The gas limit for calls and deployments. This is different from the gas limit imposed by
-    /// the passed in environment, as those limits are used by the EVM for certain opcodes like
-    /// `gaslimit`.
+    /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
@@ -162,6 +164,36 @@ impl Executor {
         self.env.spec_id()
     }
 
+    /// Sets the EVM spec ID.
+    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+        self.env.handler_cfg.spec_id = spec_id;
+    }
+
+    /// Returns the gas limit for calls and deployments.
+    ///
+    /// This is different from the gas limit imposed by the passed in environment, as those limits
+    /// are used by the EVM for certain opcodes like `gaslimit`.
+    pub fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+
+    /// Sets the gas limit for calls and deployments.
+    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.gas_limit = gas_limit;
+    }
+
+    /// Returns whether `failed()` should be called on the test contract to determine if the test
+    /// failed.
+    pub fn legacy_assertions(&self) -> bool {
+        self.legacy_assertions
+    }
+
+    /// Sets whether `failed()` should be called on the test contract to determine if the test
+    /// failed.
+    pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
+        self.legacy_assertions = legacy_assertions;
+    }
+
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
@@ -171,7 +203,7 @@ impl Executor {
             .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // If the deployer is not currently deployed, deploy the default one.
-        if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
+        if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
             let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
@@ -232,9 +264,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
-        self.gas_limit = gas_limit;
-        self
+    pub fn create2_deployer(&self) -> Address {
+        self.inspector().create2_deployer()
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -677,8 +708,12 @@ pub enum EvmError {
     #[error("{_0}")]
     Skip(SkipReason),
     /// Any other error.
-    #[error(transparent)]
-    Eyre(eyre::Error),
+    #[error("{}", foundry_common::errors::display_chain(.0))]
+    Eyre(
+        #[from]
+        #[source]
+        eyre::Report,
+    ),
 }
 
 impl From<ExecutionErr> for EvmError {
@@ -690,16 +725,6 @@ impl From<ExecutionErr> for EvmError {
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
         Self::Abi(err.into())
-    }
-}
-
-impl From<eyre::Error> for EvmError {
-    fn from(err: eyre::Report) -> Self {
-        let mut chained_cause = String::new();
-        for cause in err.chain() {
-            chained_cause.push_str(format!("{cause}; ").as_str());
-        }
-        Self::Eyre(eyre::format_err!("{chained_cause}"))
     }
 }
 
@@ -907,7 +932,7 @@ fn convert_executed_result(
             (reason.into(), 0_u64, gas_used, None, vec![])
         }
     };
-    let stipend = revm::interpreter::gas::validate_initial_tx_gas(
+    let gas = revm::interpreter::gas::calculate_initial_tx_gas(
         env.spec_id(),
         &env.tx.data,
         env.tx.transact_to.is_create(),
@@ -939,7 +964,7 @@ fn convert_executed_result(
         result,
         gas_used,
         gas_refunded,
-        stipend,
+        stipend: gas.initial_gas,
         logs,
         labels,
         traces,
@@ -951,4 +976,21 @@ fn convert_executed_result(
         out,
         chisel_state,
     })
+}
+
+/// Timer for a fuzz test.
+pub struct FuzzTestTimer {
+    /// Inner fuzz test timer - (test start time, test duration).
+    inner: Option<(Instant, Duration)>,
+}
+
+impl FuzzTestTimer {
+    pub fn new(timeout: Option<u32>) -> Self {
+        Self { inner: timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into()))) }
+    }
+
+    /// Whether the current fuzz test timed out and should be stopped.
+    pub fn is_timed_out(&self) -> bool {
+        self.inner.is_some_and(|(start, duration)| start.elapsed() > duration)
+    }
 }

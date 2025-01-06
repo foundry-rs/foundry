@@ -35,7 +35,6 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver.workspace = true
 futures.workspace = true
 tokio.workspace = true
-async-recursion = "1.1"
 
 itertools.workspace = true
 parking_lot.workspace = true

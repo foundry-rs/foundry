@@ -55,7 +55,7 @@ impl LocalFork {
 
 pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
-        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
+        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
 }
 
@@ -287,7 +287,7 @@ async fn test_fork_reset_setup() {
     assert_eq!(local_balance, U256::ZERO);
 
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(rpc::next_http_archive_rpc_endpoint()),
+        json_rpc_url: Some(rpc::next_http_archive_rpc_url()),
         block_number: Some(BLOCK_NUMBER),
     }))
     .await
@@ -829,8 +829,7 @@ async fn test_fork_init_base_fee() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reset_fork_on_new_blocks() {
     let (api, handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())))
-            .await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
 
     let anvil_provider = handle.http_provider();
     let endpoint = next_http_rpc_endpoint();
@@ -864,7 +863,7 @@ async fn test_fork_call() {
     let to: Address = "0x99d1Fa417f94dcD62BfE781a1213c092a47041Bc".parse().unwrap();
     let block_number = 14746300u64;
 
-    let provider = http_provider(rpc::next_http_archive_rpc_endpoint().as_str());
+    let provider = http_provider(rpc::next_http_archive_rpc_url().as_str());
     let tx = TransactionRequest::default().to(to).with_input(input.clone());
     let tx = WithOtherFields::new(tx);
     let res0 = provider.call(&tx).block(BlockId::Number(block_number.into())).await.unwrap();
@@ -1472,4 +1471,45 @@ async fn test_reset_dev_account_nonce() {
         .unwrap();
 
     assert!(receipt.status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_get_account() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let init_block = provider.get_block_number().await.unwrap();
+    let alice_bal = provider.get_balance(alice).await.unwrap();
+    let alice_nonce = provider.get_transaction_count(alice).await.unwrap();
+    let alice_acc_init = provider.get_account(alice).await.unwrap();
+
+    assert_eq!(alice_acc_init.balance, alice_bal);
+    assert_eq!(alice_acc_init.nonce, alice_nonce);
+
+    let tx = TransactionRequest::default().from(alice).to(bob).value(U256::from(142));
+
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+    assert_eq!(init_block + 1, receipt.block_number.unwrap());
+
+    let alice_acc = provider.get_account(alice).await.unwrap();
+
+    assert_eq!(
+        alice_acc.balance,
+        alice_bal -
+            (U256::from(142) +
+                U256::from(receipt.gas_used as u128 * receipt.effective_gas_price)),
+    );
+    assert_eq!(alice_acc.nonce, alice_nonce + 1);
+
+    let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
+
+    assert_eq!(alice_acc_init, alice_acc_prev_block);
 }

@@ -1,12 +1,13 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
-use alloy_network::TransactionResponse;
-use alloy_primitives::{b256, B256};
-use alloy_rpc_types::{BlockNumberOrTag, Index};
+use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_primitives::{address, b256, Bytes, B256};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
-    casttest, file, forgetest_async,
+    casttest, file, forgetest, forgetest_async,
     rpc::{
         next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
         next_rpc_endpoint, next_ws_rpc_endpoint,
@@ -64,7 +65,7 @@ Display options:
           - 2 (-vv): Print logs for all tests.
           - 3 (-vvv): Print execution traces for failing tests.
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
-          - 5 (-vvvvv): Print execution and setup traces for all tests.
+          - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
 Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
 
@@ -625,6 +626,46 @@ casttest!(rlp, |_prj, cmd| {
 "#]]);
 });
 
+// test that `cast impl` works correctly for both the implementation slot and the beacon slot
+casttest!(impl_slot, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast impl` for the implementation slot (AAVE Proxy)
+    cmd.args([
+        "impl",
+        "0x4965f6FA20fE9728deCf5165016fc338a5a85aBF",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--block",
+        "21422087",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xb61306c8eb34a2104d9eb8d84f1bb1001067fa4b
+
+"#]]);
+});
+
+casttest!(impl_slot_beacon, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast impl` for the beacon slot
+    cmd.args([
+        "impl",
+        "0xc63d9f0040d35f328274312fc8771a986fc4ba86",
+        "--beacon",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--block",
+        "21422087",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xa748ae65ba11606492a9c57effa0d4b7be551ec2
+
+"#]]);
+});
+
 // test for cast_rpc without arguments
 casttest!(rpc_no_args, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -768,24 +809,24 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 
-blockHash               0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
-blockNumber             16239315
-contractAddress         
-cumulativeGasUsed       10743428
-effectiveGasPrice       10539984136
-from                    0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
-gasUsed                 21000
-logs                    []
-logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                    
-status                  1 (success)
-transactionHash         0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
-transactionIndex        116
-type                    0
-blobGasPrice            
-blobGasUsed             
-authorizationList       
-to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
+blockHash            0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
+blockNumber          16239315
+contractAddress      
+cumulativeGasUsed    10743428
+effectiveGasPrice    10539984136
+from                 0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
+gasUsed              21000
+logs                 []
+logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               1 (success)
+transactionHash      0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
+transactionIndex     116
+type                 0
+blobGasPrice         
+blobGasUsed          
+authorizationList    
+to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
 
@@ -802,25 +843,25 @@ to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
         .assert_success()
         .stdout_eq(str![[r#"
 
-blockHash               0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
-blockNumber             14839405
-contractAddress         
-cumulativeGasUsed       20273649
-effectiveGasPrice       21491736378
-from                    0x3cF412d970474804623bb4e3a42dE13F9bCa5436
-gasUsed                 24952
-logs                    []
-logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                    
-status                  0 (failed)
-transactionHash         0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
-transactionIndex        173
-type                    2
-blobGasPrice            
-blobGasUsed             
-authorizationList       
-to                      0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
-revertReason            Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
+blockHash            0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
+blockNumber          14839405
+contractAddress      
+cumulativeGasUsed    20273649
+effectiveGasPrice    21491736378
+from                 0x3cF412d970474804623bb4e3a42dE13F9bCa5436
+gasUsed              24952
+logs                 []
+logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               0 (failed)
+transactionHash      0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
+transactionIndex     173
+type                 2
+blobGasPrice         
+blobGasUsed          
+authorizationList    
+to                   0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
+revertReason         Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
 
 "#]]);
 });
@@ -1130,10 +1171,15 @@ casttest!(storage_layout_simple, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
+
+╭---------+---------+------+--------+-------+-------+--------------------------------------------------------------------+-----------------------------------------------╮
 | Name    | Type    | Slot | Offset | Bytes | Value | Hex Value                                                          | Contract                                      |
-|---------|---------|------|--------|-------|-------|--------------------------------------------------------------------|-----------------------------------------------|
++========================================================================================================================================================================+
 | _owner  | address | 0    | 0      | 20    | 0     | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/Create2Deployer.sol:Create2Deployer |
+|---------+---------+------+--------+-------+-------+--------------------------------------------------------------------+-----------------------------------------------|
 | _paused | bool    | 0    | 20     | 1     | 0     | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/Create2Deployer.sol:Create2Deployer |
+╰---------+---------+------+--------+-------+-------+--------------------------------------------------------------------+-----------------------------------------------╯
+
 
 "#]]);
 });
@@ -1169,21 +1215,37 @@ casttest!(storage_layout_complex, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
+
+╭-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------╮
 | Name                          | Type                                                               | Slot | Offset | Bytes | Value                                            | Hex Value                                                          | Contract                        |
-|-------------------------------|--------------------------------------------------------------------|------|--------|-------|--------------------------------------------------|--------------------------------------------------------------------|---------------------------------|
++======================================================================================================================================================================================================================================================================================+
 | _status                       | uint256                                                            | 0    | 0      | 32    | 1                                                | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _generalPoolsBalances         | mapping(bytes32 => struct EnumerableMap.IERC20ToBytes32Map)        | 1    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _nextNonce                    | mapping(address => uint256)                                        | 2    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _paused                       | bool                                                               | 3    | 0      | 1     | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _authorizer                   | contract IAuthorizer                                               | 3    | 1      | 20    | 549683469959765988649777481110995959958745616871 | 0x0000000000000000000000006048a8c631fb7e77eca533cf9c29784e482391e7 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _approvedRelayers             | mapping(address => mapping(address => bool))                       | 4    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _isPoolRegistered             | mapping(bytes32 => bool)                                           | 5    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _nextPoolNonce                | uint256                                                            | 6    | 0      | 32    | 1760                                             | 0x00000000000000000000000000000000000000000000000000000000000006e0 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _minimalSwapInfoPoolsBalances | mapping(bytes32 => mapping(contract IERC20 => bytes32))            | 7    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _minimalSwapInfoPoolsTokens   | mapping(bytes32 => struct EnumerableSet.AddressSet)                | 8    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _twoTokenPoolTokens           | mapping(bytes32 => struct TwoTokenPoolsBalance.TwoTokenPoolTokens) | 9    | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _poolAssetManagers            | mapping(bytes32 => mapping(contract IERC20 => address))            | 10   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+|-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------|
 | _internalTokenBalance         | mapping(address => mapping(contract IERC20 => uint256))            | 11   | 0      | 32    | 0                                                | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/vault/Vault.sol:Vault |
+╰-------------------------------+--------------------------------------------------------------------+------+--------+-------+--------------------------------------------------+--------------------------------------------------------------------+---------------------------------╯
+
 
 "#]]);
 });
@@ -1474,6 +1536,101 @@ casttest!(string_decode, |_prj, cmd| {
 "#]]);
 });
 
+// tests cast can decode event with provided signature
+casttest!(event_decode_with_sig, |_prj, cmd| {
+    cmd.args(["decode-event", "--sig", "MyEvent(uint256,address)", "0x000000000000000000000000000000000000000000000000000000000000004e0000000000000000000000000000000000000000000000000000000000d0004f"]).assert_success().stdout_eq(str![[r#"
+78
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "78",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
+});
+
+// tests cast can decode event with Openchain API
+casttest!(event_decode_with_openchain, |prj, cmd| {
+    prj.clear_cache();
+    cmd.args(["decode-event", "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"]).assert_success().stdout_eq(str![[r#"
+BaseCurrencySet(address,uint256)
+0x000000000000000000000000000000000000004e
+15187004358734 [1.518e13]
+
+"#]]);
+});
+
+// tests cast can decode error with provided signature
+casttest!(error_decode_with_sig, |_prj, cmd| {
+    cmd.args(["decode-error", "--sig", "AnotherValueTooHigh(uint256,address)", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"]).assert_success().stdout_eq(str![[r#"
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+
+    cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
+[
+  "101",
+  "0x0000000000000000000000000000000000D0004F"
+]
+
+"#]]);
+});
+
+// tests cast can decode error with Openchain API
+casttest!(error_decode_with_openchain, |prj, cmd| {
+    prj.clear_cache();
+    cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
+ValueTooHigh(uint256,uint256)
+101
+100
+
+"#]]);
+});
+
+// tests cast can decode error and event when using local sig identifiers cache
+forgetest!(error_event_decode_with_cache, |prj, cmd| {
+    prj.clear_cache();
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "LocalProjectContract",
+        r#"
+contract ContractWithCustomError {
+    error AnotherValueTooHigh(uint256, address);
+    event MyUniqueEventWithinLocalProject(uint256 a, address b);
+}
+   "#,
+    )
+    .unwrap();
+    // Store selectors in local cache.
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast can decode custom error with local cache.
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+AnotherValueTooHigh(uint256,address)
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+    // Assert cast can decode event with local cache.
+    cmd.cast_fuse()
+        .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueEventWithinLocalProject(uint256,address)
+78
+0x00000000000000000000000000000DD00000004e
+
+"#]]);
+});
+
 casttest!(format_units, |_prj, cmd| {
     cmd.args(["format-units", "1000000", "6"]).assert_success().stdout_eq(str![[r#"
 1
@@ -1704,4 +1861,211 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+// tests cast can decode traces when running with verbosity level > 4
+forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Send tx to change counter storage value.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setNumber(uint256)",
+            "111",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Assert cast with verbosity displays storage changes.
+    cmd.cast_fuse()
+        .args([
+            "run",
+            format!("{tx_hash}").as_str(),
+            "-vvvvv",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Executing previous transactions from the block.
+Traces:
+  [22287] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    ├─  storage changes:
+    │   @ 0: 0 → 111
+    └─ ← [Stop] 
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// tests cast can decode external libraries traces with project cached selectors
+forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ExternalLib",
+        r#"
+import "./CounterInExternalLib.sol";
+library ExternalLib {
+    function updateCounterInExternalLib(CounterInExternalLib.Info storage counterInfo, uint256 counter) public {
+        counterInfo.counter = counter + 1;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "CounterInExternalLib",
+        r#"
+import "./ExternalLib.sol";
+contract CounterInExternalLib {
+    struct Info {
+        uint256 counter;
+    }
+    Info info;
+    constructor() {
+        ExternalLib.updateCounterInExternalLib(info, 100);
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "CounterInExternalLibScript",
+        r#"
+import "forge-std/Script.sol";
+import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
+contract CounterInExternalLibScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        new CounterInExternalLib();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterInExternalLibScript",
+    ])
+    .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    // Cache project selectors.
+    cmd.forge_fuse().set_current_dir(prj.root());
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast with local artifacts can decode external lib signature.
+    cmd.cast_fuse().set_current_dir(prj.root());
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+  [37739] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    ├─ [22411] 0xfAb06527117d29EA121998AC4fAB9Fc88bF5f979::updateCounterInExternalLib(0, 100) [delegatecall]
+    │   └─ ← [Stop] 
+    └─ ← [Return] 62 bytes of code
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/9476
+forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
+    let chain_id = 55555u64;
+    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
+
+    let http_endpoint = handle.http_endpoint();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+            "--chain",
+            &chain_id.to_string(),
+        ])
+        .assert_success();
+});
+
+// https://github.com/foundry-rs/foundry/issues/9541
+forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_auto_impersonate(true)
+            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+    )
+    .await;
+
+    let http_endpoint = handle.http_endpoint();
+
+    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
+
+    // send impersonated tx
+    let tx = TransactionRequest::default()
+        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_input(
+            Bytes::from_str(
+                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+            )
+            .unwrap(),
+        );
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    // run impersonated tx
+    cmd.cast_fuse()
+        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
+        .assert_success();
 });

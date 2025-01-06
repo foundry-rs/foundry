@@ -555,15 +555,9 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
                         return match tracer_config.into_call_config() {
-                            Ok(call_config) => Ok(GethTraceBuilder::new(
-                                self.info.traces.clone(),
-                                TracingInspectorConfig::from_geth_config(&config),
-                            )
-                            .geth_call_traces(
-                                call_config,
-                                self.receipt.cumulative_gas_used() as u64,
-                            )
-                            .into()),
+                            Ok(call_config) => Ok(GethTraceBuilder::new(self.info.traces.clone())
+                                .geth_call_traces(call_config, self.receipt.cumulative_gas_used())
+                                .into()),
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
@@ -579,16 +573,13 @@ impl MinedTransaction {
         }
 
         // default structlog tracer
-        Ok(GethTraceBuilder::new(
-            self.info.traces.clone(),
-            TracingInspectorConfig::from_geth_config(&config),
-        )
-        .geth_traces(
-            self.receipt.cumulative_gas_used() as u64,
-            self.info.out.clone().unwrap_or_default(),
-            opts.config,
-        )
-        .into())
+        Ok(GethTraceBuilder::new(self.info.traces.clone())
+            .geth_traces(
+                self.receipt.cumulative_gas_used(),
+                self.info.out.clone().unwrap_or_default(),
+                config,
+            )
+            .into())
     }
 }
 

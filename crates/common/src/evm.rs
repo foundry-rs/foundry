@@ -103,6 +103,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub always_use_create_2_factory: bool,
 
+    /// The CREATE2 deployer address to use, this will override the one in the config.
+    #[arg(long, value_name = "ADDRESS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create2_deployer: Option<Address>,
+
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
@@ -135,10 +140,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
-    /// Whether to enable Alphanet features.
-    #[arg(long, alias = "odyssey")]
+    /// Whether to enable Odyssey features.
+    #[arg(long, alias = "alphanet")]
     #[serde(skip)]
-    pub alphanet: bool,
+    pub odyssey: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -165,8 +170,8 @@ impl Provider for EvmArgs {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
-        if self.alphanet {
-            dict.insert("alphanet".to_string(), self.alphanet.into());
+        if self.odyssey {
+            dict.insert("odyssey".to_string(), self.odyssey.into());
         }
 
         if self.always_use_create_2_factory {

@@ -35,7 +35,7 @@ extern crate foundry_common;
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(Chisel, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(Chisel, opts, evm_args);
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -76,7 +76,7 @@ pub struct Chisel {
     pub opts: CoreBuildArgs,
 
     #[command(flatten)]
-    pub evm_opts: EvmArgs,
+    pub evm_args: EvmArgs,
 }
 
 /// Chisel binary subcommands

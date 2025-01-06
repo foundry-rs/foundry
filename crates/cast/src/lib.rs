@@ -571,14 +571,33 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let implementation = cast.implementation(addr, None).await?;
+    /// let implementation = cast.implementation(addr, false, None).await?;
     /// println!("{}", implementation);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn implementation(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        let slot =
-            B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+    pub async fn implementation(
+        &self,
+        who: Address,
+        is_beacon: bool,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot = match is_beacon {
+            true => {
+                // Use the beacon slot : bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
+                B256::from_str(
+                    "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50",
+                )?
+            }
+            false => {
+                // Use the implementation slot :
+                // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
+                B256::from_str(
+                    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+                )?
+            }
+        };
+
         let value = self
             .provider
             .get_storage_at(who, slot.into())
@@ -2103,13 +2122,28 @@ impl SimpleCast {
     /// ```
     pub fn extract_functions(bytecode: &str) -> Result<Vec<(String, String, &str)>> {
         let code = hex::decode(strip_0x(bytecode))?;
-        Ok(evmole::function_selectors(&code, 0)
+        let info = evmole::contract_info(
+            evmole::ContractInfoArgs::new(&code)
+                .with_selectors()
+                .with_arguments()
+                .with_state_mutability(),
+        );
+        Ok(info
+            .functions
+            .expect("functions extraction was requested")
             .into_iter()
-            .map(|s| {
+            .map(|f| {
                 (
-                    hex::encode_prefixed(s),
-                    evmole::function_arguments(&code, &s, 0),
-                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
+                    hex::encode_prefixed(f.selector),
+                    f.arguments
+                        .expect("arguments extraction was requested")
+                        .into_iter()
+                        .map(|t| t.sol_type_name().to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                    f.state_mutability
+                        .expect("state_mutability extraction was requested")
+                        .as_json_str(),
                 )
             })
             .collect())

@@ -11,7 +11,10 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    shell,
+};
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::{
     types::{DecodedTraceStep, TraceMemberOrder},
@@ -183,15 +186,23 @@ pub async fn decode_trace_arena(
 
 /// Render a collection of call traces to a string.
 pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
-    render_trace_arena_with_bytecodes(arena, false)
+    render_trace_arena_inner(arena, false, false)
 }
 
-/// Render a collection of call traces to a string optionally including contract creation bytecodes.
-pub fn render_trace_arena_with_bytecodes(
+/// Render a collection of call traces to a string optionally including contract creation bytecodes
+/// and in JSON format.
+pub fn render_trace_arena_inner(
     arena: &SparsedTraceArena,
     with_bytecodes: bool,
+    with_storage_changes: bool,
 ) -> String {
-    let mut w = TraceWriter::new(Vec::<u8>::new()).write_bytecodes(with_bytecodes);
+    if shell::is_json() {
+        return serde_json::to_string(&arena.resolve_arena()).expect("Failed to write traces");
+    }
+
+    let mut w = TraceWriter::new(Vec::<u8>::new())
+        .write_bytecodes(with_bytecodes)
+        .with_storage_changes(with_storage_changes);
     w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
@@ -289,6 +300,8 @@ pub enum TraceMode {
     ///
     /// Used by debugger.
     Debug,
+    /// Debug trace with storage changes.
+    RecordStateDiff,
 }
 
 impl TraceMode {
@@ -308,6 +321,10 @@ impl TraceMode {
         matches!(self, Self::Jump)
     }
 
+    pub const fn record_state_diff(self) -> bool {
+        matches!(self, Self::RecordStateDiff)
+    }
+
     pub const fn is_debug(self) -> bool {
         matches!(self, Self::Debug)
     }
@@ -324,8 +341,16 @@ impl TraceMode {
         std::cmp::max(self, mode.into())
     }
 
-    pub fn with_verbosity(self, verbosiy: u8) -> Self {
-        if verbosiy >= 3 {
+    pub fn with_state_changes(self, yes: bool) -> Self {
+        if yes {
+            std::cmp::max(self, Self::RecordStateDiff)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_verbosity(self, verbosity: u8) -> Self {
+        if verbosity >= 3 {
             std::cmp::max(self, Self::Call)
         } else {
             self
@@ -345,7 +370,7 @@ impl TraceMode {
                     StackSnapshotType::None
                 },
                 record_logs: true,
-                record_state_diff: false,
+                record_state_diff: self.record_state_diff(),
                 record_returndata_snapshots: self.is_debug(),
                 record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
                     .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),

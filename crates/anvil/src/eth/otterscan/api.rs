@@ -46,7 +46,7 @@ pub fn mentions_address(trace: LocalizedTransactionTrace, address: Address) -> O
 
 /// Converts the list of traces for a transaction into the expected Otterscan format.
 ///
-/// Follows format specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec.
+/// Follows format specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/main/docs/custom-jsonrpc.md#ots_tracetransaction) spec.
 pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<TraceEntry> {
     traces
         .into_iter()
@@ -350,7 +350,7 @@ impl EthApi {
     /// their `gas_used`. This would be extremely inefficient in a real blockchain RPC, but we can
     /// get away with that in this context.
     ///
-    /// The [original spec](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails)
+    /// The [original spec](https://github.com/otterscan/otterscan/blob/main/docs/custom-jsonrpc.md#ots_getblockdetails)
     /// also mentions we can hardcode `transactions` and `logsBloom` to an empty array to save
     /// bandwidth, because fields weren't intended to be used in the Otterscan UI at this point.
     ///
@@ -384,7 +384,7 @@ impl EthApi {
 
         let total_fees = receipts
             .iter()
-            .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
+            .fold(0, |acc, receipt| acc + (receipt.gas_used as u128) * receipt.effective_gas_price);
 
         let Block { header, uncles, transactions, withdrawals } = block.inner;
 
@@ -402,7 +402,7 @@ impl EthApi {
     /// Fetches all receipts for the blocks's transactions, as required by the
     /// [`ots_getBlockTransactions`] endpoint spec, and returns the final response object.
     ///
-    /// [`ots_getBlockTransactions`]: https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails
+    /// [`ots_getBlockTransactions`]: https://github.com/otterscan/otterscan/blob/main/docs/custom-jsonrpc.md#ots_getblockdetails
     pub async fn build_ots_block_tx(
         &self,
         mut block: AnyRpcBlock,
