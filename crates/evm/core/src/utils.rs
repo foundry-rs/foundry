@@ -18,6 +18,7 @@ use revm::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
+    precompile::secp256r1::P256VERIFY,
     primitives::{CreateScheme, EVMError, HandlerCfg, SpecId, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
@@ -301,7 +302,7 @@ pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandle
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
 
-        loaded_precompiles.extend([ODYSSEY_P256]);
+        loaded_precompiles.extend([ODYSSEY_P256, P256VERIFY]);
 
         loaded_precompiles
     });

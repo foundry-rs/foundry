@@ -15,7 +15,7 @@ use rustyline::{
     Helper,
 };
 use solar_parse::{
-    interface::{Pos, Session, SessionGlobals},
+    interface::{Session, SessionGlobals},
     token::{Token, TokenKind},
     Lexer,
 };
