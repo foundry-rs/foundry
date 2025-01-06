@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
-    compiler::CompilerArgs, config, coverage, create::CreateArgs, debug::DebugArgs, doc::DocArgs,
-    eip712, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
+    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
     remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
     soldeer, test, tree, update,
 };
@@ -60,10 +60,6 @@ pub enum ForgeSubcommand {
 
     /// Clone a contract from Etherscan.
     Clone(CloneArgs),
-
-    /// Debugs a single smart contract as a script.
-    #[command(visible_alias = "d")]
-    Debug(DebugArgs),
 
     /// Update one or multiple dependencies.
     ///
