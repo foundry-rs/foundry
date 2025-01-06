@@ -38,13 +38,13 @@ pub struct InitArgs {
     pub vscode: bool,
 
     #[command(flatten)]
-    pub opts: DependencyInstallOpts,
+    pub install: DependencyInstallOpts,
 }
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, template, branch, opts, offline, force, vscode } = self;
-        let DependencyInstallOpts { shallow, no_git, no_commit } = opts;
+        let Self { root, template, branch, install, offline, force, vscode } = self;
+        let DependencyInstallOpts { shallow, no_git, no_commit } = install;
 
         // create the root dir if it does not exist
         if !root.exists() {
@@ -134,7 +134,7 @@ impl InitArgs {
             if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
-            let git = self.opts.git(&config);
+            let git = self.install.git(&config);
 
             // set up the repo
             if !no_git {
@@ -145,10 +145,10 @@ impl InitArgs {
             if !offline {
                 if root.join("lib/forge-std").exists() {
                     sh_warn!("\"lib/forge-std\" already exists, skipping install...")?;
-                    self.opts.install(&mut config, vec![])?;
+                    self.install.install(&mut config, vec![])?;
                 } else {
                     let dep = "https://github.com/foundry-rs/forge-std".parse()?;
-                    self.opts.install(&mut config, vec![dep])?;
+                    self.install.install(&mut config, vec![dep])?;
                 }
             }
 

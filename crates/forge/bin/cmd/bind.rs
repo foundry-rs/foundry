@@ -5,7 +5,7 @@ use ethers_contract_abigen::{
 };
 use eyre::{Result, WrapErr};
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use regex::Regex;
@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-impl_figment_convert!(BindArgs, build_args);
+impl_figment_convert!(BindArgs, build);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
@@ -95,13 +95,13 @@ pub struct BindArgs {
     ethers: bool,
 
     #[command(flatten)]
-    build_args: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl BindArgs {
     pub fn run(self) -> Result<()> {
         if !self.skip_build {
-            let project = self.build_args.project()?;
+            let project = self.build.project()?;
             let _ = ProjectCompiler::new().compile(&project)?;
         }
 
@@ -139,7 +139,7 @@ impl BindArgs {
         if !self.select.is_empty() {
             return Ok(SelectContracts::default().extend_regex(self.select.clone()).into())
         }
-        if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
+        if let Some(skip) = self.build.skip.as_ref().filter(|s| !s.is_empty()) {
             return Ok(ExcludeContracts::default()
                 .extend_regex(
                     skip.clone()
@@ -174,7 +174,7 @@ impl BindArgs {
             return Ok(Filter::Select(self.select.clone()));
         }
 
-        if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
+        if let Some(skip) = self.build.skip.as_ref().filter(|s| !s.is_empty()) {
             return Ok(Filter::Skip(
                 skip.clone()
                     .into_iter()
