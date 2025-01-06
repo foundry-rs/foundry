@@ -19,6 +19,17 @@ sol! {
 #[derive(Debug, Cheatcode)] // Keep this list small to avoid unnecessary bloat.
 #[sol(abi)]
 interface Vm {
+    /// Simple transaction struct for assertion execution testing
+    struct AssertionExTransaction {
+        /// The address of the sender
+        address from;
+        /// The address of the receiver
+        address to;
+        /// The value of the transaction
+        uint256 value;
+        /// The abi encoded calldata of the transaction
+        bytes data;
+    }
     /// Gets the address for a given private key.
     #[cheatcode(group = Credible, safety = Safe)]
     function assertionEx(bytes calldata tx, address assertionAdopter, bytes[] assertions) external returns (bool success);
