@@ -14,7 +14,7 @@ repository.workspace = true
 workspace = true
 
 [[bin]]
-name = "phorge"
+name = "forge"
 path = "bin/main.rs"
 
 [[test]]
