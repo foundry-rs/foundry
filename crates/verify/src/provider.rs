@@ -182,7 +182,7 @@ impl VerificationProviderType {
             }
             Self::Sourcify => {
                 sh_println!(
-                    "Verifying on Sourcify, pass the ETHERSCAN_API_KEY to verify on etherscan OR use the --verifier flag to verify on any other provider"
+                    "Attempting to verify on Sourcify, pass the --etherscan-api-key <API_KEY> to verify on Etherscan OR use the --verifier flag to verify on any other provider"
                 )?;
                 Ok(Box::<SourcifyVerificationProvider>::default())
             }
