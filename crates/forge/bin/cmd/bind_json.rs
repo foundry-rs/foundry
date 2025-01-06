@@ -15,15 +15,16 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use itertools::Itertools;
-use solar_ast::{
-    ast::{self, Arena, FunctionKind, Span, VarMut},
-    interface::source_map::FileName,
-    visit::Visit,
+use rayon::prelude::*;
+use solar_parse::{
+    ast::{self, interface::source_map::FileName, visit::Visit, Arena, FunctionKind, Span, VarMut},
+    interface::Session,
+    Parser as SolarParser,
 };
-use solar_parse::{interface::Session, Parser as SolarParser};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
+    ops::ControlFlow,
     path::PathBuf,
     sync::Arc,
 };
@@ -89,9 +90,8 @@ impl BindJsonArgs {
             .1;
 
         let sess = Session::builder().with_stderr_emitter().build();
-        let result = sess.enter(|| -> solar_parse::interface::Result<()> {
-            // TODO: Switch back to par_iter_mut and `enter_parallel` after solar update.
-            sources.0.iter_mut().try_for_each(|(path, source)| {
+        let result = sess.enter_parallel(|| -> solar_parse::interface::Result<()> {
+            sources.0.par_iter_mut().try_for_each(|(path, source)| {
                 let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
 
                 let arena = Arena::new();
@@ -153,7 +153,12 @@ impl PreprocessorVisitor {
 }
 
 impl<'ast> Visit<'ast> for PreprocessorVisitor {
-    fn visit_item_function(&mut self, func: &'ast ast::ItemFunction<'ast>) {
+    type BreakValue = solar_parse::interface::data_structures::Never;
+
+    fn visit_item_function(
+        &mut self,
+        func: &'ast ast::ItemFunction<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         // Replace function bodies with a noop statement.
         if let Some(block) = &func.body {
             if !block.is_empty() {
@@ -169,7 +174,10 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         self.walk_item_function(func)
     }
 
-    fn visit_variable_definition(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast ast::VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         // Remove `immutable` attributes.
         if let Some(VarMut::Immutable) = var.mutability {
             self.updates.push((var.span, ""));

@@ -6,11 +6,13 @@ use foundry_compilers::{
 };
 use itertools::Itertools;
 use serde_json::Value;
-use solar_ast::{
-    ast::{Arena, CommentKind, Item, ItemKind},
-    interface::{self, Session},
+use solar_parse::{
+    ast::{
+        interface::{self, Session},
+        Arena, CommentKind, Item, ItemKind,
+    },
+    Parser,
 };
-use solar_parse::Parser;
 use std::{collections::BTreeMap, path::Path};
 
 /// Convenient struct to hold in-line per-test configurations
