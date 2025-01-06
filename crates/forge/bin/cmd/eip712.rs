@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
 use eyre::{Ok, OptionExt, Result};
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::artifacts::{
     output_selection::OutputSelection,
@@ -9,7 +9,7 @@ use foundry_compilers::artifacts::{
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
 
-foundry_config::impl_figment_convert!(Eip712Args, opts);
+foundry_config::impl_figment_convert!(Eip712Args, build);
 
 /// CLI arguments for `forge eip712`.
 #[derive(Clone, Debug, Parser)]
@@ -19,7 +19,7 @@ pub struct Eip712Args {
     pub target_path: PathBuf,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl Eip712Args {

@@ -1,7 +1,7 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::with_compilation_reporter, fs};
 use foundry_compilers::{
     artifacts::{
@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 
-foundry_config::impl_figment_convert!(BindJsonArgs, opts);
+foundry_config::impl_figment_convert!(BindJsonArgs, build);
 
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
@@ -39,7 +39,7 @@ pub struct BindJsonArgs {
     pub out: Option<PathBuf>,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl BindJsonArgs {
