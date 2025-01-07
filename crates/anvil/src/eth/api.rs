@@ -1902,10 +1902,10 @@ impl EthApi {
                 TransactionOrder::Fees => "fees".to_string(),
             },
             environment: NodeEnvironment {
-                base_fee: self.backend.base_fee().to::<u128>(),
+                base_fee: self.backend.base_fee() as u128,
                 chain_id: self.backend.chain_id().to::<u64>(),
-                gas_limit: self.backend.gas_limit().to::<u64>(),
-                gas_price: self.gas_price().to::<u128>(),
+                gas_limit: self.backend.gas_limit() as u64,
+                gas_price: self.gas_price(),
             },
             fork_config: fork_config
                 .map(|fork| {
