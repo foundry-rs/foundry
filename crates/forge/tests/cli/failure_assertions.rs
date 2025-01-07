@@ -254,3 +254,38 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#,
     );
 });
+
+forgetest!(failing_setup, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "FailingSetupTest.t.sol",
+        r#"
+import "./test.sol";
+
+contract FailingSetupTest is DSTest {
+    event Test(uint256 n);
+
+    function setUp() public {
+        emit Test(42);
+        require(false, "setup failed predictably");
+    }
+
+    function testShouldBeMarkedAsFailedBecauseOfSetup() public {
+        emit log("setup did not fail");
+    }
+}
+        "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "FailingSetupTest"]).assert_failure().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: revert: setup failed predictably] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+});
