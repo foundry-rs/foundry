@@ -2835,8 +2835,6 @@ forgetest!(test_fail_deprecation_warning, |prj, cmd| {
 "#);
 });
 
-// expect revert //
-
 forgetest_init!(expect_revert_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -2902,4 +2900,61 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#);
+});
+
+forgetest_init!(expect_call_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let expect_call_failure_tests = include_str!("../fixtures/ExpectCallFailures.t.sol");
+
+    prj.add_source("ExpectCallFailures.sol", expect_call_failure_tests).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectCallFailureTest"]).assert_failure().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc290d6910000000000000000000000000000000000000000000000000000000000000002, value 1 to be called 1 time, but was called 0 times] testShouldFailExpectCallValue() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithData() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000003 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithMoreParameters() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongGas() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, minimum gas 50001 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongMinGas() ([GAS])
+[FAIL: next call did not revert as expected] testShouldFailExpectCallWithRevertDisallowed() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectInnerCall() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 3 times, but was called 2 times] testShouldFailExpectMultipleCallsWithDataAdditive() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 to be called 1 time, but was called 0 times] testShouldFailExpectSelectorCall() ([GAS])
+Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
+...
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectCallCountFailureTest"])
+        .assert_failure()
+        .stdout_eq(
+            r#"No files changed, compilation skipped
+...
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc290d6910000000000000000000000000000000000000000000000000000000000000002, value 1 to be called 1 time, but was called 0 times] testShouldFailExpectCallCountValue() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 2 times, but was called 0 times] testShouldFailExpectCallCountWithNoValueAndWrongGas() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, minimum gas 50001 to be called 1 time, but was called 0 times] testShouldFailExpectCallCountWithNoValueAndWrongMinGas() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 2 times, but was called 1 time] testShouldFailExpectCallCountWithWrongCount() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectCountInnerCall() ([GAS])
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#,
+        );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectCallMixedFailureTest"])
+        .assert_failure()
+        .stdout_eq(
+            r#"No files changed, compilation skipped
+...
+[FAIL: vm.expectCall: counted expected calls can only bet set once] testShouldFailOverrideCountWithCount() ([GAS])
+[FAIL: vm.expectCall: cannot overwrite a counted expectCall with a non-counted expectCall] testShouldFailOverrideCountWithNoCount() ([GAS])
+[FAIL: vm.expectCall: counted expected calls can only bet set once] testShouldFailOverrideNoCountWithCount() ([GAS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#,
+        );
 });
