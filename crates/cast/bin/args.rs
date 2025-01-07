@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, GlobalOpts, RpcOpts};
+use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
@@ -31,9 +31,9 @@ const VERSION_MESSAGE: &str = concat!(
     next_display_order = None,
 )]
 pub struct Cast {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: CastSubcommand,

@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{CoreBuildArgs, ProjectPathsArgs},
+    opts::{BuildOpts, ProjectPathOpts},
     utils::LoadConfig,
 };
 use foundry_common::{compile::with_compilation_reporter, fs};
@@ -31,7 +31,7 @@ pub struct FlattenArgs {
     pub output: Option<PathBuf>,
 
     #[command(flatten)]
-    project_paths: ProjectPathsArgs,
+    project_paths: ProjectPathOpts,
 }
 
 impl FlattenArgs {
@@ -39,8 +39,8 @@ impl FlattenArgs {
         let Self { target_path, output, project_paths } = self;
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
-        let build_args = CoreBuildArgs { project_paths, ..Default::default() };
-        let config = build_args.try_load_config_emit_warnings()?;
+        let build = BuildOpts { project_paths, ..Default::default() };
+        let config = build.try_load_config_emit_warnings()?;
         let project = config.create_project(false, true)?;
 
         let target_path = dunce::canonicalize(target_path)?;
