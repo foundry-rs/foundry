@@ -66,10 +66,13 @@ docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker im
 docker-build-prepare: ## Prepare the Docker build environment.
 	docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64
 	@if ! docker buildx inspect cross-builder &> /dev/null; then \
+		echo "Creating a new buildx builder instance"; \
 		docker buildx create --use --driver docker-container --name cross-builder; \
 	else \
+		echo "Using existing buildx builder instance"; \
 		docker buildx use cross-builder; \
 	fi
+
 ##@ Other
 
 .PHONY: clean
