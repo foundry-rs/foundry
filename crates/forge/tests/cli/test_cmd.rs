@@ -3046,3 +3046,46 @@ Suite result: FAILED. 0 passed; 21 failed; 0 skipped; [ELAPSED]
 "#,
     );
 });
+
+forgetest!(ds_style_test_failing, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "DSStyleTest.t.sol",
+        r#"
+        import "./test.sol";
+
+        contract DSStyleTest is DSTest {
+            function testDSTestFailingAssertions() public {
+                emit log_string("assertionOne");
+                assertEq(uint256(1), uint256(2));
+                emit log_string("assertionTwo");
+                assertEq(uint256(3), uint256(4));
+                emit log_string("done");
+            }
+        }
+        "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "DSStyleTest", "-vv"]).assert_failure().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL] testDSTestFailingAssertions() ([GAS])
+Logs:
+  assertionOne
+  Error: a == b not satisfied [uint]
+    Expected: 2
+      Actual: 1
+  assertionTwo
+  Error: a == b not satisfied [uint]
+    Expected: 4
+      Actual: 3
+  done
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#,
+    );
+});
