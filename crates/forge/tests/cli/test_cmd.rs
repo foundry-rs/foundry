@@ -3007,3 +3007,42 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 "#,
         );
 });
+
+forgetest_init!(mem_safety_test_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let mem_safety_failure_tests = include_str!("../fixtures/MemSafetyFailures.t.sol");
+
+    prj.add_source("MemSafetyFailures.sol", mem_safety_failure_tests).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "MemSafetyFailureTest"]).assert_failure().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: revert: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALL() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]; counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
+[FAIL: memory write at offset 0x80 of size 0x130A not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_CODECOPY() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CREATE() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CREATE2() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_DELEGATECALL() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_EXTCODECOPY() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_LOG0() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_MLOAD() ([GAS])
+[FAIL: memory write at offset 0x81 of size 0x01 not allowed; safe range: (0x00, 0x60] U (0x80, 0x81]] testShouldFailExpectSafeMemory_MSTORE8_High() ([GAS])
+[FAIL: memory write at offset 0x60 of size 0x01 not allowed; safe range: (0x00, 0x60] U (0x80, 0x81]] testShouldFailExpectSafeMemory_MSTORE8_Low() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_MSTORE_High() ([GAS])
+[FAIL: memory write at offset 0x60 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_MSTORE_Low() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_RETURN() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_RETURNDATACOPY() ([GAS])
+[FAIL: EvmError: Revert] testShouldFailExpectSafeMemory_REVERT() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_SHA3() ([GAS])
+[FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_STATICCALL() ([GAS])
+[FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailStopExpectSafeMemory() ([GAS])
+Suite result: FAILED. 0 passed; 21 failed; 0 skipped; [ELAPSED]
+...
+"#,
+    );
+});
