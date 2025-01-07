@@ -289,3 +289,38 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#
     ]]);
 });
+
+forgetest!(multiple_after_invariants, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "MultipleAfterInvariantsTest.t.sol",
+        r#"
+import "./test.sol";
+
+contract MultipleAfterInvariant is DSTest {
+    function afterInvariant() public {}
+
+    function afterinvariant() public {}
+
+    function testFailShouldBeMarkedAsFailedBecauseOfAfterInvariant()
+        public
+        pure
+    {
+        assert(true);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "MultipleAfterInvariant"]).assert_failure().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: multiple afterInvariant functions] afterInvariant() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
+});
