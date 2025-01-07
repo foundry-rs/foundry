@@ -87,9 +87,7 @@ contract MemSafetyFailureTest is DSTest {
         SubContext sc = new SubContext();
 
         // Create a payload to call `giveReturndata` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.giveReturndata.selector
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
         vm.expectSafeMemory(0x80, 0x100);
@@ -123,9 +121,7 @@ contract MemSafetyFailureTest is DSTest {
         SubContext sc = new SubContext();
 
         // Create a payload to call `giveReturndata` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.giveReturndata.selector
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
         vm.expectSafeMemory(0x80, 0x100);
@@ -141,9 +137,7 @@ contract MemSafetyFailureTest is DSTest {
         SubContext sc = new SubContext();
 
         // Create a payload to call `giveReturndata` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.giveReturndata.selector
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
         vm.expectSafeMemory(0x80, 0x100);
@@ -159,9 +153,7 @@ contract MemSafetyFailureTest is DSTest {
         SubContext sc = new SubContext();
 
         // Create a payload to call `giveReturndata` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.giveReturndata.selector
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
         vm.expectSafeMemory(0x80, 0x100);
@@ -177,9 +169,7 @@ contract MemSafetyFailureTest is DSTest {
         SubContext sc = new SubContext();
 
         // Create a payload to call `giveReturndata` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.giveReturndata.selector
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
         vm.expectSafeMemory(0x80, 0x100);
@@ -267,11 +257,7 @@ contract MemSafetyFailureTest is DSTest {
         SubContext sc = new SubContext();
 
         // Create a payload to call `doRevert` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.doRevert.selector,
-            0x120,
-            0x20
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.doRevert.selector, 0x120, 0x20);
 
         // Expect memory in the range of [0x00, 0x120] to be safe in the next subcontext
         vm.expectSafeMemoryCall(0x00, 0x120);
@@ -280,11 +266,7 @@ contract MemSafetyFailureTest is DSTest {
         // zero data.
         _doCallReturnData(address(sc), payload, 0x200, 0x20);
         assembly {
-            if iszero(
-                eq(keccak256(0x60, 0x20), keccak256(0x200, returndatasize()))
-            ) {
-                revert(0x00, 0x00)
-            }
+            if iszero(eq(keccak256(0x60, 0x20), keccak256(0x200, returndatasize()))) { revert(0x00, 0x00) }
         }
     }
 
@@ -293,11 +275,7 @@ contract MemSafetyFailureTest is DSTest {
         // Create a new SubContext contract
         SubContext sc = new SubContext();
         // Create a payload to call `doMstore8` on the SubContext contract
-        bytes memory payload = abi.encodeWithSelector(
-            SubContext.doMstore.selector,
-            0xA0,
-            0xc0ffee
-        );
+        bytes memory payload = abi.encodeWithSelector(SubContext.doMstore.selector, 0xA0, 0xc0ffee);
 
         // Allow memory writes in the range of [0x80, 0xA0) within the next created subcontext
         vm.expectSafeMemoryCall(0x80, 0xA0);
@@ -327,42 +305,18 @@ contract MemSafetyFailureTest is DSTest {
     // Helpers
 
     /// @dev Performs a call without copying any returndata.
-    function _doCall(
-        address _target,
-        bytes memory _payload
-    ) internal returns (bool _success) {
+    function _doCall(address _target, bytes memory _payload) internal returns (bool _success) {
         assembly {
-            _success := call(
-                gas(),
-                _target,
-                0x00,
-                add(_payload, 0x20),
-                mload(_payload),
-                0x00,
-                0x00
-            )
+            _success := call(gas(), _target, 0x00, add(_payload, 0x20), mload(_payload), 0x00, 0x00)
         }
     }
 
     /// @dev Performs a call and copies returndata to memory.
-    function _doCallReturnData(
-        address _target,
-        bytes memory _payload,
-        uint256 returnDataDest,
-        uint256 returnDataSize
-    ) internal {
+    function _doCallReturnData(address _target, bytes memory _payload, uint256 returnDataDest, uint256 returnDataSize)
+        internal
+    {
         assembly {
-            pop(
-                call(
-                    gas(),
-                    _target,
-                    0x00,
-                    add(_payload, 0x20),
-                    mload(_payload),
-                    returnDataDest,
-                    returnDataSize
-                )
-            )
+            pop(call(gas(), _target, 0x00, add(_payload, 0x20), mload(_payload), returnDataDest, returnDataSize))
         }
     }
 
@@ -374,16 +328,7 @@ contract MemSafetyFailureTest is DSTest {
         uint256 returnDataSize
     ) internal {
         assembly {
-            pop(
-                staticcall(
-                    gas(),
-                    _target,
-                    add(_payload, 0x20),
-                    mload(_payload),
-                    returnDataDest,
-                    returnDataSize
-                )
-            )
+            pop(staticcall(gas(), _target, add(_payload, 0x20), mload(_payload), returnDataDest, returnDataSize))
         }
     }
 
@@ -395,16 +340,7 @@ contract MemSafetyFailureTest is DSTest {
         uint256 returnDataSize
     ) internal {
         assembly {
-            pop(
-                delegatecall(
-                    gas(),
-                    _target,
-                    add(_payload, 0x20),
-                    mload(_payload),
-                    returnDataDest,
-                    returnDataSize
-                )
-            )
+            pop(delegatecall(gas(), _target, add(_payload, 0x20), mload(_payload), returnDataDest, returnDataSize))
         }
     }
 
@@ -416,17 +352,7 @@ contract MemSafetyFailureTest is DSTest {
         uint256 returnDataSize
     ) internal {
         assembly {
-            pop(
-                callcode(
-                    gas(),
-                    _target,
-                    0x00,
-                    add(_payload, 0x20),
-                    mload(_payload),
-                    returnDataDest,
-                    returnDataSize
-                )
-            )
+            pop(callcode(gas(), _target, 0x00, add(_payload, 0x20), mload(_payload), returnDataDest, returnDataSize))
         }
     }
 }
@@ -446,8 +372,7 @@ contract SubContext {
     }
 
     function giveReturndata() external view returns (bytes memory _returndata) {
-        return
-            hex"7dc4acc68d77c9c85b5cb0f53ab9ceea175f7964390758e4409013ce80643f84";
+        return hex"7dc4acc68d77c9c85b5cb0f53ab9ceea175f7964390758e4409013ce80643f84";
     }
 
     function doRevert(uint256 offset, uint256 size) external {
