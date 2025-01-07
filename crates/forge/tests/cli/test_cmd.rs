@@ -2958,3 +2958,52 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 "#,
         );
 });
+
+forgetest_init!(expect_emit_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitFailures.t.sol");
+
+    prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: log != expected log] testShouldFailCanMatchConsecutiveEvents() ([GAS])
+[FAIL: log != expected log] testShouldFailDifferentIndexedParameters() ([GAS])
+[FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
+[FAIL: next call did not revert as expected] testShouldFailEmitWindowWithRevertDisallowed() ([GAS])
+[FAIL: log != expected log] testShouldFailEventsOnTwoCalls() ([GAS])
+[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: log != expected log] testShouldFailExpectEmitAddress() ([GAS])
+[FAIL: log != expected log] testShouldFailExpectEmitAddressWithArgs() ([GAS])
+[FAIL: log != expected log] testShouldFailExpectEmitCanMatchWithoutExactOrder() ([GAS])
+[FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingNoReference() ([GAS])
+[FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingWithReference() ([GAS])
+[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: log != expected log] testShouldFailLowLevelWithoutEmit() ([GAS])
+[FAIL: log != expected log] testShouldFailMatchRepeatedEventsOutOfOrder() ([GAS])
+[FAIL: log != expected log] testShouldFailNoEmitDirectlyOnNextCall() ([GAS])
+Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
+...
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectEmitCountFailureTest"])
+        .assert_failure()
+        .stdout_eq(
+            r#"No files changed, compilation skipped
+...
+[FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
+[FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
+[FAIL: log != expected log] testShouldFailEmitSomethingElse() ([GAS])
+[FAIL: log emitted 1 times, expected 0] testShouldFailNoEmit() ([GAS])
+[FAIL: log emitted 1 times, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
+Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+...
+"#,
+        );
+});
