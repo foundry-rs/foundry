@@ -356,3 +356,51 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ..."#
     ]]);
 });
+
+forgetest!(emit_diff_anonymous, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.add_source(
+        "EmitDiffAnonymousTest.t.sol",
+        r#"
+    import "./test.sol";
+    import "./Vm.sol";
+
+    contract Target {
+        event AnonymousEventNonIndexed(uint256 a) anonymous;
+
+        function emitAnonymousEventNonIndexed(uint256 a) external {
+            emit AnonymousEventNonIndexed(a);
+        }
+    }
+
+    contract EmitDiffAnonymousTest is DSTest {
+        Vm constant vm = Vm(HEVM_ADDRESS);
+        Target target;
+
+        event DifferentAnonymousEventNonIndexed(string a) anonymous;
+
+        function setUp() public {
+            target = new Target();
+        }
+
+        function testShouldFailEmitDifferentEventNonIndexed() public {
+            vm.expectEmitAnonymous(false, false, false, false, true);
+            emit DifferentAnonymousEventNonIndexed("1");
+            target.emitAnonymousEventNonIndexed(1);
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "EmitDiffAnonymousTest"]).assert_failure().stdout_eq(
+        str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: log != expected log] testShouldFailEmitDifferentEventNonIndexed() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});

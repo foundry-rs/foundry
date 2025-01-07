@@ -73,18 +73,6 @@ contract Issue7457Test is DSTest, ITarget {
         target.emitAnonymousEventNonIndexed(1);
     }
 
-    // function testFailEmitDifferentEvent() public {
-    //     vm.expectEmitAnonymous(false, false, false, true);
-    //     emit DifferentAnonymousEventEmpty();
-    //     target.emitAnonymousEventEmpty();
-    // }
-
-    function testFailEmitDifferentEventNonIndexed() public {
-        vm.expectEmitAnonymous(false, false, false, false, true);
-        emit DifferentAnonymousEventNonIndexed("1");
-        target.emitAnonymousEventNonIndexed(1);
-    }
-
     function testEmitEventWith1Topic() public {
         vm.expectEmitAnonymous(true, false, false, false, true);
         emit AnonymousEventWith1Topic(1, 2);
