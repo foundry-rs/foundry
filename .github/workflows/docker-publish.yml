@@ -74,5 +74,5 @@ jobs:
             echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
             echo "LABELS -> ${{ steps.meta.outputs.labels }}"
 
-      - name: Build and push reth image, tag as "latest"
+      - name: Build and push foundry image
         run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} PROFILE=maxperf docker-build-push
