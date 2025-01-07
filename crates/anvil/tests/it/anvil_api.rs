@@ -460,10 +460,10 @@ async fn can_get_node_info() {
         hard_fork: hard_fork.to_string(),
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
-            base_fee: U256::from_str("0x3b9aca00").unwrap().to(),
+            base_fee: u128::from_str("0x3b9aca00").unwrap(),
             chain_id: 0x7a69,
-            gas_limit: U256::from_str("0x1c9c380").unwrap().to(),
-            gas_price: U256::from_str("0x77359400").unwrap().to(),
+            gas_limit: u64::from_str("0x1c9c380").unwrap(),
+            gas_price: u128::from_str("0x77359400").unwrap(),
         },
         fork_config: NodeForkConfig {
             fork_url: None,
