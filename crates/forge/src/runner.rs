@@ -369,16 +369,12 @@ impl<'a> ContractRunner<'a> {
 
         let test_fail_instances = functions
             .iter()
-            .filter_map(|func| {
-                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
-                    .is_any_test_fail()
-                    .then_some(func.name.clone())
-            })
+            .filter_map(|func| (func.name.starts_with("testFail")).then_some(func.name.clone()))
             .collect::<Vec<_>>()
             .join(", ");
 
         if !test_fail_instances.is_empty() {
-            return SuiteResult::new(start.elapsed(),[("`testFail*` has been deprecated".to_string(), TestResult::fail(format!("Found {test_fail_instances}. Consider changing to test_Revert[If|When]_Condition and expecting a revert.")))].into(), warnings)
+            return SuiteResult::new(start.elapsed(),[(format!("Found: {test_fail_instances}"), TestResult::fail(format!("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert")))].into(), warnings)
         }
 
         let test_results = functions
@@ -487,20 +483,9 @@ impl<'a> FunctionRunner<'a> {
             return self.result;
         }
 
-        let test_fail_deprecation = |should_fail: bool| {
-            if should_fail {
-                return Some(TestResult::fail(format!("`testFail*` has been deprecated. Consider changing {} to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.", func.name)));
-            }
-            None
-        };
-
         match kind {
-            TestFunctionKind::UnitTest { should_fail } => {
-                test_fail_deprecation(should_fail).unwrap_or(self.run_unit_test(func, should_fail))
-            }
-            TestFunctionKind::FuzzTest { should_fail } => {
-                test_fail_deprecation(should_fail).unwrap_or(self.run_fuzz_test(func, should_fail))
-            }
+            TestFunctionKind::UnitTest => self.run_unit_test(func),
+            TestFunctionKind::FuzzTest => self.run_fuzz_test(func),
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }
@@ -516,7 +501,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the unit test call will be made on modified state).
     /// State modifications of before test txes and unit test function call are discarded after
     /// test ends, similar to `eth_call`.
-    fn run_unit_test(mut self, func: &Function, should_fail: bool) -> TestResult {
+    fn run_unit_test(mut self, func: &Function) -> TestResult {
         // Prepare unit test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -544,7 +529,7 @@ impl<'a> FunctionRunner<'a> {
         };
 
         let success =
-            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, should_fail);
+            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
         self.result
     }
@@ -743,7 +728,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the fuzz test will use the modified state).
     /// State modifications of before test txes and fuzz test are discarded after test ends,
     /// similar to `eth_call`.
-    fn run_fuzz_test(mut self, func: &Function, should_fail: bool) -> TestResult {
+    fn run_fuzz_test(mut self, func: &Function) -> TestResult {
         // Prepare fuzz test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -763,7 +748,6 @@ impl<'a> FunctionRunner<'a> {
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             self.address,
-            should_fail,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
         );
