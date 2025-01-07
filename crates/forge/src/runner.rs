@@ -366,6 +366,21 @@ impl<'a> ContractRunner<'a> {
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
         });
+
+        let test_fail_instances = functions
+            .iter()
+            .filter_map(|func| {
+                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
+                    .is_any_test_fail()
+                    .then_some(func.name.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if !test_fail_instances.is_empty() {
+            return SuiteResult::new(start.elapsed(),[("`testFail*` has been deprecated".to_string(), TestResult::fail(format!("Found {test_fail_instances}. Consider changing to test_Revert[If|When]_Condition and expecting a revert.")))].into(), warnings)
+        }
+
         let test_results = functions
             .par_iter()
             .map(|&func| {
@@ -402,23 +417,6 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let test_fail_deprecations = self
-            .contract
-            .abi
-            .functions()
-            .filter_map(|func| {
-                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
-                    .is_any_test_fail()
-                    .then_some(func.name.clone())
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        if !test_fail_deprecations.is_empty() {
-            warnings.push(format!(
-                "`testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): {test_fail_deprecations}.",
-            ));
-        }
         SuiteResult::new(duration, test_results, warnings)
     }
 }

@@ -1,5 +1,36 @@
 // Tests in which we want to assert failures.
 
+forgetest!(test_fail_deprecation_warning, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "DeprecationTestFail.t.sol",
+        r#"
+    import "./test.sol";
+    contract DeprecationTestFail is DSTest {
+        function testFail_deprecated() public {
+            revert("deprecated");
+        }
+
+        function testFail_deprecated2() public {
+            revert("deprecated2");
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "DeprecationTestFail"]).assert_failure().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[FAIL: Found testFail_deprecated, testFail_deprecated2. Consider changing to test_Revert[If|When]_Condition and expecting a revert.] `testFail*` has been deprecated ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#,
+    );
+});
+
 forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
