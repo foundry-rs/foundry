@@ -40,7 +40,7 @@ impl Cheatcode for attachDelegationCall {
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
-            chain_id: ccx.ecx.env.cfg.chain_id,
+            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
         };
         let signed_auth = SignedAuthorization::new_unchecked(
             auth,
@@ -87,7 +87,11 @@ fn create_auth(
     let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
     let nonce = authority_acc.data.info.nonce;
     Ok((
-        Authorization { address: implementation, nonce, chain_id: ccx.ecx.env.cfg.chain_id },
+        Authorization {
+            address: implementation,
+            nonce,
+            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+        },
         nonce,
     ))
 }

@@ -10,7 +10,7 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
-    opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
+    opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
 };
 use foundry_common::{
@@ -64,7 +64,7 @@ pub struct StorageArgs {
     etherscan: EtherscanOpts,
 
     #[command(flatten)]
-    build: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl_figment_convert_cast!(StorageArgs);

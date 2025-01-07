@@ -1,16 +1,66 @@
 {
     "categories": [
         {
-            "title": "## Features",
-            "labels": ["T-feature"]
+            "title": "## Breaking changes",
+            "labels": ["T-likely-breaking "]
         },
         {
-            "title": "## Fixes",
-            "labels": ["T-bug", "T-fix"]
+            "title": "## Anvil Features",
+            "labels": ["C-anvil", "T-feature"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Anvil Fixes",
+            "labels": ["C-anvil", "T-bug"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Cast Features",
+            "labels": ["C-cast", "T-feature"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Cast Fixes",
+            "labels": ["C-cast", "T-bug"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Chisel Features",
+            "labels": ["C-chisel", "T-feature"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Chisel Fixes",
+            "labels": ["C-chisel", "T-bug"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Forge Features",
+            "labels": ["C-forge", "T-feature"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Forge Fixes",
+            "labels": ["C-forge", "T-bug"],
+            "exhaustive": true,
+            "exhaustive_rules": false
+        },
+        {
+            "title": "## Performance improvements",
+            "labels": ["T-perf"]
         }
     ],
     "ignore_labels": ["L-ignore"],
-    "template": "${{CHANGELOG}}\n## Other\n\n${{UNCATEGORIZED}}",
-    "pr_template": "- ${{TITLE}} (#${{NUMBER}})",
-    "empty_template": "- No changes"
+    "template": "${{CHANGELOG}}\n## Other\n\n${{UNCATEGORIZED}}\n## Full Changelog:\n ${{RELEASE_DIFF}}",
+    "pr_template": "- ${{TITLE}} (#${{NUMBER}}) by @${{AUTHOR}}",
+    "empty_template": "- No changes",
+    "max_pull_requests": 100,
+    "max_back_track_time_days": 60
 }

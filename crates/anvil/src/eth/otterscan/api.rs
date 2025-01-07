@@ -384,7 +384,7 @@ impl EthApi {
 
         let total_fees = receipts
             .iter()
-            .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
+            .fold(0, |acc, receipt| acc + (receipt.gas_used as u128) * receipt.effective_gas_price);
 
         let Block { header, uncles, transactions, withdrawals } = block.inner;
 
