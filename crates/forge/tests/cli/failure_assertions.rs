@@ -324,3 +324,35 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#
     ]]);
 });
+
+forgetest!(multiple_setups, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "MultipleSetupsTest.t.sol",
+        r#"
+    
+import "./test.sol";
+
+contract MultipleSetup is DSTest {
+    function setUp() public {}
+
+    function setup() public {}
+
+    function testFailShouldBeMarkedAsFailedBecauseOfSetup() public {
+        assert(true);
+    }
+}
+
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "MultipleSetup"]).assert_failure().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+...
+[FAIL: multiple setUp functions] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+..."#
+    ]]);
+});
