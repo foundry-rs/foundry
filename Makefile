@@ -58,7 +58,7 @@ docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker im
 
 	docker buildx build --file ./Dockerfile.cross . \
 		--platform linux/amd64,linux/arm64 \
-		$(foreach tag,$(shell echo $(DOCKER_IMAGE_NAME) | tr ',' ' '),--tag $(tag))
+		$(foreach tag,$(shell echo $(DOCKER_IMAGE_NAME) | tr ',' ' '),--tag $(tag)) \
 		--provenance=false \
 		--push
 
