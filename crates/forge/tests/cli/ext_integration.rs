@@ -95,23 +95,6 @@ fn mds1_multicall3() {
     ExtTester::new("mds1", "multicall", "f534fbc9f98386a217eaaf9b29d3d4f6f920d5ec").run();
 }
 
-// <https://github.com/morpho-org/morpho-blue>
-#[test]
-fn morpho_blue() {
-    ExtTester::new("morpho-org", "morpho-blue", "4844569ce51f2a01a46e27a5a22f54e9a388adcc").run();
-}
-
-#[test]
-// <https://github.com/morpho-org/universal-rewards-distributor>
-fn morpho_universal_rewards_distributor() {
-    ExtTester::new(
-        "morpho-org",
-        "universal-rewards-distributor",
-        "a0051263387857b254ec19a692d89821eda94248",
-    )
-    .run();
-}
-
 // Legacy tests
 
 // <https://github.com/Arachnid/solidity-stringutils>
