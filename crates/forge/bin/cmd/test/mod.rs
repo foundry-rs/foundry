@@ -79,8 +79,8 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"], value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
-    debug: Option<Option<Regex>>,
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
+    debug: bool,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
@@ -102,8 +102,8 @@ pub struct TestArgs {
     ///
     /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
     /// single function is matched, similarly to `--debug`, for performance reasons.
-    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
-    decode_internal: Option<Option<Regex>>,
+    #[arg(long)]
+    decode_internal: bool,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -288,7 +288,7 @@ impl TestArgs {
         // Set up the project.
         let project = config.project()?;
 
-        let mut filter = self.filter(&config);
+        let filter = self.filter(&config);
         trace!(target: "forge::test", ?filter, "using filter");
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
@@ -312,7 +312,7 @@ impl TestArgs {
             }
         }
 
-        let should_debug = self.debug.is_some();
+        let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 
         // Determine print verbosity and executor verbosity.
@@ -324,12 +324,12 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
-        if should_draw && self.decode_internal.is_none() {
-            self.decode_internal = Some(None);
+        if should_draw && !self.decode_internal {
+            self.decode_internal = true;
         }
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
-        let decode_internal = if self.decode_internal.is_some() {
+        let decode_internal = if self.decode_internal {
             // If more than one function matched, we enable simple tracing.
             // If only one function matched, we enable full tracing. This is done in `run_tests`.
             InternalTraceMode::Simple
@@ -349,28 +349,6 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .odyssey(evm_opts.odyssey)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
-
-        let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {
-            if let Some(Some(regex)) = maybe_regex {
-                sh_warn!(
-                    "specifying argument for --{flag} is deprecated and will be removed in the future, \
-                     use --match-test instead"
-                )?;
-
-                let test_pattern = &mut filter.args_mut().test_pattern;
-                if test_pattern.is_some() {
-                    eyre::bail!(
-                        "Cannot specify both --{flag} and --match-test. \
-                         Use --match-contract and --match-path to further limit the search instead."
-                    );
-                }
-                *test_pattern = Some(regex.clone());
-            }
-
-            Ok(())
-        };
-        maybe_override_mt("debug", self.debug.as_ref())?;
-        maybe_override_mt("decode-internal", self.decode_internal.as_ref())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
@@ -466,7 +444,7 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
+        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
@@ -486,7 +464,7 @@ impl TestArgs {
         }
 
         // If exactly one test matched, we enable full tracing.
-        if num_filtered == 1 && self.decode_internal.is_some() {
+        if num_filtered == 1 && self.decode_internal {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
@@ -549,7 +527,7 @@ impl TestArgs {
             )?);
         }
 
-        if self.decode_internal.is_some() {
+        if self.decode_internal {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
@@ -578,7 +556,7 @@ impl TestArgs {
             // We identify addresses if we're going to print *any* trace or gas report.
             let identify_addresses = verbosity >= 3 ||
                 self.gas_report ||
-                self.debug.is_some() ||
+                self.debug ||
                 self.flamegraph ||
                 self.flamechart;
 
