@@ -19,7 +19,7 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap as Map},
+    collections::{BTreeMap, BTreeSet, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
@@ -237,7 +237,7 @@ impl SuiteResult {
             warnings.push(warning);
         }
 
-        let mut isolated_cheatcodes = Vec::new();
+        let mut isolated_cheatcodes = BTreeSet::new();
         for test_result in test_results.values() {
             isolated_cheatcodes.extend(test_result.isolated_cheatcodes.clone());
         }
@@ -246,6 +246,7 @@ impl SuiteResult {
             for cheatcode in isolated_cheatcodes {
                 write!(warning, "\n  {cheatcode}").unwrap();
             }
+            write!(warning, "\n\nTo enable isolation mode, pass the `--isolated` flag\n").unwrap();
             warnings.push(warning);
         }
 

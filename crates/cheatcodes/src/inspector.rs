@@ -2212,10 +2212,8 @@ fn apply_dispatch(
         ccx.state.deprecated_cheatcodes.insert(cheat.signature(), replacement);
     }
 
-    if *cheat.requires() == spec::Requires::Isolation {
-        if !ccx.state.isolated_cheatcodes.contains(&cheat.signature()) {
-            ccx.state.isolated_cheatcodes.push(cheat.signature());
-        }
+    if !ccx.state.config.evm_opts.isolate && *cheat.requires() == spec::Requires::Isolation {
+        ccx.state.isolated_cheatcodes.push(cheat.signature());
     }
 
     // Apply the cheatcode.
