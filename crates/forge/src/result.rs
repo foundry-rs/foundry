@@ -242,7 +242,8 @@ impl SuiteResult {
             isolated_cheatcodes.extend(test_result.isolated_cheatcodes.clone());
         }
         if !isolated_cheatcodes.is_empty() {
-            let mut warning = "the following cheatcode(s) require isolation mode and will be silently skipped if it is not enabled:".to_string();
+            let mut warning =
+                "the following cheatcode(s) require isolation mode and were skipped:".to_string();
             for cheatcode in isolated_cheatcodes {
                 write!(warning, "\n  {cheatcode}").unwrap();
             }
