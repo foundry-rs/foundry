@@ -6,9 +6,6 @@ use spec::Vm::{
 };
 use std::fmt::Debug;
 
-pub const ASSUME_REJECT_MAGIC: &str =
-    "Cannot combine a generic assumeNoRevert with specific assumeNoRevert reasons";
-
 #[derive(Clone, Debug)]
 pub struct AssumeNoRevert {
     /// The call depth at which the cheatcode was added.
@@ -90,7 +87,10 @@ fn assume_no_revert(
     depth: u64,
     parameters: Vec<AcceptableRevertParameters>,
 ) -> Result {
-    ensure!(state.assume_no_revert.is_none(), ASSUME_REJECT_MAGIC);
+    ensure!(
+        state.assume_no_revert.is_none(),
+        "you must make another external call prior to calling assumeNoRevert again"
+    );
 
     state.assume_no_revert = Some(AssumeNoRevert { depth, reasons: parameters, reverted_by: None });
 
