@@ -51,8 +51,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
             }
         }
     };
-    let requires =
-        requires.unwrap_or_else(|| quote!(Requires::None));
+    let requires = requires.unwrap_or_else(|| quote!(Requires::None));
 
     check_named_fields(data, name);
 
