@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use eyre::Context;
 use foundry_cli::{
     handler,
-    opts::{CoreBuildArgs, GlobalOpts},
+    opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{evm::EvmArgs, fs};
@@ -35,7 +35,7 @@ extern crate foundry_common;
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(Chisel, opts, evm_args);
+foundry_config::merge_impl_figment_convert!(Chisel, build, evm);
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -50,9 +50,9 @@ const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: Option<ChiselSubcommand>,
@@ -73,10 +73,10 @@ pub struct Chisel {
     pub no_vm: bool,
 
     #[command(flatten)]
-    pub opts: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
-    pub evm_args: EvmArgs,
+    pub evm: EvmArgs,
 }
 
 /// Chisel binary subcommands

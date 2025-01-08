@@ -1,12 +1,13 @@
-use solar_ast::{
-    ast::{BinOp, BinOpKind, Expr, ExprKind},
-    visit::Visit,
-};
+use std::ops::ControlFlow;
+
+use solar_ast::{visit::Visit, BinOp, BinOpKind, Expr, ExprKind};
 
 use super::DivideBeforeMultiply;
 
 impl<'ast> Visit<'ast> for DivideBeforeMultiply {
-    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) {
+    type BreakValue = ();
+
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ExprKind::Binary(left_expr, BinOp { kind: BinOpKind::Mul, .. }, _) = &expr.kind {
             if contains_division(left_expr) {
                 self.results.push(expr.span);
@@ -14,6 +15,7 @@ impl<'ast> Visit<'ast> for DivideBeforeMultiply {
         }
 
         self.walk_expr(expr);
+        ControlFlow::Continue(())
     }
 }
 
@@ -33,7 +35,7 @@ fn contains_division<'ast>(expr: &'ast Expr<'ast>) -> bool {
 
 #[cfg(test)]
 mod test {
-    use solar_ast::{ast, visit::Visit};
+    use solar_ast::{visit::Visit, Arena};
     use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
@@ -44,7 +46,7 @@ mod test {
         let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
 
         let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = ast::Arena::new();
+            let arena = Arena::new();
 
             let mut parser = solar_parse::Parser::from_file(
                 &sess,

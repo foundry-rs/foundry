@@ -5,15 +5,13 @@ pub mod med;
 
 use std::{
     hash::{Hash, Hasher},
+    ops::ControlFlow,
     path::PathBuf,
 };
 
 use foundry_compilers::solc::SolcLanguage;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{
-    ast::{Arena, SourceUnit},
-    visit::Visit,
-};
+use solar_ast::{visit::Visit, Arena, SourceUnit};
 use solar_interface::{ColorChoice, Session, Span};
 use thiserror::Error;
 
@@ -163,7 +161,8 @@ macro_rules! declare_sol_lints {
         }
 
         impl<'ast> Visit<'ast> for SolLint {
-            fn visit_source_unit(&mut self, source_unit: &SourceUnit<'ast>) {
+            type BreakValue = ();
+            fn visit_source_unit(&mut self, source_unit: &SourceUnit<'ast>) -> ControlFlow<Self::BreakValue> {
                 match self {
                     $(
                         SolLint::$name(lint) => lint.visit_source_unit(source_unit),

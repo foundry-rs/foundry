@@ -1,14 +1,18 @@
+use std::ops::ControlFlow;
+
 use regex::Regex;
 
-use solar_ast::{
-    ast::{ItemStruct, VariableDefinition},
-    visit::Visit,
-};
+use solar_ast::{visit::Visit, ItemStruct, VariableDefinition};
 
 use super::{ScreamingSnakeCase, StructPascalCase, VariableMixedCase};
 
 impl<'ast> Visit<'ast> for VariableMixedCase {
-    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+    type BreakValue = ();
+
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         if var.mutability.is_none() {
             if let Some(name) = var.name {
                 let name = name.as_str();
@@ -19,11 +23,17 @@ impl<'ast> Visit<'ast> for VariableMixedCase {
         }
 
         self.walk_variable_definition(var);
+        ControlFlow::Continue(())
     }
 }
 
 impl<'ast> Visit<'ast> for ScreamingSnakeCase {
-    fn visit_variable_definition(&mut self, var: &'ast VariableDefinition<'ast>) {
+    type BreakValue = ();
+
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         if let Some(mutability) = var.mutability {
             if mutability.is_constant() || mutability.is_immutable() {
                 if let Some(name) = var.name {
@@ -35,11 +45,17 @@ impl<'ast> Visit<'ast> for ScreamingSnakeCase {
             }
         }
         self.walk_variable_definition(var);
+        ControlFlow::Continue(())
     }
 }
 
 impl<'ast> Visit<'ast> for StructPascalCase {
-    fn visit_item_struct(&mut self, strukt: &'ast ItemStruct<'ast>) {
+    type BreakValue = ();
+
+    fn visit_item_struct(
+        &mut self,
+        strukt: &'ast ItemStruct<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         let name = strukt.name.as_str();
 
         if !is_pascal_case(name) && name.len() > 1 {
@@ -47,6 +63,7 @@ impl<'ast> Visit<'ast> for StructPascalCase {
         }
 
         self.walk_item_struct(strukt);
+        ControlFlow::Continue(())
     }
 }
 
@@ -70,7 +87,7 @@ pub fn is_screaming_snake_case(s: &str) -> bool {
 
 #[cfg(test)]
 mod test {
-    use solar_ast::{ast, visit::Visit};
+    use solar_ast::{visit::Visit, Arena};
     use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
@@ -83,7 +100,7 @@ mod test {
         let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
 
         let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = ast::Arena::new();
+            let arena = Arena::new();
 
             let mut parser = solar_parse::Parser::from_file(
                 &sess,
@@ -109,7 +126,7 @@ mod test {
         let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
 
         let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = ast::Arena::new();
+            let arena = Arena::new();
 
             let mut parser = solar_parse::Parser::from_file(
                 &sess,
@@ -135,7 +152,7 @@ mod test {
         let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
 
         let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = ast::Arena::new();
+            let arena = Arena::new();
 
             let mut parser = solar_parse::Parser::from_file(
                 &sess,

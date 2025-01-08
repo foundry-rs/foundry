@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use core::fmt;
 use foundry_compilers::Language;
-use solar_ast::ast::Span;
+use solar_ast::Span;
 use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
