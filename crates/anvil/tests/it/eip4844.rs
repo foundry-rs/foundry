@@ -78,7 +78,7 @@ async fn can_send_multiple_blobs_in_one_tx() {
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    assert_eq!(receipt.blob_gas_used, Some(MAX_DATA_GAS_PER_BLOCK as u128));
+    assert_eq!(receipt.blob_gas_used, Some(MAX_DATA_GAS_PER_BLOCK));
     assert_eq!(receipt.blob_gas_price, Some(0x1)); // 1 wei
 }
 
@@ -250,7 +250,7 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
     assert_eq!(receipt.to, Some(bob));
     assert_eq!(
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
-        DATA_GAS_PER_BLOB as u128
+        DATA_GAS_PER_BLOB
     );
 }
 
@@ -296,6 +296,6 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() 
     assert_eq!(receipt.to, Some(bob));
     assert_eq!(
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
-        DATA_GAS_PER_BLOB as u128
+        DATA_GAS_PER_BLOB
     );
 }

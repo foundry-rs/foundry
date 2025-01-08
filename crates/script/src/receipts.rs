@@ -106,7 +106,7 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
             gas = if gas_price == 0 {
                 format!("Gas Used: {gas_used}")
             } else {
-                let paid = format_units(gas_used.saturating_mul(gas_price), 18)
+                let paid = format_units((gas_used as u128).saturating_mul(gas_price), 18)
                     .unwrap_or_else(|_| "N/A".into());
                 let gas_price =
                     format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());

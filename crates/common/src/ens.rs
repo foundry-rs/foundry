@@ -96,10 +96,15 @@ impl FromStr for NameOrAddress {
     type Err = <Address as FromStr>::Err;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(addr) = Address::from_str(s) {
-            Ok(Self::Address(addr))
-        } else {
-            Ok(Self::Name(s.to_string()))
+        match Address::from_str(s) {
+            Ok(addr) => Ok(Self::Address(addr)),
+            Err(err) => {
+                if s.contains('.') {
+                    Ok(Self::Name(s.to_string()))
+                } else {
+                    Err(err)
+                }
+            }
         }
     }
 }
@@ -234,6 +239,18 @@ mod test {
             ),
         ] {
             assert_eq!(reverse_address(&addr.parse().unwrap()), expected, "{addr}");
+        }
+    }
+
+    #[test]
+    fn test_invalid_address() {
+        for addr in [
+            "0x314618",
+            "0x000000000000000000000000000000000000000", // 41
+            "0x00000000000000000000000000000000000000000", // 43
+            "0x28679A1a632125fbBf7A68d850E50623194A709E123", // 44
+        ] {
+            assert!(NameOrAddress::from_str(addr).is_err());
         }
     }
 }

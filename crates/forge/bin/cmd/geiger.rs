@@ -4,9 +4,11 @@ use foundry_cli::utils::LoadConfig;
 use foundry_compilers::{resolver::parse::SolData, Graph};
 use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
-use solar_ast::visit::Visit;
-use solar_parse::{ast, interface::Session};
-use std::path::{Path, PathBuf};
+use solar_parse::{ast, ast::visit::Visit, interface::Session};
+use std::{
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+};
 
 /// CLI arguments for `forge geiger`.
 #[derive(Clone, Debug, Parser)]
@@ -144,7 +146,9 @@ impl<'a> Visitor<'a> {
 }
 
 impl<'ast> Visit<'ast> for Visitor<'_> {
-    fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) {
+    type BreakValue = solar_parse::interface::data_structures::Never;
+
+    fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::ExprKind::Call(lhs, _args) = &expr.kind {
             if let ast::ExprKind::Member(_lhs, member) = &lhs.kind {
                 if self.unsafe_cheatcodes.iter().any(|c| c.as_str() == member.as_str()) {
@@ -154,6 +158,6 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
                 }
             }
         }
-        self.walk_expr(expr);
+        self.walk_expr(expr)
     }
 }

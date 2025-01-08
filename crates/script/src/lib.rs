@@ -25,9 +25,9 @@ use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
-use forge_verify::RetryArgs;
+use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalOpts},
+    opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{
@@ -72,14 +72,14 @@ mod transaction;
 mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_args);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
     // Include global options for users of this struct.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     /// The contract you want to run. Either the file path or contract name.
     ///
@@ -203,16 +203,16 @@ pub struct ScriptArgs {
     pub timeout: Option<u64>,
 
     #[command(flatten)]
-    pub opts: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
     pub wallets: MultiWalletOpts,
 
     #[command(flatten)]
-    pub evm_args: EvmArgs,
+    pub evm: EvmArgs,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     pub retry: RetryArgs,
@@ -220,8 +220,7 @@ pub struct ScriptArgs {
 
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
-        let script_wallets =
-            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_args.sender);
+        let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -414,7 +413,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = match self.evm_args.env.code_size_limit {
+        let max_size = match self.evm.env.code_size_limit {
             Some(size) => size,
             None => CONTRACT_MAX_SIZE,
         };
@@ -733,7 +732,7 @@ mod tests {
             "--code-size-limit",
             "50000",
         ]);
-        assert_eq!(args.evm_args.env.code_size_limit, Some(50000));
+        assert_eq!(args.evm.env.code_size_limit, Some(50000));
     }
 
     #[test]

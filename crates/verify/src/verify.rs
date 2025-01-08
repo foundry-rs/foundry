@@ -29,7 +29,7 @@ use crate::provider::VerificationContext;
 #[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
+    #[arg(long, help_heading = "Verifier options", default_value = "sourcify", value_enum)]
     pub verifier: VerificationProviderType,
 
     /// The verifier API KEY, if using a custom provider.
@@ -44,7 +44,7 @@ pub struct VerifierArgs {
 impl Default for VerifierArgs {
     fn default() -> Self {
         Self {
-            verifier: VerificationProviderType::Etherscan,
+            verifier: VerificationProviderType::Sourcify,
             verifier_api_key: None,
             verifier_url: None,
         }

@@ -1,7 +1,7 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
@@ -20,7 +20,7 @@ use foundry_config::{
 use serde::Serialize;
 use std::path::PathBuf;
 
-foundry_config::merge_impl_figment_convert!(BuildArgs, args);
+foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 
 /// CLI arguments for `forge build`.
 ///
@@ -68,7 +68,7 @@ pub struct BuildArgs {
 
     #[command(flatten)]
     #[serde(flatten)]
-    pub args: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
     #[serde(skip)]
@@ -122,7 +122,7 @@ impl BuildArgs {
     /// [`utils::find_project_root`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> Result<Project> {
-        self.args.project()
+        self.build.project()
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
