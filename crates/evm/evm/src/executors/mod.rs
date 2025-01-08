@@ -237,22 +237,22 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
-        self.strategy.runner.clone().set_balance(self, address, amount)
+        self.strategy.runner.set_balance(self, address, amount)
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
-        self.strategy.runner.clone().get_balance(self, address)
+        self.strategy.runner.get_balance(self, address)
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
-        self.strategy.runner.clone().set_nonce(self, address, nonce)
+        self.strategy.runner.set_nonce(self, address, nonce)
     }
 
     /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
-        self.strategy.runner.clone().get_nonce(self, address)
+        self.strategy.runner.get_nonce(self, address)
     }
 
     /// Returns `true` if the account has no code.

@@ -46,12 +46,6 @@ impl ExecutorStrategyContext for () {
 
 /// Stateless strategy runner for [ExecutorStrategy].
 pub trait ExecutorStrategyRunner: Debug + Send + Sync {
-    /// Strategy name used when printing.
-    fn name(&self) -> &'static str;
-
-    /// Clone the strategy runner.
-    fn new_cloned(&self) -> Box<dyn ExecutorStrategyRunner>;
-
     /// Creates a new [BackendStrategy].
     fn new_backend_strategy(&self, ctx: &dyn ExecutorStrategyContext) -> BackendStrategy;
 
@@ -97,25 +91,11 @@ pub trait ExecutorStrategyRunner: Debug + Send + Sync {
     ) -> Result<ResultAndState>;
 }
 
-impl Clone for Box<dyn ExecutorStrategyRunner> {
-    fn clone(&self) -> Self {
-        self.new_cloned()
-    }
-}
-
 /// Implements [ExecutorStrategyRunner] for EVM.
 #[derive(Debug, Default, Clone)]
 pub struct EvmExecutorStrategyRunner;
 
 impl ExecutorStrategyRunner for EvmExecutorStrategyRunner {
-    fn name(&self) -> &'static str {
-        "evm"
-    }
-
-    fn new_cloned(&self) -> Box<dyn ExecutorStrategyRunner> {
-        Box::new(self.clone())
-    }
-
     fn set_balance(
         &self,
         executor: &mut Executor,
@@ -183,7 +163,7 @@ impl ExecutorStrategyRunner for EvmExecutorStrategyRunner {
 #[derive(Debug)]
 pub struct ExecutorStrategy {
     /// Strategy runner.
-    pub runner: Box<dyn ExecutorStrategyRunner>,
+    pub runner: &'static dyn ExecutorStrategyRunner,
     /// Strategy context.
     pub context: Box<dyn ExecutorStrategyContext>,
 }
@@ -191,12 +171,12 @@ pub struct ExecutorStrategy {
 impl ExecutorStrategy {
     /// Creates a new EVM strategy for the [Executor].
     pub fn new_evm() -> Self {
-        Self { runner: Box::new(EvmExecutorStrategyRunner), context: Box::new(()) }
+        Self { runner: &EvmExecutorStrategyRunner, context: Box::new(()) }
     }
 }
 
 impl Clone for ExecutorStrategy {
     fn clone(&self) -> Self {
-        Self { runner: self.runner.clone(), context: self.context.clone() }
+        Self { runner: self.runner, context: self.context.clone() }
     }
 }

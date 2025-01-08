@@ -71,12 +71,7 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.is_initialized = false;
         self.spec_id = env.handler_cfg.spec_id;
-        self.backend.strategy.runner.clone().inspect(
-            self.backend.to_mut(),
-            env,
-            inspector,
-            inspect_ctx,
-        )
+        self.backend.strategy.runner.inspect(self.backend.to_mut(), env, inspector, inspect_ctx)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.

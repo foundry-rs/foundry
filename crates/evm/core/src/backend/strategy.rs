@@ -45,12 +45,6 @@ impl BackendStrategyContext for () {
 
 /// Stateless strategy runner for [BackendStrategy].
 pub trait BackendStrategyRunner: Debug + Send + Sync {
-    /// Strategy name used when printing.
-    fn name(&self) -> &'static str;
-
-    /// Clone the strategy runner.
-    fn new_cloned(&self) -> Box<dyn BackendStrategyRunner>;
-
     /// Executes the configured test call of the `env` without committing state changes.
     fn inspect(
         &self,
@@ -90,12 +84,6 @@ pub trait BackendStrategyRunner: Debug + Send + Sync {
     );
 }
 
-impl Clone for Box<dyn BackendStrategyRunner> {
-    fn clone(&self) -> Self {
-        self.new_cloned()
-    }
-}
-
 /// Implements [BackendStrategyRunner] for EVM.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct EvmBackendStrategyRunner;
@@ -120,14 +108,6 @@ impl EvmBackendStrategyRunner {
 }
 
 impl BackendStrategyRunner for EvmBackendStrategyRunner {
-    fn name(&self) -> &'static str {
-        "evm"
-    }
-
-    fn new_cloned(&self) -> Box<dyn BackendStrategyRunner> {
-        Box::new(self.clone())
-    }
-
     fn inspect(
         &self,
         backend: &mut Backend,
@@ -187,7 +167,7 @@ impl BackendStrategyRunner for EvmBackendStrategyRunner {
 #[derive(Debug)]
 pub struct BackendStrategy {
     /// Strategy runner.
-    pub runner: Box<dyn BackendStrategyRunner>,
+    pub runner: &'static dyn BackendStrategyRunner,
     /// Strategy context.
     pub context: Box<dyn BackendStrategyContext>,
 }
@@ -195,13 +175,13 @@ pub struct BackendStrategy {
 impl BackendStrategy {
     /// Creates a new EVM strategy for the [Backend].
     pub fn new_evm() -> Self {
-        Self { runner: Box::new(EvmBackendStrategyRunner), context: Box::new(()) }
+        Self { runner: &EvmBackendStrategyRunner, context: Box::new(()) }
     }
 }
 
 impl Clone for BackendStrategy {
     fn clone(&self) -> Self {
-        Self { runner: self.runner.clone(), context: self.context.clone() }
+        Self { runner: self.runner, context: self.context.clone() }
     }
 }
 
