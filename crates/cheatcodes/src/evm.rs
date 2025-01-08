@@ -1171,7 +1171,7 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                 // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
-                        let account_diff = state_diffs.entry(storage_access.account).or_insert(
+                        let account_diff = state_diffs.entry(storage_access.account).or_insert_with(||
                             AccountStateDiffs {
                                 label: state.labels.get(&storage_access.account).cloned(),
                                 ..Default::default()
