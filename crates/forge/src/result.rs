@@ -237,6 +237,18 @@ impl SuiteResult {
             warnings.push(warning);
         }
 
+        let mut isolated_cheatcodes = Vec::new();
+        for test_result in test_results.values() {
+            isolated_cheatcodes.extend(test_result.isolated_cheatcodes.clone());
+        }
+        if !isolated_cheatcodes.is_empty() {
+            let mut warning = "the following cheatcode(s) require isolation mode and will be silently skipped if it is not enabled:".to_string();
+            for cheatcode in isolated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+            }
+            warnings.push(warning);
+        }
+
         Self { duration, test_results, warnings }
     }
 
@@ -420,6 +432,10 @@ pub struct TestResult {
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+
+    /// Isolated cheatcodes used in current test.
+    #[serde(skip)]
+    pub isolated_cheatcodes: Vec<&'static str>,
 }
 
 impl fmt::Display for TestResult {
@@ -535,7 +551,8 @@ impl TestResult {
         if let Some(cheatcodes) = raw_call_result.cheatcodes {
             self.breakpoints = cheatcodes.breakpoints;
             self.gas_snapshots = cheatcodes.gas_snapshots;
-            self.deprecated_cheatcodes = cheatcodes.deprecated;
+            self.deprecated_cheatcodes = cheatcodes.deprecated_cheatcodes;
+            self.isolated_cheatcodes = cheatcodes.isolated_cheatcodes;
         }
     }
 
