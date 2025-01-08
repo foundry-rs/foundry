@@ -75,7 +75,7 @@ pub struct NodeArgs {
 
     /// The EVM hardfork to use.
     ///
-    /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
+    /// Choose the hardfork by name, e.g. `cancun`, `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
     #[arg(long)]
     pub hardfork: Option<String>,
@@ -89,8 +89,8 @@ pub struct NodeArgs {
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
-    #[arg(long, value_name = "OUT_FILE")]
-    pub config_out: Option<String>,
+    #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    pub config_out: Option<PathBuf>,
 
     /// Disable auto and interval mining, and mine on demand instead.
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
@@ -177,7 +177,7 @@ pub struct NodeArgs {
     /// Max number of states to persist on disk.
     ///
     /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "prune_history")]
     pub max_persisted_states: Option<usize>,
 
     /// Number of blocks with transactions to keep in memory.
@@ -185,10 +185,14 @@ pub struct NodeArgs {
     pub transaction_block_keeper: Option<usize>,
 
     #[command(flatten)]
-    pub evm_opts: AnvilEvmArgs,
+    pub evm: AnvilEvmArgs,
 
     #[command(flatten)]
     pub server_config: ServerConfig,
+
+    /// Path to the cache directory where states are stored.    
+    #[arg(long, value_name = "PATH")]
+    pub cache_path: Option<PathBuf>,
 }
 
 #[cfg(windows)]
@@ -205,15 +209,12 @@ const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
 impl NodeArgs {
     pub fn into_node_config(self) -> eyre::Result<NodeConfig> {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
-        let compute_units_per_second = if self.evm_opts.no_rate_limit {
-            Some(u64::MAX)
-        } else {
-            self.evm_opts.compute_units_per_second
-        };
+        let compute_units_per_second =
+            if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
 
         let hardfork = match &self.hardfork {
             Some(hf) => {
-                if self.evm_opts.optimism {
+                if self.evm.optimism {
                     Some(OptimismHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
@@ -223,9 +224,9 @@ impl NodeArgs {
         };
 
         Ok(NodeConfig::default()
-            .with_gas_limit(self.evm_opts.gas_limit)
-            .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
-            .with_gas_price(self.evm_opts.gas_price)
+            .with_gas_limit(self.evm.gas_limit)
+            .disable_block_gas_limit(self.evm.disable_block_gas_limit)
+            .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
@@ -234,53 +235,50 @@ impl NodeArgs {
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
-            .with_fork_choice(
-                match (self.evm_opts.fork_block_number, self.evm_opts.fork_transaction_hash) {
-                    (Some(block), None) => Some(ForkChoice::Block(block)),
-                    (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
-                    _ => {
-                        self.evm_opts.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block)
-                    }
-                },
-            )
-            .with_fork_headers(self.evm_opts.fork_headers)
-            .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from).map(U256::from))
-            .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
-            .fork_request_retries(self.evm_opts.fork_request_retries)
-            .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
+            .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
+                (Some(block), None) => Some(ForkChoice::Block(block)),
+                (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
+                _ => self.evm.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block),
+            })
+            .with_fork_headers(self.evm.fork_headers)
+            .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
+            .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
+            .fork_request_retries(self.evm.fork_request_retries)
+            .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
-            .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
-            .with_base_fee(self.evm_opts.block_base_fee_per_gas)
-            .disable_min_priority_fee(self.evm_opts.disable_min_priority_fee)
-            .with_storage_caching(self.evm_opts.no_storage_caching)
+            .with_eth_rpc_url(self.evm.fork_url.map(|fork| fork.url))
+            .with_base_fee(self.evm.block_base_fee_per_gas)
+            .disable_min_priority_fee(self.evm.disable_min_priority_fee)
+            .with_storage_caching(self.evm.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm_opts.chain_id)
+            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
-            .with_steps_tracing(self.evm_opts.steps_tracing)
-            .with_print_logs(!self.evm_opts.disable_console_log)
-            .with_auto_impersonate(self.evm_opts.auto_impersonate)
+            .with_steps_tracing(self.evm.steps_tracing)
+            .with_print_logs(!self.evm.disable_console_log)
+            .with_auto_impersonate(self.evm.auto_impersonate)
             .with_ipc(self.ipc)
-            .with_code_size_limit(self.evm_opts.code_size_limit)
-            .disable_code_size_limit(self.evm_opts.disable_code_size_limit)
+            .with_code_size_limit(self.evm.code_size_limit)
+            .disable_code_size_limit(self.evm.disable_code_size_limit)
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_optimism(self.evm_opts.optimism)
-            .with_alphanet(self.evm_opts.alphanet)
-            .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
+            .with_optimism(self.evm.optimism)
+            .with_odyssey(self.evm.odyssey)
+            .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
-            .with_memory_limit(self.evm_opts.memory_limit))
+            .with_memory_limit(self.evm.memory_limit)
+            .with_cache_path(self.cache_path))
     }
 
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm_opts.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
+            .chain_id(self.evm.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
@@ -578,9 +576,9 @@ pub struct AnvilEvmArgs {
     #[arg(long)]
     pub memory_limit: Option<u64>,
 
-    /// Enable Alphanet features
-    #[arg(long, visible_alias = "odyssey")]
-    pub alphanet: bool,
+    /// Enable Odyssey features
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
@@ -840,10 +838,7 @@ mod tests {
             "--fork-header",
             "Referrer: example.com",
         ]);
-        assert_eq!(
-            args.evm_opts.fork_headers,
-            vec!["User-Agent: test-agent", "Referrer: example.com"]
-        );
+        assert_eq!(args.evm.fork_headers, vec!["User-Agent: test-agent", "Referrer: example.com"]);
     }
 
     #[test]
@@ -864,7 +859,7 @@ mod tests {
     #[test]
     fn can_parse_disable_block_gas_limit() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-block-gas-limit"]);
-        assert!(args.evm_opts.disable_block_gas_limit);
+        assert!(args.evm.disable_block_gas_limit);
 
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
@@ -874,7 +869,7 @@ mod tests {
     #[test]
     fn can_parse_disable_code_size_limit() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-code-size-limit"]);
-        assert!(args.evm_opts.disable_code_size_limit);
+        assert!(args.evm.disable_code_size_limit);
 
         let args = NodeArgs::try_parse_from([
             "anvil",

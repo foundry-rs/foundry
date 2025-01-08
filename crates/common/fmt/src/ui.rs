@@ -1,11 +1,15 @@
 //! Helper trait and functions to format Ethereum types.
 
-use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, TxType};
-use alloy_network::ReceiptResponse;
-use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
+use alloy_consensus::{
+    Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope, TxType, Typed2718,
+};
+use alloy_network::{
+    AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyTransactionReceipt, AnyTxEnvelope,
+    ReceiptResponse,
+};
+use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64, U8};
 use alloy_rpc_types::{
-    AccessListItem, AnyNetworkBlock, AnyTransactionReceipt, Block, BlockTransactions, Header, Log,
-    Transaction, TransactionReceipt,
+    AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use serde::Deserialize;
@@ -189,23 +193,23 @@ impl UIfmt for AnyTransactionReceipt {
 
         let mut pretty = format!(
             "
-blockHash               {}
-blockNumber             {}
-contractAddress         {}
-cumulativeGasUsed       {}
-effectiveGasPrice       {}
-from                    {}
-gasUsed                 {}
-logs                    {}
-logsBloom               {}
-root                    {}
-status                  {}
-transactionHash         {}
-transactionIndex        {}
-type                    {}
-blobGasPrice            {}
-blobGasUsed             {}
-authorizationList       {}",
+blockHash            {}
+blockNumber          {}
+contractAddress      {}
+cumulativeGasUsed    {}
+effectiveGasPrice    {}
+from                 {}
+gasUsed              {}
+logs                 {}
+logsBloom            {}
+root                 {}
+status               {}
+transactionHash      {}
+transactionIndex     {}
+type                 {}
+blobGasPrice         {}
+blobGasUsed          {}
+authorizationList    {}",
             block_hash.pretty(),
             block_number.pretty(),
             contract_address.pretty(),
@@ -229,13 +233,11 @@ authorizationList       {}",
         );
 
         if let Some(to) = to {
-            pretty.push_str(&format!("\nto                      {}", to.pretty()));
+            pretty.push_str(&format!("\nto                   {}", to.pretty()));
         }
 
         // additional captured fields
-        for (key, val) in other.iter() {
-            pretty.push_str(&format!("\n{key}             {val}"));
-        }
+        pretty.push_str(&other.pretty());
 
         pretty
     }
@@ -267,7 +269,7 @@ transactionIndex: {}",
     }
 }
 
-impl<T: UIfmt> UIfmt for Block<T> {
+impl<T: UIfmt> UIfmt for Block<T, Header<AnyHeader>> {
     fn pretty(&self) -> String {
         format!(
             "
@@ -317,10 +319,210 @@ impl UIfmt for AccessListItem {
     }
 }
 
+impl UIfmt for TxEnvelope {
+    fn pretty(&self) -> String {
+        match &self {
+            Self::Eip2930(tx) => format!(
+                "
+accessList           {}
+chainId              {}
+gasLimit             {}
+gasPrice             {}
+hash                 {}
+input                {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+type                 {}
+value                {}
+yParity              {}",
+                self.access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                self.chain_id().pretty(),
+                self.gas_limit().pretty(),
+                self.gas_price().pretty(),
+                self.tx_hash().pretty(),
+                self.input().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
+                self.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
+            ),
+            Self::Eip1559(tx) => format!(
+                "
+accessList           {}
+chainId              {}
+gasLimit             {}
+hash                 {}
+input                {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+type                 {}
+value                {}
+yParity              {}",
+                self.access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                self.chain_id().pretty(),
+                self.gas_limit().pretty(),
+                self.tx_hash().pretty(),
+                self.input().pretty(),
+                self.max_fee_per_gas().pretty(),
+                self.max_priority_fee_per_gas().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
+                self.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
+            ),
+            Self::Eip4844(tx) => format!(
+                "
+accessList           {}
+blobVersionedHashes  {}
+chainId              {}
+gasLimit             {}
+hash                 {}
+input                {}
+maxFeePerBlobGas     {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+type                 {}
+value                {}
+yParity              {}",
+                self.access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                self.blob_versioned_hashes().unwrap_or(&[]).pretty(),
+                self.chain_id().pretty(),
+                self.gas_limit().pretty(),
+                self.tx_hash().pretty(),
+                self.input().pretty(),
+                self.max_fee_per_blob_gas().pretty(),
+                self.max_fee_per_gas().pretty(),
+                self.max_priority_fee_per_gas().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
+                self.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
+            ),
+            Self::Eip7702(tx) => format!(
+                "
+accessList           {}
+authorizationList    {}
+chainId              {}
+gasLimit             {}
+hash                 {}
+input                {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+type                 {}
+value                {}
+yParity              {}",
+                self.access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                self.authorization_list()
+                    .as_ref()
+                    .map(|l| serde_json::to_string(&l).unwrap())
+                    .unwrap_or_default(),
+                self.chain_id().pretty(),
+                self.gas_limit().pretty(),
+                self.tx_hash().pretty(),
+                self.input().pretty(),
+                self.max_fee_per_gas().pretty(),
+                self.max_priority_fee_per_gas().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
+                self.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
+            ),
+            _ => format!(
+                "
+gas                  {}
+gasPrice             {}
+hash                 {}
+input                {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+type                 {}
+v                    {}
+value                {}",
+                self.gas_limit().pretty(),
+                self.gas_price().pretty(),
+                self.tx_hash().pretty(),
+                self.input().pretty(),
+                self.nonce().pretty(),
+                self.as_legacy()
+                    .map(|tx| FixedBytes::from(tx.signature().r()).pretty())
+                    .unwrap_or_default(),
+                self.as_legacy()
+                    .map(|tx| FixedBytes::from(tx.signature().s()).pretty())
+                    .unwrap_or_default(),
+                self.to().pretty(),
+                self.ty(),
+                self.as_legacy()
+                    .map(|tx| (if tx.signature().v() { 1u64 } else { 0 }).pretty())
+                    .unwrap_or_default(),
+                self.value().pretty(),
+            ),
+        }
+    }
+}
+
+impl UIfmt for AnyTxEnvelope {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Ethereum(envelop) => envelop.pretty(),
+            Self::Unknown(tx) => {
+                format!(
+                    "
+hash                 {}
+type                 {}
+{}
+                    ",
+                    tx.hash.pretty(),
+                    tx.ty(),
+                    tx.inner.fields.pretty(),
+                )
+            }
+        }
+    }
+}
 impl UIfmt for Transaction {
     fn pretty(&self) -> String {
-        match self.transaction_type {
-            Some(1) => format!(
+        match &self.inner {
+            TxEnvelope::Eip2930(tx) => format!(
                 "
 accessList           {}
 blockHash            {}
@@ -339,25 +541,29 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}",
-                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
+                self.inner
+                    .access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
-                self.chain_id.pretty(),
+                self.chain_id().pretty(),
                 self.from.pretty(),
-                self.gas.pretty(),
-                self.gas_price.pretty(),
-                self.hash.pretty(),
-                self.input.pretty(),
-                self.nonce.pretty(),
-                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
-                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
-                self.to.pretty(),
+                self.gas_limit().pretty(),
+                self.gas_price().pretty(),
+                self.inner.tx_hash().pretty(),
+                self.input().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
                 self.transaction_index.pretty(),
-                self.transaction_type.unwrap(),
-                self.value.pretty(),
-                self.signature.map(|s| s.v).pretty(),
+                self.inner.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
-            Some(2) => format!(
+            TxEnvelope::Eip1559(tx) => format!(
                 "
 accessList           {}
 blockHash            {}
@@ -377,26 +583,30 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}",
-                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
+                self.inner
+                    .access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
-                self.chain_id.pretty(),
+                self.chain_id().pretty(),
                 self.from.pretty(),
-                self.gas.pretty(),
-                self.hash.pretty(),
-                self.input.pretty(),
-                self.max_fee_per_gas.pretty(),
-                self.max_priority_fee_per_gas.pretty(),
-                self.nonce.pretty(),
-                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
-                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
-                self.to.pretty(),
+                self.gas_limit().pretty(),
+                tx.hash().pretty(),
+                self.input().pretty(),
+                self.max_fee_per_gas().pretty(),
+                self.max_priority_fee_per_gas().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
                 self.transaction_index.pretty(),
-                self.transaction_type.unwrap(),
-                self.value.pretty(),
-                self.signature.map(|s| s.v).pretty(),
+                self.inner.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
-            Some(3) => format!(
+            TxEnvelope::Eip4844(tx) => format!(
                 "
 accessList           {}
 blobVersionedHashes  {}
@@ -418,28 +628,32 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}",
-                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
-                self.blob_versioned_hashes.as_deref().unwrap_or(&[]).pretty(),
+                self.inner
+                    .access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                self.blob_versioned_hashes().unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
-                self.chain_id.pretty(),
+                self.chain_id().pretty(),
                 self.from.pretty(),
-                self.gas.pretty(),
-                self.hash.pretty(),
-                self.input.pretty(),
-                self.max_fee_per_blob_gas.pretty(),
-                self.max_fee_per_gas.pretty(),
-                self.max_priority_fee_per_gas.pretty(),
-                self.nonce.pretty(),
-                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
-                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
-                self.to.pretty(),
+                self.gas_limit().pretty(),
+                tx.hash().pretty(),
+                self.input().pretty(),
+                self.max_fee_per_blob_gas().pretty(),
+                self.max_fee_per_gas().pretty(),
+                self.max_priority_fee_per_gas().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
                 self.transaction_index.pretty(),
-                self.transaction_type.unwrap(),
-                self.value.pretty(),
-                self.signature.map(|s| s.v).pretty(),
+                self.inner.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
-            Some(4) => format!(
+            TxEnvelope::Eip7702(tx) => format!(
                 "
 accessList           {}
 authorizationList    {}
@@ -460,28 +674,32 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}",
-                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
-                self.authorization_list
+                self.inner
+                    .access_list()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                self.authorization_list()
                     .as_ref()
                     .map(|l| serde_json::to_string(&l).unwrap())
                     .unwrap_or_default(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
-                self.chain_id.pretty(),
+                self.chain_id().pretty(),
                 self.from.pretty(),
-                self.gas.pretty(),
-                self.hash.pretty(),
-                self.input.pretty(),
-                self.max_fee_per_gas.pretty(),
-                self.max_priority_fee_per_gas.pretty(),
-                self.nonce.pretty(),
-                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
-                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
-                self.to.pretty(),
+                self.gas_limit().pretty(),
+                tx.hash().pretty(),
+                self.input().pretty(),
+                self.max_fee_per_gas().pretty(),
+                self.max_priority_fee_per_gas().pretty(),
+                self.nonce().pretty(),
+                FixedBytes::from(tx.signature().r()).pretty(),
+                FixedBytes::from(tx.signature().s()).pretty(),
+                self.to().pretty(),
                 self.transaction_index.pretty(),
-                self.transaction_type.unwrap(),
-                self.value.pretty(),
-                self.signature.map(|s| s.v).pretty(),
+                self.inner.ty(),
+                self.value().pretty(),
+                (if tx.signature().v() { 1u64 } else { 0 }).pretty(),
             ),
             _ => format!(
                 "
@@ -502,19 +720,49 @@ value                {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.from.pretty(),
-                self.gas.pretty(),
-                self.gas_price.pretty(),
-                self.hash.pretty(),
-                self.input.pretty(),
-                self.nonce,
-                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
-                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
-                self.to.pretty(),
+                self.gas_limit().pretty(),
+                self.gas_price().pretty(),
+                self.inner.tx_hash().pretty(),
+                self.input().pretty(),
+                self.nonce().pretty(),
+                self.inner
+                    .as_legacy()
+                    .map(|tx| FixedBytes::from(tx.signature().r()).pretty())
+                    .unwrap_or_default(),
+                self.inner
+                    .as_legacy()
+                    .map(|tx| FixedBytes::from(tx.signature().s()).pretty())
+                    .unwrap_or_default(),
+                self.to().pretty(),
                 self.transaction_index.pretty(),
-                self.signature.map(|s| s.v).pretty(),
-                self.value.pretty(),
+                self.inner
+                    .as_legacy()
+                    .map(|tx| (if tx.signature().v() { 1u64 } else { 0 }).pretty())
+                    .unwrap_or_default(),
+                self.value().pretty(),
             ),
         }
+    }
+}
+
+impl UIfmt for Transaction<AnyTxEnvelope> {
+    fn pretty(&self) -> String {
+        format!(
+            "
+blockHash            {}
+blockNumber          {}
+from                 {}
+transactionIndex     {}
+effectiveGasPrice    {}
+{}
+            ",
+            self.block_hash.pretty(),
+            self.block_number.pretty(),
+            self.from.pretty(),
+            self.transaction_index.pretty(),
+            self.effective_gas_price.pretty(),
+            self.inner.pretty(),
+        )
     }
 }
 
@@ -555,28 +803,38 @@ impl UIfmt for EthValue {
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
-pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<String> {
+pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) -> Option<String> {
+    let sig = match &transaction.inner {
+        AnyTxEnvelope::Ethereum(envelope) => match &envelope {
+            TxEnvelope::Eip2930(tx) => Some(tx.signature()),
+            TxEnvelope::Eip1559(tx) => Some(tx.signature()),
+            TxEnvelope::Eip4844(tx) => Some(tx.signature()),
+            TxEnvelope::Eip7702(tx) => Some(tx.signature()),
+            TxEnvelope::Legacy(tx) => Some(tx.signature()),
+        },
+        _ => None,
+    };
     match attr {
         "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
         "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
         "from" => Some(transaction.from.pretty()),
-        "gas" => Some(transaction.gas.pretty()),
-        "gasPrice" | "gas_price" => Some(transaction.gas_price.pretty()),
-        "hash" => Some(transaction.hash.pretty()),
-        "input" => Some(transaction.input.pretty()),
-        "nonce" => Some(transaction.nonce.to_string()),
-        "s" => transaction.signature.map(|s| B256::from(s.s).pretty()),
-        "r" => transaction.signature.map(|s| B256::from(s.r).pretty()),
-        "to" => Some(transaction.to.pretty()),
+        "gas" => Some(transaction.gas_limit().pretty()),
+        "gasPrice" | "gas_price" => Some(Transaction::gas_price(transaction).pretty()),
+        "hash" => Some(alloy_network::TransactionResponse::tx_hash(transaction).pretty()),
+        "input" => Some(transaction.input().pretty()),
+        "nonce" => Some(transaction.nonce().to_string()),
+        "s" => sig.map(|s| FixedBytes::from(s.s()).pretty()),
+        "r" => sig.map(|s| FixedBytes::from(s.r()).pretty()),
+        "to" => Some(transaction.to().pretty()),
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
-        "v" => transaction.signature.map(|s| s.v.pretty()),
-        "value" => Some(transaction.value.pretty()),
+        "v" => sig.map(|s| U8::from_be_slice(&s.as_bytes()[64..]).pretty()),
+        "value" => Some(transaction.value().pretty()),
         _ => None,
     }
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<String> {
+pub fn get_pretty_block_attr(block: &AnyRpcBlock, attr: &str) -> Option<String> {
     match attr {
         "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
         "difficulty" => Some(block.header.difficulty.pretty()),
@@ -585,15 +843,15 @@ pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<Stri
         "gasUsed" | "gas_used" => Some(block.header.gas_used.pretty()),
         "hash" => Some(block.header.hash.pretty()),
         "logsBloom" | "logs_bloom" => Some(block.header.logs_bloom.pretty()),
-        "miner" | "author" => Some(block.header.miner.pretty()),
+        "miner" | "author" => Some(block.header.inner.beneficiary.pretty()),
         "mixHash" | "mix_hash" => Some(block.header.mix_hash.pretty()),
         "nonce" => Some(block.header.nonce.pretty()),
         "number" => Some(block.header.number.pretty()),
         "parentHash" | "parent_hash" => Some(block.header.parent_hash.pretty()),
         "transactionsRoot" | "transactions_root" => Some(block.header.transactions_root.pretty()),
         "receiptsRoot" | "receipts_root" => Some(block.header.receipts_root.pretty()),
-        "sha3Uncles" | "sha_3_uncles" => Some(block.header.uncles_hash.pretty()),
-        "size" => Some(block.size.pretty()),
+        "sha3Uncles" | "sha_3_uncles" => Some(block.header.ommers_hash.pretty()),
+        "size" => Some(block.header.size.pretty()),
         "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
         "timestamp" => Some(block.header.timestamp.pretty()),
         "totalDifficulty" | "total_difficult" => Some(block.header.total_difficulty.pretty()),
@@ -610,37 +868,40 @@ pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<Stri
     }
 }
 
-fn pretty_block_basics<T>(block: &Block<T>) -> String {
+fn pretty_block_basics<T>(block: &Block<T, alloy_rpc_types::Header<AnyHeader>>) -> String {
     let Block {
         header:
             Header {
                 hash,
-                parent_hash,
-                uncles_hash,
-                miner,
-                state_root,
-                transactions_root,
-                receipts_root,
-                logs_bloom,
-                difficulty,
-                number,
-                gas_limit,
-                gas_used,
-                timestamp,
+                size,
                 total_difficulty,
-                extra_data,
-                mix_hash,
-                nonce,
-                base_fee_per_gas,
-                withdrawals_root,
-                blob_gas_used,
-                excess_blob_gas,
-                parent_beacon_block_root,
-                requests_hash,
+                inner:
+                    AnyHeader {
+                        parent_hash,
+                        ommers_hash,
+                        beneficiary,
+                        state_root,
+                        transactions_root,
+                        receipts_root,
+                        logs_bloom,
+                        difficulty,
+                        number,
+                        gas_limit,
+                        gas_used,
+                        timestamp,
+                        extra_data,
+                        mix_hash,
+                        nonce,
+                        base_fee_per_gas,
+                        withdrawals_root,
+                        blob_gas_used,
+                        excess_blob_gas,
+                        parent_beacon_block_root,
+                        requests_hash,
+                    },
             },
         uncles: _,
         transactions: _,
-        size,
         withdrawals: _,
     } = block;
     format!(
@@ -676,7 +937,7 @@ requestsHash         {}",
         gas_used.pretty(),
         hash.pretty(),
         logs_bloom.pretty(),
-        miner.pretty(),
+        beneficiary.pretty(),
         mix_hash.pretty(),
         nonce.pretty(),
         number.pretty(),
@@ -684,7 +945,7 @@ requestsHash         {}",
         parent_beacon_block_root.pretty(),
         transactions_root.pretty(),
         receipts_root.pretty(),
-        uncles_hash.pretty(),
+        ommers_hash.pretty(),
         size.pretty(),
         state_root.pretty(),
         timestamp.pretty(),
@@ -702,6 +963,7 @@ requestsHash         {}",
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::B256;
     use similar_asserts::assert_eq;
     use std::str::FromStr;
 
@@ -764,7 +1026,7 @@ r                    0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd9
 s                    0x0e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
 to                   0x4a16A42407AA491564643E1dfc1fd50af29794eF
 transactionIndex     0
-v                    56
+v                    1
 value                0
 index                435
 l1BlockNumber        12691036
@@ -973,7 +1235,7 @@ r                    0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99
 s                    0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e
 to                   0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e
 transactionIndex     0
-v                    37
+v                    0
 value                0".to_string();
         let txs = match block.transactions {
             BlockTransactions::Full(txs) => txs,
@@ -1027,11 +1289,12 @@ value                0".to_string();
     #[test]
     fn test_pretty_tx_attr() {
         let block = r#"{"number":"0x3","hash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","parentHash":"0x689c70c080ca22bc0e681694fa803c1aba16a69c8b6368fed5311d279eb9de90","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","transactionsRoot":"0x7270c1c4440180f2bd5215809ee3d545df042b67329499e1ab97eb759d31610d","stateRoot":"0x29f32984517a7d25607da485b23cefabfd443751422ca7e603395e1de9bc8a4b","receiptsRoot":"0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2","miner":"0x0000000000000000000000000000000000000000","difficulty":"0x0","totalDifficulty":"0x0","extraData":"0x","size":"0x3e8","gasLimit":"0x6691b7","gasUsed":"0x5208","timestamp":"0x5ecedbb9","transactions":[{"hash":"0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067","nonce":"0x2","blockHash":"0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972","blockNumber":"0x3","transactionIndex":"0x0","from":"0xfdcedc3bfca10ecb0890337fbdd1977aba84807a","to":"0xdca8ce283150ab773bcbeb8d38289bdb5661de1e","value":"0x0","gas":"0x15f90","gasPrice":"0x4a817c800","input":"0x","v":"0x25","r":"0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88","s":"0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e"}],"uncles":[]}"#;
-        let block: Block = serde_json::from_str(block).unwrap();
+        let block: Block<Transaction<AnyTxEnvelope>> = serde_json::from_str(block).unwrap();
         let txs = match block.transactions {
             BlockTransactions::Full(txes) => txes,
             _ => panic!("not full transactions"),
         };
+
         assert_eq!(None, get_pretty_tx_attr(&txs[0], ""));
         assert_eq!(Some("3".to_string()), get_pretty_tx_attr(&txs[0], "blockNumber"));
         assert_eq!(
@@ -1059,7 +1322,7 @@ value                0".to_string();
             get_pretty_tx_attr(&txs[0], "to")
         );
         assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&txs[0], "transactionIndex"));
-        assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&txs[0], "v"));
+        assert_eq!(Some("27".to_string()), get_pretty_tx_attr(&txs[0], "v"));
         assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&txs[0], "value"));
     }
 
@@ -1096,7 +1359,7 @@ value                0".to_string();
           }
         );
 
-        let block: AnyNetworkBlock = serde_json::from_value(json).unwrap();
+        let block: AnyRpcBlock = serde_json::from_value(json).unwrap();
 
         assert_eq!(None, get_pretty_block_attr(&block, ""));
         assert_eq!(Some("7".to_string()), get_pretty_block_attr(&block, "baseFeePerGas"));
@@ -1145,5 +1408,64 @@ value                0".to_string();
         );
         assert_eq!(Some("1424182926".to_string()), get_pretty_block_attr(&block, "timestamp"));
         assert_eq!(Some("163591".to_string()), get_pretty_block_attr(&block, "totalDifficulty"));
+    }
+
+    #[test]
+    fn test_receipt_other_fields_alignment() {
+        let receipt_json = serde_json::json!(
+        {
+          "status": "0x1",
+          "cumulativeGasUsed": "0x74e483",
+          "logs": [],
+          "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "type": "0x2",
+          "transactionHash": "0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d",
+          "transactionIndex": "0x10",
+          "blockHash": "0x54bafb12e8cea9bb355fbf03a4ac49e42a2a1a80fa6cf4364b342e2de6432b5d",
+          "blockNumber": "0x7b1ab93",
+          "gasUsed": "0xc222",
+          "effectiveGasPrice": "0x18961",
+          "from": "0x2d815240a61731c75fa01b2793e1d3ed09f289d0",
+          "to": "0x4200000000000000000000000000000000000000",
+          "contractAddress": null,
+          "l1BaseFeeScalar": "0x146b",
+          "l1BlobBaseFee": "0x6a83078",
+          "l1BlobBaseFeeScalar": "0xf79c5",
+          "l1Fee": "0x51a9af7fd3",
+          "l1GasPrice": "0x972fe4acc",
+          "l1GasUsed": "0x640"
+        });
+
+        let receipt: AnyTransactionReceipt = serde_json::from_value(receipt_json).unwrap();
+        let formatted = receipt.pretty();
+
+        let expected = r#"
+blockHash            0x54bafb12e8cea9bb355fbf03a4ac49e42a2a1a80fa6cf4364b342e2de6432b5d
+blockNumber          129084307
+contractAddress      
+cumulativeGasUsed    7660675
+effectiveGasPrice    100705
+from                 0x2D815240A61731c75Fa01b2793E1D3eD09F289d0
+gasUsed              49698
+logs                 []
+logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               1 (success)
+transactionHash      0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d
+transactionIndex     16
+type                 2
+blobGasPrice         
+blobGasUsed          
+authorizationList    
+to                   0x4200000000000000000000000000000000000000
+l1BaseFeeScalar      5227
+l1BlobBaseFee        111685752
+l1BlobBaseFeeScalar  1014213
+l1Fee                350739202003
+l1GasPrice           40583973580
+l1GasUsed            1600
+"#;
+
+        assert_eq!(formatted.trim(), expected.trim());
     }
 }

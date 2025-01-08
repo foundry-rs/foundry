@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, Signature, B256};
+use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_signer_local::{
@@ -182,10 +182,6 @@ pub enum WalletSubcommands {
         /// specified mnemonic index (if integer) or derivation path.
         #[arg(value_name = "MNEMONIC_INDEX_OR_DERIVATION_PATH")]
         mnemonic_index_or_derivation_path_override: Option<String>,
-
-        /// Verbose mode, print the address and private key.
-        #[arg(short = 'v', long)]
-        verbose: bool,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -384,7 +380,7 @@ impl WalletSubcommands {
                 } else {
                     provider.get_chain_id().await?
                 };
-                let auth = Authorization { chain_id, address, nonce };
+                let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
                 sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
@@ -462,7 +458,6 @@ flag to set your key via:
                 wallet,
                 mnemonic_override,
                 mnemonic_index_or_derivation_path_override,
-                verbose,
             } => {
                 let (index_override, derivation_path_override) =
                     match mnemonic_index_or_derivation_path_override {
@@ -485,7 +480,7 @@ flag to set your key via:
                 .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {
-                        if verbose {
+                        if shell::verbosity() > 0 {
                             sh_println!("Address:     {}", wallet.address())?;
                             sh_println!(
                                 "Private key: 0x{}",

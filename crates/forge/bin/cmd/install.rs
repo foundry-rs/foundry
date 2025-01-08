@@ -97,10 +97,8 @@ impl DependencyInstallOpts {
             let _ = sh_println!("Missing dependencies found. Installing now...\n");
             self.no_commit = true;
             if self.install(config, Vec::new()).is_err() {
-                let _ = sh_warn!(
-                    "{}",
-                    "Your project has missing dependencies that could not be installed."
-                );
+                let _ =
+                    sh_warn!("Your project has missing dependencies that could not be installed.");
             }
             true
         } else {
@@ -166,7 +164,7 @@ impl DependencyInstallOpts {
                 // Pin branch to submodule if branch is used
                 if let Some(branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    if git.has_branch(branch)? {
+                    if git.has_branch(branch, &path)? {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
                             .args(["submodule", "set-branch", "-b", branch])

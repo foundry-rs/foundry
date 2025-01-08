@@ -1,18 +1,19 @@
+use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge_verify::RetryArgs;
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
-    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
+    opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
@@ -20,7 +21,9 @@ use foundry_common::{
     fmt::parse_tokens,
     shell,
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
+use foundry_compilers::{
+    artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize, ArtifactId,
+};
 use foundry_config::{
     figment::{
         self,
@@ -32,7 +35,7 @@ use foundry_config::{
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
-merge_impl_figment_convert!(CreateArgs, opts, eth);
+merge_impl_figment_convert!(CreateArgs, build, eth);
 
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
@@ -58,6 +61,10 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
+    /// Broadcast the transaction.
+    #[arg(long)]
+    pub broadcast: bool,
+
     /// Verify contract after creation.
     #[arg(long)]
     verify: bool,
@@ -78,7 +85,7 @@ pub struct CreateArgs {
     pub timeout: Option<u64>,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 
     #[command(flatten)]
     tx: TransactionOpts,
@@ -87,7 +94,7 @@ pub struct CreateArgs {
     eth: EthereumOpts,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     retry: RetryArgs,
@@ -96,7 +103,14 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let mut config = self.try_load_config_emit_warnings()?;
+
+        // Install missing dependencies.
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config();
+        }
+
         // Find Project & Compile
         let project = config.project()?;
 
@@ -106,9 +120,9 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output = compile::compile_target(&target_path, &project, shell::is_json())?;
+        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
-        let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
+        let (abi, bin, id) = remove_contract(output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -145,11 +159,25 @@ impl CreateArgs {
         } else {
             provider.get_chain_id().await?
         };
+
+        // Whether to broadcast the transaction or not
+        let dry_run = !self.broadcast;
+
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            self.deploy(abi, bin, params, provider, chain_id, sender, config.transaction_timeout)
-                .await
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                chain_id,
+                sender,
+                config.transaction_timeout,
+                id,
+                dry_run,
+            )
+            .await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
@@ -157,8 +185,18 @@ impl CreateArgs {
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
-            self.deploy(abi, bin, params, provider, chain_id, deployer, config.transaction_timeout)
-                .await
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                chain_id,
+                deployer,
+                config.transaction_timeout,
+                id,
+                dry_run,
+            )
+            .await
         }
     }
 
@@ -177,13 +215,14 @@ impl CreateArgs {
         &self,
         constructor_args: Option<String>,
         chain: u64,
+        id: &ArtifactId,
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
         // since we don't know the address yet.
-        let mut verify = forge_verify::VerifyArgs {
+        let mut verify = VerifyArgs {
             address: Default::default(),
             contract: Some(self.contract.clone()),
-            compiler_version: None,
+            compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations: None,
@@ -197,13 +236,14 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: self.opts.libraries.clone(),
+            libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
-            via_ir: self.opts.via_ir,
-            evm_version: self.opts.compiler.evm_version,
+            via_ir: self.build.via_ir,
+            evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -229,6 +269,8 @@ impl CreateArgs {
         chain: u64,
         deployer_address: Address,
         timeout: u64,
+        id: ArtifactId,
+        dry_run: bool,
     ) -> Result<()> {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
@@ -305,7 +347,31 @@ impl CreateArgs {
                 constructor_args = Some(hex::encode(encoded_args));
             }
 
-            self.verify_preflight_check(constructor_args.clone(), chain).await?;
+            self.verify_preflight_check(constructor_args.clone(), chain, &id).await?;
+        }
+
+        if dry_run {
+            if !shell::is_json() {
+                sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
+
+                sh_println!("Contract: {}", self.contract.name)?;
+                sh_println!(
+                    "Transaction: {}",
+                    serde_json::to_string_pretty(&deployer.tx.clone())?
+                )?;
+                sh_println!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
+
+                sh_warn!("To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more.")?;
+            } else {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            }
+
+            return Ok(());
         }
 
         // Deploy the actual contract
@@ -318,7 +384,7 @@ impl CreateArgs {
                 "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
-            sh_println!("{output}")?;
+            sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
         } else {
             sh_println!("Deployer: {deployer_address}")?;
             sh_println!("Deployed to: {address}")?;
@@ -331,15 +397,15 @@ impl CreateArgs {
 
         sh_println!("Starting contract verification...")?;
 
-        let num_of_optimizations = if self.opts.compiler.optimize.unwrap_or_default() {
-            self.opts.compiler.optimizer_runs
+        let num_of_optimizations = if self.build.compiler.optimize.unwrap_or_default() {
+            self.build.compiler.optimizer_runs
         } else {
             None
         };
-        let verify = forge_verify::VerifyArgs {
+        let verify = VerifyArgs {
             address,
             contract: Some(self.contract),
-            compiler_version: None,
+            compiler_version: Some(id.version.to_string()),
             constructor_args,
             constructor_args_path: None,
             num_of_optimizations,
@@ -350,13 +416,14 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: self.opts.libraries.clone(),
+            libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier,
-            via_ir: self.opts.via_ir,
-            evm_version: self.opts.compiler.evm_version,
+            via_ir: self.build.via_ir,
+            evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
+            compilation_profile: Some(id.profile.to_string()),
         };
         sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await

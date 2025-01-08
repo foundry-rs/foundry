@@ -1,11 +1,14 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, PrimitiveSignature, B256, U256};
+use alloy_rpc_types::Authorization;
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
+use revm::primitives::{Bytecode, SignedAuthorization};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -27,6 +30,100 @@ impl Cheatcode for broadcast_2Call {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, true)
     }
+}
+
+impl Cheatcode for attachDelegationCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { signedDelegation } = self;
+        let SignedDelegation { v, r, s, nonce, implementation } = signedDelegation;
+
+        let auth = Authorization {
+            address: *implementation,
+            nonce: *nonce,
+            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+        };
+        let signed_auth = SignedAuthorization::new_unchecked(
+            auth,
+            *v,
+            U256::from_be_bytes(r.0),
+            U256::from_be_bytes(s.0),
+        );
+        write_delegation(ccx, signed_auth.clone())?;
+        ccx.state.active_delegation = Some(signed_auth);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for signDelegationCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey } = self;
+        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
+        let authority = signer.address();
+        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
+        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+    }
+}
+
+impl Cheatcode for signAndAttachDelegationCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey } = self;
+        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
+        let authority = signer.address();
+        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
+        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+        let signed_auth = sig_to_auth(sig, auth);
+        write_delegation(ccx, signed_auth.clone())?;
+        ccx.state.active_delegation = Some(signed_auth);
+        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+    }
+}
+
+fn create_auth(
+    ccx: &mut CheatsCtxt,
+    implementation: Address,
+    authority: Address,
+) -> Result<(Authorization, u64)> {
+    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
+    let nonce = authority_acc.data.info.nonce;
+    Ok((
+        Authorization {
+            address: implementation,
+            nonce,
+            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+        },
+        nonce,
+    ))
+}
+
+fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
+    let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
+    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
+    if authority_acc.data.info.nonce != auth.nonce {
+        return Err("invalid nonce".into());
+    }
+    authority_acc.data.info.nonce += 1;
+    let bytecode = Bytecode::new_eip7702(*auth.address());
+    ccx.ecx.journaled_state.set_code(authority, bytecode);
+    Ok(())
+}
+
+fn sig_to_delegation(
+    sig: PrimitiveSignature,
+    nonce: u64,
+    implementation: Address,
+) -> SignedDelegation {
+    SignedDelegation {
+        v: sig.v() as u8,
+        r: sig.r().into(),
+        s: sig.s().into(),
+        nonce,
+        implementation,
+    }
+}
+
+fn sig_to_auth(sig: PrimitiveSignature, auth: Authorization) -> SignedAuthorization {
+    SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s())
 }
 
 impl Cheatcode for startBroadcast_0Call {

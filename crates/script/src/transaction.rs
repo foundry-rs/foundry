@@ -4,7 +4,7 @@ use alloy_primitives::{hex, Address, TxKind, B256};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
+use foundry_evm::traces::CallTraceDecoder;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
 use std::collections::BTreeMap;
@@ -29,16 +29,16 @@ impl ScriptTransactionBuilder {
         &mut self,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
+        create2_deployer: Address,
     ) -> Result<()> {
         if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
-            if to == DEFAULT_CREATE2_DEPLOYER {
+            if to == create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);
 
                     self.set_create(
                         true,
-                        DEFAULT_CREATE2_DEPLOYER
-                            .create2_from_code(B256::from_slice(salt), init_code),
+                        create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
                         local_contracts,
                     )?;
                 }
@@ -152,7 +152,7 @@ impl ScriptTransactionBuilder {
         // Add the additional contracts created in this transaction, so we can verify them later.
         created_contracts.retain(|contract| {
             // Filter out the contract that was created by the transaction itself.
-            self.transaction.contract_address.map_or(true, |addr| addr != contract.address)
+            self.transaction.contract_address != Some(contract.address)
         });
 
         self.transaction.additional_contracts = created_contracts;

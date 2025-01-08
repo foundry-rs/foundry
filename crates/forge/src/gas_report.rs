@@ -5,24 +5,17 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{presets::ASCII_MARKDOWN, *};
-use foundry_common::{calc, TestFunctionExt};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
+use foundry_common::{
+    calc,
+    reports::{report_kind, ReportKind},
+    TestFunctionExt,
+};
 use foundry_evm::traces::CallKind;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, fmt::Display};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GasReportKind {
-    Markdown,
-    JSON,
-}
-
-impl Default for GasReportKind {
-    fn default() -> Self {
-        Self::Markdown
-    }
-}
 
 /// Represents the gas report for a set of contracts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -30,7 +23,7 @@ pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
     /// What kind of report to generate.
-    report_type: GasReportKind,
+    report_kind: ReportKind,
     /// Contracts to generate the report for.
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
@@ -47,13 +40,18 @@ impl GasReport {
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
         include_tests: bool,
-        report_kind: GasReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
-        let report_type = report_kind;
-        Self { report_any, report_type, report_for, ignore, include_tests, ..Default::default() }
+        Self {
+            report_any,
+            report_kind: report_kind(),
+            report_for,
+            ignore,
+            include_tests,
+            ..Default::default()
+        }
     }
 
     /// Whether the given contract should be reported.
@@ -94,31 +92,32 @@ impl GasReport {
             return;
         }
 
-        // Only include top-level calls which account for calldata and base (21.000) cost.
-        // Only include Calls and Creates as only these calls are isolated in inspector.
-        if trace.depth > 1 &&
-            (trace.kind == CallKind::Call ||
-                trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2 ||
-                trace.kind == CallKind::EOFCreate)
-        {
-            return;
-        }
-
         let Some(name) = decoder.contracts.get(&node.trace.address) else { return };
         let contract_name = name.rsplit(':').next().unwrap_or(name);
 
         if !self.should_report(contract_name) {
             return;
         }
+        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let is_create_call = trace.kind.is_any_create();
+
+        // Record contract deployment size.
+        if is_create_call {
+            trace!(contract_name, "adding create size info");
+            contract_info.size = trace.data.len();
+        }
+
+        // Only include top-level calls which account for calldata and base (21.000) cost.
+        // Only include Calls and Creates as only these calls are isolated in inspector.
+        if trace.depth > 1 && (trace.kind == CallKind::Call || is_create_call) {
+            return;
+        }
 
         let decoded = || decoder.decode_function(&node.trace);
 
-        let contract_info = self.contracts.entry(name.to_string()).or_default();
-        if trace.kind.is_any_create() {
+        if is_create_call {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
-            contract_info.size = trace.data.len();
         } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
@@ -157,8 +156,8 @@ impl GasReport {
 
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self.report_type {
-            GasReportKind::Markdown => {
+        match self.report_kind {
+            ReportKind::Text => {
                 for (name, contract) in &self.contracts {
                     if contract.functions.is_empty() {
                         trace!(name, "gas report contract without functions");
@@ -166,11 +165,10 @@ impl Display for GasReport {
                     }
 
                     let table = self.format_table_output(contract, name);
-                    writeln!(f, "{table}")?;
-                    writeln!(f, "\n")?;
+                    writeln!(f, "\n{table}")?;
                 }
             }
-            GasReportKind::JSON => {
+            ReportKind::JSON => {
                 writeln!(f, "{}", &self.format_json_output())?;
             }
         }
@@ -216,27 +214,31 @@ impl GasReport {
         .unwrap()
     }
 
-    // Helper function to format the table output
     fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
         let mut table = Table::new();
-        table.load_preset(ASCII_MARKDOWN);
-        table.set_header([Cell::new(format!("{name} contract"))
-            .add_attribute(Attribute::Bold)
-            .fg(Color::Green)]);
+        table.apply_modifier(UTF8_ROUND_CORNERS);
 
-        table.add_row([
-            Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
+        table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);
+
+        table.add_row(vec![
+            Cell::new("Deployment Cost").fg(Color::Cyan),
+            Cell::new("Deployment Size").fg(Color::Cyan),
         ]);
-        table.add_row([contract.gas.to_string(), contract.size.to_string()]);
+        table.add_row(vec![
+            Cell::new(contract.gas.to_string()),
+            Cell::new(contract.size.to_string()),
+        ]);
 
-        table.add_row([
-            Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
-            Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
-            Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
-            Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
-            Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
-            Cell::new("# calls").add_attribute(Attribute::Bold),
+        // Add a blank row to separate deployment info from function info.
+        table.add_row(vec![Cell::new("")]);
+
+        table.add_row(vec![
+            Cell::new("Function Name"),
+            Cell::new("Min").fg(Color::Green),
+            Cell::new("Avg").fg(Color::Yellow),
+            Cell::new("Median").fg(Color::Yellow),
+            Cell::new("Max").fg(Color::Red),
+            Cell::new("# Calls").fg(Color::Cyan),
         ]);
 
         contract.functions.iter().for_each(|(fname, sigs)| {
@@ -245,8 +247,8 @@ impl GasReport {
                 let display_name =
                     if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
 
-                table.add_row([
-                    Cell::new(display_name).add_attribute(Attribute::Bold),
+                table.add_row(vec![
+                    Cell::new(display_name),
                     Cell::new(gas_info.min.to_string()).fg(Color::Green),
                     Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
                     Cell::new(gas_info.median.to_string()).fg(Color::Yellow),

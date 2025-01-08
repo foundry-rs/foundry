@@ -1,5 +1,5 @@
-use super::ProjectPathsArgs;
-use crate::{opts::CompilerArgs, utils::LoadConfig};
+use super::ProjectPathOpts;
+use crate::{opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
@@ -16,15 +16,14 @@ use foundry_config::{
         Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    providers::remappings::Remappings,
-    Config,
+    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Build options")]
-pub struct CoreBuildArgs {
+pub struct BuildOpts {
     /// Clear the cache and artifacts folder and recompile.
     #[arg(long, help_heading = "Cache options")]
     #[serde(skip)]
@@ -139,14 +138,14 @@ pub struct CoreBuildArgs {
 
     #[command(flatten)]
     #[serde(flatten)]
-    pub compiler: CompilerArgs,
+    pub compiler: CompilerOpts,
 
     #[command(flatten)]
     #[serde(flatten)]
-    pub project_paths: ProjectPathsArgs,
+    pub project_paths: ProjectPathOpts,
 }
 
-impl CoreBuildArgs {
+impl BuildOpts {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
@@ -165,8 +164,8 @@ impl CoreBuildArgs {
 }
 
 // Loads project's figment and merges the build cli arguments into it
-impl<'a> From<&'a CoreBuildArgs> for Figment {
-    fn from(args: &'a CoreBuildArgs) -> Self {
+impl<'a> From<&'a BuildOpts> for Figment {
+    fn from(args: &'a BuildOpts) -> Self {
         let mut figment = if let Some(ref config_path) = args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
@@ -181,7 +180,8 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         };
 
         // remappings should stack
-        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
+        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
+            .with_figment(&figment);
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
         figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
@@ -196,20 +196,20 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
     }
 }
 
-impl<'a> From<&'a CoreBuildArgs> for Config {
-    fn from(args: &'a CoreBuildArgs) -> Self {
+impl<'a> From<&'a BuildOpts> for Config {
+    fn from(args: &'a BuildOpts) -> Self {
         let figment: Figment = args.into();
         let mut config = Self::from_provider(figment).sanitized();
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.project_paths.config_path.is_some() {
-            config.root = args.project_paths.project_root().into();
+            config.root = args.project_paths.project_root();
         }
         config
     }
 }
 
-impl Provider for CoreBuildArgs {
+impl Provider for BuildOpts {
     fn metadata(&self) -> Metadata {
         Metadata::named("Core Build Args Provider")
     }

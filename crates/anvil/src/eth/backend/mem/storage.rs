@@ -41,7 +41,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use revm::primitives::SpecId;
-use std::{collections::VecDeque, fmt, sync::Arc, time::Duration};
+use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
 // === various limits in number of blocks ===
@@ -91,6 +91,12 @@ impl InMemoryBlockStates {
     /// Configures no disk caching
     pub fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
+        self
+    }
+
+    /// Configures the path on disk where the states will cached.
+    pub fn disk_path(mut self, path: PathBuf) -> Self {
+        self.disk_cache = self.disk_cache.with_path(path);
         self
     }
 
@@ -549,15 +555,9 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
                         return match tracer_config.into_call_config() {
-                            Ok(call_config) => Ok(GethTraceBuilder::new(
-                                self.info.traces.clone(),
-                                TracingInspectorConfig::from_geth_config(&config),
-                            )
-                            .geth_call_traces(
-                                call_config,
-                                self.receipt.cumulative_gas_used() as u64,
-                            )
-                            .into()),
+                            Ok(call_config) => Ok(GethTraceBuilder::new(self.info.traces.clone())
+                                .geth_call_traces(call_config, self.receipt.cumulative_gas_used())
+                                .into()),
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
@@ -573,16 +573,13 @@ impl MinedTransaction {
         }
 
         // default structlog tracer
-        Ok(GethTraceBuilder::new(
-            self.info.traces.clone(),
-            TracingInspectorConfig::from_geth_config(&config),
-        )
-        .geth_traces(
-            self.receipt.cumulative_gas_used() as u64,
-            self.info.out.clone().unwrap_or_default(),
-            opts.config,
-        )
-        .into())
+        Ok(GethTraceBuilder::new(self.info.traces.clone())
+            .geth_traces(
+                self.receipt.cumulative_gas_used(),
+                self.info.out.clone().unwrap_or_default(),
+                config,
+            )
+            .into())
     }
 }
 

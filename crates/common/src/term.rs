@@ -3,6 +3,8 @@ use foundry_compilers::{
     artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
+use foundry_config::find_project_root;
+use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
@@ -16,6 +18,8 @@ use std::{
     time::Duration,
 };
 use yansi::Paint;
+
+use crate::shell;
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -72,7 +76,7 @@ impl Spinner {
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        print!("\r\x33[2K\r{indicator} {}", self.message);
+        let _ = sh_print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
@@ -112,11 +116,11 @@ impl SpinnerReporter {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
                             // new line so past messages are not overwritten
-                            println!();
+                            let _ = sh_println!();
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
                             // end with a newline
-                            println!();
+                            let _ = sh_println!();
                             let _ = ack.send(());
                             break
                         }
@@ -151,6 +155,24 @@ impl Drop for SpinnerReporter {
 
 impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
+        // Verbose message with dirty files displays first to avoid being overlapped
+        // by the spinner in .tick() which prints repeatedly over the same line.
+        if shell::verbosity() >= 5 {
+            let project_root = find_project_root(None);
+
+            self.send_msg(format!(
+                "Files to compile:\n{}",
+                dirty_files
+                    .iter()
+                    .map(|path| {
+                        let trimmed_path = path.strip_prefix(&project_root).unwrap_or(path);
+                        format!("- {}", trimmed_path.display())
+                    })
+                    .sorted()
+                    .format("\n")
+            ));
+        }
+
         self.send_msg(format!(
             "Compiling {} files with {} {}.{}.{}",
             dirty_files.len(),

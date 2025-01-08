@@ -29,7 +29,9 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
-        root: Default::default(),
+        // `profiles` is not serialized.
+        profiles: vec![],
+        root: ".".into(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -107,6 +109,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
+        eth_rpc_headers: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -143,6 +146,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
+        create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
         skip: vec![],
         dependencies: Default::default(),
@@ -152,8 +156,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         eof_version: None,
-        alphanet: false,
+        odyssey: false,
         transaction_timeout: 120,
+        additional_compiler_profiles: Default::default(),
+        compilation_restrictions: Default::default(),
         eof: false,
         _non_exhaustive: (),
     };
@@ -442,7 +448,6 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
 6 |        assembly {
   |        ^ (Relevant source part starts here and spans across multiple lines).
 
-
 "#]]);
 
     // disable yul optimizer explicitly
@@ -569,6 +574,25 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
+
+    // check if lib path is absolute, it should deteect nested lib
+    let mut config = cmd.config();
+    config.libs = vec![nested];
+
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
+    similar_asserts::assert_eq!(
+        remappings,
+        vec![
+            // local to the lib
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
+            // global
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remappings local to the lib
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+        ]
+    );
 });
 
 // test remappings with closer paths are prioritised
@@ -596,44 +620,6 @@ Global:
 - dep2/=lib/dep1/lib/dep2/src/
 - my-dep/=lib/dep1/path/to/dep/
 - my-dep2/=lib/dep1/lib/dep2/path/to/dep/
-
-
-"#]]);
-});
-
-// Test that remappings within root of the project have priority over remappings of sub-projects.
-// E.g. `@utils/libraries` mapping from library shouldn't be added if project already has `@utils`
-// remapping.
-// See <https://github.com/foundry-rs/foundry/issues/9146>
-forgetest_init!(test_root_remappings_priority, |prj, cmd| {
-    let mut config = cmd.config();
-    // Add `@utils/` remapping in project config.
-    config.remappings = vec![
-        Remapping::from_str("@utils/=src/").unwrap().into(),
-        Remapping::from_str("@another-utils/libraries/=src/").unwrap().into(),
-    ];
-    let proj_toml_file = prj.paths().root.join("foundry.toml");
-    pretty_err(&proj_toml_file, fs::write(&proj_toml_file, config.to_string_pretty().unwrap()));
-
-    // Create a new lib in the `lib` folder with conflicting `@utils/libraries` remapping.
-    // This should be filtered out from final remappings as root project already has `@utils/`.
-    let nested = prj.paths().libraries[0].join("dep1");
-    pretty_err(&nested, fs::create_dir_all(&nested));
-    let mut lib_config = Config::load_with_root(&nested);
-    lib_config.remappings = vec![
-        Remapping::from_str("@utils/libraries/=src/").unwrap().into(),
-        Remapping::from_str("@another-utils/=src/").unwrap().into(),
-    ];
-    let lib_toml_file = nested.join("foundry.toml");
-    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
-
-    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
-Global:
-- @utils/=src/
-- @another-utils/libraries/=src/
-- @another-utils/=lib/dep1/src/
-- dep1/=lib/dep1/src/
-- forge-std/=lib/forge-std/src/
 
 
 "#]]);
@@ -801,4 +787,110 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
+
+    // See <https://github.com/foundry-rs/foundry/issues/7014>
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.17", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::London);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.18", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Paris);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.23", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Shanghai);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.26", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Cancun);
+});
+
+// Tests that root paths are properly resolved even if submodule specifies remappings for them.
+// See <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(test_submodule_root_path_remappings, |prj, cmd| {
+    prj.add_script(
+        "BaseScript.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract BaseScript is Script {
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "MyScript.sol",
+        r#"
+import "script/BaseScript.sol";
+
+contract MyScript is BaseScript {
+}
+   "#,
+    )
+    .unwrap();
+
+    let nested = prj.paths().libraries[0].join("another-dep");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested);
+    lib_config.remappings = vec![
+        Remapping::from_str("test/=test/").unwrap().into(),
+        Remapping::from_str("script/=script/").unwrap().into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+    cmd.forge_fuse().args(["build"]).assert_success();
+});
+
+// Tests that project remappings use config paths.
+// For `src=src/contracts` config, remapping should be `src/contracts/ = src/contracts/`.
+// For `src=src` config, remapping should be `src/ = src/`.
+// <https://github.com/foundry-rs/foundry/issues/9454>
+forgetest!(test_project_remappings, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let config = Config {
+        src: "src/contracts".into(),
+        remappings: vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add Counter.sol in `src/contracts` project dir.
+    let src_dir = &prj.root().join("src/contracts");
+    pretty_err(src_dir, fs::create_dir_all(src_dir));
+    pretty_err(
+        src_dir.join("Counter.sol"),
+        fs::write(src_dir.join("Counter.sol"), "contract Counter{}"),
+    );
+    prj.add_test(
+        "CounterTest.sol",
+        r#"
+import "contracts/Counter.sol";
+
+contract CounterTest {
+}
+   "#,
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["build"]).assert_success();
 });

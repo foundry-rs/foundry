@@ -87,6 +87,7 @@ impl Cheatcodes<'static> {
                 Vm::Gas::STRUCT.clone(),
                 Vm::DebugStep::STRUCT.clone(),
                 Vm::BroadcastTxSummary::STRUCT.clone(),
+                Vm::SignedDelegation::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
@@ -103,6 +104,7 @@ impl Cheatcodes<'static> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use std::{fs, path::Path};

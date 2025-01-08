@@ -3,7 +3,7 @@
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use eyre::Result;
-use foundry_cli::{opts::ShellOpts, utils};
+use foundry_cli::{opts::GlobalArgs, utils};
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -13,14 +13,15 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[derive(Parser)]
 #[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
 pub struct Anvil {
+    /// Include the global arguments.
+    #[command(flatten)]
+    pub global: GlobalArgs,
+
     #[command(flatten)]
     pub node: NodeArgs,
 
     #[command(subcommand)]
     pub cmd: Option<AnvilSubcommand>,
-
-    #[clap(flatten)]
-    pub shell: ShellOpts,
 }
 
 #[derive(Subcommand)]
@@ -48,8 +49,8 @@ fn run() -> Result<()> {
     utils::load_dotenv();
 
     let mut args = Anvil::parse();
-    args.shell.shell().set();
-    args.node.evm_opts.resolve_rpc_alias();
+    args.global.init()?;
+    args.node.evm.resolve_rpc_alias();
 
     if let Some(cmd) = &args.cmd {
         match cmd {

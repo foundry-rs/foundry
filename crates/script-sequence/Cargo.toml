@@ -28,3 +28,4 @@ revm-inspectors.workspace = true
 
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
+alloy-network.workspace = true

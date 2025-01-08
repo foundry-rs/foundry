@@ -1,8 +1,9 @@
 use crate::executors::{Executor, ExecutorBuilder};
+use alloy_primitives::Address;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-use foundry_evm_traces::{InternalTraceMode, TraceMode};
+use foundry_evm_traces::TraceMode;
 use revm::primitives::{Env, SpecId};
 use std::ops::{Deref, DerefMut};
 
@@ -16,23 +17,19 @@ impl TracingExecutor {
         env: revm::primitives::Env,
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
-        debug: bool,
-        decode_internal: bool,
-        alphanet: bool,
+        trace_mode: TraceMode,
+        odyssey: bool,
+        create2_deployer: Address,
     ) -> Self {
         let db = Backend::spawn(fork);
-        let trace_mode =
-            TraceMode::Call.with_debug(debug).with_decode_internal(if decode_internal {
-                InternalTraceMode::Full
-            } else {
-                InternalTraceMode::None
-            });
         Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
             executor: ExecutorBuilder::new()
-                .inspectors(|stack| stack.trace_mode(trace_mode).alphanet(alphanet))
-                .spec(evm_spec_id(&version.unwrap_or_default(), alphanet))
+                .inspectors(|stack| {
+                    stack.trace_mode(trace_mode).odyssey(odyssey).create2_deployer(create2_deployer)
+                })
+                .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
                 .build(env, db),
         }
     }
@@ -54,7 +51,7 @@ impl TracingExecutor {
 
         let fork = evm_opts.get_fork(config, env.clone());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.alphanet))
+        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.odyssey))
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
 use figment::{
     value::{Dict, Map},
-    Error, Metadata, Profile, Provider,
+    Error, Figment, Metadata, Profile, Provider,
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
@@ -16,17 +16,40 @@ use std::{
 pub struct Remappings {
     /// Remappings.
     remappings: Vec<Remapping>,
+    /// Source, test and script configured project dirs.
+    /// Remappings of these dirs from libs are ignored.
+    project_paths: Vec<Remapping>,
 }
 
 impl Remappings {
     /// Create a new `Remappings` wrapper with an empty vector.
     pub fn new() -> Self {
-        Self { remappings: Vec::new() }
+        Self { remappings: Vec::new(), project_paths: Vec::new() }
     }
 
     /// Create a new `Remappings` wrapper with a vector of remappings.
     pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
-        Self { remappings }
+        Self { remappings, project_paths: Vec::new() }
+    }
+
+    /// Extract project paths that cannot be remapped by dependencies.
+    pub fn with_figment(mut self, figment: &Figment) -> Self {
+        let mut add_project_remapping = |path: &str| {
+            if let Ok(path) = figment.find_value(path) {
+                if let Some(path) = path.into_string() {
+                    let remapping = Remapping {
+                        context: None,
+                        name: format!("{path}/"),
+                        path: format!("{path}/"),
+                    };
+                    self.project_paths.push(remapping);
+                }
+            }
+        };
+        add_project_remapping("src");
+        add_project_remapping("test");
+        add_project_remapping("script");
+        self
     }
 
     /// Filters the remappings vector by name and context.
@@ -46,19 +69,29 @@ impl Remappings {
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    fn push(&mut self, remapping: Remapping) {
-        if !self.remappings.iter().any(|existing| {
+    pub fn push(&mut self, remapping: Remapping) {
+        if self.remappings.iter().any(|existing| {
             // What we're doing here is filtering for ambiguous paths. For example, if we have
-            // @prb/=node_modules/@prb/ as existing, and
-            // @prb/math/=node_modules/@prb/math/src/  as the one being checked,
+            // @prb/math/=node_modules/@prb/math/src/ as existing, and
+            // @prb/=node_modules/@prb/  as the one being checked,
             // we want to keep the already existing one, which is the first one. This way we avoid
             // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
-            // Remappings are added from root of the project down to libraries, so
-            // we want to exclude any conflicting remappings added from libraries.
-            remapping.name.starts_with(&existing.name) && existing.context == remapping.context
+            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
         }) {
-            self.remappings.push(remapping)
-        }
+            return;
+        };
+
+        // Ignore remappings of root project src, test or script dir.
+        // See <https://github.com/foundry-rs/foundry/issues/3440>.
+        if self
+            .project_paths
+            .iter()
+            .any(|project_path| remapping.name.eq_ignore_ascii_case(&project_path.name))
+        {
+            return;
+        };
+
+        self.remappings.push(remapping);
     }
 
     /// Extend the remappings vector, leaving out the remappings that are already present.
@@ -81,7 +114,7 @@ pub struct RemappingsProvider<'a> {
     pub lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
     /// `Remapping::find_many` into a relative one.
-    pub root: &'a PathBuf,
+    pub root: &'a Path,
     /// This contains either:
     ///   - previously set remappings
     ///   - a `MissingField` error, which means previous provider didn't set the "remappings" field
@@ -200,7 +233,7 @@ impl RemappingsProvider<'_> {
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
             .iter()
-            .map(|p| self.root.join(p))
+            .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
             .flat_map(foundry_toml_dirs)
             .inspect(|lib| {
                 trace!("find all remappings of nested foundry.toml lib: {:?}", lib);

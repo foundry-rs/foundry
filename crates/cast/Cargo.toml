@@ -79,7 +79,7 @@ comfy-table.workspace = true
 dunce.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
@@ -94,6 +94,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
+alloy-node-bindings.workspace = true
 
 async-trait.workspace = true
 divan.workspace = true

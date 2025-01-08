@@ -21,7 +21,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    TransactionMaybeSigned,
+    shell, TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -213,7 +213,12 @@ impl BundledState {
             .sequence
             .sequences()
             .iter()
-            .flat_map(|sequence| sequence.transactions().map(|tx| tx.from().expect("missing from")))
+            .flat_map(|sequence| {
+                sequence
+                    .transactions()
+                    .filter(|tx| tx.is_unsigned())
+                    .map(|tx| tx.from().expect("missing from"))
+            })
             .collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
@@ -408,11 +413,11 @@ impl BundledState {
             let (total_gas, total_gas_price, total_paid) =
                 sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
                     let gas_used = receipt.gas_used;
-                    let gas_price = receipt.effective_gas_price;
+                    let gas_price = receipt.effective_gas_price as u64;
                     (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
                 });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
+            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
             seq_progress.inner.write().set_status(&format!(
@@ -424,8 +429,10 @@ impl BundledState {
             seq_progress.inner.write().finish();
         }
 
-        sh_println!("\n\n==========================")?;
-        sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        if !shell::is_json() {
+            sh_println!("\n\n==========================")?;
+            sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        }
 
         Ok(BroadcastedState {
             args: self.args,

@@ -6,6 +6,7 @@
 //! [`foundry_config::Config`].
 
 pub mod access_list;
+pub mod artifact;
 pub mod bind;
 pub mod call;
 pub mod constructor_args;

@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use eyre::Context;
 use foundry_cli::{
     handler,
-    opts::{CoreBuildArgs, ShellOpts},
+    opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{evm::EvmArgs, fs};
@@ -35,7 +35,7 @@ extern crate foundry_common;
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(Chisel, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(Chisel, build, evm);
 
 const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -50,11 +50,12 @@ const VERSION_MESSAGE: &str = concat!(
 #[derive(Debug, Parser)]
 #[command(name = "chisel", version = VERSION_MESSAGE)]
 pub struct Chisel {
+    /// Include the global arguments.
+    #[command(flatten)]
+    pub global: GlobalArgs,
+
     #[command(subcommand)]
     pub cmd: Option<ChiselSubcommand>,
-
-    #[clap(flatten)]
-    pub shell: ShellOpts,
 
     /// Path to a directory containing Solidity files to import, or path to a single Solidity file.
     ///
@@ -72,10 +73,10 @@ pub struct Chisel {
     pub no_vm: bool,
 
     #[command(flatten)]
-    pub opts: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
-    pub evm_opts: EvmArgs,
+    pub evm: EvmArgs,
 }
 
 /// Chisel binary subcommands
@@ -117,8 +118,9 @@ fn run() -> eyre::Result<()> {
     handler::install();
     utils::subscriber();
     utils::load_dotenv();
+
     let args = Chisel::parse();
-    args.shell.shell().set();
+    args.global.init()?;
     main_args(args)
 }
 

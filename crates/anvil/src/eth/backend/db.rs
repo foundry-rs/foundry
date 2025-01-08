@@ -482,7 +482,7 @@ impl From<Block> for SerializableBlock {
         Self {
             header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().map(Into::into).collect(),
+            ommers: block.ommers.into_iter().collect(),
         }
     }
 }
@@ -492,7 +492,7 @@ impl From<SerializableBlock> for Block {
         Self {
             header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().map(Into::into).collect(),
+            ommers: block.ommers.into_iter().collect(),
         }
     }
 }
@@ -569,8 +569,8 @@ mod test {
         let block = r#"{
             "header": {
                 "parentHash": "0xceb0fe420d6f14a8eeec4319515b89acbb0bb4861cad9983d529ab4b1e4af929",
-                "ommersHash": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-                "beneficiary": "0x0000000000000000000000000000000000000000",
+                "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+                "miner": "0x0000000000000000000000000000000000000000",
                 "stateRoot": "0xe1423fd180478ab4fd05a7103277d64496b15eb914ecafe71eeec871b552efd1",
                 "transactionsRoot": "0x2b5598ef261e5f88e4303bb2b3986b3d5c0ebf4cd9977daebccae82a6469b988",
                 "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa",

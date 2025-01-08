@@ -3,7 +3,7 @@ use alloy_json_abi::Function;
 use alloy_network::{
     AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
 };
-use alloy_primitives::{hex, Address, Bytes, TxKind};
+use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -252,7 +252,7 @@ where
         };
 
         if self.state.to.is_none() && code.is_none() {
-            let has_value = self.tx.value.map_or(false, |v| !v.is_zero());
+            let has_value = self.tx.value.is_some_and(|v| !v.is_zero());
             let has_auth = self.auth.is_some();
             // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
             // without a value.
@@ -379,8 +379,11 @@ where
 
         let auth = match auth {
             CliAuthorizationList::Address(address) => {
-                let auth =
-                    Authorization { chain_id: self.chain.id(), nonce: tx_nonce + 1, address };
+                let auth = Authorization {
+                    chain_id: U256::from(self.chain.id()),
+                    nonce: tx_nonce + 1,
+                    address,
+                };
 
                 let Some(signer) = sender.as_signer() else {
                     eyre::bail!("No signer available to sign authorization");

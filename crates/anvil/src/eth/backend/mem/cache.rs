@@ -18,6 +18,10 @@ pub struct DiskStateCache {
 }
 
 impl DiskStateCache {
+    /// Specify the path where to create the tempdir in
+    pub fn with_path(self, temp_path: PathBuf) -> Self {
+        Self { temp_path: Some(temp_path), temp_dir: None }
+    }
     /// Returns the cache file for the given hash
     fn with_cache_file<F, R>(&mut self, hash: B256, f: F) -> Option<R>
     where

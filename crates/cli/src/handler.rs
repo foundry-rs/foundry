@@ -1,29 +1,25 @@
 use eyre::EyreHandler;
-use std::error::Error;
-use yansi::Paint;
+use std::{error::Error, fmt};
 
 /// A custom context type for Foundry specific error reporting via `eyre`
 #[derive(Debug)]
 pub struct Handler;
 
 impl EyreHandler for Handler {
-    fn debug(
-        &self,
-        error: &(dyn Error + 'static),
-        f: &mut core::fmt::Formatter<'_>,
-    ) -> core::fmt::Result {
+    fn debug(&self, error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
-            return core::fmt::Debug::fmt(error, f)
+            return fmt::Debug::fmt(error, f)
         }
-        write!(f, "{}", error.red())?;
+        let errors = foundry_common::errors::dedup_chain(error);
 
-        if let Some(cause) = error.source() {
+        let (error, sources) = errors.split_first().unwrap();
+        write!(f, "{error}")?;
+
+        if !sources.is_empty() {
             write!(f, "\n\nContext:")?;
 
-            let multiple = cause.source().is_some();
-            let errors = std::iter::successors(Some(cause), |e| (*e).source());
-
-            for (n, error) in errors.enumerate() {
+            let multiple = sources.len() > 1;
+            for (n, error) in sources.iter().enumerate() {
                 writeln!(f)?;
                 if multiple {
                     write!(f, "- Error #{n}: {error}")?;
@@ -37,7 +33,7 @@ impl EyreHandler for Handler {
     }
 }
 
-/// Installs the Foundry eyre hook as the global error report hook.
+/// Installs the Foundry [eyre] and [panic](mod@std::panic) hooks as the global ones.
 ///
 /// # Details
 ///
@@ -51,19 +47,17 @@ pub fn install() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
 
-    if std::env::var_os("FOUNDRY_DEBUG").is_some() {
-        if let Err(e) = color_eyre::install() {
-            debug!("failed to install color eyre error hook: {e}");
-        }
+    let panic_section =
+        "This is a bug. Consider reporting it at https://github.com/foundry-rs/foundry";
+    let (panic_hook, debug_eyre_hook) =
+        color_eyre::config::HookBuilder::default().panic_section(panic_section).into_hooks();
+    panic_hook.install();
+    let eyre_install_result = if std::env::var_os("FOUNDRY_DEBUG").is_some() {
+        debug_eyre_hook.install()
     } else {
-        let (panic_hook, _) = color_eyre::config::HookBuilder::default()
-            .panic_section(
-                "This is a bug. Consider reporting it at https://github.com/foundry-rs/foundry",
-            )
-            .into_hooks();
-        panic_hook.install();
-        if let Err(e) = eyre::set_hook(Box::new(move |_| Box::new(Handler))) {
-            debug!("failed to install eyre error hook: {e}");
-        }
+        eyre::set_hook(Box::new(|_| Box::new(Handler)))
+    };
+    if let Err(e) = eyre_install_result {
+        debug!("failed to install eyre error hook: {e}");
     }
 }

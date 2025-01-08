@@ -121,6 +121,8 @@ pub struct CallTraceDecoder {
     pub labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: Vec<Address>,
+    /// Contract addresses that have fallback functions, mapped to function sigs.
+    pub fallback_contracts: HashMap<Address, Vec<String>>,
 
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
@@ -188,6 +190,7 @@ impl CallTraceDecoder {
                 (POINT_EVALUATION, "PointEvaluation".to_string()),
             ]),
             receive_contracts: Default::default(),
+            fallback_contracts: Default::default(),
 
             functions: hh_funcs()
                 .chain(
@@ -222,6 +225,7 @@ impl CallTraceDecoder {
         }
 
         self.receive_contracts.clear();
+        self.fallback_contracts.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -317,6 +321,14 @@ impl CallTraceDecoder {
             if abi.receive.is_some() {
                 self.receive_contracts.push(*address);
             }
+
+            if abi.fallback.is_some() {
+                let mut functions_sig = vec![];
+                for function in abi.functions() {
+                    functions_sig.push(function.signature());
+                }
+                self.fallback_contracts.insert(*address, functions_sig);
+            }
         }
     }
 
@@ -379,9 +391,18 @@ impl CallTraceDecoder {
                 };
             };
 
+            // If traced contract is a fallback contract, check if it has the decoded function.
+            // If not, then replace call data signature with `fallback`.
+            let mut call_data = self.decode_function_input(trace, func);
+            if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
+                if !fallback_functions.contains(&func.signature()) {
+                    call_data.signature = "fallback()".into();
+                }
+            }
+
             DecodedCallTrace {
                 label,
-                call_data: Some(self.decode_function_input(trace, func)),
+                call_data: Some(call_data),
                 return_data: self.decode_function_output(trace, functions),
             }
         } else {
@@ -668,10 +689,13 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
     let mut unindexed = 0;
     let mut inputs = vec![];
     for input in event.inputs.iter() {
-        if input.indexed {
+        // Prevent panic of event `Transfer(from, to)` decoded with a signature
+        // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
+        // sure the event inputs is not higher than decoded indexed / un-indexed values.
+        if input.indexed && indexed < decoded.indexed.len() {
             inputs.push(decoded.indexed[indexed].clone());
             indexed += 1;
-        } else {
+        } else if unindexed < decoded.body.len() {
             inputs.push(decoded.body[unindexed].clone());
             unindexed += 1;
         }

@@ -18,7 +18,6 @@ pub mod proof;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
-pub mod utils;
 pub mod wallet;
 
 #[cfg(feature = "serde")]
@@ -393,6 +392,13 @@ pub enum EthRequest {
         )
     )]
     SetIntervalMining(u64),
+
+    /// Gets the current mining behavior
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "anvil_getIntervalMining", with = "empty_params")
+    )]
+    GetIntervalMining(()),
 
     /// Removes transactions from the pool
     #[cfg_attr(

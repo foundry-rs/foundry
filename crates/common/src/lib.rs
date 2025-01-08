@@ -26,6 +26,7 @@ pub mod errors;
 pub mod evm;
 pub mod fs;
 pub mod provider;
+pub mod reports;
 pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
