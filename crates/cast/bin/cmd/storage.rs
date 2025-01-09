@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn parse_storage_etherscan_api_key() {
         let args =
-            StorageArgs::parse_from(["foundry-cli", "addr", "--etherscan-api-key", "dummykey"]);
+            StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
         std::env::set_var("ETHERSCAN_API_KEY", "FXY");
