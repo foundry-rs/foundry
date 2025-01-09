@@ -171,8 +171,8 @@ impl SendTransactionsKind {
 }
 
 /// State after we have bundled all
-/// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
-/// single [`ScriptSequenceKind`] object containing one or more script sequences.
+/// [`TransactionWithMetadata`] objects into a single [`ScriptSequenceKind`] object containing one
+/// or more script sequences.
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -238,7 +238,7 @@ fn format_transaction_details(index: usize, tx: &TransactionWithMetadata) -> Str
                 }
             }
             // Always show raw data
-            output.push_str(&format!("data (raw): {}\n", hex::encode_prefixed(&data)));
+            output.push_str(&format!("data (raw): {}\n", hex::encode_prefixed(data)));
         }
     }
 
@@ -254,17 +254,17 @@ fn format_transaction_details(index: usize, tx: &TransactionWithMetadata) -> Str
 
     // Gas limit
     if let Some(gas) = gas {
-        output.push_str(&format!("gasLimit: {}\n", gas));
+        output.push_str(&format!("gasLimit: {gas}\n"));
     }
 
     // Gas pricing
     match (max_fee_per_gas, max_priority_fee_per_gas, gas_price) {
         (Some(max_fee), Some(priority_fee), _) => {
-            output.push_str(&format!("maxFeePerGas: {}\n", max_fee));
-            output.push_str(&format!("maxPriorityFeePerGas: {}\n", priority_fee));
+            output.push_str(&format!("maxFeePerGas: {max_fee}\n"));
+            output.push_str(&format!("maxPriorityFeePerGas: {priority_fee}\n"));
         }
         (_, _, Some(gas_price)) => {
-            output.push_str(&format!("gasPrice: {}\n", gas_price));
+            output.push_str(&format!("gasPrice: {gas_price}\n"));
         }
         _ => {}
     }
@@ -363,7 +363,7 @@ impl BundledState {
                 sh_println!("\n=== Transactions that will be broadcast ===\n")?;
 
                 for sequence in self.sequence.sequences() {
-                    if sequence.transactions.len() > 0 {
+                    if !sequence.transactions.is_empty() {
                         sh_println!("\nChain {}\n", sequence.chain)?;
 
                         for (i, tx) in sequence.transactions.iter().enumerate() {
