@@ -2298,7 +2298,7 @@ impl Default for Config {
             vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
-            optimizer: true,
+            optimizer: false,
             optimizer_runs: 200,
             optimizer_details: None,
             model_checker: None,
