@@ -39,6 +39,7 @@ pub async fn check_tx_status(
             return Ok(receipt.into());
         }
 
+        let mut retries = 0;
         loop {
             match PendingTransactionBuilder::new(provider.clone(), hash)
                 .with_timeout(Some(Duration::from_secs(timeout)))
@@ -48,8 +49,13 @@ pub async fn check_tx_status(
                 Ok(receipt) => return Ok(receipt.into()),
                 // do nothing on timeout, we will check whether tx is dropped below
                 Err(PendingTransactionError::TxWatcher(WatchTxError::Timeout)) => {}
-                // treat other errors as fatal
-                Err(e) => return Err(e.into()),
+                // treat other errors as fatal, with retries
+                Err(e) => {
+                    if retries == 3 {
+                        return Err(e.into())
+                    }
+                    retries += 1;
+                }
             }
 
             if provider.get_transaction_by_hash(hash).await?.is_some() {
