@@ -19,28 +19,8 @@ async fn test_core() {
         &results,
         BTreeMap::from([
             (
-                "default/core/FailingSetup.t.sol:FailingSetupTest",
-                vec![(
-                    "setUp()",
-                    false,
-                    Some("revert: setup failed predictably".to_string()),
-                    None,
-                    None,
-                )],
-            ),
-            (
-                "default/core/MultipleSetup.t.sol:MultipleSetup",
-                vec![(
-                    "setUp()",
-                    false,
-                    Some("multiple setUp functions".to_string()),
-                    None,
-                    Some(1),
-                )],
-            ),
-            (
                 "default/core/Reverting.t.sol:RevertingTest",
-                vec![("testFailRevert()", true, None, None, None)],
+                vec![("testRevert()", true, None, None, None)],
             ),
             (
                 "default/core/SetupConsistency.t.sol:SetupConsistencyCheck",
@@ -48,10 +28,6 @@ async fn test_core() {
                     ("testAdd()", true, None, None, None),
                     ("testMultiply()", true, None, None, None),
                 ],
-            ),
-            (
-                "default/core/DSStyle.t.sol:DSStyleTest",
-                vec![("testFailingAssertions()", true, None, None, None)],
             ),
             (
                 "default/core/ContractEnvironment.t.sol:ContractEnvironmentTest",
@@ -71,16 +47,6 @@ async fn test_core() {
             (
                 "default/core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
                 vec![("setUp()", false, Some("execution error".to_string()), None, None)],
-            ),
-            (
-                "default/core/MultipleAfterInvariant.t.sol:MultipleAfterInvariant",
-                vec![(
-                    "afterInvariant()",
-                    false,
-                    Some("multiple afterInvariant functions".to_string()),
-                    None,
-                    None,
-                )],
             ),
             (
                 "default/core/BadSigAfterInvariant.t.sol:BadSigAfterInvariant",
