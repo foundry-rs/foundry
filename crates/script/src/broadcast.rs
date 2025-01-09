@@ -223,15 +223,19 @@ fn format_transaction_details(index: usize, tx: &TransactionWithMetadata) -> Str
         } else {
             // Show decoded function if available
             if let (Some(func), Some(args)) = (&tx.function, &tx.arguments) {
-                output.push_str(&format!("data (decoded): {func}(\n"));
-                for (i, arg) in args.iter().enumerate() {
-                    output.push_str(&format!(
-                        "  {}{}\n",
-                        arg,
-                        if i + 1 < args.len() { "," } else { "" }
-                    ));
+                if args.is_empty() {
+                    output.push_str(&format!("data (decoded): {func}()\n"));
+                } else {
+                    output.push_str(&format!("data (decoded): {func}(\n"));
+                    for (i, arg) in args.iter().enumerate() {
+                        output.push_str(&format!(
+                            "  {}{}\n",
+                            arg,
+                            if i + 1 < args.len() { "," } else { "" }
+                        ));
+                    }
+                    output.push_str(")\n");
                 }
-                output.push_str(")\n");
             }
             // Always show raw data
             output.push_str(&format!("data (raw): {}\n", hex::encode_prefixed(&data)));
