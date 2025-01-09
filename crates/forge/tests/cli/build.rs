@@ -72,6 +72,7 @@ contract Dummy {
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -103,6 +104,7 @@ Compiler run successful!
 });
 
 forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
     cmd.args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -149,6 +151,8 @@ Compiler run successful!
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     prj.write_config(Config {
+        optimizer: true,
+        optimizer_runs: 200,
         solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27))),
         ..Default::default()
     });

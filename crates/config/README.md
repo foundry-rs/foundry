@@ -86,8 +86,8 @@ gas_reports_ignore = []
 # solc = '0.8.10'
 auto_detect_solc = true
 offline = false
-optimizer = true
-optimizer_runs = 200
+optimizer = false
+optimizer_runs = 0
 model_checker = { contracts = { 'a.sol' = [
     'A1',
     'A2',

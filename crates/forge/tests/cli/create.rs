@@ -168,7 +168,7 @@ Transaction: {
   "to": null,
   "maxFeePerGas": "0x77359401",
   "maxPriorityFeePerGas": "0x1",
-  "gas": "0x17575",
+  "gas": "0x241e7",
   "input": "[..]",
   "nonce": "0x0",
   "chainId": "0x7a69"
@@ -222,7 +222,7 @@ ABI: [
     "to": null,
     "maxFeePerGas": "0x77359401",
     "maxPriorityFeePerGas": "0x1",
-    "gas": "0x17575",
+    "gas": "0x241e7",
     "input": "[..]",
     "nonce": "0x0",
     "chainId": "0x7a69"

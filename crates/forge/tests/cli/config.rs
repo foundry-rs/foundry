@@ -426,6 +426,7 @@ Compiler run successful!
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.add_source(
         "foo.sol",
         r"

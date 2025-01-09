@@ -591,6 +591,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -958,6 +959,7 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1214,9 +1216,6 @@ forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.wipe_contracts();
     prj.clear();
 
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
-
     prj.add_test(
         "Simple",
         r#"
@@ -1264,7 +1263,7 @@ Compiler run successful!
 Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
-  [244864] SimpleContractTest::test()
+  [..] SimpleContractTest::test()
     ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
     ├─ [22630] SimpleContract::increment()
@@ -1291,9 +1290,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.wipe_contracts();
     prj.clear();
-
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
 
     prj.add_test(
         "Simple",
@@ -1325,7 +1321,7 @@ contract SimpleContractTest is Test {
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [406629] SimpleContractTest::test()
+  [..] SimpleContractTest::test()
     ├─ [370554] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 1737 bytes of code
     ├─ [2511] SimpleContract::setStr("new value")
@@ -1421,6 +1417,7 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1506,6 +1503,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1584,6 +1582,7 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
@@ -2332,6 +2331,7 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2454,6 +2454,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2702,6 +2703,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
+
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
@@ -2761,6 +2764,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 // Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
 // verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
 forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
     prj.add_test(
         "DebugTraceRecordingTest.t.sol",
         r#"
@@ -2788,7 +2792,7 @@ Compiler run successful!
 Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
-  [476338] DebugTraceRecordingTest::test_start_stop_recording()
+  [..] DebugTraceRecordingTest::test_start_stop_recording()
     └─ ← [Stop] 
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

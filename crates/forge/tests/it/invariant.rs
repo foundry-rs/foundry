@@ -263,6 +263,8 @@ async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
+        config.optimizer = true;
+        config.optimizer_runs = 200;
     });
 
     match get_counterexample!(runner, &filter) {
@@ -795,6 +797,8 @@ contract AssumeTest is Test {
 // <https://github.com/foundry-rs/foundry/issues/9054>
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
     let config = Config {
+        optimizer: true,
+        optimizer_runs: 200,
         invariant: {
             InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
         },

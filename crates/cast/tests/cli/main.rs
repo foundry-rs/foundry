@@ -1832,7 +1832,7 @@ Nothing to compile
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
 Traces:
-  [13520] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
     │           data: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
     └─ ← [Return] 62 bytes of code
@@ -1852,7 +1852,7 @@ Executing previous transactions from the block.
 Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
-  [13520] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
     └─ ← [Return] 62 bytes of code
 
@@ -1914,7 +1914,7 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
 Traces:
-  [22287] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
     │   @ 0: 0 → 111
     └─ ← [Stop] 
@@ -2005,8 +2005,8 @@ contract CounterInExternalLibScript is Script {
         .stdout_eq(str![[r#"
 ...
 Traces:
-  [37739] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-    ├─ [22411] 0xfAb06527117d29EA121998AC4fAB9Fc88bF5f979::updateCounterInExternalLib(0, 100) [delegatecall]
+  [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    ├─ [..] 0xb2d2EeaF0b3867cDfcD59B1408aaCF516d38071b::updateCounterInExternalLib(0, 100) [delegatecall]
     │   └─ ← [Stop] 
     └─ ← [Return] 62 bytes of code
 
