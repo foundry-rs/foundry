@@ -347,10 +347,10 @@ shall be dual licensed as above, without any additional terms or conditions.
 [solidity]: https://soliditylang.org/
 [foundry-book]: https://book.getfoundry.sh
 [foundry-book-config]: https://book.getfoundry.sh/config/
-[foundry-book-forge]: https://book.getfoundry.sh/forge/
-[foundry-book-anvil]: https://book.getfoundry.sh/anvil/
-[foundry-book-cast]: https://book.getfoundry.sh/cast/
-[foundry-book-chisel]: https://book.getfoundry.sh/chisel/
+[foundry-book-forge]: https://book.getfoundry.sh/reference/forge/
+[foundry-book-anvil]: https://book.getfoundry.sh/reference/anvil/
+[foundry-book-cast]: https://book.getfoundry.sh/reference/cast/
+[foundry-book-chisel]: https://book.getfoundry.sh/reference/chisel/
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
