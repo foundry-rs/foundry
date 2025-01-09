@@ -301,6 +301,17 @@ impl TestArgs {
         // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
 
+        // Remove the snapshots directory if it exists.
+        // This is to ensure that we don't have any stale snapshots.
+        // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
+        // required for comparison.
+        if std::env::var_os("FORGE_SNAPSHOT_CHECK").is_none() {
+            let snapshot_dir = project_root.join(&config.snapshots);
+            if snapshot_dir.exists() {
+                let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
+            }
+        }
+
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 

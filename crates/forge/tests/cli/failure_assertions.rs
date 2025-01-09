@@ -24,7 +24,7 @@ forgetest!(test_fail_deprecation, |prj, cmd| {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: `testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert.] Found 2 instances: testFail_deprecated, testFail_deprecated2 ([GAS])
+[FAIL: `testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert] Found 2 instances: testFail_deprecated, testFail_deprecated2 ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#,
