@@ -186,7 +186,7 @@ impl CheatcodesStrategyRunner for EvmCheatcodesStrategyRunner {
     }
 }
 
-/// Defines the strategy for [Cheatcodes].
+/// Defines the strategy for [super::Cheatcodes].
 #[derive(Debug)]
 pub struct CheatcodesStrategy {
     /// Strategy runner.
@@ -196,7 +196,7 @@ pub struct CheatcodesStrategy {
 }
 
 impl CheatcodesStrategy {
-    /// Creates a new EVM strategy for the [Cheatcodes].
+    /// Creates a new EVM strategy for the [super::Cheatcodes].
     pub fn new_evm() -> Self {
         Self { runner: &EvmCheatcodesStrategyRunner, context: Box::new(()) }
     }

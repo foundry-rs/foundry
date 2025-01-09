@@ -185,7 +185,7 @@ impl Clone for BackendStrategy {
     }
 }
 
-//// Clones the data of the given `accounts` from the `active` database into the `fork_db`
+/// Clones the data of the given `accounts` from the `active` database into the `fork_db`
 /// This includes the data held in storage (`CacheDB`) and kept in the `JournaledState`.
 pub(crate) fn merge_account_data<ExtDB: DatabaseRef>(
     accounts: impl IntoIterator<Item = Address>,

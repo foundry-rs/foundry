@@ -1865,6 +1865,7 @@ fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
+#[allow(clippy::too_many_arguments)]
 fn commit_transaction(
     strategy: &mut BackendStrategy,
     tx: &Transaction<AnyTxEnvelope>,
