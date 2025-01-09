@@ -2485,3 +2485,101 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
 == Logs ==
   sender nonce 1124703[..]"#]]);
 });
+
+forgetest_async!(dryrun_without_broadcast, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Called {
+    event log_string(string);
+    uint256 public x;
+    uint256 public y;
+    function run(uint256 _x, uint256 _y) external {
+        x = _x;
+        y = _y;
+        emit log_string("script ran");
+    }
+}
+
+contract DryRunTest is Script {
+    function run() external {
+        vm.startBroadcast();
+        Called called = new Called();
+        called.run(123, 456);
+    }
+}
+   "#,
+    )
+    .unwrap();
+    cmd.arg("script")
+        .args([
+            "DryRunTest",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--dry-run",
+            "--broadcast",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+== Logs ==
+  script ran
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+=== Transactions that will be broadcast ===
+
+
+Chain 31337
+
+
+### Transaction 1 ###
+
+to: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+data (raw): 0x6080604052348015600e575f5ffd5b506101268061001c5f395ff3fe6080604052348015600e575f5ffd5b5060043610603a575f3560e01c80630c55699c14603e5780637357f5d2146057578063a56dfe4a146068575b5f5ffd5b60455f5481565b60405190815260200160405180910390f35b6066606236600460d1565b6070565b005b604560015481565b5f82905560018190556040517f0b2e13ff20ac7b474198655583edf70dedd2c1dc980e329c4fbb2fc0748b796b9060c5906020808252600a908201526939b1b934b83a103930b760b11b604082015260600190565b60405180910390a15050565b5f5f6040838503121560e1575f5ffd5b5050803592602090910135915056fea2646970667358221220636a8bb84cca028ffd65e97993a339ee07be62e0052cdf3b3fee510e86e089c564736f6c634300081b0033
+value: 0 wei [0 ETH]
+gasLimit: 152145
+
+
+### Transaction 2 ###
+
+to: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+data (decoded): run(uint256,uint256)(
+  123,
+  456
+)
+data (raw): 0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
+value: 0 wei [0 ETH]
+gasLimit: 98645
+
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+});
