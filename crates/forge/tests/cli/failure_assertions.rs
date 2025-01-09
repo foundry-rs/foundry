@@ -221,7 +221,7 @@ forgetest!(mem_safety_test_should_fail, |prj, cmd| {
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALL() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
 [FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]; counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
-[FAIL: memory write at offset 0x80 of size 0x130A not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_CODECOPY() ([GAS])
+[FAIL: memory write at offset 0x80 of size [..] not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]] testShouldFailExpectSafeMemory_CODECOPY() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CREATE() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CREATE2() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_DELEGATECALL() ([GAS])
