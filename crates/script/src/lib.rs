@@ -118,6 +118,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
+    /// Only shows the transactions that would be sent without actually broadcasting them.
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Batch size of transactions.
     ///
     /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
