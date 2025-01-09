@@ -455,7 +455,7 @@ pub struct Backend {
     /// ([`DatabaseExt::select_fork`]).
     ///
     /// This will be an empty `JournaledState`, which will be populated with persistent accounts,
-    /// See [`Self::update_fork_db()`].
+    /// See [`BackendStrategyRunner::update_fork_db()`].
     fork_init_journaled_state: JournaledState,
     /// The currently active fork database
     ///
