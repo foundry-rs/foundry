@@ -1574,7 +1574,6 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     // report for all
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: (vec!["*".to_string()]),
         gas_reports_ignore: (vec![]),
         ..Default::default()
@@ -1684,12 +1683,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .is_json(),
     );
 
-    prj.write_config(Config {
-        optimizer: true,
-        optimizer_runs: 200,
-        gas_reports: (vec![]),
-        ..Default::default()
-    });
+    prj.write_config(Config { optimizer: true, gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -1796,7 +1790,6 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: (vec!["*".to_string()]),
         ..Default::default()
     });
@@ -1906,7 +1899,6 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: (vec![
             "ContractOne".to_string(),
             "ContractTwo".to_string(),
@@ -2026,7 +2018,6 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     // report for One
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: vec!["ContractOne".to_string()],
         ..Default::default()
     });
@@ -2078,7 +2069,6 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     // report for Two
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: vec!["ContractTwo".to_string()],
         ..Default::default()
     });
@@ -2130,7 +2120,6 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     // report for Three
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: vec!["ContractThree".to_string()],
         ..Default::default()
     });
@@ -2187,7 +2176,6 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     // ignore ContractOne
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: (vec!["*".to_string()]),
         gas_reports_ignore: (vec!["ContractOne".to_string()]),
         ..Default::default()
@@ -2271,7 +2259,6 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     cmd.forge_fuse();
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: (vec![]),
         gas_reports_ignore: (vec!["ContractTwo".to_string()]),
         ..Default::default()
@@ -2359,7 +2346,6 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     cmd.forge_fuse();
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports: (vec![
             "ContractOne".to_string(),
             "ContractTwo".to_string(),
@@ -2493,7 +2479,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 });
 
 forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -2612,7 +2598,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9115>
 forgetest_init!(gas_report_with_fallback, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.add_test(
         "DelegateProxyTest.sol",
         r#"
@@ -2756,7 +2742,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.add_test(
         "NestedDeployTest.sol",
         r#"
@@ -3195,7 +3181,7 @@ Error: No source files found in specified build paths.
 
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
@@ -3263,7 +3249,6 @@ interface Counter {
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
     prj.write_config(Config {
         optimizer: true,
-        optimizer_runs: 200,
         gas_reports_include_tests: true,
         fuzz: FuzzConfig { runs: 1, ..Default::default() },
         ..Default::default()

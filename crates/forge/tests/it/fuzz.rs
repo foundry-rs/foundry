@@ -119,7 +119,6 @@ async fn test_persist_fuzz_failure() {
         (|$config:ident| $e:expr) => {{
             let mut runner = TEST_DATA_DEFAULT.runner_with(|$config| {
                 $config.optimizer = true;
-                $config.optimizer_runs = 200;
                 $config.fuzz.runs = 1000;
                 $e
             });
@@ -164,7 +163,7 @@ async fn test_persist_fuzz_failure() {
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, optimizer_runs: 200, ..Default::default() });
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.add_source(
         "FuzzerDict.sol",
         r#"

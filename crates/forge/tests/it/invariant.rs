@@ -264,7 +264,6 @@ async fn test_invariant_shrink() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.optimizer = true;
-        config.optimizer_runs = 200;
     });
 
     match get_counterexample!(runner, &filter) {
@@ -798,7 +797,6 @@ contract AssumeTest is Test {
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
     let config = Config {
         optimizer: true,
-        optimizer_runs: 200,
         invariant: {
             InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
         },

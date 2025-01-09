@@ -2299,7 +2299,7 @@ impl Default for Config {
             auto_detect_solc: true,
             offline: false,
             optimizer: false,
-            optimizer_runs: 0,
+            optimizer_runs: 200,
             optimizer_details: None,
             model_checker: None,
             extra_output: Default::default(),
