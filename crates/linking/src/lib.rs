@@ -29,8 +29,8 @@ pub enum LinkerError {
     InvalidAddress(<Address as std::str::FromStr>::Err),
     #[error("cyclic dependency found, can't link libraries via CREATE2")]
     CyclicDependency,
-    #[error("linking failed for library {name} at {file}")]
-    LinkingFailed { file: String, name: String },
+    #[error("linking failed for library at {file}")]
+    LinkingFailed { file: String },
 }
 
 pub struct Linker<'a> {
@@ -252,26 +252,25 @@ impl<'a> Linker<'a> {
         let mut contract =
             self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
         for (file, libs) in &libraries.libs {
+            // Track if any linking succeeded
+            let mut linked = false;
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
+
                 if let Some(bytecode) = contract.bytecode.as_mut() {
-                    if !bytecode.to_mut().link(&file.to_string_lossy(), name, address) {
-                        return Err(LinkerError::LinkingFailed {
-                            file: file.to_string_lossy().into(),
-                            name: name.clone(),
-                        });
-                    }
+                    linked |= bytecode.to_mut().link(&file.to_string_lossy(), name, address);
                 }
                 if let Some(deployed_bytecode) =
                     contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
                 {
-                    if !deployed_bytecode.link(&file.to_string_lossy(), name, address) {
-                        return Err(LinkerError::LinkingFailed {
-                            file: file.to_string_lossy().into(),
-                            name: name.clone(),
-                        });
-                    }
+                    linked |= deployed_bytecode.link(&file.to_string_lossy(), name, address);
                 }
+            }
+
+            if !linked {
+                return Err(LinkerError::LinkingFailed {
+                    file: file.to_string_lossy().into_owned(),
+                });
             }
         }
         Ok(contract)
@@ -723,9 +722,8 @@ mod tests {
 
         // Verify we get a LinkingFailed error
         match result {
-            Err(LinkerError::LinkingFailed { file, name }) => {
+            Err(LinkerError::LinkingFailed { file }) => {
                 assert_eq!(file, "default/linking/simple/Simple.t.sol");
-                assert_eq!(name, "NonExistentLib");
             }
             _ => panic!("Expected LinkingFailed error, got: {result:?}"),
         }
