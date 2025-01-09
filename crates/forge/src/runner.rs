@@ -377,7 +377,7 @@ impl<'a> ContractRunner<'a> {
             .collect::<Vec<_>>();
 
         if !test_fail_instances.is_empty() {
-            return SuiteResult::new(start.elapsed(),[(format!("Found {} instances: {}", test_fail_instances.len(), test_fail_instances.join(", ")), TestResult::fail("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert.".to_string()))].into(), warnings)
+            return SuiteResult::new(start.elapsed(),[(format!("Found {} instances: {}", test_fail_instances.len(), test_fail_instances.join(", ")), TestResult::fail("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string()))].into(), warnings)
         }
 
         let test_results = functions
@@ -504,7 +504,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the unit test call will be made on modified state).
     /// State modifications of before test txes and unit test function call are discarded after
     /// test ends, similar to `eth_call`.
-    fn run_unit_test(mut self, func: &Function) -> TestResult {
+    fn run_unit_test(mut self, func: &Function, should_fail: bool) -> TestResult {
         // Prepare unit test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -532,7 +532,7 @@ impl<'a> FunctionRunner<'a> {
         };
 
         let success =
-            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
+            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, should_fail);
         self.result.single_result(success, reason, raw_call_result);
         self.result
     }
@@ -731,7 +731,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the fuzz test will use the modified state).
     /// State modifications of before test txes and fuzz test are discarded after test ends,
     /// similar to `eth_call`.
-    fn run_fuzz_test(mut self, func: &Function) -> TestResult {
+    fn run_fuzz_test(mut self, func: &Function, should_fail: bool) -> TestResult {
         // Prepare fuzz test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -751,6 +751,7 @@ impl<'a> FunctionRunner<'a> {
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             self.address,
+            should_fail,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
         );
