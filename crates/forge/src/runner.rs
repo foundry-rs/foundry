@@ -374,11 +374,10 @@ impl<'a> ContractRunner<'a> {
                     .is_any_test_fail()
                     .then_some(func.name.clone())
             })
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
 
         if !test_fail_instances.is_empty() {
-            return SuiteResult::new(start.elapsed(),[("`testFail*` has been deprecated".to_string(), TestResult::fail(format!("Found {test_fail_instances}. Consider changing to test_Revert[If|When]_Condition and expecting a revert.")))].into(), warnings)
+            return SuiteResult::new(start.elapsed(),[(format!("Found {} instances: {}", test_fail_instances.len(), test_fail_instances.join(", ")), TestResult::fail(format!("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert.")))].into(), warnings)
         }
 
         let test_results = functions
@@ -487,20 +486,9 @@ impl<'a> FunctionRunner<'a> {
             return self.result;
         }
 
-        let test_fail_deprecation = |should_fail: bool| {
-            if should_fail {
-                return Some(TestResult::fail(format!("`testFail*` has been deprecated. Consider changing {} to something along the lines of `test_Revert[If|When]_Condition` and expecting a revert.", func.name)));
-            }
-            None
-        };
-
         match kind {
-            TestFunctionKind::UnitTest { should_fail } => {
-                test_fail_deprecation(should_fail).unwrap_or(self.run_unit_test(func, should_fail))
-            }
-            TestFunctionKind::FuzzTest { should_fail } => {
-                test_fail_deprecation(should_fail).unwrap_or(self.run_fuzz_test(func, should_fail))
-            }
+            TestFunctionKind::UnitTest { should_fail } => self.run_unit_test(func, should_fail),
+            TestFunctionKind::FuzzTest { should_fail } => self.run_fuzz_test(func, should_fail),
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }
