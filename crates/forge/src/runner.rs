@@ -402,6 +402,23 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
+        let test_fail_deprecations = self
+            .contract
+            .abi
+            .functions()
+            .filter_map(|func| {
+                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
+                    .is_any_test_fail()
+                    .then_some(func.name.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if !test_fail_deprecations.is_empty() {
+            warnings.push(format!(
+                "`testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): {test_fail_deprecations}.",
+            ));
+        }
         SuiteResult::new(duration, test_results, warnings)
     }
 }

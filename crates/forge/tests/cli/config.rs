@@ -426,6 +426,7 @@ Compiler run successful!
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.add_source(
         "foo.sol",
         r"
@@ -447,7 +448,6 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
   |
 6 |        assembly {
   |        ^ (Relevant source part starts here and spans across multiple lines).
-
 
 "#]]);
 

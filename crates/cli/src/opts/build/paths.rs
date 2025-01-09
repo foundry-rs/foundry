@@ -16,7 +16,7 @@ use std::path::PathBuf;
 /// Common arguments for a project's paths.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Project options")]
-pub struct ProjectPathsArgs {
+pub struct ProjectPathOpts {
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
@@ -63,7 +63,7 @@ pub struct ProjectPathsArgs {
     pub config_path: Option<PathBuf>,
 }
 
-impl ProjectPathsArgs {
+impl ProjectPathOpts {
     /// Returns the root directory to use for configuring the project.
     ///
     /// This will be the `--root` argument if provided, otherwise see [`find_project_root`].
@@ -87,10 +87,10 @@ impl ProjectPathsArgs {
     }
 }
 
-foundry_config::impl_figment_convert!(ProjectPathsArgs);
+foundry_config::impl_figment_convert!(ProjectPathOpts);
 
 // Make this args a `figment::Provider` so that it can be merged into the `Config`
-impl Provider for ProjectPathsArgs {
+impl Provider for ProjectPathOpts {
     fn metadata(&self) -> Metadata {
         Metadata::named("Project Paths Args Provider")
     }
