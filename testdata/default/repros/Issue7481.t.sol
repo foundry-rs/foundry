@@ -18,6 +18,7 @@ contract Issue7481Test is DSTest {
         vm.transact(0xccfd66fc409a633a99b5b75b0e9a2040fcf562d03d9bee3fefc1a5c0eb49c999);
 
         // Revert the current call to ensure that revm can revert state journal
+        vm.expectRevert();
         revert("HERE");
     }
 }

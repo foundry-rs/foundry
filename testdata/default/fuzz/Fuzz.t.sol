@@ -15,11 +15,8 @@ contract FuzzTest is DSTest {
         emit log("setUp");
     }
 
-    function testRevertingFuzz(uint8 x) public {
+    function testShouldFailFuzz(uint8 x) public {
         emit log("testFailFuzz");
-        if (x <= 128) {
-            vm.expectRevert();
-        }
         require(x > 128, "should revert");
     }
 

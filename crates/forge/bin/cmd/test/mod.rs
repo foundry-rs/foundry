@@ -311,7 +311,7 @@ impl TestArgs {
                 let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
             }
         }
-
+      
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 

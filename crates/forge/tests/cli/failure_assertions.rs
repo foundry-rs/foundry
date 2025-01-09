@@ -24,7 +24,7 @@ forgetest!(test_fail_deprecation, |prj, cmd| {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: `testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert] Found: testFail_deprecated, testFail_deprecated2 ([GAS])
+[FAIL: `testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert.] Found 2 instances: testFail_deprecated, testFail_deprecated2 ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -49,9 +49,10 @@ forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertDangling() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertDidNotRevert() ([GAS])
 [FAIL: Error != expected error: but reverts with this message != should revert with this message] testShouldFailExpectRevertErrorDoesNotMatch() ([GAS])
+[FAIL: next call did not revert as expected] testShouldFailRevertNotOnImmediateNextCall() ([GAS])
 [FAIL: revert: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
 [FAIL: revert: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
-Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );

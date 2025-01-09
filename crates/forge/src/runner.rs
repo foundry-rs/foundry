@@ -369,12 +369,15 @@ impl<'a> ContractRunner<'a> {
 
         let test_fail_instances = functions
             .iter()
-            .filter_map(|func| (func.name.starts_with("testFail")).then_some(func.name.clone()))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .filter_map(|func| {
+                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
+                    .is_any_test_fail()
+                    .then_some(func.name.clone())
+            })
+            .collect::<Vec<_>>();
 
         if !test_fail_instances.is_empty() {
-            return SuiteResult::new(start.elapsed(),[(format!("Found: {test_fail_instances}"), TestResult::fail(format!("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert")))].into(), warnings)
+            return SuiteResult::new(start.elapsed(),[(format!("Found {} instances: {}", test_fail_instances.len(), test_fail_instances.join(", ")), TestResult::fail("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert.".to_string()))].into(), warnings)
         }
 
         let test_results = functions
@@ -484,8 +487,8 @@ impl<'a> FunctionRunner<'a> {
         }
 
         match kind {
-            TestFunctionKind::UnitTest => self.run_unit_test(func),
-            TestFunctionKind::FuzzTest => self.run_fuzz_test(func),
+            TestFunctionKind::UnitTest { should_fail } => self.run_unit_test(func, should_fail),
+            TestFunctionKind::FuzzTest { should_fail } => self.run_fuzz_test(func, should_fail),
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }

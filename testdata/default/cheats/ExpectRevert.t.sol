@@ -90,16 +90,6 @@ contract ExpectRevertTest is DSTest {
         reverter.revertWithMessage("my cool error");
     }
 
-    function testRevertNotOnImmediateNextCall() public {
-        Reverter reverter = new Reverter();
-        // expectRevert should only work for the next call. However,
-        // we do not immediately revert, so,
-        // we fail.
-        vm.expectRevert("revert", 0);
-        reverter.doNotRevert();
-        reverter.revertWithMessage("revert");
-    }
-
     function testExpectRevertConstructor() public {
         vm.expectRevert("constructor revert");
         new ConstructorReverter("constructor revert");
