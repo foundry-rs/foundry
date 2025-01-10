@@ -2,8 +2,8 @@ use alloy_chains::Chain;
 use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{utils::format_units, TxHash, U256};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
-use eyre::Result;
-use foundry_common::{provider::RetryProvider, shell};
+use eyre::{eyre, Result};
+use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 
 /// Convenience enum for internal signalling of transaction status
@@ -30,45 +30,28 @@ pub async fn check_tx_status(
     hash: TxHash,
     timeout: u64,
 ) -> (TxHash, Result<TxStatus, eyre::Report>) {
-    // We use the inner future so that we can use ? operator in the future, but
-    // still neatly return the tuple
-    let result = async move {
-        // First check if there's a receipt
-        let receipt_opt = provider.get_transaction_receipt(hash).await?;
-        if let Some(receipt) = receipt_opt {
-            return Ok(receipt.into());
-        }
-
-        let mut retries = 0;
-        loop {
+    let result = retry::Retry::new_no_delay(3)
+        .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
                 .with_timeout(Some(Duration::from_secs(timeout)))
                 .get_receipt()
                 .await
             {
-                Ok(receipt) => return Ok(receipt.into()),
-                // do nothing on timeout, we will check whether tx is dropped below
-                Err(PendingTransactionError::TxWatcher(WatchTxError::Timeout)) => {}
-                // treat other errors as fatal, with retries
-                Err(e) => {
-                    if retries == 3 {
-                        return Err(e.into())
-                    }
-                    retries += 1;
-                }
+                Ok(receipt) => Ok(receipt.into()),
+                Err(e) => match provider.get_transaction_by_hash(hash).await {
+                    Ok(_) => match e {
+                        PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
+                            Err(RetryError::Continue(eyre!(
+                                "tx is still known to the node, waiting for receipt"
+                            )))
+                        }
+                        _ => Err(RetryError::Retry(e.into())),
+                    },
+                    Err(_) => Ok(TxStatus::Dropped),
+                },
             }
-
-            if provider.get_transaction_by_hash(hash).await?.is_some() {
-                trace!("tx is still known to the node, waiting for receipt");
-            } else {
-                trace!("eth_getTransactionByHash returned null, assuming dropped");
-                break
-            }
-        }
-
-        Ok(TxStatus::Dropped)
-    }
-    .await;
+        })
+        .await;
 
     (hash, result)
 }
