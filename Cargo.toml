@@ -67,7 +67,7 @@ split-debuginfo = "unpacked"
 [profile.release]
 opt-level = 3
 lto = "thin"
-debug = "line-tables-only"
+debug = "none"
 strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
