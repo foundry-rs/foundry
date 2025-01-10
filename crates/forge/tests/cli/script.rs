@@ -4,6 +4,7 @@ use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
+use foundry_config::Config;
 use foundry_test_utils::{
     rpc,
     snapbox::IntoData,
@@ -230,7 +231,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 221 bytes of code
+    │   └─ ← [Return] 415 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
@@ -242,10 +243,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [44291] → new GasWaster@[..]
-    └─ ← [Return] 221 bytes of code
+  [..] → new GasWaster@[..]
+    └─ ← [Return] 415 bytes of code
 
-  [224] GasWaster::wasteGas(200000 [2e5])
+  [..] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop] 
 
 
@@ -336,7 +337,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 221 bytes of code
+    │   └─ ← [Return] 415 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
@@ -348,10 +349,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [44291] → new GasWaster@[..]
-    └─ ← [Return] 221 bytes of code
+  [..] → new GasWaster@[..]
+    └─ ← [Return] 415 bytes of code
 
-  [224] GasWaster::wasteGas(200000 [2e5])
+  [..] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop] 
 
 
@@ -520,7 +521,7 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new HashChecker@[..]
-    │   └─ ← [Return] 368 bytes of code
+    │   └─ ← [Return] 718 bytes of code
     └─ ← [Stop] 
 
 
@@ -1925,6 +1926,7 @@ forgetest_async!(adheres_to_json_flag, |prj, cmd| {
     }
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.write_config(Config { optimizer: true, ..Default::default() });
     prj.add_script(
         "Foo",
         r#"
@@ -2372,9 +2374,9 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 116 bytes of code
+    │   └─ ← [Return] 175 bytes of code
     ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [145] A::getValue() [staticcall]
+    │   ├─ [..] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop] 
@@ -2386,11 +2388,11 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    └─ ← [Return] 116 bytes of code
+  [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 175 bytes of code
 
-  [15662] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [145] A::getValue() [staticcall]
+  [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [..] A::getValue() [staticcall]
     │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
 ...

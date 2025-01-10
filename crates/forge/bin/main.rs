@@ -58,7 +58,6 @@ fn run() -> Result<()> {
                 cmd.run().map(drop)
             }
         }
-        ForgeSubcommand::Debug(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::VerifyContract(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyCheck(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),

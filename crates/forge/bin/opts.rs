@@ -1,14 +1,14 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
-    compiler::CompilerArgs, config, coverage, create::CreateArgs, debug::DebugArgs, doc::DocArgs,
-    eip712, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
+    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
     remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
     soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
-use foundry_cli::opts::GlobalOpts;
+use foundry_cli::opts::GlobalArgs;
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -29,9 +29,9 @@ const VERSION_MESSAGE: &str = concat!(
     next_display_order = None,
 )]
 pub struct Forge {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: ForgeSubcommand,
@@ -60,10 +60,6 @@ pub enum ForgeSubcommand {
 
     /// Clone a contract from Etherscan.
     Clone(CloneArgs),
-
-    /// Debugs a single smart contract as a script.
-    #[command(visible_alias = "d")]
-    Debug(DebugArgs),
 
     /// Update one or multiple dependencies.
     ///

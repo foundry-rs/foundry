@@ -3,7 +3,7 @@ use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Table};
 use eyre::Result;
 use foundry_cli::{
-    opts::{CompilerArgs, CoreBuildArgs, ProjectPathsArgs},
+    opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
     utils::{cache_local_signatures, FoundryPathExt},
 };
 use foundry_common::{
@@ -29,7 +29,7 @@ pub enum SelectorsSubcommands {
         second_contract: ContractInfo,
 
         #[command(flatten)]
-        build: Box<CoreBuildArgs>,
+        build: Box<BuildOpts>,
     },
 
     /// Upload selectors to registry
@@ -44,7 +44,7 @@ pub enum SelectorsSubcommands {
         all: bool,
 
         #[command(flatten)]
-        project_paths: ProjectPathsArgs,
+        project_paths: ProjectPathOpts,
     },
 
     /// List selectors from current workspace
@@ -55,7 +55,7 @@ pub enum SelectorsSubcommands {
         contract: Option<String>,
 
         #[command(flatten)]
-        project_paths: ProjectPathsArgs,
+        project_paths: ProjectPathOpts,
     },
 
     /// Find if a selector is present in the project
@@ -66,14 +66,14 @@ pub enum SelectorsSubcommands {
         selector: String,
 
         #[command(flatten)]
-        project_paths: ProjectPathsArgs,
+        project_paths: ProjectPathOpts,
     },
 
     /// Cache project selectors (enables trace with local contracts functions and events).
     #[command(visible_alias = "c")]
     Cache {
         #[command(flatten)]
-        project_paths: ProjectPathsArgs,
+        project_paths: ProjectPathOpts,
     },
 }
 
@@ -82,9 +82,9 @@ impl SelectorsSubcommands {
         match self {
             Self::Cache { project_paths } => {
                 sh_println!("Caching selectors for contracts in the project...")?;
-                let build_args = CoreBuildArgs {
+                let build_args = BuildOpts {
                     project_paths,
-                    compiler: CompilerArgs {
+                    compiler: CompilerOpts {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
                     },
@@ -97,9 +97,9 @@ impl SelectorsSubcommands {
                 cache_local_signatures(&outcome, Config::foundry_cache_dir().unwrap())?
             }
             Self::Upload { contract, all, project_paths } => {
-                let build_args = CoreBuildArgs {
+                let build_args = BuildOpts {
                     project_paths: project_paths.clone(),
-                    compiler: CompilerArgs {
+                    compiler: CompilerOpts {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
                     },
@@ -213,9 +213,9 @@ impl SelectorsSubcommands {
             }
             Self::List { contract, project_paths } => {
                 sh_println!("Listing selectors for contracts in the project...")?;
-                let build_args = CoreBuildArgs {
+                let build_args = BuildOpts {
                     project_paths,
-                    compiler: CompilerArgs {
+                    compiler: CompilerOpts {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
                     },
@@ -301,9 +301,9 @@ impl SelectorsSubcommands {
             Self::Find { selector, project_paths } => {
                 sh_println!("Searching for selector {selector:?} in the project...")?;
 
-                let build_args = CoreBuildArgs {
+                let build_args = BuildOpts {
                     project_paths,
-                    compiler: CompilerArgs {
+                    compiler: CompilerOpts {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
                     },

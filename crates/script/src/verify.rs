@@ -7,7 +7,7 @@ use alloy_primitives::{hex, Address};
 use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
-use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
+use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
@@ -48,7 +48,7 @@ impl BroadcastedState {
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
-    pub project_paths: ProjectPathsArgs,
+    pub project_paths: ProjectPathOpts,
     pub etherscan: EtherscanOpts,
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
@@ -68,7 +68,7 @@ impl VerifyBundle {
 
         let config_path = config.get_config_path();
 
-        let project_paths = ProjectPathsArgs {
+        let project_paths = ProjectPathOpts {
             root: Some(project.paths.root.clone()),
             contracts: Some(project.paths.sources.clone()),
             remappings: project.paths.remappings.clone(),
