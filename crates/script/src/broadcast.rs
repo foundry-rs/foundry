@@ -1,13 +1,12 @@
 use crate::{
-    build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
-    verify::BroadcastedState, ScriptArgs, ScriptConfig,
+    build::LinkedBuildData, dryrun::format_transaction_details, progress::ScriptProgress,
+    sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
-    hex,
     map::{AddressHashMap, AddressHashSet},
     utils::format_units,
     Address, TxHash,
@@ -17,7 +16,6 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
-use forge_script_sequence::TransactionWithMetadata;
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
@@ -171,106 +169,14 @@ impl SendTransactionsKind {
 }
 
 /// State after we have bundled all
-/// [`TransactionWithMetadata`] objects into a single [`ScriptSequenceKind`] object containing one
-/// or more script sequences.
+/// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
+/// single [`ScriptSequenceKind`] object containing one or more script sequences.
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind,
-}
-
-/// Format transaction details for display
-fn format_transaction_details(index: usize, tx: &TransactionWithMetadata) -> String {
-    let mut output = format!("\n### Transaction {index} ###\n\n");
-
-    // Contract info (to)
-    if let Some(addr) = tx.contract_address {
-        if let Some(name) = &tx.contract_name {
-            output.push_str(&format!("to: {name}({addr})\n"));
-        } else {
-            output.push_str(&format!("to: {addr}\n"));
-        }
-    } else {
-        output.push_str("to: <contract creation>\n");
-    }
-
-    // Transaction data
-    let (input, gas, gas_price, value, max_fee_per_gas, max_priority_fee_per_gas) = match tx.tx() {
-        TransactionMaybeSigned::Signed { tx, .. } => (
-            Some(tx.input()),
-            Some(tx.gas_limit()),
-            tx.gas_price(),
-            Some(tx.value()),
-            Some(tx.max_fee_per_gas()),
-            tx.max_priority_fee_per_gas(),
-        ),
-        TransactionMaybeSigned::Unsigned(tx) => (
-            tx.input.input(),
-            tx.gas,
-            tx.gas_price,
-            tx.value,
-            tx.max_fee_per_gas,
-            tx.max_priority_fee_per_gas,
-        ),
-    };
-
-    // Data field
-    if let Some(data) = input {
-        if data.is_empty() {
-            output.push_str("data: <empty>\n");
-        } else {
-            // Show decoded function if available
-            if let (Some(func), Some(args)) = (&tx.function, &tx.arguments) {
-                if args.is_empty() {
-                    output.push_str(&format!("data (decoded): {func}()\n"));
-                } else {
-                    output.push_str(&format!("data (decoded): {func}(\n"));
-                    for (i, arg) in args.iter().enumerate() {
-                        output.push_str(&format!(
-                            "  {}{}\n",
-                            arg,
-                            if i + 1 < args.len() { "," } else { "" }
-                        ));
-                    }
-                    output.push_str(")\n");
-                }
-            }
-            // Always show raw data
-            output.push_str(&format!("data (raw): {}\n", hex::encode_prefixed(data)));
-        }
-    }
-
-    // Value
-    if let Some(value) = value {
-        let eth_value = format_units(value, 18).unwrap_or_else(|_| "N/A".into());
-        output.push_str(&format!(
-            "value: {} wei [{} ETH]\n",
-            value,
-            eth_value.trim_end_matches('0').trim_end_matches('.')
-        ));
-    }
-
-    // Gas limit
-    if let Some(gas) = gas {
-        output.push_str(&format!("gasLimit: {gas}\n"));
-    }
-
-    // Gas pricing
-    match (max_fee_per_gas, max_priority_fee_per_gas, gas_price) {
-        (Some(max_fee), Some(priority_fee), _) => {
-            output.push_str(&format!("maxFeePerGas: {max_fee}\n"));
-            output.push_str(&format!("maxPriorityFeePerGas: {priority_fee}\n"));
-        }
-        (_, _, Some(gas_price)) => {
-            output.push_str(&format!("gasPrice: {gas_price}\n"));
-        }
-        _ => {}
-    }
-
-    output.push('\n');
-    output
 }
 
 impl BundledState {
@@ -305,6 +211,24 @@ impl BundledState {
         }
 
         Ok(self)
+    }
+
+    /// Show the transactions that will be broadcasted.
+    pub fn show_transactions(self) -> Result<()> {
+        if !shell::is_json() {
+            sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+
+            for sequence in self.sequence.sequences() {
+                if !sequence.transactions.is_empty() {
+                    sh_println!("\nChain {}\n", sequence.chain)?;
+
+                    for (i, tx) in sequence.transactions.iter().enumerate() {
+                        sh_print!("{}", format_transaction_details(i + 1, tx))?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Broadcasts transactions from all sequences.
@@ -356,30 +280,6 @@ impl BundledState {
         };
 
         let progress = ScriptProgress::default();
-
-        // Print all transactions if --dry-run is set
-        if self.args.dry_run {
-            if !shell::is_json() {
-                sh_println!("\n=== Transactions that will be broadcast ===\n")?;
-
-                for sequence in self.sequence.sequences() {
-                    if !sequence.transactions.is_empty() {
-                        sh_println!("\nChain {}\n", sequence.chain)?;
-
-                        for (i, tx) in sequence.transactions.iter().enumerate() {
-                            sh_print!("{}", format_transaction_details(i + 1, tx))?;
-                        }
-                    }
-                }
-            }
-
-            return Ok(BroadcastedState {
-                args: self.args,
-                script_config: self.script_config,
-                build_data: self.build_data,
-                sequence: self.sequence,
-            });
-        }
 
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();

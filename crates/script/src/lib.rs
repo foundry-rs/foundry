@@ -60,6 +60,7 @@ use std::path::PathBuf;
 
 mod broadcast;
 mod build;
+mod dryrun;
 mod execute;
 mod multi_sequence;
 mod progress;
@@ -304,8 +305,9 @@ impl ScriptArgs {
             pre_simulation.fill_metadata().await?.bundle().await?
         };
 
+        let dry_run = bundled.args.dry_run;
         // Exit early in case user didn't provide any broadcast/verify related flags.
-        if !bundled.args.should_broadcast() {
+        if !bundled.args.should_broadcast() && !dry_run {
             if !shell::is_json() {
                 sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             }
@@ -318,8 +320,15 @@ impl ScriptArgs {
         }
 
         // Wait for pending txes and broadcast others.
-        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        let bundle_state = bundled.wait_for_pending().await?;
 
+        // Print all transactions if --dry-run is set
+        if dry_run {
+            bundle_state.show_transactions()?;
+            return Ok(());
+        }
+
+        let broadcasted = bundle_state.broadcast().await?;
         if broadcasted.args.verify {
             broadcasted.verify().await?;
         }
