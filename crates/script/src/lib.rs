@@ -119,10 +119,6 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub broadcast: bool,
 
-    /// Only shows the transactions that would be sent without actually broadcasting them.
-    #[arg(long)]
-    pub dry_run: bool,
-
     /// Batch size of transactions.
     ///
     /// This is ignored and set to 1 if batching is not available or `--slow` is enabled.
@@ -305,10 +301,21 @@ impl ScriptArgs {
             pre_simulation.fill_metadata().await?.bundle().await?
         };
 
-        let dry_run = bundled.args.dry_run;
         // Exit early in case user didn't provide any broadcast/verify related flags.
-        if !bundled.args.should_broadcast() && !dry_run {
+        if !bundled.args.should_broadcast() {
             if !shell::is_json() {
+                sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+
+                for sequence in bundled.sequence.sequences() {
+                    if !sequence.transactions.is_empty() {
+                        sh_println!("\nChain {}\n", sequence.chain)?;
+
+                        for (i, tx) in sequence.transactions.iter().enumerate() {
+                            sh_print!("{}", dryrun::format_transaction_details(i + 1, tx))?;
+                        }
+                    }
+                }
+
                 sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             }
             return Ok(());
@@ -320,15 +327,8 @@ impl ScriptArgs {
         }
 
         // Wait for pending txes and broadcast others.
-        let bundle_state = bundled.wait_for_pending().await?;
+        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
 
-        // Print all transactions if --dry-run is set
-        if dry_run {
-            bundle_state.show_transactions()?;
-            return Ok(());
-        }
-
-        let broadcasted = bundle_state.broadcast().await?;
         if broadcasted.args.verify {
             broadcasted.verify().await?;
         }

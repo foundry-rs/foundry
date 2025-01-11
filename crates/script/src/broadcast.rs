@@ -1,6 +1,6 @@
 use crate::{
-    build::LinkedBuildData, dryrun::format_transaction_details, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs, ScriptConfig,
+    build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
+    verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
 use alloy_consensus::{Transaction, TxEnvelope};
@@ -21,7 +21,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    sh_print, shell, TransactionMaybeSigned,
+    shell, TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -211,24 +211,6 @@ impl BundledState {
         }
 
         Ok(self)
-    }
-
-    /// Show the transactions that will be broadcasted.
-    pub fn show_transactions(self) -> Result<()> {
-        if !shell::is_json() {
-            sh_println!("\n=== Transactions that will be broadcast ===\n")?;
-
-            for sequence in self.sequence.sequences() {
-                if !sequence.transactions.is_empty() {
-                    sh_println!("\nChain {}\n", sequence.chain)?;
-
-                    for (i, tx) in sequence.transactions.iter().enumerate() {
-                        sh_print!("{}", format_transaction_details(i + 1, tx))?;
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Broadcasts transactions from all sequences.
