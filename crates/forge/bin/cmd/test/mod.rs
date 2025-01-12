@@ -358,7 +358,7 @@ impl TestArgs {
             let mut fst = folded_stack_trace::build(arena);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
-            let contract = suite_name.split(':').last().unwrap();
+            let contract = suite_name.split(':').next_back().unwrap();
             let test_name = test_name.trim_end_matches("()");
             let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
             let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
