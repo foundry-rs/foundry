@@ -238,7 +238,7 @@ fn find_mismatch_in_settings(
         mismatches.push(str);
     }
     let local_optimizer: u64 =
-        if local_settings.optimizer.is_some_and(|enabled| enabled) { 1 } else { 0 };
+        if local_settings.optimizer == Some(true) { 1 } else { 0 };
     if etherscan_settings.optimization_used != local_optimizer {
         let str = format!(
             "Optimizer mismatch: local={}, onchain={}",

@@ -494,7 +494,17 @@ forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
     prj.write_config(config);
 
     let config = cmd.config();
-    assert!(config.optimizer.is_some_and(|enabled| enabled));
+    assert!(config.optimizer.unwrap());
+});
+
+// test `optimizer_runs` set to 200 by default if optimizer enabled
+forgetest!(optimizer_runs_default, |prj, cmd| {
+    // explicitly set optimizer runs
+    let config = Config { optimizer: Some(true), ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert_eq!(config.optimizer_runs, Some(200));
 });
 
 // test that gas_price can be set

@@ -4076,7 +4076,7 @@ mod tests {
             assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, Some(999));
-            assert!(config.optimizer.is_some_and(|enabled| !enabled));
+            assert!(!config.optimizer.unwrap());
 
             Ok(())
         });

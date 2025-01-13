@@ -63,7 +63,7 @@ impl VerifyBundle {
         retry: RetryArgs,
         verifier: VerifierArgs,
     ) -> Self {
-        let num_of_optimizations = if config.optimizer.is_some_and(|enabled| enabled) {
+        let num_of_optimizations = if config.optimizer == Some(true) {
             config.optimizer_runs
         } else {
             None
