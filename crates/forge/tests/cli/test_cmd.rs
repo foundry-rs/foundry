@@ -591,7 +591,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -959,7 +959,7 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1417,7 +1417,7 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1503,7 +1503,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1582,7 +1582,7 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
@@ -2331,7 +2331,7 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2454,7 +2454,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2703,7 +2703,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
 
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -2764,7 +2764,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 // Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
 // verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
 forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_test(
         "DebugTraceRecordingTest.t.sol",
         r#"
