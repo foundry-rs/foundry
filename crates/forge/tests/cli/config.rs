@@ -50,8 +50,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         auto_detect_solc: false,
         auto_detect_remappings: true,
         offline: true,
-        optimizer: false,
-        optimizer_runs: 1000,
+        optimizer: Some(false),
+        optimizer_runs: Some(1000),
         optimizer_details: Some(OptimizerDetails {
             yul: Some(false),
             yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
@@ -426,7 +426,7 @@ Compiler run successful!
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_source(
         "foo.sol",
         r"
@@ -476,25 +476,25 @@ forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
 // test that optimizer runs works
 forgetest!(can_set_optimizer_runs, |prj, cmd| {
     // explicitly set optimizer runs
-    let config = Config { optimizer_runs: 1337, ..Default::default() };
+    let config = Config { optimizer_runs: Some(1337), ..Default::default() };
     prj.write_config(config);
 
     let config = cmd.config();
-    assert_eq!(config.optimizer_runs, 1337);
+    assert_eq!(config.optimizer_runs, Some(1337));
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
-    assert_eq!(config.optimizer_runs, 300);
+    assert_eq!(config.optimizer_runs, Some(300));
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9665>
 forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
     // explicitly set optimizer runs
-    let config = Config { optimizer_runs: 1337, ..Default::default() };
-    assert!(!config.optimizer);
+    let config = Config { optimizer_runs: Some(1337), ..Default::default() };
+    assert!(config.optimizer.is_none());
     prj.write_config(config);
 
     let config = cmd.config();
-    assert!(config.optimizer);
+    assert!(config.optimizer.is_some_and(|enabled| enabled));
 });
 
 // test that gas_price can be set

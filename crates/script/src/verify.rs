@@ -63,8 +63,11 @@ impl VerifyBundle {
         retry: RetryArgs,
         verifier: VerifierArgs,
     ) -> Self {
-        let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
+        let num_of_optimizations = if config.optimizer.is_some_and(|enabled| enabled) {
+            config.optimizer_runs
+        } else {
+            None
+        };
 
         let config_path = config.get_config_path();
 

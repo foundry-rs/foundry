@@ -237,7 +237,7 @@ pub struct Config {
     ///      install it
     pub offline: bool,
     /// Whether to activate optimizer
-    pub optimizer: bool,
+    pub optimizer: Option<bool>,
     /// The number of runs specifies roughly how often each opcode of the deployed code will be
     /// executed across the life-time of the contract. This means it is a trade-off parameter
     /// between code size (deploy cost) and code execution cost (cost after deployment).
@@ -248,7 +248,7 @@ pub struct Config {
     /// A common misconception is that this parameter specifies the number of iterations of the
     /// optimizer. This is not true: The optimizer will always run as many times as it can
     /// still improve the code.
-    pub optimizer_runs: usize,
+    pub optimizer_runs: Option<usize>,
     /// Switch optimizer components on or off in detail.
     /// The "enabled" switch above provides two defaults which can be
     /// tweaked here. If "details" is given, "enabled" can be omitted.
@@ -672,9 +672,12 @@ impl Config {
         // Ref: https://github.com/foundry-rs/foundry/issues/9665
         // Enables the optimizer if the `optimizer_runs` has been set.
         let optimizer = config.optimizer();
-        if optimizer.runs.is_some_and(|runs| runs > 0) && !config.optimizer {
-            config.optimizer = true;
-        }
+        if optimizer.runs.is_some_and(|runs| runs > 0) && optimizer.enabled.is_none() {
+            config.optimizer = Some(true);
+        } else if optimizer.runs.is_none() && optimizer.enabled.is_some_and(|enabled| enabled) {
+            // Default optimizer runs set to 200 if `optimizer = true`.
+            config.optimizer_runs = Some(200);
+        };
         Ok(config)
     }
 
@@ -1472,8 +1475,8 @@ impl Config {
     /// and  <https://github.com/ethereum/solidity/blob/bbb7f58be026fdc51b0b4694a6f25c22a1425586/docs/using-the-compiler.rst?plain=1#L293-L294>
     pub fn optimizer(&self) -> Optimizer {
         Optimizer {
-            enabled: Some(self.optimizer),
-            runs: Some(self.optimizer_runs),
+            enabled: self.optimizer,
+            runs: self.optimizer_runs,
             // we always set the details because `enabled` is effectively a specific details profile
             // that can still be modified
             details: self.optimizer_details.clone(),
@@ -2304,8 +2307,8 @@ impl Default for Config {
             vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
-            optimizer: false,
-            optimizer_runs: 200,
+            optimizer: None,
+            optimizer_runs: None,
             optimizer_details: None,
             model_checker: None,
             extra_output: Default::default(),
@@ -4072,8 +4075,8 @@ mod tests {
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
-            assert_eq!(config.optimizer_runs, 999);
-            assert!(!config.optimizer);
+            assert_eq!(config.optimizer_runs, Some(999));
+            assert!(config.optimizer.is_none());
 
             Ok(())
         });
