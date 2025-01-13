@@ -486,6 +486,17 @@ forgetest!(can_set_optimizer_runs, |prj, cmd| {
     assert_eq!(config.optimizer_runs, 300);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9665>
+forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
+    // explicitly set optimizer runs
+    let config = Config { optimizer_runs: 1337, ..Default::default() };
+    assert!(!config.optimizer);
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert!(config.optimizer);
+});
+
 // test that gas_price can be set
 forgetest!(can_set_gas_price, |prj, cmd| {
     // explicitly set gas_price
