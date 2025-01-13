@@ -21,6 +21,7 @@ name = "chisel"
 path = "bin/main.rs"
 
 [build-dependencies]
+foundry-common.workspace = true
 vergen = { workspace = true, default-features = false, features = [
     "build",
     "git",

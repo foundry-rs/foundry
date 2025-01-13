@@ -13,14 +13,7 @@ use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
+const VERSION_MESSAGE: &str = env!("FOUNDRY_SHORT_VERSION");
 
 /// Perform Ethereum RPC calls from the comfort of your command line.
 #[derive(Parser)]

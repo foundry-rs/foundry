@@ -3699,6 +3699,7 @@ dependencies = [
  "tower 0.4.13",
  "tracing",
  "url",
+ "vergen",
  "walkdir",
  "yansi",
 ]
