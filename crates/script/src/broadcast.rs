@@ -57,7 +57,7 @@ pub async fn next_nonce(
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
 
-    let block_id = block_number.map_or(BlockId::latest(), |bn| BlockId::number(bn));
+    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
     Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
 }
 
