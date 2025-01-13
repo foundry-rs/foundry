@@ -1503,7 +1503,9 @@ async fn test_fork_get_account() {
 
     assert_eq!(
         alice_acc.balance,
-        alice_bal - (U256::from(142) + U256::from(receipt.gas_used * receipt.effective_gas_price)),
+        alice_bal -
+            (U256::from(142) +
+                U256::from(receipt.gas_used as u128 * receipt.effective_gas_price)),
     );
     assert_eq!(alice_acc.nonce, alice_nonce + 1);
 

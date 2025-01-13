@@ -35,8 +35,6 @@ foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
 
-ethers-contract-abigen = { workspace = true, features = ["providers"] }
-
 revm-inspectors.workspace = true
 
 comfy-table.workspace = true
@@ -89,7 +87,6 @@ semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
-solar-ast.workspace = true
 solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true

@@ -10,7 +10,7 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
-    opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
+    opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
 };
 use foundry_common::{
@@ -64,7 +64,7 @@ pub struct StorageArgs {
     etherscan: EtherscanOpts,
 
     #[command(flatten)]
-    build: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn parse_storage_etherscan_api_key() {
         let args =
-            StorageArgs::parse_from(["foundry-cli", "addr", "--etherscan-api-key", "dummykey"]);
+            StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
         std::env::set_var("ETHERSCAN_API_KEY", "FXY");

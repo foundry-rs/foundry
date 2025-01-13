@@ -1061,12 +1061,6 @@ impl Config {
         remove_test_dir(&Some(self.cache_path.clone().join("coverage")));
         remove_test_dir(&Some(self.cache_path.clone()));
 
-        // Remove snapshot directory.
-        let snapshot_dir = project.root().join(&self.snapshots);
-        if snapshot_dir.exists() {
-            let _ = fs::remove_dir_all(&snapshot_dir);
-        }
-
         Ok(())
     }
 
@@ -2306,7 +2300,7 @@ impl Default for Config {
             vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
-            optimizer: true,
+            optimizer: false,
             optimizer_runs: 200,
             optimizer_details: None,
             model_checker: None,
