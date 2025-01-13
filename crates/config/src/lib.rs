@@ -669,6 +669,12 @@ impl Config {
         add_profile(&Self::DEFAULT_PROFILE);
         add_profile(&config.profile);
 
+        // Ref: https://github.com/foundry-rs/foundry/issues/9665
+        // Enables the optimizer if the `optimizer_runs` has been set.
+        let optimizer = config.optimizer();
+        if optimizer.runs.is_some_and(|runs| runs > 0) && !config.optimizer {
+            config.optimizer = true;
+        }
         Ok(config)
     }
 
