@@ -291,7 +291,7 @@ contract SimpleContractTest is DSTest {
     function test() public {
         SimpleContract c = new SimpleContract();
         c.setValues(100);
-        console.log("Value set: ", 100);
+        console.logUint(100);
     }
 }
    "#;
