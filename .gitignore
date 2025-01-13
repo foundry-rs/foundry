@@ -1,5 +1,5 @@
 .DS_STORE
-/target
+/target*
 out/
 snapshots/
 out.json

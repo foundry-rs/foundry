@@ -76,7 +76,7 @@ codegen-units = 16
 # e.g. `cargo build --profile profiling`
 [profile.profiling]
 inherits = "release"
-debug = 2
+debug = "full"
 split-debuginfo = "unpacked"
 strip = false
 
