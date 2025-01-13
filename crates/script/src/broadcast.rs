@@ -3,7 +3,7 @@ use crate::{
     verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
-use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_consensus::TxEnvelope;
 use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
