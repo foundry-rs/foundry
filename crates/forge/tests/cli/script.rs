@@ -6,7 +6,7 @@ use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_config::Config;
 use foundry_test_utils::{
-    rpc,
+    rpc::{self, next_http_rpc_endpoint},
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     ScriptOutcome, ScriptTester,
@@ -2444,4 +2444,44 @@ contract ContractScript is Script {
 
     assert_eq!(sequence.transactions.len(), 2);
     assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9661>
+forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "MyScript.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract MyScript is Script {
+        function run() public view {
+            console.log("sender nonce", vm.getNonce(msg.sender));
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    let rpc_url = next_http_rpc_endpoint();
+
+    let fork_bn = 21614115;
+
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "MyScript",
+            "--sender",
+            "0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97",
+            "--fork-block-number",
+            &fork_bn.to_string(),
+            "--rpc-url",
+            &rpc_url,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+== Logs ==
+  sender nonce 1124703[..]"#]]);
 });
