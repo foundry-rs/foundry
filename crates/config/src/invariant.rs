@@ -75,6 +75,6 @@ impl InvariantConfig {
         self.failure_persist_dir
             .unwrap()
             .join("failures")
-            .join(contract_name.split(':').last().unwrap())
+            .join(contract_name.split(':').next_back().unwrap())
     }
 }

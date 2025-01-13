@@ -309,7 +309,7 @@ pub fn check_args_len(
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
     if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if !constructor.inputs.is_empty() && args.len() == 0 {
+        if !constructor.inputs.is_empty() && args.is_empty() {
             eyre::bail!(
                 "Contract expects {} constructor argument(s), but none were provided",
                 constructor.inputs.len()

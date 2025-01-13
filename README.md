@@ -135,7 +135,7 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
-[foundry-compilers]: https://github.com/foundry-rs/foundry-compilers
+[foundry-compilers]: https://github.com/foundry-rs/compilers
 [solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [vaults]: https://github.com/rari-capital/vaults
