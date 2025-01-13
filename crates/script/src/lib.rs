@@ -311,7 +311,7 @@ impl ScriptArgs {
                         sh_println!("\nChain {}\n", sequence.chain)?;
 
                         for (i, tx) in sequence.transactions.iter().enumerate() {
-                            sh_print!("{}", dryrun::format_transaction_details(i + 1, tx))?;
+                            sh_print!("{}", dryrun::format_transaction_details(i + 1, tx)?)?;
                         }
                     }
                 }
