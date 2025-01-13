@@ -77,7 +77,7 @@ impl Retry {
         loop {
             match callback().await {
                 Err(RetryError::Continue(e)) => {
-                    self.handle_continue(e);
+                    self.log(e, false);
                     if !self.delay.is_zero() {
                         tokio::time::sleep(self.delay).await;
                     }
@@ -97,11 +97,11 @@ impl Retry {
     fn handle_err(&mut self, err: Error) {
         debug_assert!(self.retries > 0);
         self.retries -= 1;
-        self.handle_continue(err);
+        self.log(err, true);
     }
 
-    fn handle_continue(&mut self, err: Error) {
-        let _ = sh_warn!(
+    fn log(&self, err: Error, warn: bool) {
+        let msg = format!(
             "{msg}{delay} ({retries} tries remaining)",
             msg = crate::errors::display_chain(&err),
             delay = if self.delay.is_zero() {
@@ -111,5 +111,10 @@ impl Retry {
             },
             retries = self.retries,
         );
+        if warn {
+            let _ = sh_warn!("{msg}");
+        } else {
+            tracing::info!("{msg}");
+        }
     }
 }
