@@ -19,9 +19,10 @@ contract RandomCheatcodesTest is DSTest {
         assertLe(val, max);
     }
 
-    function testFail_int128() public {
+    function testReverttIf_int128() public {
         int256 val = vm.randomInt(128);
-        assertGt(val, max);
+        vm.expectRevert("Error: a > b not satisfied [int]");
+        require(val > max, "Error: a > b not satisfied [int]");
     }
 
     function test_address() public {

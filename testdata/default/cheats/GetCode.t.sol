@@ -71,7 +71,8 @@ contract GetCodeTest is DSTest {
     }
     */
 
-    function testFailGetUnlinked() public {
+    function testRevertIfGetUnlinked() public {
+        vm.expectRevert("vm.getCode: no matching artifact found");
         vm.getCode("UnlinkedContract.sol");
     }
 

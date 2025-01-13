@@ -151,10 +151,20 @@ impl TestFunctionKind {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Setup => "setUp",
-            Self::UnitTest { should_fail: false } => "test",
-            Self::UnitTest { should_fail: true } => "testFail",
-            Self::FuzzTest { should_fail: false } => "fuzz",
-            Self::FuzzTest { should_fail: true } => "fuzz fail",
+            Self::UnitTest { should_fail } => {
+                if *should_fail {
+                    "testFail"
+                } else {
+                    "test"
+                }
+            }
+            Self::FuzzTest { should_fail } => {
+                if *should_fail {
+                    "testFailFuzz"
+                } else {
+                    "fuzz"
+                }
+            }
             Self::InvariantTest => "invariant",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",

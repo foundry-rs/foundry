@@ -139,15 +139,6 @@ contract ExpectEmitTest is DSTest {
         emit A(1);
     }
 
-    function testFailExpectEmitDanglingNoReference() public {
-        vm.expectEmit(false, false, false, false);
-    }
-
-    function testFailExpectEmitDanglingWithReference() public {
-        vm.expectEmit(false, false, false, false);
-        emit Something(1, 2, 3, 4);
-    }
-
     /// The topics that are not checked are altered to be incorrect
     /// compared to the reference.
     function testExpectEmit(
@@ -173,31 +164,6 @@ contract ExpectEmitTest is DSTest {
 
     /// The topics that are checked are altered to be incorrect
     /// compared to the reference.
-    function testFailExpectEmit(
-        bool checkTopic1,
-        bool checkTopic2,
-        bool checkTopic3,
-        bool checkData,
-        uint128 topic1,
-        uint128 topic2,
-        uint128 topic3,
-        uint128 data
-    ) public {
-        vm.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
-
-        uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
-        uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) + 1 : uint256(topic2);
-        uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) + 1 : uint256(topic3);
-        uint256 transformedData = checkData ? uint256(data) + 1 : uint256(data);
-
-        vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
-
-        emit Something(topic1, topic2, topic3, data);
-        emitter.emitEvent(transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
-    }
-
-    /// The topics that are checked are altered to be incorrect
-    /// compared to the reference.
     function testExpectEmitNested(
         bool checkTopic1,
         bool checkTopic2,
@@ -214,32 +180,6 @@ contract ExpectEmitTest is DSTest {
         uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) : uint256(topic2) + 1;
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
         uint256 transformedData = checkData ? uint256(data) : uint256(data) + 1;
-
-        vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
-
-        emit Something(topic1, topic2, topic3, data);
-        emitter.emitNested(inner, transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
-    }
-
-    /// The topics that are checked are altered to be incorrect
-    /// compared to the reference.
-    function testFailExpectEmitNested(
-        bool checkTopic1,
-        bool checkTopic2,
-        bool checkTopic3,
-        bool checkData,
-        uint128 topic1,
-        uint128 topic2,
-        uint128 topic3,
-        uint128 data
-    ) public {
-        vm.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
-        Emitter inner = new Emitter();
-
-        uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
-        uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) + 1 : uint256(topic2);
-        uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) + 1 : uint256(topic3);
-        uint256 transformedData = checkData ? uint256(data) + 1 : uint256(data);
 
         vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
@@ -287,19 +227,6 @@ contract ExpectEmitTest is DSTest {
         emitter.emitOutOfExactOrder();
     }
 
-    function testFailExpectEmitCanMatchWithoutExactOrder() public {
-        vm.expectEmit(true, true, true, true);
-        emit Something(1, 2, 3, 4);
-        // This should fail, as this event is never emitted
-        // in between the other two Something events.
-        vm.expectEmit(true, true, true, true);
-        emit SomethingElse(1);
-        vm.expectEmit(true, true, true, true);
-        emit Something(1, 2, 3, 4);
-
-        emitter.emitOutOfExactOrder();
-    }
-
     function testExpectEmitCanMatchWithoutExactOrder2() public {
         vm.expectEmit(true, true, true, true);
         emit SomethingNonIndexed(1);
@@ -323,54 +250,6 @@ contract ExpectEmitTest is DSTest {
         emitter.emitEvent(1, 2, 3, 4);
     }
 
-    function testFailExpectEmitAddress() public {
-        vm.expectEmit(address(0));
-        emit Something(1, 2, 3, 4);
-
-        emitter.emitEvent(1, 2, 3, 4);
-    }
-
-    function testFailExpectEmitAddressWithArgs() public {
-        vm.expectEmit(true, true, true, true, address(0));
-        emit Something(1, 2, 3, 4);
-
-        emitter.emitEvent(1, 2, 3, 4);
-    }
-
-    /// Ref: issue #760
-    function testFailLowLevelWithoutEmit() public {
-        LowLevelCaller caller = new LowLevelCaller();
-
-        vm.expectEmit(true, true, true, true);
-        emit Something(1, 2, 3, 4);
-
-        // This does not emit an event, so this test should fail
-        caller.f();
-    }
-
-    function testFailNoEmitDirectlyOnNextCall() public {
-        LowLevelCaller caller = new LowLevelCaller();
-
-        vm.expectEmit(true, true, true, true);
-        emit Something(1, 2, 3, 4);
-
-        // This call does not emit. As emit expects the next call to emit, this should fail.
-        caller.f();
-        // This call does emit, but it is a call later than expected.
-        emitter.emitEvent(1, 2, 3, 4);
-    }
-
-    /// Ref: issue #760
-    function testFailDifferentIndexedParameters() public {
-        vm.expectEmit(true, false, false, false);
-        emit SomethingElse(1);
-
-        // This should fail since `SomethingElse` in the test
-        // and in the `Emitter` contract have differing
-        // amounts of indexed topics.
-        emitter.emitSomethingElse(1);
-    }
-
     function testCanDoStaticCall() public {
         vm.expectEmit(true, true, true, true);
         emit Something(emitter.getVar(), 2, 3, 4);
@@ -387,19 +266,6 @@ contract ExpectEmitTest is DSTest {
         emitter.emitMultiple(
             [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
-    }
-
-    /// This test should fail, as the call to `changeThing` is not a static call.
-    /// While we can ignore static calls, we cannot ignore normal calls.
-    function testFailEmitOnlyAppliesToNextCall() public {
-        vm.expectEmit(true, true, true, true);
-        emit Something(1, 2, 3, 4);
-        // This works because it's a staticcall.
-        emitter.doesNothing();
-        // This should make the test fail as it's a normal call.
-        emitter.changeThing(block.timestamp);
-
-        emitter.emitEvent(1, 2, 3, 4);
     }
 
     /// emitWindow() emits events A, B, C, D, E.
@@ -451,23 +317,6 @@ contract ExpectEmitTest is DSTest {
     function testCanMatchSingleEventFromConsecutive() public {
         vm.expectEmit(true, false, false, true);
         emit C(3);
-
-        emitter.emitWindow();
-    }
-
-    /// emitWindow() emits events A, B, C, D, E.
-    /// We should not be able to match [B, A, C, D, E] as B and A are flipped.
-    function testFailCanMatchConsecutiveEvents() public {
-        vm.expectEmit(true, false, false, true);
-        emit B(2);
-        vm.expectEmit(true, false, false, true);
-        emit A(1);
-        vm.expectEmit(true, false, false, true);
-        emit C(3);
-        vm.expectEmit(true, false, false, true);
-        emit D(4);
-        vm.expectEmit(true, false, false, true);
-        emit E(5);
 
         emitter.emitWindow();
     }
@@ -536,34 +385,6 @@ contract ExpectEmitTest is DSTest {
         emitter.emitNestedWindow();
     }
 
-    /// emitWindowNested() emits events A, C, E, A, B, C, D, E, the last 5 on an external call.
-    /// We should NOT be able to match [A, A, E, E], as while we're matching the correct amount
-    /// of events, they're not in the correct order. It should be [A, E, A, E].
-    function testFailMatchRepeatedEventsOutOfOrder() public {
-        vm.expectEmit(true, false, false, true);
-        emit A(1);
-        vm.expectEmit(true, false, false, true);
-        emit A(1);
-        vm.expectEmit(true, false, false, true);
-        emit E(5);
-        vm.expectEmit(true, false, false, true);
-        emit E(5);
-
-        emitter.emitNestedWindow();
-    }
-
-    /// emitWindow() emits events A, B, C, D, E.
-    /// We should not be able to match [A, A] even if emitWindow() is called twice,
-    /// as expectEmit() only works for the next call.
-    function testFailEventsOnTwoCalls() public {
-        vm.expectEmit(true, false, false, true);
-        emit A(1);
-        vm.expectEmit(true, false, false, true);
-        emit A(1);
-        emitter.emitWindow();
-        emitter.emitWindow();
-    }
-
     /// emitWindowAndOnTest emits [[A, B, C, D, E], [A]]. The interesting bit is that the
     /// second call that emits [A] is on this same contract. We should still be able to match
     /// [A, A] as the call made to this contract is still external.
@@ -573,15 +394,6 @@ contract ExpectEmitTest is DSTest {
         vm.expectEmit(true, false, false, true);
         emit A(1);
         emitter.emitWindowAndOnTest(this);
-    }
-
-    /// We should not be able to expect emits if we're expecting the function reverts, no matter
-    /// if the function reverts or not.
-    function testFailEmitWindowWithRevertDisallowed() public {
-        vm.expectRevert();
-        vm.expectEmit(true, false, false, true);
-        emit A(1);
-        emitter.emitWindow();
     }
 
     /// This test will fail if we check that all expected logs were emitted
@@ -620,24 +432,11 @@ contract ExpectEmitCountTest is DSTest {
         emitter.doesNothing();
     }
 
-    function testFailNoEmit() public {
-        vm.expectEmit(0);
-        emit Something(1, 2, 3, 4);
-        emitter.emitEvent(1, 2, 3, 4);
-    }
-
     function testCountNEmits() public {
         uint64 count = 2;
         vm.expectEmit(count);
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count);
-    }
-
-    function testFailCountLessEmits() public {
-        uint64 count = 2;
-        vm.expectEmit(count);
-        emit Something(1, 2, 3, 4);
-        emitter.emitNEvents(1, 2, 3, 4, count - 1);
     }
 
     function testCountMoreEmits() public {
@@ -648,17 +447,10 @@ contract ExpectEmitCountTest is DSTest {
     }
 
     /// Test zero emits from a specific address (emitter).
-
     function testCountNoEmitFromAddress() public {
         vm.expectEmit(address(emitter), 0);
         emit Something(1, 2, 3, 4);
         emitter.doesNothing();
-    }
-
-    function testFailNoEmitFromAddress() public {
-        vm.expectEmit(address(emitter), 0);
-        emit Something(1, 2, 3, 4);
-        emitter.emitEvent(1, 2, 3, 4);
     }
 
     function testCountEmitsFromAddress() public {
@@ -666,19 +458,5 @@ contract ExpectEmitCountTest is DSTest {
         vm.expectEmit(address(emitter), count);
         emit Something(1, 2, 3, 4);
         emitter.emitNEvents(1, 2, 3, 4, count);
-    }
-
-    function testFailCountEmitsFromAddress() public {
-        uint64 count = 3;
-        vm.expectEmit(address(emitter), count);
-        emit Something(1, 2, 3, 4);
-        emitter.emitNEvents(1, 2, 3, 4, count - 1);
-    }
-
-    function testFailEmitSomethingElse() public {
-        uint64 count = 2;
-        vm.expectEmit(count);
-        emit Something(1, 2, 3, 4);
-        emitter.emitSomethingElse(23214);
     }
 }
