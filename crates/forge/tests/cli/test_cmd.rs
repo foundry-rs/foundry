@@ -2556,7 +2556,6 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` does not reject an unanticipated error with extra data
     function testAssume_wrongData_fails(uint256 x) public view {
-        
         _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 3), partialMatch: false, reverter: address(0)}));
         reverter.revertWithDataIf2(x);
     }
