@@ -1,5 +1,5 @@
 [profile.default]
-retries = { backoff = "exponential", count = 2, delay = "2s", jitter = true }
+retries = { backoff = "exponential", count = 2, delay = "3s", jitter = true }
 slow-timeout = { period = "1m", terminate-after = 3 }
 
 [[profile.default.overrides]]

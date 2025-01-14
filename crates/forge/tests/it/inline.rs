@@ -8,7 +8,7 @@ use foundry_test_utils::Filter;
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
-        config.optimizer = true;
+        config.optimizer = Some(true);
     });
     let result = runner.test_collect(&filter);
     let results = result

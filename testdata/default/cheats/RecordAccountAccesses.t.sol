@@ -343,14 +343,12 @@ contract RecordAccountAccessesTest is DSTest {
         // contract calls to self in constructor
         SelfCaller caller = new SelfCaller{value: 2 ether}("hello2 world2");
 
-        assertEq(
-            "0x000000000000000000000000000000000000162e\n- balance diff: 0 \xE2\x86\x92 1000000000000000000\n\n0x1d1499e622D69689cdf9004d05Ec547d650Ff211\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n\n",
-            cheats.getStateDiff()
-        );
-        assertEq(
-            "{\"0x000000000000000000000000000000000000162e\":{\"label\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0xde0b6b3a7640000\"},\"stateDiff\":{}},\"0x1d1499e622d69689cdf9004d05ec547d650ff211\":{\"label\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0x1bc16d674ec80000\"},\"stateDiff\":{}}}",
-            cheats.getStateDiffJson()
-        );
+        string memory callerAddress = cheats.toString(address(caller));
+        string memory expectedStateDiff =
+            "0x000000000000000000000000000000000000162e\n- balance diff: 0 \xE2\x86\x92 1000000000000000000\n\n";
+        expectedStateDiff = string.concat(expectedStateDiff, callerAddress);
+        expectedStateDiff = string.concat(expectedStateDiff, "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n\n");
+        assertEq(expectedStateDiff, cheats.getStateDiff());
 
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 6);
