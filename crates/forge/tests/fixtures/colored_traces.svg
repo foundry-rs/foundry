@@ -1,0 +1,82 @@
+<svg width="852px" height="542px" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .fg { fill: #AAAAAA }
+    .bg { background: #000000 }
+    .fg-blue { fill: #0000AA }
+    .fg-green { fill: #00AA00 }
+    .fg-yellow { fill: #AA5500 }
+    .container {
+      padding: 0 10px;
+      line-height: 18px;
+    }
+    tspan {
+      font: 14px SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
+      white-space: pre;
+      line-height: 18px;
+    }
+  </style>
+
+  <rect width="100%" height="100%" y="0" rx="4.5" class="bg" />
+
+  <text xml:space="preserve" class="container fg">
+    <tspan x="10px" y="28px"><tspan>No files changed, compilation skipped</tspan>
+</tspan>
+    <tspan x="10px" y="46px">
+</tspan>
+    <tspan x="10px" y="64px"><tspan>Ran 1 test for test/Counter.t.sol:CounterTest</tspan>
+</tspan>
+    <tspan x="10px" y="82px"><tspan>[PASS] test_Increment() ([GAS])</tspan>
+</tspan>
+    <tspan x="10px" y="100px"><tspan>Traces:</tspan>
+</tspan>
+    <tspan x="10px" y="118px"><tspan>  [137242] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
+</tspan>
+    <tspan x="10px" y="136px"><tspan>    ├─ [96345] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
+</tspan>
+    <tspan x="10px" y="154px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return] </tspan><tspan>481 bytes of code</tspan>
+</tspan>
+    <tspan x="10px" y="172px"><tspan>    ├─ [2592] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">setNumber</tspan><tspan>(0)</tspan>
+</tspan>
+    <tspan x="10px" y="190px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop] </tspan>
+</tspan>
+    <tspan x="10px" y="208px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop] </tspan>
+</tspan>
+    <tspan x="10px" y="226px">
+</tspan>
+    <tspan x="10px" y="244px"><tspan>  [31851] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
+</tspan>
+    <tspan x="10px" y="262px"><tspan>    ├─ [22418] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
+</tspan>
+    <tspan x="10px" y="280px"><tspan>    │   ├─  storage changes:</tspan>
+</tspan>
+    <tspan x="10px" y="298px"><tspan>    │   │   @ 0: 0 → 1</tspan>
+</tspan>
+    <tspan x="10px" y="316px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop] </tspan>
+</tspan>
+    <tspan x="10px" y="334px"><tspan>    ├─ [424] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">number</tspan><tspan>()</tspan><tspan class="fg-yellow"> [staticcall]</tspan>
+</tspan>
+    <tspan x="10px" y="352px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return] </tspan><tspan>1</tspan>
+</tspan>
+    <tspan x="10px" y="370px"><tspan>    ├─ [0] </tspan><tspan class="fg-blue">VM</tspan><tspan>::</tspan><tspan class="fg-blue">assertEq</tspan><tspan>(1, 1)</tspan><tspan class="fg-yellow"> [staticcall]</tspan>
+</tspan>
+    <tspan x="10px" y="388px"><tspan>    │   └─ </tspan><tspan class="fg-blue">← [Return] </tspan>
+</tspan>
+    <tspan x="10px" y="406px"><tspan>    ├─  storage changes:</tspan>
+</tspan>
+    <tspan x="10px" y="424px"><tspan>    │   @ 0: 0 → 1</tspan>
+</tspan>
+    <tspan x="10px" y="442px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop] </tspan>
+</tspan>
+    <tspan x="10px" y="460px">
+</tspan>
+    <tspan x="10px" y="478px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
+</tspan>
+    <tspan x="10px" y="496px">
+</tspan>
+    <tspan x="10px" y="514px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
+</tspan>
+    <tspan x="10px" y="532px">
+</tspan>
+  </text>
+
+</svg>

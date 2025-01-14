@@ -2829,3 +2829,10 @@ forgetest!(test_fail_deprecation_warning, |prj, cmd| {
         .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated, testFail_deprecated2.
 "#);
 });
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(colored_traces, |prj, cmd| {
+    cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
+});
