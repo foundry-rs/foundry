@@ -12,8 +12,10 @@ pub fn format_transaction_details(
     writeln!(output, "{}", tx.tx().pretty())?;
 
     // Show contract name and address if available
-    if let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address) {
-        writeln!(output, "contract: {name}({addr})")?;
+    if !tx.opcode.is_any_create() {
+        if let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address) {
+            writeln!(output, "contract: {name}({addr})")?;
+        }
     }
 
     // Show decoded function if available
