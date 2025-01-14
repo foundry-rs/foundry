@@ -63,6 +63,8 @@ main() {
     fi
   fi
 
+  check_bins_in_use
+
   # Installs foundry from a local repository if --path parameter is provided
   if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
     need_cmd cargo
@@ -292,6 +294,9 @@ use() {
   [ -z "$FOUNDRYUP_VERSION" ] && err "no version provided"
   FOUNDRY_VERSION_DIR="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
   if [ -d "$FOUNDRY_VERSION_DIR" ]; then
+
+    check_bins_in_use
+
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
       cp $FOUNDRY_VERSION_DIR/$bin $bin_path
@@ -344,6 +349,18 @@ need_cmd() {
 
 check_cmd() {
   command -v "$1" &>/dev/null
+}
+
+check_bins_in_use() {
+  if check_cmd pgrep; then
+    for bin in "${BINS[@]}"; do
+      if pgrep -x "$bin" >/dev/null; then
+        err "Error: '$bin' is currently running. Please stop the process and try again."
+      fi
+    done
+  else
+    warn "Make sure no foundry process is running during the install process!"
+  fi
 }
 
 # Run a command that should never fail. If the command fails execution
