@@ -8,7 +8,7 @@ use foundry_config::Config;
 use foundry_test_utils::{
     rpc::{self, next_http_rpc_endpoint},
     snapbox::IntoData,
-    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     ScriptOutcome, ScriptTester,
 };
 use regex::Regex;
@@ -2517,8 +2517,7 @@ contract DryRunTest is Script {
     )
     .unwrap();
 
-    let stdout = cmd
-        .arg("script")
+    cmd.arg("script")
         .args([
             "DryRunTest",
             "--private-key",
@@ -2526,14 +2525,81 @@ contract DryRunTest is Script {
             "--rpc-url",
             &handle.http_endpoint(),
         ])
-        .execute()
-        .stdout_lossy();
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
 
-    assert!(stdout.contains("=== Transactions that will be broadcast ==="));
-    assert!(stdout.contains("to: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)"));
-    assert!(stdout.contains("data (raw): "));
-    assert!(stdout.contains("data (decoded): run(uint256,uint256)("));
-    assert!(stdout.contains("123,"));
-    assert!(stdout.contains("456"));
-    assert!(stdout.contains("gasLimit:"));
+== Logs ==
+  script ran
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+=== Transactions that will be broadcast ===
+
+
+Chain 31337
+
+
+### Transaction 1 ###
+
+
+accessList           []
+chainId              31337
+gasLimit             228247
+gasPrice             
+input                [..]
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
+nonce                0
+to                   
+type                 0
+value                0
+
+
+### Transaction 2 ###
+
+
+accessList           []
+chainId              31337
+gasLimit             93856
+gasPrice             
+input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
+nonce                1
+to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
+type                 0
+value                0
+contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+data (decoded): run(uint256,uint256)(
+  123,
+  456
+)
+
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
 });
