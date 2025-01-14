@@ -203,6 +203,10 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    /// Only shows the transactions that would be sent without actually broadcasting them.
+    #[arg(long)]
+    pub dry_run: bool,
+
     #[command(flatten)]
     pub build: BuildOpts,
 
@@ -302,7 +306,7 @@ impl ScriptArgs {
         };
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
-        if !bundled.args.should_broadcast() {
+        if !bundled.args.should_broadcast() || bundled.args.dry_run {
             if !shell::is_json() {
                 sh_println!("\n=== Transactions that will be broadcast ===\n")?;
 
