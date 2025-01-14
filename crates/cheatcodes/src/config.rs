@@ -1,5 +1,5 @@
 use super::Result;
-use crate::Vm::Rpc;
+use crate::{CheatcodesStrategy, Vm::Rpc};
 use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
@@ -57,11 +57,14 @@ pub struct CheatsConfig {
     pub assertions_revert: bool,
     /// Optional seed for the RNG algorithm.
     pub seed: Option<U256>,
+    /// Cheatcode inspector behavior.
+    pub strategy: CheatcodesStrategy,
 }
 
 impl CheatsConfig {
     /// Extracts the necessary settings from the Config
     pub fn new(
+        strategy: CheatcodesStrategy,
         config: &Config,
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
@@ -98,12 +101,14 @@ impl CheatsConfig {
             running_version,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
+            strategy,
         }
     }
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
         Self::new(
+            self.strategy.clone(),
             config,
             evm_opts,
             self.available_artifacts.clone(),
@@ -234,6 +239,7 @@ impl Default for CheatsConfig {
             running_version: Default::default(),
             assertions_revert: true,
             seed: None,
+            strategy: CheatcodesStrategy::new_evm(),
         }
     }
 }
@@ -245,6 +251,7 @@ mod tests {
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
+            CheatcodesStrategy::new_evm(),
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
             None,

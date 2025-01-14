@@ -349,7 +349,7 @@ impl Cheatcode for deployCode_1Call {
 /// - `path/to/contract.sol:0.8.23`
 /// - `ContractName`
 /// - `ContractName:0.8.23`
-fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
+pub fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
     } else {
