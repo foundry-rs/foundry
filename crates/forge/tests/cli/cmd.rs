@@ -1,6 +1,8 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
+use alloy_primitives::map::HashMap;
+use foundry_cli::utils::{Submodules, TagType};
 use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
@@ -14,7 +16,7 @@ use foundry_test_utils::{
 use semver::Version;
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
@@ -1360,9 +1362,7 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std[..]
-
-"#]]);
+    Installed forge-std tag=[..]"#]]);
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -1406,6 +1406,128 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
 
     assert!(current >= version);
 });
+
+forgetest!(can_update_and_retain_tag_revs, |_prj, cmd| {
+    cmd.git_init();
+
+    // Installs oz at release tag
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@v5.1.0"])
+        .assert_success();
+
+    // Install solady pinned to rev i.e https://github.com/Vectorized/solady/commit/513f581675374706dbe947284d6b12d19ce35a2a
+    cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
+
+    let out = cmd.git_submodule_status();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_init: Submodules = status.parse().unwrap();
+
+    cmd.forge_fuse().arg("update").assert_success();
+
+    let out = cmd.git_submodule_status();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_update: Submodules = status.parse().unwrap();
+
+    assert_eq!(submodules_init, submodules_update);
+});
+
+forgetest!(can_override_tag_in_update, |_prj, cmd| {
+    cmd.git_init();
+
+    // Installs oz at release tag
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@v5.0.2"])
+        .assert_success();
+
+    cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
+
+    let out = cmd.git_submodule_status();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_init: Submodules = status.parse().unwrap();
+
+    // Update oz to a different release tag
+    cmd.forge_fuse()
+        .args(["update", "openzeppelin/openzeppelin-contracts@v5.1.0"])
+        .assert_success();
+
+    let out = cmd.git_submodule_status();
+    let status = String::from_utf8_lossy(&out.stdout);
+
+    let submodules_update: Submodules = status.parse().unwrap();
+
+    assert_ne!(submodules_init.0[0], submodules_update.0[0]);
+    assert_eq!(submodules_init.0[1], submodules_update.0[1]);
+});
+
+// Ref: https://github.com/foundry-rs/foundry/pull/9522#pullrequestreview-2494431518
+forgetest!(should_not_update_tagged_deps, |prj, cmd| {
+    cmd.git_init();
+
+    // Installs oz at release tag
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@tag=v4.9.4"])
+        .assert_success();
+
+    let out = cmd.git_submodule_status();
+    let status = String::from_utf8_lossy(&out.stdout);
+    let submodules_init: Submodules = status.parse().unwrap();
+
+    cmd.forge_fuse().arg("update").assert_success();
+
+    let out = cmd.git_submodule_status();
+    let status = String::from_utf8_lossy(&out.stdout);
+    let submodules_update: Submodules = status.parse().unwrap();
+
+    assert_eq!(submodules_init, submodules_update);
+
+    // Check that halmos-cheatcodes dep is not added to oz deps
+    let halmos_path = prj.paths().libraries[0].join("openzeppelin-contracts/lib/halmos-cheatcodes");
+
+    assert!(!halmos_path.exists());
+});
+
+forgetest!(can_remove_dep_from_foundry_lock, |prj, cmd| {
+    cmd.git_init();
+
+    cmd.forge_fuse()
+        .args(["install", "openzeppelin/openzeppelin-contracts@tag=v4.9.4"])
+        .assert_success();
+
+    cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
+
+    cmd.forge_fuse().args(["remove", "openzeppelin-contracts"]).assert_success();
+
+    let lock: HashMap<PathBuf, TagType> =
+        foundry_common::fs::read_json_file(&prj.root().join("foundry.lock")).unwrap();
+
+    assert!(!lock.contains_key(&PathBuf::from("lib/openzeppelin-contracts")));
+});
+
+forgetest!(
+    #[cfg_attr(windows, ignore = "weird git fail")]
+    can_sync_foundry_lock,
+    |prj, cmd| {
+        cmd.git_init();
+
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std@master"]).assert_success();
+
+        cmd.forge_fuse().args(["install", "vectorized/solady"]).assert_success();
+
+        fs::remove_file(prj.root().join("foundry.lock")).unwrap();
+
+        // sync submodules and write foundry.lock
+        cmd.forge_fuse().arg("install").assert_success();
+
+        let lock: HashMap<PathBuf, TagType> =
+            foundry_common::fs::read_json_file(&prj.root().join("foundry.lock")).unwrap();
+
+        assert!(matches!(lock.get(&PathBuf::from("lib/forge-std")).unwrap(), &TagType::Rev(_)));
+        assert!(matches!(lock.get(&PathBuf::from("lib/solady")).unwrap(), &TagType::Tag(_)));
+    }
+);
 
 // Tests that forge update doesn't break a working dependency by recursively updating nested
 // dependencies
