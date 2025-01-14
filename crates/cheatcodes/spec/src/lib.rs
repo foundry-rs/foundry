@@ -88,6 +88,7 @@ impl Cheatcodes<'static> {
                 Vm::DebugStep::STRUCT.clone(),
                 Vm::BroadcastTxSummary::STRUCT.clone(),
                 Vm::SignedDelegation::STRUCT.clone(),
+                Vm::PotentialRevert::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
