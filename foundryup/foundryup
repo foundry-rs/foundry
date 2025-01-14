@@ -77,7 +77,7 @@ main() {
 
     # Ignore branches/versions as we do not want to modify local git state
     if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRYUP_BRANCH" ] || [ -n "$FOUNDRYUP_VERSION" ]; then
-      warn "--branch, --install, and --repo arguments are ignored during local install"
+      warn "--branch, --install, --use, and --repo arguments are ignored during local install"
     fi
 
     # Enter local repo and build
@@ -279,7 +279,7 @@ EOF
 }
 
 version() {
-  echo "foundryup $FOUNDRYUP_INSTALLER_VERSION"
+  say "$FOUNDRYUP_INSTALLER_VERSION"
   exit 0
 }
 
