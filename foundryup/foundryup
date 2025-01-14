@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+# NOTE: if you make modifications to this script, please increment the version number.
+# Major / minor: incremented for each stable release of Foundry.
+# Patch: incremented for each change between stable releases.
+FOUNDRYUP_INSTALLER_VERSION="0.3.0"
+
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
 FOUNDRY_VERSIONS_DIR="$FOUNDRY_DIR/versions"
@@ -23,6 +28,8 @@ main() {
     case $1 in
       --)               shift; break;;
 
+      -v|--version)     shift; version;;
+      -U|--update)      shift; update;;
       -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
       -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
       -i|--install)     shift; FOUNDRYUP_VERSION=$1;;
@@ -32,7 +39,6 @@ main() {
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
       -j|--jobs)        shift; FOUNDRYUP_JOBS=$1;;
-      -U|--update)      shift; update;;
       --arch)           shift; FOUNDRYUP_ARCH=$1;;
       --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
       -h|--help)
@@ -71,7 +77,7 @@ main() {
 
     # Ignore branches/versions as we do not want to modify local git state
     if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRYUP_BRANCH" ] || [ -n "$FOUNDRYUP_VERSION" ]; then
-      warn "--branch, --version, and --repo arguments are ignored during local install"
+      warn "--branch, --install, --use, and --repo arguments are ignored during local install"
     fi
 
     # Enter local repo and build
@@ -256,6 +262,8 @@ USAGE:
 
 OPTIONS:
     -h, --help      Print help information
+    -v, --version   Print the version of foundryup
+    -U, --update    Update foundryup to the latest version
     -i, --install   Install a specific version from built binaries
     -l, --list      List versions installed from built binaries
     -u, --use       Use a specific installed version from built binaries
@@ -265,10 +273,29 @@ OPTIONS:
     -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
-    -U, --update    Update foundryup to the latest version
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, and darwin)
 EOF
+}
+
+version() {
+  say "$FOUNDRYUP_INSTALLER_VERSION"
+  exit 0
+}
+
+update() {
+  say "updating foundryup..."
+
+  # Download to a temporary file first
+  tmp_file="$(mktemp)"
+  ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
+
+  # Replace the current foundryup with the downloaded file
+  ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
+  ensure chmod +x "$FOUNDRY_BIN_PATH"
+
+  say "successfully updated foundryup"
+  exit 0
 }
 
 list() {
@@ -307,21 +334,6 @@ use() {
   else
     err "version $FOUNDRYUP_VERSION not installed"
   fi
-}
-
-update() {
-  say "updating foundryup..."
-
-  # Download to a temporary file first
-  tmp_file="$(mktemp)"
-  ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
-
-  # Replace the current foundryup with the downloaded file
-  ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
-  ensure chmod +x "$FOUNDRY_BIN_PATH"
-
-  say "successfully updated foundryup"
-  exit 0
 }
 
 say() {
