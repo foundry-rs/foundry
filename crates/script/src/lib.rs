@@ -203,10 +203,6 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
-    /// Only shows the transactions that would be sent without actually broadcasting them.
-    #[arg(long)]
-    pub dry_run: bool,
-
     #[command(flatten)]
     pub build: BuildOpts,
 
@@ -306,16 +302,18 @@ impl ScriptArgs {
         };
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
-        if !bundled.args.should_broadcast() || bundled.args.dry_run {
+        if !bundled.args.should_broadcast() {
             if !shell::is_json() {
-                sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+                if shell::verbosity() >= 4 {
+                    sh_println!("\n=== Transactions that will be broadcast ===\n")?;
 
-                for sequence in bundled.sequence.sequences() {
-                    if !sequence.transactions.is_empty() {
-                        sh_println!("\nChain {}\n", sequence.chain)?;
+                    for sequence in bundled.sequence.sequences() {
+                        if !sequence.transactions.is_empty() {
+                            sh_println!("\nChain {}\n", sequence.chain)?;
 
-                        for (i, tx) in sequence.transactions.iter().enumerate() {
-                            sh_print!("{}", dryrun::format_transaction_details(i + 1, tx)?)?;
+                            for (i, tx) in sequence.transactions.iter().enumerate() {
+                                sh_print!("{}", dryrun::format_transaction_details(i + 1, tx)?)?;
+                            }
                         }
                     }
                 }
