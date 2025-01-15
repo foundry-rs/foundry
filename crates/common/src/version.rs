@@ -15,7 +15,7 @@ pub fn set_build_version() -> Result<(), Box<dyn Error>> {
     // if not on a tag: <BIN> 0.3.0-dev+ba03de0019
     // if on a tag: <BIN> 0.3.0-stable+ba03de0019
     let tag_name = option_env!("TAG_NAME");
-    
+
     let (is_nightly, version_suffix) = match tag_name {
         Some(tag_name) if tag_name.eq_ignore_ascii_case("nightly") => {
             (true, "-nightly".to_string())
