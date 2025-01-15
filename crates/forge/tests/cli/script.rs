@@ -2524,18 +2524,41 @@ contract DryRunTest is Script {
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
             "--rpc-url",
             &handle.http_endpoint(),
+            "-vvvv",
         ])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+Traces:
+  [279581] DryRunTest::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [175575] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    │   └─ ← [Return] 567 bytes of code
+    ├─ [67951] Called::run(123, 456)
+    │   ├─ emit log_string(val: "script ran")
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+
+
 Script ran successfully.
 
 == Logs ==
   script ran
 
 ## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [113557] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 567 bytes of code
+
+  [46595] Called::run(123, 456)
+    ├─ emit log_string(val: "script ran")
+    └─ ← [Stop] 
+
 
 ==========================
 
@@ -2554,9 +2577,7 @@ Chain 31337
 
 Chain 31337
 
-
 ### Transaction 1 ###
-
 
 accessList           []
 chainId              31337
@@ -2571,9 +2592,7 @@ to
 type                 0
 value                0
 
-
 ### Transaction 2 ###
-
 
 accessList           []
 chainId              31337
