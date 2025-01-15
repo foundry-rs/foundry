@@ -8,7 +8,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .git_describe(false, true, None)
         .git_dirty(true)
         .git_sha(true)
-        .build_timestamp()
         .emit_and_set()?;
 
     set_build_version()?;
