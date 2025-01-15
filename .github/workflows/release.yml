@@ -75,7 +75,6 @@ jobs:
     name: ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     env:
-      IS_NIGHTLY: ${{ env.IS_NIGHTLY }}
       TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
     timeout-minutes: 240
     needs: prepare
