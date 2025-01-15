@@ -1,7 +1,7 @@
 use std::{env, error::Error};
 
 pub const NIGHTLY_VERSION_WARNING_MESSAGE: &str =
-    "This is a pre-release build of Foundry. It is recommended to use the latest stable version. See: https://book.getfoundry.sh/announcements";
+    "This is a nightly build of Foundry. It is recommended to use the latest stable version. See: https://book.getfoundry.sh/announcements";
 
 /// Set the build version information for Foundry binaries.
 pub fn set_build_version() -> Result<(), Box<dyn Error>> {
