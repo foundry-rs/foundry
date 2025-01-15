@@ -60,7 +60,6 @@ use std::path::PathBuf;
 
 mod broadcast;
 mod build;
-mod dryrun;
 mod execute;
 mod multi_sequence;
 mod progress;
@@ -306,16 +305,7 @@ impl ScriptArgs {
             if !shell::is_json() {
                 if shell::verbosity() >= 4 {
                     sh_println!("\n=== Transactions that will be broadcast ===\n")?;
-
-                    for sequence in bundled.sequence.sequences() {
-                        if !sequence.transactions.is_empty() {
-                            sh_println!("\nChain {}\n", sequence.chain)?;
-
-                            for (i, tx) in sequence.transactions.iter().enumerate() {
-                                sh_print!("{}", dryrun::format_transaction_details(i + 1, tx)?)?;
-                            }
-                        }
-                    }
+                    bundled.sequence.show_transactions()?;
                 }
 
                 sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
