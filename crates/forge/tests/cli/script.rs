@@ -1151,6 +1151,7 @@ contract Script0 is Script {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+...
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -1166,29 +1167,6 @@ Chain 31337
 [ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
-
-=== Transactions that will be broadcast ===
-
-
-Chain 31337
-
-
-### Transaction 1 ###
-
-
-accessList           []
-chainId              31337
-gasLimit             403195
-gasPrice             
-input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
-nonce                0
-to                   
-type                 0
-value                0
-
 
 SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
@@ -1317,29 +1295,6 @@ Chain 31337
 [ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
-
-=== Transactions that will be broadcast ===
-
-
-Chain 31337
-
-
-### Transaction 1 ###
-
-
-accessList           []
-chainId              31337
-gasLimit             437434
-gasPrice             
-input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
-nonce                0
-to                   
-type                 0
-value                0
-
 
 SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
