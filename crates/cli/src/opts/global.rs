@@ -1,7 +1,7 @@
 use clap::{ArgAction, Parser};
 use foundry_common::{
     shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity},
-    version::{NIGHTLY_VERSION_WARNING_MESSAGE},
+    version::NIGHTLY_VERSION_WARNING_MESSAGE,
 };
 use serde::{Deserialize, Serialize};
 
