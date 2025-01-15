@@ -37,6 +37,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(Chisel, build, evm);
 
+const IS_NIGHTLY: &str = env!("FOUNDRY_IS_NIGHTLY_VERSION");
 const VERSION_MESSAGE: &str = env!("FOUNDRY_SHORT_VERSION");
 
 /// Fast, utilitarian, and verbose Solidity REPL.
@@ -114,6 +115,12 @@ fn run() -> eyre::Result<()> {
 
     let args = Chisel::parse();
     args.global.init()?;
+
+    if IS_NIGHTLY == "true" {
+        let _ =
+            sh_warn!("This is a pre-release nightly build, please be weary of breaking changes.");
+    }
+
     main_args(args)
 }
 
