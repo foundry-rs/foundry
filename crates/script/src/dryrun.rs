@@ -8,7 +8,7 @@ pub fn format_transaction_details(
     tx: &TransactionWithMetadata,
 ) -> Result<String, Error> {
     let mut output = String::new();
-    writeln!(output, "\n### Transaction {index} ###\n")?;
+    writeln!(output, "### Transaction {index} ###")?;
     writeln!(output, "{}", tx.tx().pretty())?;
 
     // Show contract name and address if available
