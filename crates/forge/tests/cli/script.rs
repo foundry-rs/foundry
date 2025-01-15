@@ -2532,12 +2532,12 @@ contract DryRunTest is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [279581] DryRunTest::run()
+  [..] DryRunTest::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [175575] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   └─ ← [Return] 567 bytes of code
-    ├─ [67951] Called::run(123, 456)
+    ├─ [..] Called::run(123, 456)
     │   ├─ emit log_string(val: "script ran")
     │   └─ ← [Stop] 
     └─ ← [Stop] 
