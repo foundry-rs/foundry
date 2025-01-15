@@ -29,7 +29,7 @@ pub fn set_build_version() -> Result<(), Box<dyn Error>> {
 
     // Append the profile to the version string if it exists.
     let profile_suffix =
-        env::var("PROFILE").map_or(String::new(), |profile| format!(".{}", profile));
+        env::var("PROFILE").map_or(String::new(), |profile| format!(".{profile}"));
 
     // The short version information for Foundry.
     // - The latest version from Cargo.toml
