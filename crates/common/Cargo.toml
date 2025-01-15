@@ -69,6 +69,13 @@ anstream.workspace = true
 anstyle.workspace = true
 terminal_size.workspace = true
 
+[build-dependencies]
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
+
 [dev-dependencies]
 foundry-macros.workspace = true
 similar-asserts.workspace = true

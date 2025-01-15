@@ -74,6 +74,8 @@ jobs:
       attestations: write
     name: ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
+    env:
+      TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
     timeout-minutes: 240
     needs: prepare
     strategy:
@@ -272,7 +274,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, cleanup]
+    needs: [ prepare, release-docker, release, cleanup ]
     if: failure()
     steps:
       - uses: actions/checkout@v4

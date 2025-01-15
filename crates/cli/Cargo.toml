@@ -53,6 +53,14 @@ tracing-tracy = { version = "0.11", optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 
+[build-dependencies]
+foundry-common.workspace = true
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
+
 [features]
 default = ["rustls"]
 rustls = ["foundry-wallets/rustls"]

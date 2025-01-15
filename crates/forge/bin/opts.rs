@@ -11,14 +11,7 @@ use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use foundry_cli::opts::GlobalArgs;
 use std::path::PathBuf;
 
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
+const VERSION_MESSAGE: &str = env!("FOUNDRY_SHORT_VERSION");
 
 /// Build, test, fuzz, debug and deploy Solidity contracts.
 #[derive(Parser)]
