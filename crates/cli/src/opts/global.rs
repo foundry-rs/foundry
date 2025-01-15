@@ -51,10 +51,8 @@ impl GlobalArgs {
         }
 
         // Display a warning message if the current version is not stable.
-        if !self.json {
-            if env!("FOUNDRY_IS_NIGHTLY_VERSION") == "true" {
-                let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
-            }
+        if !self.json && env!("FOUNDRY_IS_NIGHTLY_VERSION") == "true" {
+            let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
         }
 
         Ok(())

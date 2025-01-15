@@ -3,6 +3,7 @@ use std::{env, error::Error};
 pub const NIGHTLY_VERSION_WARNING_MESSAGE: &str =
     "This is a nightly build of Foundry. It is recommended to use the latest stable version. See: https://book.getfoundry.sh/announcements";
 
+#[allow(clippy::disallowed_macros)]
 /// Set the build version information for Foundry binaries.
 pub fn set_build_version() -> Result<(), Box<dyn Error>> {
     let sha = env::var("VERGEN_GIT_SHA")?;
@@ -20,18 +21,18 @@ pub fn set_build_version() -> Result<(), Box<dyn Error>> {
         Some(tag_name) if tag_name.eq_ignore_ascii_case("nightly") => {
             (true, "-nightly".to_string())
         }
-        Some(tag_name) => (false, format!("-{}", tag_name)),
+        Some(tag_name) => (false, format!("-{tag_name}")),
         None => {
             if is_dirty {
                 (false, "-dev".to_string())
             } else {
-                (false, "".to_string())
+                (false, String::new())
             }
         }
     };
 
-    println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION={}", is_nightly);
-    println!("cargo:rustc-env=FOUNDRY_VERSION_SUFFIX={}", version_suffix);
+    println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION={is_nightly}");
+    println!("cargo:rustc-env=FOUNDRY_VERSION_SUFFIX={version_suffix}");
 
     // Set formatted version strings
     let pkg_version = env!("CARGO_PKG_VERSION");
