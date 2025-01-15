@@ -1,7 +1,7 @@
 use clap::{ArgAction, Parser};
 use foundry_common::{
     shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity},
-    version::NIGHTLY_VERSION_WARNING_MESSAGE,
+    version::{NIGHTLY_VERSION_WARNING_MESSAGE},
 };
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +51,10 @@ impl GlobalArgs {
         }
 
         // Display a warning message if the current version is not stable.
-        if !self.json && env!("FOUNDRY_IS_NIGHTLY_VERSION") == "true" {
+        if std::env::var("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_err() &&
+            !self.json &&
+            env!("FOUNDRY_IS_NIGHTLY_VERSION") == "true"
+        {
             let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
         }
 

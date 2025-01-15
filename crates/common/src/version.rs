@@ -1,7 +1,9 @@
 use std::{env, error::Error};
 
 pub const NIGHTLY_VERSION_WARNING_MESSAGE: &str =
-    "This is a nightly build of Foundry. It is recommended to use the latest stable version. See: https://book.getfoundry.sh/announcements";
+    "This is a nightly build of Foundry. It is recommended to use the latest stable version. \
+    Visit https://book.getfoundry.sh/announcements for more information. \n\
+    To mute this warning set `FOUNDRY_DISABLE_NIGHTLY_WARNING` in your environment. \n";
 
 #[allow(clippy::disallowed_macros)]
 /// Set the build version information for Foundry binaries.
@@ -13,9 +15,7 @@ pub fn set_build_version() -> Result<(), Box<dyn Error>> {
     // if on a tag: <BIN> 0.3.0-stable+ba03de0019
     let tag_name = option_env!("TAG_NAME");
     let (is_nightly, version_suffix) = match tag_name {
-        Some(tag_name) if tag_name.eq_ignore_ascii_case("nightly") => {
-            (true, "-nightly".to_string())
-        }
+        Some(tag_name) if tag_name.eq("nightly") => (true, "-nightly".to_string()),
         Some(tag_name) => (false, format!("-{tag_name}")),
         None => (false, "-dev".to_string()),
     };
