@@ -21,13 +21,7 @@ extern crate tracing;
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-const IS_NIGHTLY: &str = env!("FOUNDRY_IS_NIGHTLY_VERSION");
-
 fn main() {
-    if IS_NIGHTLY == "true" {
-        warn!("This is a pre-release nightly build, please be weary of breaking changes.");
-    }
-
     if let Err(err) = run() {
         let _ = foundry_common::sh_err!("{err:?}");
         std::process::exit(1);

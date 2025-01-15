@@ -4,9 +4,6 @@ use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use eyre::Result;
 use foundry_cli::{opts::GlobalArgs, utils};
-use foundry_common::sh_warn;
-
-const IS_NIGHTLY: &str = env!("FOUNDRY_IS_NIGHTLY_VERSION");
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -54,11 +51,6 @@ fn run() -> Result<()> {
     let mut args = Anvil::parse();
     args.global.init()?;
     args.node.evm.resolve_rpc_alias();
-
-    if IS_NIGHTLY == "true" {
-        let _ =
-            sh_warn!("This is a pre-release nightly build, please be weary of breaking changes.");
-    }
 
     if let Some(cmd) = &args.cmd {
         match cmd {

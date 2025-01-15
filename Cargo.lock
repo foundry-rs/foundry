@@ -3671,6 +3671,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "vergen",
  "yansi",
 ]
 

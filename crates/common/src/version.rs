@@ -1,20 +1,19 @@
 use std::{env, error::Error};
 
+pub const NIGHTLY_VERSION_WARNING_MESSAGE: &str =
+    "This is a pre-release build of Foundry. It is recommended to use the latest stable version. See: https://book.getfoundry.sh/announcements";
 
 /// Set the build version information for Foundry binaries.
 pub fn set_build_version() -> Result<(), Box<dyn Error>> {
     let sha = env::var("VERGEN_GIT_SHA")?;
-    
+
     // Check if the git repository is dirty, i.e. has uncommitted changes.
     // If so, mark the version as a development version.
     let is_dirty = env::var("VERGEN_GIT_DIRTY")? == "true";
 
     // Set nightly version information
     // This is used to determine if the build is a nightly build.
-    let is_nightly = match env::var("IS_NIGHTLY") {
-        Ok(is_nightly) => is_nightly,
-        Err(_) => "false".to_string(),
-    };
+    let is_nightly = env::var("IS_NIGHTLY").is_ok();
 
     println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION={}", is_nightly);
 
