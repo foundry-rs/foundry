@@ -36,7 +36,7 @@ contract GetFoundryVersionTest is DSTest {
 
         // Validate UNIX timestamp (numeric)
         uint256 buildUnixTimestamp = vm.parseUint(timestamp);
-        uint256 minimumAcceptableTimestamp = 202406111234; // Adjust as needed
+        uint256 minimumAcceptableTimestamp = 1700000000; // Adjust as needed
         require(buildUnixTimestamp >= minimumAcceptableTimestamp, "Build timestamp is too old");
 
         // Validate build profile (e.g., "debug" or "release")
