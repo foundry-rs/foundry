@@ -70,7 +70,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
-/// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
 
 const BANNER: &str = r"
                              _   _
