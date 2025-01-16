@@ -4,7 +4,6 @@ use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use eyre::Result;
 use foundry_cli::{opts::GlobalArgs, utils};
-use foundry_common::version::VERSION_MESSAGE;
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -12,7 +11,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// A fast local Ethereum development node.
 #[derive(Parser)]
-#[command(name = "anvil", version = VERSION_MESSAGE, next_display_order = None)]
+#[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
 pub struct Anvil {
     /// Include the global arguments.
     #[command(flatten)]

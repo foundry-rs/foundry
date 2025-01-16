@@ -54,7 +54,6 @@ fn run() -> Result<()> {
 
     let args = CastArgs::parse();
     args.global.init()?;
-
     main_args(args)
 }
 

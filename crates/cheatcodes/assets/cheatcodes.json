@@ -5714,7 +5714,7 @@
     {
       "func": {
         "id": "getFoundryVersion",
-        "description": "Returns the Foundry version.\nFormat: <cargo_version>+<git_sha>+<build_timestamp>\nSample output: 0.2.0+faa94c384+202407110019\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)\nto compare timestamps while ignoring minor time differences.",
+        "description": "Returns the Foundry version.\nFormat: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>\nSample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use UNIX format (e.g., >= 1700000000)\nto compare timestamps while ignoring minor time differences.",
         "declaration": "function getFoundryVersion() external view returns (string memory version);",
         "visibility": "external",
         "mutability": "view",

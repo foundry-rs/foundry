@@ -112,7 +112,6 @@ fn run() -> eyre::Result<()> {
 
     let args = Chisel::parse();
     args.global.init()?;
-
     main_args(args)
 }
 
