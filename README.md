@@ -110,14 +110,16 @@ _In the above benchmarks, compilation was always skipped_
 ### Compilation Benchmarks
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/chart-a-dark.png" width="500px">
-  <img src=".github/chart-a-light.png" width="500px">
+  <source media="(prefers-color-scheme: dark)" srcset=".github/chart-a-dark.png" width="600px">
+  <img src=".github/chart-a-light.png" width="600px">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/chart-b-dark.png" width="500px">
-  <img src=".github/chart-b-light.png" width="500px">
+  <source media="(prefers-color-scheme: dark)" srcset=".github/chart-b-dark.png" width="600px">
+  <img src=".github/chart-b-light.png" width="600px">
 </picture>
+
+<br>
 
 **Takeaway: Forge compilation is consistently faster than Hardhat by a factor of `2.1x` to `5.2x`, depending on the amount of caching involved.**
 
