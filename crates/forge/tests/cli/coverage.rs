@@ -1757,7 +1757,7 @@ contract AContractTest is DSTest {
         .collect::<Vec<_>>();
 
     assert!(files.len() == 4);
-    let expected_artifacts = vec!["AContract.json", "AContractTest.json", "DSTest.json"];
+    let expected_artifacts = ["AContract.json", "AContractTest.json", "DSTest.json"];
     expected_artifacts.iter().for_each(|artifact| {
         assert!(files.contains(&artifact.to_string()));
     });
