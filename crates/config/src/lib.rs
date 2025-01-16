@@ -669,15 +669,8 @@ impl Config {
         add_profile(&Self::DEFAULT_PROFILE);
         add_profile(&config.profile);
 
-        // Ref: https://github.com/foundry-rs/foundry/issues/9665
-        // Enables the optimizer if the `optimizer_runs` has been set.
-        let optimizer = config.optimizer();
-        if optimizer.runs.is_some_and(|runs| runs > 0) && optimizer.enabled.is_none() {
-            config.optimizer = Some(true);
-        } else if optimizer.runs.is_none() && optimizer.enabled.is_some_and(|enabled| enabled) {
-            // Default optimizer runs set to 200 if `optimizer = true`.
-            config.optimizer_runs = Some(200);
-        };
+        config.normalize_optimizer_settings();
+
         Ok(config)
     }
 
@@ -843,9 +836,35 @@ impl Config {
         self
     }
 
+    /// Normalizes optimizer settings.
+    /// See <https://github.com/foundry-rs/foundry/issues/9665>
+    pub fn normalized_optimizer_settings(mut self) -> Self {
+        self.normalize_optimizer_settings();
+        self
+    }
+
     /// Normalizes the evm version if a [SolcReq] is set to a valid version.
     pub fn normalize_evm_version(&mut self) {
         self.evm_version = self.get_normalized_evm_version();
+    }
+
+    /// Normalizes optimizer settings:
+    /// - with default settings, optimizer is set to false and optimizer runs to 200
+    /// - if optimizer is set and optimizer runs not specified, then optimizer runs is set to 200
+    /// - enable optimizer if not explicitly set and optimizer runs set to a value greater than 0
+    pub fn normalize_optimizer_settings(&mut self) {
+        match (self.optimizer, self.optimizer_runs) {
+            // Default: set the optimizer to false and optimizer runs to 200.
+            (None, None) => {
+                self.optimizer = Some(false);
+                self.optimizer_runs = Some(200);
+            }
+            // Set the optimizer runs to 200 if the `optimizer` config set.
+            (Some(_), None) => self.optimizer_runs = Some(200),
+            // Enables optimizer if the `optimizer_runs` has been set with a value greater than 0.
+            (None, Some(runs)) => self.optimizer = Some(runs > 0),
+            _ => {}
+        }
     }
 
     /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version or if the solc
@@ -2670,7 +2689,7 @@ mod tests {
             let roundtrip = Figment::from(Config::from_provider(&original));
             for figment in &[original, roundtrip] {
                 let config = Config::from_provider(figment);
-                assert_eq!(config, Config::default());
+                assert_eq!(config, Config::default().normalized_optimizer_settings());
             }
             Ok(())
         });
@@ -2942,7 +2961,13 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
+            assert_eq!(
+                config,
+                Config {
+                    gas_limit: gas.into(),
+                    ..Config::default().normalized_optimizer_settings()
+                }
+            );
 
             Ok(())
         });
@@ -3590,7 +3615,7 @@ mod tests {
                     ]),
                     build_info_path: Some("build-info".into()),
                     always_use_create_2_factory: true,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3825,7 +3850,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     auto_detect_solc: false,
                     evm_version: EvmVersion::Berlin,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3877,7 +3902,7 @@ mod tests {
                     src: "mysrc".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3889,7 +3914,7 @@ mod tests {
                     src: "other-src".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -4192,7 +4217,7 @@ mod tests {
     #[test]
     fn config_roundtrip() {
         figment::Jail::expect_with(|jail| {
-            let default = Config::default();
+            let default = Config::default().normalized_optimizer_settings();
             let basic = default.clone().into_basic();
             jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
 
