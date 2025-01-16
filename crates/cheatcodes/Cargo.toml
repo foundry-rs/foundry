@@ -61,6 +61,3 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
-
-[build-dependencies]
-foundry-common.workspace = true

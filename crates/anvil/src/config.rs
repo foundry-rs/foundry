@@ -29,7 +29,6 @@ use alloy_signer_local::{
 use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
-pub use foundry_common::version::VERSION_MESSAGE;
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
@@ -57,6 +56,8 @@ use std::{
 };
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
+
+pub use foundry_common::version::VERSION_MESSAGE;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;

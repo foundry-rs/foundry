@@ -1,5 +1,6 @@
 [package]
 name = "foundry-cli"
+
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -48,9 +49,6 @@ tracing.workspace = true
 yansi.workspace = true
 
 tracing-tracy = { version = "0.11", optional = true }
-
-[build-dependencies]
-foundry-common.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,5 +1,6 @@
 [package]
 name = "foundry-common"
+
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +8,6 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-build = "build.rs"
 
 [lints]
 workspace = true
@@ -70,7 +70,8 @@ anstyle.workspace = true
 terminal_size.workspace = true
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
+chrono.workspace = true
+vergen = { workspace = true, features = [
     "build",
     "git",
     "gitcl",
