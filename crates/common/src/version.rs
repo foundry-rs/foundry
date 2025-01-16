@@ -1,7 +1,9 @@
-/// The SemVer compatible version for Foundry.
+//! Foundry version information.
+
+/// The SemVer compatible version information for Foundry.
 pub const VERSION_SEMVER: &str = env!("FOUNDRY_VERSION_SEMVER");
 
-/// The version message for the Foundry CLI.
+/// The version message information for the Foundry CLI.
 pub const VERSION_MESSAGE: &str = concat!(
     "\n",
     env!("FOUNDRY_VERSION_MESSAGE_0"),
