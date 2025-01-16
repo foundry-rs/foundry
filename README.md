@@ -109,23 +109,15 @@ _In the above benchmarks, compilation was always skipped_
 
 ### Compilation Benchmarks
 
-[vectorized/solady][solady] (version: `0.0.281`):
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/chart-a-dark.png" width="500px">
+  <img src=".github/chart-a-light.png" width="500px">
+</picture>
 
-| Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
-| ----------- | ----------- | --------------- | ------- |
-| Cold        | 0.58s       | 1.65s           | 2.8x    |
-| Light Cache | 0.38s       | 1.24s           | 3.3x    |
-| Deep Cache  | 0.57s       | 1.27s           | 2.2x    |
-| Full Cache  | 0.17s       | 0.35s           | 2.1x    |
-
-[openzeppelin/openzeppelin-contracts][openzeppelin] (version `5.1`):
-
-| Type        | Foundry 1.0 | Hardhat 2.22.17 | Speedup |
-| ----------- | ----------- | --------------- | ------- |
-| Cold        | 9.07s       | 28.08s          | 3.1x    |
-| Light Cache | 0.99s       | 5.11s           | 5.2x    |
-| Deep Cache  | 2.29s       | 8.66s           | 3.8x    |
-| Full Cache  | 0.18s       | 0.47s           | 2.6x    |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/chart-b-dark.png" width="500px">
+  <img src=".github/chart-b-light.png" width="500px">
+</picture>
 
 **Takeaway: Forge compilation is consistently faster than Hardhat by a factor of `2.1x` to `5.2x`, depending on the amount of caching involved.**
 
