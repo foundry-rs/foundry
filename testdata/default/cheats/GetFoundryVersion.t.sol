@@ -17,7 +17,7 @@ contract GetFoundryVersionTest is DSTest {
 
         // Step 2: Extract parts
         string memory semanticVersion = plusSplit[0]; // "0.3.0-dev"
-        string memory metadata = plusSplit[1];        // "34389e7850.1737037814.debug"
+        string memory metadata = plusSplit[1]; // "34389e7850.1737037814.debug"
 
         // Step 3: Further split metadata by "."
         string[] memory metadataComponents = vm.split(metadata, ".");
@@ -25,8 +25,8 @@ contract GetFoundryVersionTest is DSTest {
 
         // Step 4: Extract values
         string memory commitHash = metadataComponents[0]; // "34389e7850"
-        string memory timestamp = metadataComponents[1];  // "1737037814"
-        string memory buildType = metadataComponents[2];  // "debug"
+        string memory timestamp = metadataComponents[1]; // "1737037814"
+        string memory buildType = metadataComponents[2]; // "debug"
 
         // Validate semantic version (e.g., "0.3.0-stable" or "0.3.0-nightly")
         require(bytes(semanticVersion).length > 0, "Semantic version is empty");
