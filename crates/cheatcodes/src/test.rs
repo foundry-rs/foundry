@@ -3,14 +3,12 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
+use foundry_common::version::VERSION_MESSAGE;
 use foundry_evm_core::constants::MAGIC_SKIP;
 
 pub(crate) mod assert;
 pub(crate) mod assume;
 pub(crate) mod expect;
-
-// The version of the Foundry CLI.
-pub const VERSION_MESSAGE: &str = env!("FOUNDRY_SHORT_VERSION");
 
 impl Cheatcode for breakpoint_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {

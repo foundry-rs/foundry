@@ -9,11 +9,8 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::{
-    opts::{EtherscanOpts, GlobalArgs, RpcOpts},
-    VERSION_MESSAGE,
-};
-use foundry_common::ens::NameOrAddress;
+use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
+use foundry_common::{ens::NameOrAddress, version::VERSION_MESSAGE};
 use std::{path::PathBuf, str::FromStr};
 
 /// Perform Ethereum RPC calls from the comfort of your command line.

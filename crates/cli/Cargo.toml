@@ -7,7 +7,6 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-build = "build.rs"
 
 [lints]
 workspace = true
@@ -51,11 +50,7 @@ yansi.workspace = true
 tracing-tracy = { version = "0.11", optional = true }
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
+foundry-common.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

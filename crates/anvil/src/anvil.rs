@@ -3,7 +3,8 @@
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use eyre::Result;
-use foundry_cli::{opts::GlobalArgs, utils, VERSION_MESSAGE};
+use foundry_cli::{opts::GlobalArgs, utils};
+use foundry_common::version::VERSION_MESSAGE;
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]

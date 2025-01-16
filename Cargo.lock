@@ -3615,7 +3615,6 @@ dependencies = [
  "thiserror 2.0.11",
  "toml 0.8.19",
  "tracing",
- "vergen",
  "walkdir",
 ]
 
@@ -3666,7 +3665,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
- "vergen",
  "yansi",
 ]
 
@@ -3717,6 +3715,7 @@ dependencies = [
  "tower 0.4.13",
  "tracing",
  "url",
+ "vergen",
  "walkdir",
  "yansi",
 ]

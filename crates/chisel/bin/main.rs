@@ -13,9 +13,8 @@ use foundry_cli::{
     handler,
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
-    VERSION_MESSAGE,
 };
-use foundry_common::{evm::EvmArgs, fs};
+use foundry_common::{evm::EvmArgs, fs, version::VERSION_MESSAGE};
 use foundry_config::{
     figment::{
         value::{Dict, Map},
