@@ -9,14 +9,14 @@ use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use foundry_cli::opts::GlobalArgs;
-use foundry_common::version::VERSION_SEMVER;
+use foundry_common::version::VERSION_MESSAGE;
 use std::path::PathBuf;
 
 /// Build, test, fuzz, debug and deploy Solidity contracts.
 #[derive(Parser)]
 #[command(
     name = "forge",
-    version = VERSION_SEMVER,
+    version = VERSION_MESSAGE,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
     next_display_order = None,
 )]

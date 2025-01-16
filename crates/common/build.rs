@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // The version message for the Foundry CLI.
     // - The latest version from Cargo.toml.
     // - The long SHA of the latest commit.
-    // - The build timestamp in RFC3339 format.
+    // - The build timestamp in RFC3339 format and UNIX format in seconds.
     // - The build profile.
     //
     // Example:
@@ -69,12 +69,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // <BIN>
     // Version: 0.3.0-dev
     // Commit SHA: 5186142d3bb4d1be7bb4ade548b77c8e2270717e
-    // Build Timestamp: 2025-01-16T13:52:28.926928104Z
+    // Build Timestamp: 2025-01-16T15:04:03.522021223Z (1737039843)
     // Build Profile: debug
     // ```
     println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_0=Version: {pkg_version}{version_suffix}");
     println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_1=Commit SHA: {sha}");
-    println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_2=Build Timestamp: {timestamp}");
+    println!(
+        "cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_2=Build Timestamp: {timestamp} ({timestamp_unix})"
+    );
     println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_3=Build Profile: {profile}");
 
     Ok(())
