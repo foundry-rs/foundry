@@ -115,8 +115,6 @@ _In the above benchmarks, compilation was always skipped_
     <img src=".github/chart-a-light.png" width="600px">
   </picture>
 
-&nbsp;
-
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/chart-b-dark.png" width="600px">
     <img src=".github/chart-b-light.png" width="600px">
