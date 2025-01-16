@@ -150,7 +150,7 @@ impl CoverageArgs {
         let mut warning =
             "optimizer settings have been disabled for accurate coverage reports".to_string();
         if !self.ir_minimum {
-            warning += ", if you encounter \"stack too deep\" errors, consider using `--ir-minimum` which enables viaIR with mimimum optimization resolving most of the errors";
+            warning += ", if you encounter \"stack too deep\" errors, consider using `--ir-minimum` which enables viaIR with minimum optimization resolving most of the errors";
         }
 
         sh_warn!("{warning}")?;
