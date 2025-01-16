@@ -53,7 +53,7 @@ impl GlobalArgs {
         // Display a warning message if the current version is not stable.
         if std::env::var("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_err() &&
             !self.json &&
-            IS_NIGHTLY_VERSION == "true"
+            IS_NIGHTLY_VERSION
         {
             let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
         }

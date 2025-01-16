@@ -32,7 +32,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Whether the version is a nightly build.
-    println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION={is_nightly}");
+    if is_nightly {
+        println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION=true");
+    }
 
     // Set formatted version strings
     let pkg_version = env::var("CARGO_PKG_VERSION")?;

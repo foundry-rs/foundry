@@ -14,7 +14,7 @@ pub const VERSION_MESSAGE: &str = concat!(
 );
 
 /// Whether the version is a nightly build.
-pub const IS_NIGHTLY_VERSION: &str = env!("FOUNDRY_IS_NIGHTLY_VERSION");
+pub const IS_NIGHTLY_VERSION: bool = option_env!("FOUNDRY_IS_NIGHTLY_VERSION").is_some();
 
 /// The warning message for nightly versions.
 pub const NIGHTLY_VERSION_WARNING_MESSAGE: &str =
