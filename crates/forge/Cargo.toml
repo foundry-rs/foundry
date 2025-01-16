@@ -17,14 +17,6 @@ workspace = true
 name = "forge"
 path = "bin/main.rs"
 
-[build-dependencies]
-foundry-common.workspace = true
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }

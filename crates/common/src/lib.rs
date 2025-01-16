@@ -34,7 +34,6 @@ pub mod term;
 pub mod traits;
 pub mod transactions;
 mod utils;
-pub mod version;
 
 pub use constants::*;
 pub use contracts::*;

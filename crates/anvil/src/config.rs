@@ -29,6 +29,7 @@ use alloy_signer_local::{
 use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
+pub use foundry_cli::VERSION_MESSAGE;
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
@@ -70,14 +71,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
 /// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
-pub const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
 
 const BANNER: &str = r"
                              _   _

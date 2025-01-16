@@ -1010,7 +1010,6 @@ dependencies = [
  "tower 0.4.13",
  "tracing",
  "tracing-subscriber",
- "vergen",
  "yansi",
 ]
 
@@ -2054,7 +2053,6 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "tracing",
- "vergen",
  "yansi",
 ]
 
@@ -2128,7 +2126,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "vergen",
  "yansi",
 ]
 
@@ -3389,7 +3386,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "vergen",
  "watchexec",
  "watchexec-events",
  "watchexec-signals",
@@ -3592,7 +3588,6 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "base64 0.22.1",
- "chrono",
  "dialoguer",
  "ecdsa",
  "eyre",
@@ -3722,7 +3717,6 @@ dependencies = [
  "tower 0.4.13",
  "tracing",
  "url",
- "vergen",
  "walkdir",
  "yansi",
 ]

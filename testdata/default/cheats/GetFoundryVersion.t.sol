@@ -10,17 +10,16 @@ contract GetFoundryVersionTest is DSTest {
     function testGetFoundryVersion() public view {
         string memory fullVersionString = vm.getFoundryVersion();
 
+        // Ensure the version string contains a "+" separator
         string[] memory versionComponents = vm.split(fullVersionString, "+");
-        require(versionComponents.length == 3, "Invalid version format");
+        require(versionComponents.length == 2, "Invalid version format");
 
+        // Validate semantic version (e.g., "0.3.0-stable")
         string memory semanticVersion = versionComponents[0];
         require(bytes(semanticVersion).length > 0, "Semantic version is empty");
 
+        // Validate commit hash (e.g., "3a9576857a")
         string memory commitHash = versionComponents[1];
         require(bytes(commitHash).length > 0, "Commit hash is empty");
-
-        uint256 buildUnixTimestamp = vm.parseUint(versionComponents[2]);
-        uint256 minimumAcceptableTimestamp = 202406111234;
-        require(buildUnixTimestamp >= minimumAcceptableTimestamp, "Build timestamp is too old");
     }
 }
