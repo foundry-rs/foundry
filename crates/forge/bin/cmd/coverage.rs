@@ -108,6 +108,15 @@ impl CoverageArgs {
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
         let mut project = config.create_project(false, false)?;
+
+        // Set a different artifacts path for coverage. `out/coverage`.
+        // This is done to avoid overwriting the artifacts of the main build that maybe built with
+        // different optimizer settings or --via-ir. Optimizer settings are disabled for
+        // coverage builds.
+        let coverage_artifacts_path = project.artifacts_path().join("coverage");
+        project.paths.artifacts = coverage_artifacts_path.clone();
+        project.paths.build_infos = coverage_artifacts_path.join("build-info");
+
         if self.ir_minimum {
             // print warning message
             sh_warn!("{}", concat!(
@@ -138,6 +147,13 @@ impl CoverageArgs {
             project.settings.solc.optimizer.details = None;
             project.settings.solc.via_ir = None;
         }
+        let mut warning =
+            "optimizer settings have been disabled for accurate coverage reports".to_string();
+        if !self.ir_minimum {
+            warning += ", if you encounter \"stack too deep\" errors, consider using `--ir-minimum` which enables viaIR with mimimum optimization resolving most of the errors";
+        }
+
+        sh_warn!("{warning}")?;
 
         let output = ProjectCompiler::default()
             .compile(&project)?
