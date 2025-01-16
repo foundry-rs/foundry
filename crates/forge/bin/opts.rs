@@ -8,7 +8,7 @@ use crate::cmd::{
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
-use foundry_cli::{opts::GlobalArgs};
+use foundry_cli::opts::GlobalArgs;
 use foundry_common::version::VERSION_MESSAGE;
 use std::path::PathBuf;
 
