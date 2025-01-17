@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // - The build profile.
     // Example: forge 0.3.0-nightly+3cb96bde9b.1737036656.debug
     println!(
-            "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={pkg_version}{version_suffix}+{sha_short}.{profile}"
+            "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={pkg_version}{version_suffix}+{sha_short}.{build_timestamp_unix}.{profile}"
         );
 
     // The short version information for the Foundry CLI.
