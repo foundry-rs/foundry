@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".github/banner.png" alt="Foundry banner" />
+  <img src=".github/assets/banner.png" alt="Foundry banner" />
 
 &nbsp;
 
@@ -111,13 +111,13 @@ _In the above benchmarks, compilation was always skipped_
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/chart-a-dark.png" width="600px">
-    <img src=".github/chart-a-light.png" width="600px">
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/build_benchmark_solady_dark.png" width="600px">
+    <img src=".github/assets/build_benchmark_solady_light.png" width="600px">
   </picture>
 
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/chart-b-dark.png" width="600px">
-    <img src=".github/chart-b-light.png" width="600px">
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/build_benchmark_openzeppelin_dark.png" width="600px">
+    <img src=".github/assets/build_benchmark_openzeppelin_light.png" width="600px">
   </picture>
 
 &nbsp;
