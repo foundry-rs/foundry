@@ -1,7 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use chrono::Utc;
-use clap::{Parser, ValueHint};
+use clap::{builder::FalseyValueParser, ArgAction, Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
@@ -121,6 +121,14 @@ pub struct TestArgs {
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
+
+    /// Enable/disable writing snapshot results
+    #[arg(long, env = "FORGE_SNAPSHOT_EMIT", action = ArgAction::Set, default_value="true", default_missing_value = "true", require_equals=true, num_args = 0..=1)]
+    snapshot_emit: bool,
+
+    /// Check snapshot results
+    #[arg(long, env = "FORGE_SNAPSHOT_CHECK", value_parser=FalseyValueParser::new())]
+    snapshot_check: bool,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -662,7 +670,7 @@ impl TestArgs {
             if !gas_snapshots.is_empty() {
                 // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
                 // Exiting early with code 1 if differences are found.
-                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                if self.snapshot_check {
                     let differences_found = gas_snapshots.clone().into_iter().fold(
                         false,
                         |mut found, (group, snapshots)| {
@@ -717,17 +725,19 @@ impl TestArgs {
                     }
                 }
 
-                // Create `snapshots` directory if it doesn't exist.
-                fs::create_dir_all(&config.snapshots)?;
+                if self.snapshot_emit {
+                    // Create `snapshots` directory if it doesn't exist.
+                    fs::create_dir_all(&config.snapshots)?;
 
-                // Write gas snapshots to disk per group.
-                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
-                    fs::write_pretty_json_file(
-                        &config.snapshots.join(format!("{group}.json")),
-                        &snapshots,
-                    )
-                    .expect("Failed to write gas snapshots to disk");
-                });
+                    // Write gas snapshots to disk per group.
+                    gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                        fs::write_pretty_json_file(
+                            &config.snapshots.join(format!("{group}.json")),
+                            &snapshots,
+                        )
+                        .expect("Failed to write gas snapshots to disk");
+                    });
+                }
             }
 
             // Print suite summary.
@@ -971,6 +981,40 @@ mod tests {
         };
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
+    }
+
+    fn env_bool(env_name: &str, test_fn: impl Fn(Option<bool>)) {
+        for env_val in [None, Some(false), Some(true)] {
+            match env_val {
+                None => std::env::remove_var(env_name),
+                Some(value) => std::env::set_var(env_name, value.to_string()),
+            }
+            test_fn(env_val);
+        }
+    }
+
+    #[test]
+    fn snapshot_emit_env() {
+        env_bool("FORGE_SNAPSHOT_EMIT", |env_val| {
+            let args: TestArgs = TestArgs::parse_from(["foundry-cli"]);
+            assert!(args.snapshot_emit == env_val.unwrap_or(true));
+            let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--snapshot-emit"]);
+            assert!(args.snapshot_emit);
+            let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--snapshot-emit=true"]);
+            assert!(args.snapshot_emit);
+            let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--snapshot-emit=false"]);
+            assert!(!args.snapshot_emit);
+        });
+    }
+
+    #[test]
+    fn snapshot_check_env() {
+        env_bool("FORGE_SNAPSHOT_CHECK", |env_val| {
+            let args: TestArgs = TestArgs::parse_from(["foundry-cli"]);
+            assert!(args.snapshot_check == env_val.unwrap_or(false));
+            let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--snapshot-check"]);
+            assert!(args.snapshot_check);
+        });
     }
 
     forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
