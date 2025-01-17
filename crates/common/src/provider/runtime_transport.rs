@@ -346,7 +346,7 @@ mod tests {
 
         let handler = axum::routing::get(|actual_headers: HeaderMap| {
             let user_agent = HeaderName::from_str("User-Agent").unwrap();
-            assert!(actual_headers.contains_key(user_agent.clone()),);
+            assert!(actual_headers.contains_key(user_agent.clone()));
             assert_eq!(actual_headers[user_agent], HeaderValue::from_str("test-agent").unwrap());
 
             async { "" }
