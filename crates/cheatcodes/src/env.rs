@@ -175,11 +175,7 @@ impl Cheatcode for envOr_4Call {
 impl Cheatcode for envOr_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        let value = match env::var(name) {
-            Ok(env_var) if !env_var.is_empty() => env_var,
-            _ => defaultValue.to_string(),
-        };
-        Ok(value.abi_encode())
+        env_default(name, defaultValue, &DynSolType::String)
     }
 }
 
@@ -262,7 +258,10 @@ pub fn set_execution_context(context: ForgeContext) {
 }
 
 fn env(key: &str, ty: &DynSolType) -> Result {
-    get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, &val)))
+    get_env(key).and_then(|val| {
+        ensure!(!val.is_empty(), "env var value cannot be empty");
+        string::parse(&val, ty).map_err(map_env_err(key, &val))
+    })
 }
 
 fn env_default<T: SolValue>(key: &str, default: &T, ty: &DynSolType) -> Result {
