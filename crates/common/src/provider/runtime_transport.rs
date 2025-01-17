@@ -332,3 +332,61 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
     url.to_file_path()
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    #[tokio::test]
+    async fn test_user_agent_header() {
+        let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+        let shutdown_notify_clone = Arc::clone(&shutdown_notify);
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:1337").await.unwrap();
+
+        let handler = axum::routing::get(|actual_headers: HeaderMap| {
+            let user_agent = HeaderName::from_str("User-Agent").unwrap();
+            assert!(
+                actual_headers.contains_key(user_agent.clone()),
+            );
+            assert_eq!(actual_headers[user_agent], HeaderValue::from_str("test-agent").unwrap());
+
+            async { "" }
+        });
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, handler.into_make_service())
+                .with_graceful_shutdown(async move {
+                    shutdown_notify_clone.notified().await;
+                })
+                .await
+                .unwrap()
+        });
+
+        let transport = RuntimeTransportBuilder::new(Url::parse("http://127.0.0.1:1337").unwrap())
+            .with_headers(vec![
+                "User-Agent: test-agent".to_string(),
+                "Some-Header: some-header".to_string(),
+            ])
+            .build();
+
+        let inner = transport.connect_http().await.unwrap();
+
+        match inner {
+            InnerTransport::Http(http) => {
+                let client = http.client();
+                let _ = client.get("http://127.0.0.1:1337").send().await.unwrap();
+
+                // assert inside http_handler
+            }
+            _ => unreachable!(),
+        }
+
+        // Signal the server to shut down
+        shutdown_notify.notify_one();
+
+        // Wait for the server to shut down
+        server_task.await.unwrap();
+    }
+}
