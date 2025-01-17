@@ -176,7 +176,7 @@ impl RuntimeTransport {
             );
         }
 
-        if !headers.iter().any(|(k, _v)| k.as_str().starts_with("user-agent")) {
+        if !headers.iter().any(|(k, _v)| k.eq(&reqwest::header::USER_AGENT)) {
             headers.insert(
                 reqwest::header::USER_AGENT,
                 HeaderValue::from_str(DEFAULT_USER_AGENT)
