@@ -14,7 +14,11 @@ use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{evm::EvmArgs, fs, version::{LONG_VERSION, SHORT_VERSION}};
+use foundry_common::{
+    evm::EvmArgs,
+    fs,
+    version::{LONG_VERSION, SHORT_VERSION},
+};
 use foundry_config::{
     figment::{
         value::{Dict, Map},

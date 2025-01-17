@@ -57,7 +57,7 @@ use std::{
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
-pub use foundry_common::version::{SHORT_VERSION as VERSION_MESSAGE};
+pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;

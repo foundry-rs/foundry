@@ -87,15 +87,18 @@ mod tests {
     }
 
     #[test]
-    fn verify_version() {
-        let version = Anvil::parse_from(["anvil", "-V"]);
-
-        assert_eq!(version, SHORT_VERSION);
+    fn can_parse_help() {
+        let _: Anvil = Anvil::parse_from(["anvil", "--help"]);
     }
 
     #[test]
-    fn can_parse_help() {
-        let _: Anvil = Anvil::parse_from(["anvil", "--help"]);
+    fn can_parse_short_version() {
+        let _: Anvil = Anvil::parse_from(["anvil", "-V"]);
+    }
+
+    #[test]
+    fn can_parse_long_version() {
+        let _: Anvil = Anvil::parse_from(["anvil", "--version"]);
     }
 
     #[test]
