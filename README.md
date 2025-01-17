@@ -33,7 +33,7 @@ Foundry consists of:
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book]!**
 
-![Demo](.github/demo.gif)
+![Demo](.github/assets/demo.gif)
 
 ## Features
 
