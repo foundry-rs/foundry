@@ -73,4 +73,4 @@ terminal_size.workspace = true
 foundry-macros.workspace = true
 similar-asserts.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-axum = {workspace = true}
+axum = { workspace = true }
