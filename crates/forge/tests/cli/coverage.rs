@@ -1746,28 +1746,10 @@ contract AContractTest is DSTest {
 ...
 "#]]);
 
-    let coverage_artifacts = prj.artifacts().join("coverage");
-    assert!(coverage_artifacts.is_dir() && coverage_artifacts.exists());
+    // no artifacts are to be written
+    let artifacts = prj.artifacts();
 
-    let build_info = coverage_artifacts.join("build-info");
+    let files = files_with_ext(artifacts, "json").collect::<Vec<_>>();
 
-    assert!(build_info.is_dir() && build_info.exists());
-    let files = files_with_ext(&coverage_artifacts, "json")
-        .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-
-    assert!(files.len() == 4);
-    let expected_artifacts = ["AContract.json", "AContractTest.json", "DSTest.json"];
-    expected_artifacts.iter().for_each(|artifact| {
-        assert!(files.contains(&artifact.to_string()));
-    });
-
-    // Should recompile
-    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-...
-"#
-    ]]);
+    assert!(files.is_empty());
 });
