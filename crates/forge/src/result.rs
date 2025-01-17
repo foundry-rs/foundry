@@ -482,10 +482,10 @@ impl TestResult {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
-    /// Creates a failed test setup result.
-    pub fn setup_fail(setup: TestSetup) -> Self {
+    /// Creates a test setup result.
+    pub fn setup_result(setup: TestSetup) -> Self {
         Self {
-            status: TestStatus::Failure,
+            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
             reason: setup.reason,
             logs: setup.logs,
             traces: setup.traces,
@@ -752,14 +752,22 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
+    /// Addresses of external libraries deployed during setup.
+    pub deployed_libs: Vec<Address>,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,
+    /// Whether setup and entire test suite is skipped.
+    pub skipped: bool,
 }
 
 impl TestSetup {
     pub fn failed(reason: String) -> Self {
         Self { reason: Some(reason), ..Default::default() }
+    }
+
+    pub fn skipped(reason: String) -> Self {
+        Self { reason: Some(reason), skipped: true, ..Default::default() }
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {

@@ -1,7 +1,7 @@
 //! Helper trait and functions to format Ethereum types.
 
 use alloy_consensus::{
-    Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope, TxType,
+    Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope, TxType, Typed2718,
 };
 use alloy_network::{
     AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyTransactionReceipt, AnyTxEnvelope,
@@ -193,23 +193,23 @@ impl UIfmt for AnyTransactionReceipt {
 
         let mut pretty = format!(
             "
-blockHash               {}
-blockNumber             {}
-contractAddress         {}
-cumulativeGasUsed       {}
-effectiveGasPrice       {}
-from                    {}
-gasUsed                 {}
-logs                    {}
-logsBloom               {}
-root                    {}
-status                  {}
-transactionHash         {}
-transactionIndex        {}
-type                    {}
-blobGasPrice            {}
-blobGasUsed             {}
-authorizationList       {}",
+blockHash            {}
+blockNumber          {}
+contractAddress      {}
+cumulativeGasUsed    {}
+effectiveGasPrice    {}
+from                 {}
+gasUsed              {}
+logs                 {}
+logsBloom            {}
+root                 {}
+status               {}
+transactionHash      {}
+transactionIndex     {}
+type                 {}
+blobGasPrice         {}
+blobGasUsed          {}
+authorizationList    {}",
             block_hash.pretty(),
             block_number.pretty(),
             contract_address.pretty(),
@@ -233,13 +233,11 @@ authorizationList       {}",
         );
 
         if let Some(to) = to {
-            pretty.push_str(&format!("\nto                      {}", to.pretty()));
+            pretty.push_str(&format!("\nto                   {}", to.pretty()));
         }
 
         // additional captured fields
-        for (key, val) in other.iter() {
-            pretty.push_str(&format!("\n{key}             {val}"));
-        }
+        pretty.push_str(&other.pretty());
 
         pretty
     }
@@ -509,8 +507,8 @@ impl UIfmt for AnyTxEnvelope {
             Self::Unknown(tx) => {
                 format!(
                     "
-hash {}
-type {}
+hash                 {}
+type                 {}
 {}
                     ",
                     tx.hash.pretty(),
@@ -813,7 +811,6 @@ pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) 
             TxEnvelope::Eip4844(tx) => Some(tx.signature()),
             TxEnvelope::Eip7702(tx) => Some(tx.signature()),
             TxEnvelope::Legacy(tx) => Some(tx.signature()),
-            _ => None,
         },
         _ => None,
     };
@@ -901,7 +898,6 @@ fn pretty_block_basics<T>(block: &Block<T, alloy_rpc_types::Header<AnyHeader>>) 
                         excess_blob_gas,
                         parent_beacon_block_root,
                         requests_hash,
-                        target_blobs_per_block,
                     },
             },
         uncles: _,
@@ -933,8 +929,7 @@ withdrawalsRoot      {}
 totalDifficulty      {}
 blobGasUsed          {}
 excessBlobGas        {}
-requestsHash         {}
-targetBlobsPerBlock  {}",
+requestsHash         {}",
         base_fee_per_gas.pretty(),
         difficulty.pretty(),
         extra_data.pretty(),
@@ -962,7 +957,6 @@ targetBlobsPerBlock  {}",
         blob_gas_used.pretty(),
         excess_blob_gas.pretty(),
         requests_hash.pretty(),
-        target_blobs_per_block.pretty(),
     )
 }
 
@@ -1414,5 +1408,64 @@ value                0".to_string();
         );
         assert_eq!(Some("1424182926".to_string()), get_pretty_block_attr(&block, "timestamp"));
         assert_eq!(Some("163591".to_string()), get_pretty_block_attr(&block, "totalDifficulty"));
+    }
+
+    #[test]
+    fn test_receipt_other_fields_alignment() {
+        let receipt_json = serde_json::json!(
+        {
+          "status": "0x1",
+          "cumulativeGasUsed": "0x74e483",
+          "logs": [],
+          "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "type": "0x2",
+          "transactionHash": "0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d",
+          "transactionIndex": "0x10",
+          "blockHash": "0x54bafb12e8cea9bb355fbf03a4ac49e42a2a1a80fa6cf4364b342e2de6432b5d",
+          "blockNumber": "0x7b1ab93",
+          "gasUsed": "0xc222",
+          "effectiveGasPrice": "0x18961",
+          "from": "0x2d815240a61731c75fa01b2793e1d3ed09f289d0",
+          "to": "0x4200000000000000000000000000000000000000",
+          "contractAddress": null,
+          "l1BaseFeeScalar": "0x146b",
+          "l1BlobBaseFee": "0x6a83078",
+          "l1BlobBaseFeeScalar": "0xf79c5",
+          "l1Fee": "0x51a9af7fd3",
+          "l1GasPrice": "0x972fe4acc",
+          "l1GasUsed": "0x640"
+        });
+
+        let receipt: AnyTransactionReceipt = serde_json::from_value(receipt_json).unwrap();
+        let formatted = receipt.pretty();
+
+        let expected = r#"
+blockHash            0x54bafb12e8cea9bb355fbf03a4ac49e42a2a1a80fa6cf4364b342e2de6432b5d
+blockNumber          129084307
+contractAddress      
+cumulativeGasUsed    7660675
+effectiveGasPrice    100705
+from                 0x2D815240A61731c75Fa01b2793E1D3eD09F289d0
+gasUsed              49698
+logs                 []
+logsBloom            0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                 
+status               1 (success)
+transactionHash      0x91181b0dca3b29aa136eeb2f536be5ce7b0aebc949be1c44b5509093c516097d
+transactionIndex     16
+type                 2
+blobGasPrice         
+blobGasUsed          
+authorizationList    
+to                   0x4200000000000000000000000000000000000000
+l1BaseFeeScalar      5227
+l1BlobBaseFee        111685752
+l1BlobBaseFeeScalar  1014213
+l1Fee                350739202003
+l1GasPrice           40583973580
+l1GasUsed            1600
+"#;
+
+        assert_eq!(formatted.trim(), expected.trim());
     }
 }

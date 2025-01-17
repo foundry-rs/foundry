@@ -28,6 +28,12 @@ contract Emitter {
         emit Something(topic1, topic2, topic3, data);
     }
 
+    function emitNEvents(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data, uint256 n) public {
+        for (uint256 i = 0; i < n; i++) {
+            emit Something(topic1, topic2, topic3, data);
+        }
+    }
+
     function emitMultiple(
         uint256[2] memory topic1,
         uint256[2] memory topic2,
@@ -596,4 +602,83 @@ contract ExpectEmitTest is DSTest {
     //     // amounts of indexed topics.
     //     emitter.emitEvent(1, 2, 3, 4);
     // }
+}
+
+contract ExpectEmitCountTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    Emitter emitter;
+
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
+
+    function setUp() public {
+        emitter = new Emitter();
+    }
+
+    function testCountNoEmit() public {
+        vm.expectEmit(0);
+        emit Something(1, 2, 3, 4);
+        emitter.doesNothing();
+    }
+
+    function testFailNoEmit() public {
+        vm.expectEmit(0);
+        emit Something(1, 2, 3, 4);
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
+    function testCountNEmits() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count);
+    }
+
+    function testFailCountLessEmits() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count - 1);
+    }
+
+    function testCountMoreEmits() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count + 1);
+    }
+
+    /// Test zero emits from a specific address (emitter).
+
+    function testCountNoEmitFromAddress() public {
+        vm.expectEmit(address(emitter), 0);
+        emit Something(1, 2, 3, 4);
+        emitter.doesNothing();
+    }
+
+    function testFailNoEmitFromAddress() public {
+        vm.expectEmit(address(emitter), 0);
+        emit Something(1, 2, 3, 4);
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
+    function testCountEmitsFromAddress() public {
+        uint64 count = 2;
+        vm.expectEmit(address(emitter), count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count);
+    }
+
+    function testFailCountEmitsFromAddress() public {
+        uint64 count = 3;
+        vm.expectEmit(address(emitter), count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitNEvents(1, 2, 3, 4, count - 1);
+    }
+
+    function testFailEmitSomethingElse() public {
+        uint64 count = 2;
+        vm.expectEmit(count);
+        emit Something(1, 2, 3, 4);
+        emitter.emitSomethingElse(23214);
+    }
 }

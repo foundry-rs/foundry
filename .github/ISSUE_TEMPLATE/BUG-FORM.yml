@@ -34,6 +34,10 @@ body:
           placeholder: "Run forge --version and paste the output here"
     - type: input
       attributes:
+          label: What version of Foundryup are you on?
+          placeholder: "Run foundryup --version and paste the output here"
+    - type: input
+      attributes:
           label: What command(s) is the bug in?
           description: Leave empty if not relevant
           placeholder: "For example: forge test"

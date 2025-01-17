@@ -591,6 +591,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -958,6 +959,7 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1214,9 +1216,6 @@ forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.wipe_contracts();
     prj.clear();
 
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
-
     prj.add_test(
         "Simple",
         r#"
@@ -1264,7 +1263,7 @@ Compiler run successful!
 Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
-  [244864] SimpleContractTest::test()
+  [..] SimpleContractTest::test()
     ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
     ├─ [22630] SimpleContract::increment()
@@ -1291,9 +1290,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.wipe_contracts();
     prj.clear();
-
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
 
     prj.add_test(
         "Simple",
@@ -1322,11 +1318,10 @@ contract SimpleContractTest is Test {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vvvv", "--decode-internal", "test"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [406629] SimpleContractTest::test()
+  [..] SimpleContractTest::test()
     ├─ [370554] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 1737 bytes of code
     ├─ [2511] SimpleContract::setStr("new value")
@@ -1335,8 +1330,7 @@ Traces:
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 ...
-"#
-    ]]);
+"#]]);
 });
 
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
@@ -1423,6 +1417,7 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1508,6 +1503,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1586,6 +1582,7 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
@@ -2026,6 +2023,48 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 6 skipped (6 total tests)
 "#]]);
 });
 
+forgetest_init!(skip_setup, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SkipCounterSetup is Test {
+
+    function setUp() public {
+        vm.skip(true, "skip counter test");
+    }
+
+    function test_require1() public pure {
+        require(1 > 2);
+    }
+
+    function test_require2() public pure {
+        require(1 > 2);
+    }
+
+    function test_require3() public pure {
+        require(1 > 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "SkipCounterSetup"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:SkipCounterSetup
+[SKIP: skipped: skip counter test] setUp() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});
+
 forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
     prj.wipe_contracts();
     prj.insert_ds_test();
@@ -2235,13 +2274,6 @@ Use --match-contract and --match-path to further limit the search.
 "#]]);
 });
 
-forgetest_init!(deprecated_regex_arg, |prj, cmd| {
-    cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
-Warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
-
-"#]]);
-});
-
 // Test a script that calls vm.rememberKeys
 forgetest_init!(script_testing, |prj, cmd| {
     prj
@@ -2299,6 +2331,7 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2410,7 +2443,7 @@ contract Dummy {
 
     let dump_path = prj.root().join("dump.json");
 
-    cmd.args(["test", "--debug", "testDummy", "--dump", dump_path.to_str().unwrap()]);
+    cmd.args(["test", "--mt", "testDummy", "--debug", "--dump", dump_path.to_str().unwrap()]);
     cmd.assert_success();
 
     assert!(dump_path.exists());
@@ -2421,6 +2454,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2669,6 +2703,8 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
@@ -2723,4 +2759,80 @@ Encountered 1 failing test in test/Foo.t.sol:ContractTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
+});
+
+// Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
+// verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
+forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.add_test(
+        "DebugTraceRecordingTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract DebugTraceRecordingTest is Test {
+    function test_start_stop_recording() public {
+        vm.startDebugTraceRecording();
+        Counter counter = new Counter();
+        counter.increment();
+        vm.stopAndReturnDebugTraceRecording();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_start_stop_recording", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
+[PASS] test_start_stop_recording() ([GAS])
+Traces:
+  [..] DebugTraceRecordingTest::test_start_stop_recording()
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});
+
+forgetest!(test_fail_deprecation_warning, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "WarnDeprecationTestFail.t.sol",
+        r#"
+    import "./test.sol";
+    contract WarnDeprecationTestFail is DSTest {
+        function testFail_deprecated() public {
+            revert("deprecated");
+        }
+
+        function testFail_deprecated2() public {
+            revert("deprecated2");
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "WarnDeprecationTestFail"])
+        .assert_success()
+        .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated, testFail_deprecated2.
+"#);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(colored_traces, |prj, cmd| {
+    cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
 });

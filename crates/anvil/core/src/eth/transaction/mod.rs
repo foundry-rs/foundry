@@ -6,8 +6,8 @@ use alloy_consensus::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
         TxEip7702,
     },
-    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
-    TxEnvelope, TxLegacy, TxReceipt,
+    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
+    TxReceipt, Typed2718,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
@@ -619,7 +619,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
                 TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-                _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
             },
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
@@ -1260,7 +1259,7 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
         } as u8;
         let receipt = ReceiptWithBloom::<Receipt<alloy_rpc_types::Log>>::from(value);
         let status = receipt.status();
-        let cumulative_gas_used = receipt.cumulative_gas_used() as u64;
+        let cumulative_gas_used = receipt.cumulative_gas_used();
         let logs = receipt.logs().to_vec();
         let logs_bloom = receipt.logs_bloom;
 
@@ -1269,7 +1268,7 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
 }
 
 impl TypedReceipt {
-    pub fn cumulative_gas_used(&self) -> u128 {
+    pub fn cumulative_gas_used(&self) -> u64 {
         self.as_receipt_with_bloom().cumulative_gas_used()
     }
 
@@ -1653,7 +1652,7 @@ mod tests {
         let receipt = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false.into(),
-                cumulative_gas_used: 0x1u128,
+                cumulative_gas_used: 0x1,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(
@@ -1688,7 +1687,7 @@ mod tests {
         let expected = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false.into(),
-                cumulative_gas_used: 0x1u128,
+                cumulative_gas_used: 0x1,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(

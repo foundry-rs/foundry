@@ -24,9 +24,9 @@
 //! #[derive(Clone, Debug, Parser)]
 //! pub struct MyArgs {
 //!     #[command(flatten)]
-//!     evm_args: EvmArgs,
+//!     evm: EvmArgs,
 //!     #[command(flatten)]
-//!     opts: BuildArgs,
+//!     build: BuildArgs,
 //! }
 //!
 //! // add `Figment` and `Config` converters
@@ -48,7 +48,6 @@ pub mod compiler;
 pub mod config;
 pub mod coverage;
 pub mod create;
-pub mod debug;
 pub mod doc;
 pub mod eip712;
 pub mod flatten;

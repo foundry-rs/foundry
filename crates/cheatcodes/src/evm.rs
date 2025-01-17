@@ -485,7 +485,10 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to());
+        ccx.ecx.env.block.set_blob_excess_gas_and_price(
+            (*newBlobBaseFee).to(),
+            ccx.ecx.spec_id() >= SpecId::PRAGUE,
+        );
         Ok(Default::default())
     }
 }
@@ -855,11 +858,12 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
-
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
                 node.trace.steps = Vec::new();
+                node.logs = Vec::new();
+                node.ordering = Vec::new();
             });
         }
 
@@ -1145,14 +1149,15 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                     account_access.oldBalance != account_access.newBalance
             })
             .for_each(|account_access| {
-                let account_diff =
-                    state_diffs.entry(account_access.account).or_insert(AccountStateDiffs {
-                        label: state.labels.get(&account_access.account).cloned(),
-                        ..Default::default()
-                    });
-
                 // Record account balance diffs.
                 if account_access.oldBalance != account_access.newBalance {
+                    let account_diff =
+                        state_diffs.entry(account_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
+                                label: state.labels.get(&account_access.account).cloned(),
+                                ..Default::default()
+                            }
+                        });
                     // Update balance diff. Do not overwrite the initial balance if already set.
                     if let Some(diff) = &mut account_diff.balance_diff {
                         diff.new_value = account_access.newBalance;
@@ -1167,6 +1172,12 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                 // Record account state diffs.
                 for storage_access in &account_access.storageAccesses {
                     if storage_access.isWrite && !storage_access.reverted {
+                        let account_diff = state_diffs
+                            .entry(storage_access.account)
+                            .or_insert_with(|| AccountStateDiffs {
+                                label: state.labels.get(&storage_access.account).cloned(),
+                                ..Default::default()
+                            });
                         // Update state diff. Do not overwrite the initial value if already set.
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {

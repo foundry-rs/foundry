@@ -5,7 +5,7 @@ use foundry_cli::utils::LoadConfig;
 use foundry_common::{evm::EvmArgs, shell};
 use foundry_config::fix::fix_tomls;
 
-foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_args);
+foundry_config::impl_figment_convert!(ConfigArgs, build, evm);
 
 /// CLI arguments for `forge config`.
 #[derive(Clone, Debug, Parser)]
@@ -20,10 +20,10 @@ pub struct ConfigArgs {
 
     // support nested build arguments
     #[command(flatten)]
-    opts: BuildArgs,
+    build: BuildArgs,
 
     #[command(flatten)]
-    evm_args: EvmArgs,
+    evm: EvmArgs,
 }
 
 impl ConfigArgs {
@@ -37,6 +37,7 @@ impl ConfigArgs {
 
         let config = self
             .try_load_config_unsanitized_emit_warnings()?
+            .normalized_optimizer_settings()
             // we explicitly normalize the version, so mimic the behavior when invoking solc
             .normalized_evm_version();
 

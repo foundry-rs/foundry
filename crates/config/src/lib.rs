@@ -58,7 +58,9 @@ pub mod utils;
 pub use utils::*;
 
 mod endpoints;
-pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
+pub use endpoints::{
+    ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
+};
 
 mod etherscan;
 use etherscan::{
@@ -235,7 +237,7 @@ pub struct Config {
     ///      install it
     pub offline: bool,
     /// Whether to activate optimizer
-    pub optimizer: bool,
+    pub optimizer: Option<bool>,
     /// The number of runs specifies roughly how often each opcode of the deployed code will be
     /// executed across the life-time of the contract. This means it is a trade-off parameter
     /// between code size (deploy cost) and code execution cost (cost after deployment).
@@ -246,7 +248,7 @@ pub struct Config {
     /// A common misconception is that this parameter specifies the number of iterations of the
     /// optimizer. This is not true: The optimizer will always run as many times as it can
     /// still improve the code.
-    pub optimizer_runs: usize,
+    pub optimizer_runs: Option<usize>,
     /// Switch optimizer components on or off in detail.
     /// The "enabled" switch above provides two defaults which can be
     /// tweaked here. If "details" is given, "enabled" can be omitted.
@@ -667,6 +669,8 @@ impl Config {
         add_profile(&Self::DEFAULT_PROFILE);
         add_profile(&config.profile);
 
+        config.normalize_optimizer_settings();
+
         Ok(config)
     }
 
@@ -832,9 +836,35 @@ impl Config {
         self
     }
 
+    /// Normalizes optimizer settings.
+    /// See <https://github.com/foundry-rs/foundry/issues/9665>
+    pub fn normalized_optimizer_settings(mut self) -> Self {
+        self.normalize_optimizer_settings();
+        self
+    }
+
     /// Normalizes the evm version if a [SolcReq] is set to a valid version.
     pub fn normalize_evm_version(&mut self) {
         self.evm_version = self.get_normalized_evm_version();
+    }
+
+    /// Normalizes optimizer settings:
+    /// - with default settings, optimizer is set to false and optimizer runs to 200
+    /// - if optimizer is set and optimizer runs not specified, then optimizer runs is set to 200
+    /// - enable optimizer if not explicitly set and optimizer runs set to a value greater than 0
+    pub fn normalize_optimizer_settings(&mut self) {
+        match (self.optimizer, self.optimizer_runs) {
+            // Default: set the optimizer to false and optimizer runs to 200.
+            (None, None) => {
+                self.optimizer = Some(false);
+                self.optimizer_runs = Some(200);
+            }
+            // Set the optimizer runs to 200 if the `optimizer` config set.
+            (Some(_), None) => self.optimizer_runs = Some(200),
+            // Enables optimizer if the `optimizer_runs` has been set with a value greater than 0.
+            (None, Some(runs)) => self.optimizer = Some(runs > 0),
+            _ => {}
+        }
     }
 
     /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version or if the solc
@@ -949,6 +979,7 @@ impl Config {
     }
 
     /// Resolves globs and builds a mapping from individual source files to their restrictions
+    #[expect(clippy::disallowed_macros)]
     fn restrictions(
         &self,
         paths: &ProjectPathsConfig,
@@ -977,7 +1008,20 @@ impl Config {
                 if !map.contains_key(source) {
                     map.insert(source.clone(), res);
                 } else {
-                    map.get_mut(source.as_path()).unwrap().merge(res);
+                    let value = map.remove(source.as_path()).unwrap();
+                    if let Some(merged) = value.clone().merge(res) {
+                        map.insert(source.clone(), merged);
+                    } else {
+                        // `sh_warn!` is a circular dependency, preventing us from using it here.
+                        eprintln!(
+                            "{}",
+                            yansi::Paint::yellow(&format!(
+                                "Failed to merge compilation restrictions for {}",
+                                source.display()
+                            ))
+                        );
+                        map.insert(source.clone(), value);
+                    }
                 }
             }
         }
@@ -1042,12 +1086,6 @@ impl Config {
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
-
-        // Remove snapshot directory.
-        let snapshot_dir = project.root().join(&self.snapshots);
-        if snapshot_dir.exists() {
-            let _ = fs::remove_dir_all(&snapshot_dir);
-        }
 
         Ok(())
     }
@@ -1295,7 +1333,7 @@ impl Config {
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         if let Some(endpoint) = endpoints.remove(maybe_alias) {
-            return Some(endpoint.map(Cow::Owned));
+            return Some(endpoint.url().map(Cow::Owned));
         }
 
         if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
@@ -1456,8 +1494,8 @@ impl Config {
     /// and  <https://github.com/ethereum/solidity/blob/bbb7f58be026fdc51b0b4694a6f25c22a1425586/docs/using-the-compiler.rst?plain=1#L293-L294>
     pub fn optimizer(&self) -> Optimizer {
         Optimizer {
-            enabled: Some(self.optimizer),
-            runs: Some(self.optimizer_runs),
+            enabled: self.optimizer,
+            runs: self.optimizer_runs,
             // we always set the details because `enabled` is effectively a specific details profile
             // that can still be modified
             details: self.optimizer_details.clone(),
@@ -2288,8 +2326,8 @@ impl Default for Config {
             vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
-            optimizer: true,
-            optimizer_runs: 200,
+            optimizer: None,
+            optimizer_runs: None,
             optimizer_details: None,
             model_checker: None,
             extra_output: Default::default(),
@@ -2533,10 +2571,10 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::{RpcEndpointConfig, RpcEndpointType},
+        endpoints::{RpcEndpoint, RpcEndpointType},
         etherscan::ResolvedEtherscanConfigs,
     };
-    use endpoints::RpcAuth;
+    use endpoints::{RpcAuth, RpcEndpointConfig};
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
         vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
@@ -2651,7 +2689,7 @@ mod tests {
             let roundtrip = Figment::from(Config::from_provider(&original));
             for figment in &[original, roundtrip] {
                 let config = Config::from_provider(figment);
-                assert_eq!(config, Config::default());
+                assert_eq!(config, Config::default().normalized_optimizer_settings());
             }
             Ok(())
         });
@@ -2923,7 +2961,13 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
+            assert_eq!(
+                config,
+                Config {
+                    gas_limit: gas.into(),
+                    ..Config::default().normalized_optimizer_settings()
+                }
+            );
 
             Ok(())
         });
@@ -3206,17 +3250,19 @@ mod tests {
                 RpcEndpoints::new([
                     (
                         "optimism",
-                        RpcEndpointType::String(RpcEndpoint::Url(
+                        RpcEndpointType::String(RpcEndpointUrl::Url(
                             "https://example.com/".to_string()
                         ))
                     ),
                     (
                         "mainnet",
-                        RpcEndpointType::Config(RpcEndpointConfig {
-                            endpoint: RpcEndpoint::Env("${_CONFIG_MAINNET}".to_string()),
-                            retries: Some(3),
-                            retry_backoff: Some(1000),
-                            compute_units_per_second: Some(1000),
+                        RpcEndpointType::Config(RpcEndpoint {
+                            endpoint: RpcEndpointUrl::Env("${_CONFIG_MAINNET}".to_string()),
+                            config: RpcEndpointConfig {
+                                retries: Some(3),
+                                retry_backoff: Some(1000),
+                                compute_units_per_second: Some(1000),
+                            },
                             auth: None,
                         })
                     ),
@@ -3227,10 +3273,23 @@ mod tests {
             let resolved = config.rpc_endpoints.resolved();
             assert_eq!(
                 RpcEndpoints::new([
-                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    (
+                        "optimism",
+                        RpcEndpointType::String(RpcEndpointUrl::Url(
+                            "https://example.com/".to_string()
+                        ))
+                    ),
                     (
                         "mainnet",
-                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                        RpcEndpointType::Config(RpcEndpoint {
+                            endpoint: RpcEndpointUrl::Env("${_CONFIG_MAINNET}".to_string()),
+                            config: RpcEndpointConfig {
+                                retries: Some(3),
+                                retry_backoff: Some(1000),
+                                compute_units_per_second: Some(1000),
+                            },
+                            auth: None,
+                        })
                     ),
                 ])
                 .resolved(),
@@ -3263,17 +3322,19 @@ mod tests {
                 RpcEndpoints::new([
                     (
                         "optimism",
-                        RpcEndpointType::String(RpcEndpoint::Url(
+                        RpcEndpointType::String(RpcEndpointUrl::Url(
                             "https://example.com/".to_string()
                         ))
                     ),
                     (
                         "mainnet",
-                        RpcEndpointType::Config(RpcEndpointConfig {
-                            endpoint: RpcEndpoint::Env("${_CONFIG_MAINNET}".to_string()),
-                            retries: Some(3),
-                            retry_backoff: Some(1000),
-                            compute_units_per_second: Some(1000),
+                        RpcEndpointType::Config(RpcEndpoint {
+                            endpoint: RpcEndpointUrl::Env("${_CONFIG_MAINNET}".to_string()),
+                            config: RpcEndpointConfig {
+                                retries: Some(3),
+                                retry_backoff: Some(1000),
+                                compute_units_per_second: Some(1000)
+                            },
                             auth: Some(RpcAuth::Env("Bearer ${_CONFIG_AUTH}".to_string())),
                         })
                     ),
@@ -3285,19 +3346,21 @@ mod tests {
                 RpcEndpoints::new([
                     (
                         "optimism",
-                        RpcEndpointType::String(RpcEndpoint::Url(
+                        RpcEndpointType::String(RpcEndpointUrl::Url(
                             "https://example.com/".to_string()
                         ))
                     ),
                     (
                         "mainnet",
-                        RpcEndpointType::Config(RpcEndpointConfig {
-                            endpoint: RpcEndpoint::Url(
+                        RpcEndpointType::Config(RpcEndpoint {
+                            endpoint: RpcEndpointUrl::Url(
                                 "https://eth-mainnet.alchemyapi.io/v2/123455".to_string()
                             ),
-                            retries: Some(3),
-                            retry_backoff: Some(1000),
-                            compute_units_per_second: Some(1000),
+                            config: RpcEndpointConfig {
+                                retries: Some(3),
+                                retry_backoff: Some(1000),
+                                compute_units_per_second: Some(1000)
+                            },
                             auth: Some(RpcAuth::Raw("Bearer 123456".to_string())),
                         })
                     ),
@@ -3343,18 +3406,22 @@ mod tests {
             assert_eq!(
                 endpoints,
                 RpcEndpoints::new([
-                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    ("optimism", RpcEndpointUrl::Url("https://example.com/".to_string())),
                     (
                         "mainnet",
-                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                        RpcEndpointUrl::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123455".to_string()
+                        )
                     ),
                     (
                         "mainnet_2",
-                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                        RpcEndpointUrl::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123456".to_string()
+                        )
                     ),
                     (
                         "mainnet_3",
-                        RpcEndpoint::Url(
+                        RpcEndpointUrl::Url(
                             "https://eth-mainnet.alchemyapi.io/v2/123456/98765".to_string()
                         )
                     ),
@@ -3530,17 +3597,17 @@ mod tests {
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
-                        ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                        ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                        ("optimism", RpcEndpointUrl::Url("https://example.com/".to_string())),
+                        ("mainnet", RpcEndpointUrl::Env("${RPC_MAINNET}".to_string())),
                         (
                             "mainnet_2",
-                            RpcEndpoint::Env(
+                            RpcEndpointUrl::Env(
                                 "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
                             )
                         ),
                         (
                             "mainnet_3",
-                            RpcEndpoint::Env(
+                            RpcEndpointUrl::Env(
                                 "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
                                     .to_string()
                             )
@@ -3548,7 +3615,7 @@ mod tests {
                     ]),
                     build_info_path: Some("build-info".into()),
                     always_use_create_2_factory: true,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3664,11 +3731,11 @@ mod tests {
             assert_eq!(
                 config.rpc_endpoints,
                 RpcEndpoints::new([
-                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                    ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                    ("optimism", RpcEndpointUrl::Url("https://example.com/".to_string())),
+                    ("mainnet", RpcEndpointUrl::Env("${RPC_MAINNET}".to_string())),
                     (
                         "mainnet_2",
-                        RpcEndpoint::Env(
+                        RpcEndpointUrl::Env(
                             "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
                         )
                     ),
@@ -3783,7 +3850,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     auto_detect_solc: false,
                     evm_version: EvmVersion::Berlin,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3835,7 +3902,7 @@ mod tests {
                     src: "mysrc".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3847,7 +3914,7 @@ mod tests {
                     src: "other-src".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -4033,8 +4100,8 @@ mod tests {
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
-            assert_eq!(config.optimizer_runs, 999);
-            assert!(!config.optimizer);
+            assert_eq!(config.optimizer_runs, Some(999));
+            assert!(!config.optimizer.unwrap());
 
             Ok(())
         });
@@ -4150,7 +4217,7 @@ mod tests {
     #[test]
     fn config_roundtrip() {
         figment::Jail::expect_with(|jail| {
-            let default = Config::default();
+            let default = Config::default().normalized_optimizer_settings();
             let basic = default.clone().into_basic();
             jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
 

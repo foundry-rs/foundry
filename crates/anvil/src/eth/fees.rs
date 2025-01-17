@@ -5,6 +5,7 @@ use crate::eth::{
 use alloy_consensus::Header;
 use alloy_eips::{
     calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
+    eip7840::BlobParams,
 };
 use alloy_primitives::B256;
 use anvil_core::eth::transaction::TypedTransaction;
@@ -172,7 +173,7 @@ impl FeeManager {
 
     /// Calculates the next block blob base fee, using the provided excess blob gas
     pub fn get_next_block_blob_base_fee_per_gas(&self, excess_blob_gas: u128) -> u128 {
-        crate::revm::primitives::calc_blob_gasprice(excess_blob_gas as u64)
+        alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas as u64)
     }
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and
@@ -182,7 +183,7 @@ impl FeeManager {
         blob_gas_used: u128,
         blob_excess_gas: u128,
     ) -> u64 {
-        crate::revm::primitives::calc_excess_blob_gas(blob_gas_used as u64, blob_excess_gas as u64)
+        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used as u64, blob_excess_gas as u64)
     }
 }
 
@@ -246,7 +247,7 @@ impl FeeHistoryService {
         let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee();
+        let base_fee_per_blob_gas = header.blob_fee(BlobParams::cancun());
         let mut item = FeeHistoryCacheItem {
             base_fee,
             gas_used_ratio: 0f64,
@@ -270,7 +271,7 @@ impl FeeHistoryService {
                 blob_gas_used.map(|g| g / MAX_DATA_GAS_PER_BLOCK as f64).unwrap_or(0 as f64);
 
             // extract useful tx info (gas_used, effective_reward)
-            let mut transactions: Vec<(u128, u128)> = receipts
+            let mut transactions: Vec<(_, _)> = receipts
                 .iter()
                 .enumerate()
                 .map(|(i, receipt)| {
@@ -312,7 +313,7 @@ impl FeeHistoryService {
             item.rewards = reward_percentiles
                 .into_iter()
                 .filter_map(|p| {
-                    let target_gas = (p * gas_used / 100f64) as u128;
+                    let target_gas = (p * gas_used / 100f64) as u64;
                     let mut sum_gas = 0;
                     for (gas_used, effective_reward) in transactions.iter().cloned() {
                         sum_gas += gas_used;

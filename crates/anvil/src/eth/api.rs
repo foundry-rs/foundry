@@ -2315,7 +2315,7 @@ impl EthApi {
             let to = tx.to();
             let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = tx.gas_limit() as u128;
+            let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 

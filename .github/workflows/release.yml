@@ -3,6 +3,7 @@ name: release
 on:
   push:
     tags:
+      - "stable"
       - "v*.*.*"
   schedule:
     - cron: "0 0 * * *"
@@ -30,7 +31,7 @@ jobs:
       - name: Compute release name and tag
         id: release_info
         run: |
-          if [[ $IS_NIGHTLY ]]; then
+          if [[ ${IS_NIGHTLY} == 'true' ]]; then
             echo "tag_name=nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
             echo "release_name=Nightly ($(date '+%Y-%m-%d'))" >> $GITHUB_OUTPUT
           else
@@ -43,7 +44,7 @@ jobs:
       # which allows users to roll back. It is also used to build
       # the changelog.
       - name: Create build-specific nightly tag
-        if: ${{ env.IS_NIGHTLY }}
+        if: ${{ env.IS_NIGHTLY == 'true' }}
         uses: actions/github-script@v7
         env:
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
@@ -57,7 +58,7 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@v4
         with:
           configuration: "./.github/changelog.json"
-          fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
+          fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || '' }}
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,6 +68,10 @@ jobs:
     uses: ./.github/workflows/docker-publish.yml
 
   release:
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
     name: ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
@@ -156,6 +161,7 @@ jobs:
             du -h "$bin" || true
             ldd "$bin" || true
             $bin --version || true
+            echo "${name}_bin_path=${bin}" >> $GITHUB_ENV
           done
 
       - name: Archive binaries
@@ -163,7 +169,7 @@ jobs:
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
           OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
-          VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+          VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
@@ -187,7 +193,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         env:
           OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
-          VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+          VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
         shell: bash
         run: |
           sudo apt-get -y install help2man
@@ -208,16 +214,25 @@ jobs:
         with:
           name: ${{ needs.prepare.outputs.release_name }}
           tag_name: ${{ needs.prepare.outputs.tag_name }}
-          prerelease: ${{ env.IS_NIGHTLY }}
+          prerelease: ${{ env.IS_NIGHTLY == 'true' }}
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.foundry_man }}
 
+      - name: Binaries attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ${{ env.anvil_bin_path }}
+            ${{ env.cast_bin_path }}
+            ${{ env.chisel_bin_path }}
+            ${{ env.forge_bin_path }}
+
       # If this is a nightly release, it also updates the release
       # tagged `nightly` for compatibility with `foundryup`
       - name: Update nightly release
-        if: ${{ env.IS_NIGHTLY }}
+        if: ${{ env.IS_NIGHTLY == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           name: "Nightly"
@@ -239,7 +254,7 @@ jobs:
 
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag
-        if: ${{ env.IS_NIGHTLY }}
+        if: ${{ env.IS_NIGHTLY == 'true' }}
         uses: actions/github-script@v7
         with:
           script: |
