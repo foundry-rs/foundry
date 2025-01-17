@@ -175,7 +175,11 @@ impl Cheatcode for envOr_4Call {
 impl Cheatcode for envOr_5Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, defaultValue } = self;
-        env_default(name, defaultValue, &DynSolType::String)
+        let value = match env::var(name) {
+            Ok(env_var) if !env_var.is_empty() => env_var,
+            _ => defaultValue.to_string(),
+        };
+        Ok(value.abi_encode())
     }
 }
 

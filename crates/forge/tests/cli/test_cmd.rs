@@ -2,10 +2,11 @@
 
 use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
+use foundry_common::fs;
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
-    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{pretty_err, OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
@@ -2835,4 +2836,66 @@ forgetest_init!(colored_traces, |prj, cmd| {
     cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
         .assert_success()
         .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
+});
+
+// Tests that default value is used for empty string env var
+// <https://github.com/foundry-rs/foundry/issues/7408>
+forgetest_init!(test_default_string_env_var, |prj, cmd| {
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ContractTest is Test {
+    function test_string_env_var() public {
+        string memory defaultFoo = "DEFAULT_FOO";
+        string memory myFoo = vm.envOr("FOO", defaultFoo);
+        assertEq(myFoo, "DEFAULT_FOO");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mt", "test_string_env_var"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] test_string_env_var() ([GAS])
+...
+
+"#]],
+    );
+
+    let env_file = prj.root().join(".env");
+    pretty_err(&env_file, fs::write(&env_file, "FOO="));
+    cmd.forge_fuse().args(["test", "--mt", "test_string_env_var"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] test_string_env_var() ([GAS])
+...
+
+"#]],
+    );
+
+    let env_file = prj.root().join(".env");
+    pretty_err(&env_file, fs::write(&env_file, "FOO=\"\""));
+    cmd.forge_fuse().args(["test", "--mt", "test_string_env_var"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] test_string_env_var() ([GAS])
+...
+
+"#]],
+    );
+
+    let env_file = prj.root().join(".env");
+    pretty_err(&env_file, fs::write(&env_file, "FOO=FOO_SET_AS_ENV_VAR"));
+    cmd.forge_fuse().args(["test", "--mt", "test_string_env_var"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: assertion failed: FOO_SET_AS_ENV_VAR != DEFAULT_FOO] test_string_env_var() ([GAS])
+...
+
+"#]],
+    );
 });
