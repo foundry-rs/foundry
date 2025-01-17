@@ -30,7 +30,7 @@ pub struct InspectArgs {
     pub field: ContractArtifactField,
 
     /// Pretty print the selected field, if supported.
-    #[arg(long)]
+    #[arg(long, default_value = "true")]
     pub pretty: bool,
 
     /// All build arguments are supported
@@ -78,6 +78,7 @@ impl InspectArgs {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
+        let is_json = shell::is_json();
         // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
@@ -85,7 +86,7 @@ impl InspectArgs {
                     .abi
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-                if pretty {
+                if !is_json {
                     let source = foundry_cli::utils::abi_to_solidity(abi, &contract.name)?;
                     sh_println!("{source}")?;
                 } else {
@@ -105,10 +106,18 @@ impl InspectArgs {
                 print_json_str(&artifact.legacy_assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
-                print_json(&artifact.method_identifiers)?;
+                if is_json {
+                    print_json(&artifact.method_identifiers)?;
+                } else {
+                    todo!("table version")
+                }
             }
             ContractArtifactField::GasEstimates => {
-                print_json(&artifact.gas_estimates)?;
+                if is_json {
+                    print_json(&artifact.gas_estimates)?;
+                } else {
+                    todo!("prettier fmt")
+                }
             }
             ContractArtifactField::StorageLayout => {
                 print_storage_layout(artifact.storage_layout.as_ref())?;
@@ -146,7 +155,11 @@ impl InspectArgs {
                         );
                     }
                 }
-                print_json(&out)?;
+                if is_json {
+                    print_json(&out)?;
+                } else {
+                    todo!("table version")
+                }
             }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
@@ -162,7 +175,11 @@ impl InspectArgs {
                         );
                     }
                 }
-                print_json(&out)?;
+                if is_json {
+                    print_json(&out)?;
+                } else {
+                    todo!("table version")
+                }
             }
             ContractArtifactField::Eof => {
                 print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
