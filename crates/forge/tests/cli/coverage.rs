@@ -1692,7 +1692,7 @@ fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
     cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
 }
 
-forgetest!(diff_artifact_dir, |prj, cmd| {
+forgetest!(no_artifacts_written, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -1747,9 +1747,7 @@ contract AContractTest is DSTest {
 "#]]);
 
     // no artifacts are to be written
-    let artifacts = prj.artifacts();
-
-    let files = files_with_ext(artifacts, "json").collect::<Vec<_>>();
+    let files = files_with_ext(prj.artifacts(), "json").collect::<Vec<_>>();
 
     assert!(files.is_empty());
 });
