@@ -1,18 +1,20 @@
 //! Foundry version information.
 
 /// The SemVer compatible version information for Foundry.
-pub const VERSION_SEMVER: &str = env!("FOUNDRY_VERSION_SEMVER");
+pub const SEMVER_VERSION: &str = env!("FOUNDRY_SEMVER_VERSION");
 
-/// The version message information for the Foundry CLI.
-pub const VERSION_MESSAGE: &str = concat!(
+/// The short version message information for the Foundry CLI.
+pub const SHORT_VERSION: &str = env!("FOUNDRY_SHORT_VERSION");
+
+/// The long version message information for the Foundry CLI.
+pub const LONG_VERSION: &str = concat!(
+    env!("FOUNDRY_LONG_VERSION_0"),
     "\n",
-    env!("FOUNDRY_VERSION_MESSAGE_0"),
+    env!("FOUNDRY_LONG_VERSION_1"),
     "\n",
-    env!("FOUNDRY_VERSION_MESSAGE_1"),
+    env!("FOUNDRY_LONG_VERSION_2"),
     "\n",
-    env!("FOUNDRY_VERSION_MESSAGE_2"),
-    "\n",
-    env!("FOUNDRY_VERSION_MESSAGE_3"),
+    env!("FOUNDRY_LONG_VERSION_3"),
 );
 
 /// Whether the version is a nightly build.

@@ -70,7 +70,6 @@ anstyle.workspace = true
 terminal_size.workspace = true
 
 [build-dependencies]
-chrono.workspace = true
 vergen = { workspace = true, features = [
     "build",
     "git",

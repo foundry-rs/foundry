@@ -3,7 +3,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
-use foundry_common::version::VERSION_SEMVER;
+use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
 
 pub(crate) mod assert;
@@ -27,7 +27,7 @@ impl Cheatcode for breakpoint_1Call {
 impl Cheatcode for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        Ok(VERSION_SEMVER.to_string().abi_encode())
+        Ok(SEMVER_VERSION.abi_encode())
     }
 }
 

@@ -3693,7 +3693,6 @@ dependencies = [
  "anstream",
  "anstyle",
  "async-trait",
- "chrono",
  "clap",
  "comfy-table",
  "dunce",

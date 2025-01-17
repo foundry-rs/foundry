@@ -1,6 +1,5 @@
 use std::{env, error::Error};
 
-use chrono::DateTime;
 use vergen::EmitBuilder;
 
 #[allow(clippy::disallowed_macros)]
@@ -12,6 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-env-changed=PROFILE");
 
     EmitBuilder::builder()
+        .build_date()
         .build_timestamp()
         .git_describe(false, true, None)
         .git_sha(false)
@@ -38,26 +38,31 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Set formatted version strings
     let pkg_version = env::var("CARGO_PKG_VERSION")?;
-
-    // Append the YYYYMMDD build timestamp to the version string, removing the dashes to make it
-    // SemVer compliant.
-    let timestamp = env::var("VERGEN_BUILD_TIMESTAMP")?;
-    let timestamp_unix = DateTime::parse_from_rfc3339(&timestamp)?.timestamp();
-
+    
     // Append the profile to the version string, defaulting to "debug".
     let profile = env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));
 
-    // The SemVer compatible version for Foundry.
+    // Set the build date and build timestamp.
+    let build_date = env::var("VERGEN_BUILD_DATE")?;
+    let build_timestamp = env::var("VERGEN_BUILD_TIMESTAMP")?;
+    
+    // The SemVer compatible version information for Foundry.
     // - The latest version from Cargo.toml.
     // - The short SHA of the latest commit.
     // - The UNIX formatted build timestamp.
     // - The build profile.
     // Example: forge 0.3.0-nightly+3cb96bde9b.1737036656.debug
     println!(
-        "cargo:rustc-env=FOUNDRY_VERSION_SEMVER={pkg_version}{version_suffix}+{sha_short}.{timestamp_unix}.{profile}"
+        "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={pkg_version}{version_suffix}+{sha_short}.{profile}"
     );
 
-    // The version message for the Foundry CLI.
+    // The short version information for the Foundry CLI.
+    // - The latest version from Cargo.toml
+    // - The short SHA of the latest commit.
+    // Example: 0.3.0-dev (3cb96bde9b)
+    println!("cargo:rustc-env=FOUNDRY_SHORT_VERSION={pkg_version}{version_suffix} ({sha_short} {build_date})");
+    
+    // The long version infomration for the Foundry CLI.
     // - The latest version from Cargo.toml.
     // - The long SHA of the latest commit.
     // - The build timestamp in RFC3339 format and UNIX format in seconds.
@@ -72,12 +77,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Build Timestamp: 2025-01-16T15:04:03.522021223Z (1737039843)
     // Build Profile: debug
     // ```
-    println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_0=Version: {pkg_version}{version_suffix}");
-    println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_1=Commit SHA: {sha}");
+    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_0=Version: {pkg_version}{version_suffix}");
+    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_1=Commit SHA: {sha}");
     println!(
-        "cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_2=Build Timestamp: {timestamp} ({timestamp_unix})"
+        "cargo:rustc-env=FOUNDRY_LONG_VERSION_2=Build Timestamp: {build_timestamp}"
     );
-    println!("cargo:rustc-env=FOUNDRY_VERSION_MESSAGE_3=Build Profile: {profile}");
+    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_3=Build Profile: {profile}");
 
     Ok(())
 }
