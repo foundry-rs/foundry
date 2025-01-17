@@ -1,4 +1,4 @@
-use super::{install, test::TestArgs};
+use super::{install, test::TestArgs, watch::WatchArgs};
 use alloy_primitives::{map::HashMap, Address, Bytes, U256};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
@@ -318,6 +318,14 @@ impl CoverageArgs {
             }?;
         }
         Ok(())
+    }
+
+    pub(crate) fn is_watch(&self) -> bool {
+        self.test.is_watch()
+    }
+
+    pub(crate) fn watch(&self) -> &WatchArgs {
+        &self.test.watch
     }
 }
 
