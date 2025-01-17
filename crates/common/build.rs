@@ -42,8 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Append the profile to the version string, defaulting to "debug".
     let profile = env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));
 
-    // Set the build date and build timestamp.
-    let build_date = env::var("VERGEN_BUILD_DATE")?;
+    // Set the build timestamp.
     let build_timestamp = env::var("VERGEN_BUILD_TIMESTAMP")?;
     
     // The SemVer compatible version information for Foundry.
@@ -60,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // - The latest version from Cargo.toml
     // - The short SHA of the latest commit.
     // Example: 0.3.0-dev (3cb96bde9b)
-    println!("cargo:rustc-env=FOUNDRY_SHORT_VERSION={pkg_version}{version_suffix} ({sha_short} {build_date})");
+    println!("cargo:rustc-env=FOUNDRY_SHORT_VERSION={pkg_version}{version_suffix} ({sha_short} {build_timestamp})");
     
     // The long version infomration for the Foundry CLI.
     // - The latest version from Cargo.toml.
