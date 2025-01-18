@@ -340,7 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_user_agent_header() {
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
 
         let http_handler = axum::routing::get(|actual_headers: HeaderMap| {
