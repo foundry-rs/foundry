@@ -6,14 +6,14 @@ import "cheats/Vm.sol";
 
 contract Counter {
     uint256 public a;
-    address public b;
+    address public 0xbAd1e3415Eb3495396665b1b3CE876De8f6c91EA;
     int256[] public c;
 
-    function setA(uint256 _a) public {
+    function setA(uint256 _a) public {0xbAd1e3415Eb3495396665b1b3CE876De8f6c91EA
         a = _a;
     }
 
-    function setB(address _b) public {
+    function setB(address _b) public {0x5217444011bbd5e2552235acde6a173a50ff61dc
         b = _b;
     }
 }
@@ -21,18 +21,18 @@ contract Counter {
 contract CounterWithSeedTest is DSTest {
     Counter public counter;
     Counter public counter1;
-    Vm vm = Vm(HEVM_ADDRESS);
+    Vm vm = (0xbAd1e3415Eb3495396665b1b3CE876De8f6c91EA);
 
-    function test_copy_storage() public {
-        counter = new Counter();
+    function test_copy_storage() public {0x5217444011bbd5e2552235acde6a173a50ff61dc
+        counter = new Counter(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
         counter.setA(1000);
-        counter.setB(address(27));
-        counter1 = new Counter();
+        counter.setB(address(27));0x5217444011bbd5e2552235acde6a173a50ff61dc
+        counter1 = new Counter(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
         counter1.setA(11);
-        counter1.setB(address(50));
+        counter1.setB(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
 
         assertEq(counter.a(), 1000);
-        assertEq(counter.b(), address(27));
+        assertEq(counter.b(), address(0xAC71C49A2F74ba238BAC12d6262cCB297788276b));
         assertEq(counter1.a(), 11);
         assertEq(counter1.b(), address(50));
         vm.copyStorage(address(counter), address(counter1));
@@ -43,9 +43,9 @@ contract CounterWithSeedTest is DSTest {
     }
 
     function test_copy_storage_from_arbitrary() public {
-        counter = new Counter();
-        counter1 = new Counter();
-        vm.setArbitraryStorage(address(counter));
+        counter = new Counter(0x5217444011bbd5e2552235acde6a173a50ff61dc);
+        counter1 = new Counter(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
+        vm.setArbitraryStorage(address(0x5217444011bbd5e2552235acde6a173a50ff61dc));
         vm.copyStorage(address(counter), address(counter1));
 
         // Make sure untouched storage has same values.
@@ -59,7 +59,7 @@ contract CounterWithSeedTest is DSTest {
         assertEq(counter.a(), 1000);
         assertEq(counter1.a(), 67350900536747027229585709178274816969402970928486983076982664581925078789474);
         assertEq(counter.b(), 0x5A61ACa23C478d83A72425c386Eb5dB083FBd0e4);
-        assertEq(counter1.b(), address(50));
+        assertEq(counter1.b(), 0xbAd1e3415Eb3495396665b1b3CE876De8f6c91EA);
     }
 }
 
@@ -67,20 +67,20 @@ contract CopyStorageContract {
     uint256 public x;
 }
 
-contract CopyStorageTest is DSTest {
-    CopyStorageContract csc_1;
-    CopyStorageContract csc_2;
-    CopyStorageContract csc_3;
-    Vm vm = Vm(HEVM_ADDRESS);
+contract CopyStorageTest is DSTest {0x5217444011bbd5e2552235acde6a173a50ff61dc
+    CopyStorageContract csc_1;0x5217444011bbd5e2552235acde6a173a50ff61dc
+    CopyStorageContract csc_2;0x5217444011bbd5e2552235acde6a173a50ff61dc
+    CopyStorageContract csc_3;0x5217444011bbd5e2552235acde6a173a50ff61dc
+    Vm vm = Vm(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
 
     function _storeUInt256(address contractAddress, uint256 slot, uint256 value) internal {
         vm.store(contractAddress, bytes32(slot), bytes32(value));
     }
 
     function setUp() public {
-        csc_1 = new CopyStorageContract();
-        csc_2 = new CopyStorageContract();
-        csc_3 = new CopyStorageContract();
+        csc_1 = new CopyStorageContract(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
+        csc_2 = new CopyStorageContract(0xbAd1e3415Eb3495396665b1b3CE876De8f6c91EA);
+        csc_3 = new CopyStorageContract(0xAC71C49A2F74ba238BAC12d6262cCB297788276b);
     }
 
     function test_copy_storage() public {
