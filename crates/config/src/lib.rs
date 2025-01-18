@@ -930,8 +930,9 @@ impl Config {
     ///
     /// ```
     /// use foundry_config::Config;
-    /// let config = Config::load_with_root(".").sanitized();
-    /// let project = config.project();
+    /// let config = Config::load_with_root(".")?.sanitized();
+    /// let project = config.project()?;
+    /// # Ok::<_, eyre::Error>(())
     /// ```
     pub fn project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(self.cache, false)
@@ -1179,8 +1180,9 @@ impl Config {
     /// ```
     /// use foundry_compilers::solc::Solc;
     /// use foundry_config::Config;
-    /// let config = Config::load_with_root(".").sanitized();
+    /// let config = Config::load_with_root(".")?.sanitized();
     /// let paths = config.project_paths::<Solc>();
+    /// # Ok::<_, eyre::Error>(())
     /// ```
     pub fn project_paths<L>(&self) -> ProjectPathsConfig<L> {
         let mut builder = ProjectPathsConfig::builder()

@@ -34,7 +34,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 /// use foundry_cli::cmd::forge::build::BuildArgs;
 /// use foundry_config::Config;
 /// # fn t(args: BuildArgs) {
-/// let config = (&args).load_config()?;
+/// let config = args.load_config()?;
 /// # }
 /// ```
 ///
