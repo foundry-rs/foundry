@@ -28,16 +28,6 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 /// In order to override them in the foundry `Config` they need to be merged into an existing
 /// `figment::Provider`, like `foundry_config::Config` is.
 ///
-/// # Example
-///
-/// ```
-/// use foundry_cli::cmd::forge::build::BuildArgs;
-/// use foundry_config::Config;
-/// # fn t(args: BuildArgs) {
-/// let config = args.load_config()?;
-/// # }
-/// ```
-///
 /// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
 /// then merged into an existing `Config`, effectively overwriting them.
 ///
