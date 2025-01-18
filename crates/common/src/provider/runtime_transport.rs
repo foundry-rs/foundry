@@ -176,7 +176,7 @@ impl RuntimeTransport {
             );
         }
 
-        if !headers.iter().any(|(k, _v)| k.eq(&reqwest::header::USER_AGENT)) {
+        if !headers.contains_key(reqwest::header::USER_AGENT) {
             headers.insert(
                 reqwest::header::USER_AGENT,
                 HeaderValue::from_str(DEFAULT_USER_AGENT)
@@ -340,9 +340,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_user_agent_header() {
-        let shutdown_notify = Arc::new(tokio::sync::Notify::new());
-        let shutdown_notify_clone = Arc::clone(&shutdown_notify);
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:1337").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
 
         let http_handler = axum::routing::get(|actual_headers: HeaderMap| {
             let user_agent = HeaderName::from_str("User-Agent").unwrap();
@@ -352,31 +351,23 @@ mod tests {
         });
 
         let server_task = tokio::spawn(async move {
-            axum::serve(listener, http_handler.into_make_service())
-                .with_graceful_shutdown(async move {
-                    shutdown_notify_clone.notified().await;
-                })
-                .await
-                .unwrap()
+            axum::serve(listener, http_handler.into_make_service()).await.unwrap()
         });
 
-        let transport = RuntimeTransportBuilder::new(Url::parse("http://127.0.0.1:1337").unwrap())
+        let transport = RuntimeTransportBuilder::new(url.clone())
             .with_headers(vec!["User-Agent: test-agent".to_string()])
             .build();
         let inner = transport.connect_http().await.unwrap();
 
         match inner {
             InnerTransport::Http(http) => {
-                let _ = http.client().get("http://127.0.0.1:1337").send().await.unwrap();
+                let _ = http.client().get(url).send().await.unwrap();
 
                 // assert inside http_handler
             }
             _ => unreachable!(),
         }
 
-        // Signal the server to shut down
-        shutdown_notify.notify_one();
-        // Wait for the server to shut down
-        server_task.await.unwrap();
+        server_task.abort();
     }
 }
