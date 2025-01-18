@@ -1,3 +1,7 @@
+use super::{
+    creation_code::fetch_creation_code,
+    interface::{fetch_abi_from_etherscan, load_abi_from_file},
+};
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
@@ -6,13 +10,7 @@ use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils,
-};
-use foundry_config::Config;
-
-use super::{
-    creation_code::fetch_creation_code,
-    interface::{fetch_abi_from_etherscan, load_abi_from_file},
+    utils::{self, LoadConfig},
 };
 
 /// CLI arguments for `cast creation-args`.
@@ -35,10 +33,9 @@ pub struct ConstructorArgsArgs {
 
 impl ConstructorArgsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, etherscan, rpc, abi_path } = self;
+        let Self { contract, mut etherscan, rpc, abi_path } = self;
 
-        let mut etherscan = etherscan;
-        let config = Config::from(&rpc);
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
         let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;

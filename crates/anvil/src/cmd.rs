@@ -587,9 +587,10 @@ pub struct AnvilEvmArgs {
 impl AnvilEvmArgs {
     pub fn resolve_rpc_alias(&mut self) {
         if let Some(fork_url) = &self.fork_url {
-            let config = Config::load_with_providers(FigmentProviders::Anvil);
-            if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
-                self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+            if let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil) {
+                if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                    self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+                }
             }
         }
     }

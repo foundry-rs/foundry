@@ -7,7 +7,10 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     Client,
 };
-use foundry_cli::{opts::EtherscanOpts, utils::Git};
+use foundry_cli::{
+    opts::EtherscanOpts,
+    utils::{Git, LoadConfig},
+};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{
@@ -96,7 +99,7 @@ impl CloneArgs {
             self;
 
         // step 0. get the chain and api key from the config
-        let config = Config::from(&etherscan);
+        let config = etherscan.load_config()?;
         let chain = config.chain.unwrap_or_default();
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, etherscan_api_key.clone())?;
@@ -547,7 +550,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &Path) -> Result<ProjectCompileOutput> {
-    let mut config = Config::load_with_root(root).sanitized();
+    let mut config = Config::load_with_root(root)?.sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
     let compiler = ProjectCompiler::new();

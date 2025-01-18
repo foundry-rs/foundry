@@ -58,7 +58,7 @@ impl_figment_convert_basic!(InstallArgs);
 
 impl InstallArgs {
     pub fn run(self) -> Result<()> {
-        let mut config = self.try_load_config_emit_warnings()?;
+        let mut config = self.load_config()?;
         self.opts.install(&mut config, self.dependencies)
     }
 }
