@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_lint::{
-    linter::{ProjectLinter, Severity},
+    linter::{Linter, Severity},
     sol::SolidityLinter,
 };
 use foundry_cli::utils::LoadConfig;
@@ -62,14 +62,11 @@ impl LintArgs {
             std::process::exit(0);
         }
 
-        let linter = if project.compiler.solc.is_some() {
-            SolidityLinter::new().with_severity(self.severity)
+        if project.compiler.solc.is_some() {
+            SolidityLinter::new().with_severity(self.severity).lint(&sources)?;
         } else {
             todo!("Linting not supported for this language");
         };
-
-        let output = ProjectLinter::new(linter).lint(&sources)?;
-        sh_println!("{}", &output)?;
 
         Ok(())
     }
