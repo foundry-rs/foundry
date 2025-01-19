@@ -50,8 +50,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         auto_detect_solc: false,
         auto_detect_remappings: true,
         offline: true,
-        optimizer: false,
-        optimizer_runs: 1000,
+        optimizer: Some(false),
+        optimizer_runs: Some(1000),
         optimizer_details: Some(OptimizerDetails {
             yul: Some(false),
             yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
@@ -426,6 +426,7 @@ Compiler run successful!
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_source(
         "foo.sol",
         r"
@@ -475,14 +476,35 @@ forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
 // test that optimizer runs works
 forgetest!(can_set_optimizer_runs, |prj, cmd| {
     // explicitly set optimizer runs
-    let config = Config { optimizer_runs: 1337, ..Default::default() };
+    let config = Config { optimizer_runs: Some(1337), ..Default::default() };
     prj.write_config(config);
 
     let config = cmd.config();
-    assert_eq!(config.optimizer_runs, 1337);
+    assert_eq!(config.optimizer_runs, Some(1337));
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
-    assert_eq!(config.optimizer_runs, 300);
+    assert_eq!(config.optimizer_runs, Some(300));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9665>
+forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
+    // explicitly set optimizer runs
+    let config = Config { optimizer_runs: Some(1337), ..Default::default() };
+    assert!(config.optimizer.is_none());
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert!(config.optimizer.unwrap());
+});
+
+// test `optimizer_runs` set to 200 by default if optimizer enabled
+forgetest!(optimizer_runs_default, |prj, cmd| {
+    // explicitly set optimizer runs
+    let config = Config { optimizer: Some(true), ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert_eq!(config.optimizer_runs, Some(200));
 });
 
 // test that gas_price can be set
@@ -887,4 +909,404 @@ contract CounterTest {
     )
     .unwrap();
     cmd.forge_fuse().args(["build"]).assert_success();
+});
+
+forgetest_init!(test_default_config, |prj, cmd| {
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+remappings = ["forge-std/=lib/forge-std/src/"]
+auto_detect_remappings = true
+libraries = []
+cache = true
+cache_path = "cache"
+snapshots = "snapshots"
+broadcast = "broadcast"
+allow_paths = []
+include_paths = []
+skip = []
+force = false
+evm_version = "cancun"
+gas_reports = ["*"]
+gas_reports_ignore = []
+gas_reports_include_tests = false
+auto_detect_solc = true
+offline = false
+optimizer = false
+optimizer_runs = 200
+verbosity = 0
+ignored_error_codes = [
+    "license",
+    "code-size",
+    "init-code-size",
+    "transient-storage",
+]
+ignored_warnings_from = []
+deny_warnings = false
+test_failures_file = "cache/test-failures"
+show_progress = false
+eof = false
+transaction_timeout = 120
+ffi = false
+always_use_create_2_factory = false
+prompt_timeout = 120
+sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
+tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
+initial_balance = "0xffffffffffffffffffffffff"
+block_number = 1
+gas_limit = 1073741824
+block_base_fee_per_gas = 0
+block_coinbase = "0x0000000000000000000000000000000000000000"
+block_timestamp = 1
+block_difficulty = 0
+block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
+memory_limit = 134217728
+extra_output = []
+extra_output_files = []
+names = false
+sizes = false
+via_ir = false
+ast = false
+no_storage_caching = false
+no_rpc_rate_limit = false
+use_literal_content = false
+bytecode_hash = "ipfs"
+cbor_metadata = true
+sparse_mode = false
+build_info = false
+compilation_restrictions = []
+additional_compiler_profiles = []
+assertions_revert = true
+isolate = false
+disable_block_gas_limit = false
+odyssey = false
+unchecked_cheatcode_artifacts = false
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
+create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+legacy_assertions = false
+
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
+
+[profile.default.rpc_storage_caching]
+chains = "all"
+endpoints = "all"
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+multiline_func_header = "attributes_first"
+quote_style = "double"
+number_underscore = "preserve"
+hex_underscore = "remove"
+single_line_statement_blocks = "preserve"
+override_spacing = false
+wrap_comments = false
+ignore = []
+contract_new_lines = false
+sort_imports = false
+
+[doc]
+out = "docs"
+title = ""
+book = "book.toml"
+homepage = "README.md"
+ignore = []
+
+[fuzz]
+runs = 256
+max_test_rejects = 65536
+dictionary_weight = 40
+include_storage = true
+include_push_bytes = true
+max_fuzz_dictionary_addresses = 15728640
+max_fuzz_dictionary_values = 6553600
+gas_report_samples = 256
+failure_persist_dir = "cache/fuzz"
+failure_persist_file = "failures"
+show_logs = false
+
+[invariant]
+runs = 256
+depth = 500
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+max_fuzz_dictionary_addresses = 15728640
+max_fuzz_dictionary_values = 6553600
+shrink_run_limit = 5000
+max_assume_rejects = 65536
+gas_report_samples = 256
+failure_persist_dir = "cache/invariant"
+show_metrics = false
+
+[labels]
+
+[vyper]
+
+[bind_json]
+out = "utils/JsonBindings.sol"
+include = []
+exclude = []
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["config", "--json"]).assert_success().stdout_eq(str![[r#"
+{
+  "src": "src",
+  "test": "test",
+  "script": "script",
+  "out": "out",
+  "libs": [
+    "lib"
+  ],
+  "remappings": [
+    "forge-std/=lib/forge-std/src/"
+  ],
+  "auto_detect_remappings": true,
+  "libraries": [],
+  "cache": true,
+  "cache_path": "cache",
+  "snapshots": "snapshots",
+  "broadcast": "broadcast",
+  "allow_paths": [],
+  "include_paths": [],
+  "skip": [],
+  "force": false,
+  "evm_version": "cancun",
+  "gas_reports": [
+    "*"
+  ],
+  "gas_reports_ignore": [],
+  "gas_reports_include_tests": false,
+  "solc": null,
+  "auto_detect_solc": true,
+  "offline": false,
+  "optimizer": false,
+  "optimizer_runs": 200,
+  "optimizer_details": null,
+  "model_checker": null,
+  "verbosity": 0,
+  "eth_rpc_url": null,
+  "eth_rpc_jwt": null,
+  "eth_rpc_timeout": null,
+  "eth_rpc_headers": null,
+  "etherscan_api_key": null,
+  "ignored_error_codes": [
+    "license",
+    "code-size",
+    "init-code-size",
+    "transient-storage"
+  ],
+  "ignored_warnings_from": [],
+  "deny_warnings": false,
+  "match_test": null,
+  "no_match_test": null,
+  "match_contract": null,
+  "no_match_contract": null,
+  "match_path": null,
+  "no_match_path": null,
+  "no_match_coverage": null,
+  "test_failures_file": "cache/test-failures",
+  "threads": null,
+  "show_progress": false,
+  "fuzz": {
+    "runs": 256,
+    "max_test_rejects": 65536,
+    "seed": null,
+    "dictionary_weight": 40,
+    "include_storage": true,
+    "include_push_bytes": true,
+    "max_fuzz_dictionary_addresses": 15728640,
+    "max_fuzz_dictionary_values": 6553600,
+    "gas_report_samples": 256,
+    "failure_persist_dir": "cache/fuzz",
+    "failure_persist_file": "failures",
+    "show_logs": false,
+    "timeout": null
+  },
+  "invariant": {
+    "runs": 256,
+    "depth": 500,
+    "fail_on_revert": false,
+    "call_override": false,
+    "dictionary_weight": 80,
+    "include_storage": true,
+    "include_push_bytes": true,
+    "max_fuzz_dictionary_addresses": 15728640,
+    "max_fuzz_dictionary_values": 6553600,
+    "shrink_run_limit": 5000,
+    "max_assume_rejects": 65536,
+    "gas_report_samples": 256,
+    "failure_persist_dir": "cache/invariant",
+    "show_metrics": false,
+    "timeout": null
+  },
+  "ffi": false,
+  "always_use_create_2_factory": false,
+  "prompt_timeout": 120,
+  "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+  "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+  "initial_balance": "0xffffffffffffffffffffffff",
+  "block_number": 1,
+  "fork_block_number": null,
+  "chain_id": null,
+  "gas_limit": 1073741824,
+  "code_size_limit": null,
+  "gas_price": null,
+  "block_base_fee_per_gas": 0,
+  "block_coinbase": "0x0000000000000000000000000000000000000000",
+  "block_timestamp": 1,
+  "block_difficulty": 0,
+  "block_prevrandao": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "block_gas_limit": null,
+  "memory_limit": 134217728,
+  "extra_output": [],
+  "extra_output_files": [],
+  "names": false,
+  "sizes": false,
+  "via_ir": false,
+  "ast": false,
+  "rpc_storage_caching": {
+    "chains": "all",
+    "endpoints": "all"
+  },
+  "no_storage_caching": false,
+  "no_rpc_rate_limit": false,
+  "use_literal_content": false,
+  "bytecode_hash": "ipfs",
+  "cbor_metadata": true,
+  "revert_strings": null,
+  "sparse_mode": false,
+  "build_info": false,
+  "build_info_path": null,
+  "fmt": {
+    "line_length": 120,
+    "tab_width": 4,
+    "bracket_spacing": false,
+    "int_types": "long",
+    "multiline_func_header": "attributes_first",
+    "quote_style": "double",
+    "number_underscore": "preserve",
+    "hex_underscore": "remove",
+    "single_line_statement_blocks": "preserve",
+    "override_spacing": false,
+    "wrap_comments": false,
+    "ignore": [],
+    "contract_new_lines": false,
+    "sort_imports": false
+  },
+  "doc": {
+    "out": "docs",
+    "title": "",
+    "book": "book.toml",
+    "homepage": "README.md",
+    "ignore": []
+  },
+  "bind_json": {
+    "out": "utils/JsonBindings.sol",
+    "include": [],
+    "exclude": []
+  },
+  "fs_permissions": [
+    {
+      "access": "read",
+      "path": "out"
+    }
+  ],
+  "isolate": false,
+  "disable_block_gas_limit": false,
+  "labels": {},
+  "unchecked_cheatcode_artifacts": false,
+  "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+  "vyper": {},
+  "dependencies": null,
+  "soldeer": null,
+  "assertions_revert": true,
+  "legacy_assertions": false,
+  "odyssey": false,
+  "transaction_timeout": 120,
+  "eof": false,
+  "additional_compiler_profiles": [],
+  "compilation_restrictions": []
+}
+
+"#]]);
+});
+
+forgetest_init!(test_optimizer_config, |prj, cmd| {
+    // Default settings: optimizer disabled, optimizer runs 200.
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = false
+optimizer_runs = 200
+...
+
+"#]]);
+
+    // Optimizer set to true: optimizer runs set to default value of 200.
+    let config = Config { optimizer: Some(true), ..Default::default() };
+    prj.write_config(config);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = true
+optimizer_runs = 200
+...
+
+"#]]);
+
+    // Optimizer runs set to 0: optimizer should be disabled, runs set to 0.
+    let config = Config { optimizer_runs: Some(0), ..Default::default() };
+    prj.write_config(config);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = false
+optimizer_runs = 0
+...
+
+"#]]);
+
+    // Optimizer runs set to 500: optimizer should be enabled, runs set to 500.
+    let config = Config { optimizer_runs: Some(500), ..Default::default() };
+    prj.write_config(config);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = true
+optimizer_runs = 500
+...
+
+"#]]);
+
+    // Optimizer disabled and runs set to 500: optimizer should be disabled, runs set to 500.
+    let config = Config { optimizer: Some(false), optimizer_runs: Some(500), ..Default::default() };
+    prj.write_config(config);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = false
+optimizer_runs = 500
+...
+
+"#]]);
+
+    // Optimizer enabled and runs set to 0: optimizer should be enabled, runs set to 0.
+    let config = Config { optimizer: Some(true), optimizer_runs: Some(0), ..Default::default() };
+    prj.write_config(config);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = true
+optimizer_runs = 0
+...
+
+"#]]);
 });

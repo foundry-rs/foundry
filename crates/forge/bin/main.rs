@@ -49,7 +49,13 @@ fn run() -> Result<()> {
             }
         }
         ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),
-        ForgeSubcommand::Coverage(cmd) => utils::block_on(cmd.run()),
+        ForgeSubcommand::Coverage(cmd) => {
+            if cmd.is_watch() {
+                utils::block_on(watch::watch_coverage(cmd))
+            } else {
+                utils::block_on(cmd.run())
+            }
+        }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
             if cmd.is_watch() {

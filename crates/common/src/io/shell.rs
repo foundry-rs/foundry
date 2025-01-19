@@ -18,6 +18,11 @@ use std::{
     },
 };
 
+/// Returns the current color choice.
+pub fn color_choice() -> ColorChoice {
+    Shell::get().color_choice()
+}
+
 /// Returns the currently set verbosity level.
 pub fn verbosity() -> Verbosity {
     Shell::get().verbosity()
