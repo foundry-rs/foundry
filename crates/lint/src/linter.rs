@@ -16,9 +16,8 @@ use yansi::Paint;
 ///
 /// # Required Methods
 ///
-/// TODO: update this
-/// - `lint`: Scans the provided source files and returns a [`LinterOutput`] containing categorized
-///   findings or an error if linting fails.
+/// - `lint`: Scans the provided source files emitting a daignostic for lints found.
+/// Returns an error if linting fails.
 pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     type Lint: Lint + Ord;
@@ -28,7 +27,7 @@ pub trait Linter: Send + Sync + Clone {
 }
 
 pub trait Lint: Hash {
-    fn name(&self) -> &'static str;
+    fn id(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn help(&self) -> Option<&'static str>;
     fn severity(&self) -> Severity;
