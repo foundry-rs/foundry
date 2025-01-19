@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use core::fmt;
 use foundry_compilers::Language;
-use std::{error::Error, hash::Hash, path::PathBuf};
+use std::{hash::Hash, path::PathBuf};
 use yansi::Paint;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
@@ -12,18 +12,15 @@ use yansi::Paint;
 /// - `Language`: Represents the target programming language. Must implement the [`Language`] trait.
 /// - `Lint`: Represents the types of lints performed by the linter. Must implement the [`Lint`]
 ///   trait.
-/// - `LinterError`: Represents errors that can occur during the linting process.
 ///
 /// # Required Methods
 ///
 /// - `lint`: Scans the provided source files emitting a daignostic for lints found.
-/// Returns an error if linting fails.
 pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     type Lint: Lint + Ord;
-    type LinterError: Error + Send + Sync + 'static;
 
-    fn lint(&self, input: &[PathBuf]) -> Result<(), Self::LinterError>;
+    fn lint(&self, input: &[PathBuf]);
 }
 
 pub trait Lint: Hash {

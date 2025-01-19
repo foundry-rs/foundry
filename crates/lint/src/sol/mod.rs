@@ -13,7 +13,10 @@ use crate::linter::{Lint, Linter, Severity};
 use foundry_compilers::solc::SolcLanguage;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena, SourceUnit};
-use solar_interface::{diagnostics::Level, Session, Span};
+use solar_interface::{
+    diagnostics::{ErrorGuaranteed, Level},
+    Session, Span,
+};
 use thiserror::Error;
 use yansi::Paint;
 
@@ -44,51 +47,45 @@ impl SolidityLinter {
 impl Linter for SolidityLinter {
     type Language = SolcLanguage;
     type Lint = SolLint;
-    type LinterError = SolLintError;
 
-    fn lint(&self, input: &[PathBuf]) -> Result<(), Self::LinterError> {
-        let _ = input
-            .into_par_iter()
-            .map(|file| {
-                let mut lints = if let Some(severity) = &self.severity {
-                    SolLint::with_severity(severity.to_owned())
-                } else {
-                    SolLint::all()
-                };
+    fn lint(&self, input: &[PathBuf]) {
+        let _ = input.into_par_iter().map(|file| {
+            let mut lints = if let Some(severity) = &self.severity {
+                SolLint::with_severity(severity.to_owned())
+            } else {
+                SolLint::all()
+            };
 
-                let mut sess = Session::builder().with_stderr_emitter().build();
-                sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+            let mut sess = Session::builder().with_stderr_emitter().build();
+            sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-                let arena = Arena::new();
+            let arena = Arena::new();
 
-                let _ = sess.enter(|| -> solar_interface::Result<()> {
-                    let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
-                    let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let _ = sess.enter(|| -> Result<(), ErrorGuaranteed> {
+                let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
+                let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-                    // Run all lints on the parsed AST
-                    for lint in lints.iter_mut() {
-                        for span in lint.lint(&ast) {
-                            let level = match lint.severity() {
-                                Severity::High | Severity::Med | Severity::Low => Level::Warning,
-                                Severity::Info | Severity::Gas => Level::Note,
-                            };
+                // Run all lints on the parsed AST
+                for lint in lints.iter_mut() {
+                    for span in lint.lint(&ast) {
+                        let level = match lint.severity() {
+                            Severity::High | Severity::Med | Severity::Low => Level::Warning,
+                            Severity::Info | Severity::Gas => Level::Note,
+                        };
 
-                            sess.dcx
-                                .diag::<()>(
-                                    level,
-                                    format!("{}: {}", lint.severity(), lint.description().bold()),
-                                )
-                                .span(span)
-                                .help(lint.help().unwrap_or_default())
-                                .emit()
-                        }
+                        sess.dcx
+                            .diag::<()>(
+                                level,
+                                format!("{}: {}", lint.severity(), lint.description().bold()),
+                            )
+                            .span(span)
+                            .help(lint.help().unwrap_or_default())
+                            .emit()
                     }
-                    Ok(())
-                });
-            })
-            .collect::<Vec<_>>();
-
-        Ok(())
+                }
+                Ok(())
+            });
+        });
     }
 }
 
