@@ -69,9 +69,14 @@ impl Linter for SolidityLinter {
                     // Run all lints on the parsed AST
                     for lint in lints.iter_mut() {
                         for span in lint.lint(&ast) {
+                            let level = match lint.severity() {
+                                Severity::High | Severity::Med | Severity::Low => Level::Warning,
+                                Severity::Info | Severity::Gas => Level::Note,
+                            };
+
                             sess.dcx
                                 .diag::<()>(
-                                    Level::Warning,
+                                    level,
                                     format!("{}: {}", lint.severity(), lint.description()),
                                 )
                                 .span(span)

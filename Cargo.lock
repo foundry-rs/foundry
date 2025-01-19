@@ -3453,7 +3453,7 @@ dependencies = [
  "solar-ast",
  "solar-interface",
  "solar-parse",
- "thiserror 2.0.9",
+ "thiserror 2.0.11",
  "yansi",
 ]
 
