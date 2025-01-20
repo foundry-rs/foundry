@@ -2,13 +2,12 @@ use super::Result;
 use crate::Vm::Rpc;
 use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
-use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
+use foundry_compilers::{utils::canonicalize, ArtifactId, ProjectPathsConfig};
 use foundry_config::{
     cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
     ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
 };
 use foundry_evm_core::opts::EvmOpts;
-use semver::Version;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -49,10 +48,8 @@ pub struct CheatsConfig {
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
-    /// Name of the script/test contract which is currently running.
-    pub running_contract: Option<String>,
-    /// Version of the script/test contract which is currently running.
-    pub running_version: Option<Version>,
+    /// Currently running artifact.
+    pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
     pub assertions_revert: bool,
     /// Optional seed for the RNG algorithm.
@@ -65,8 +62,7 @@ impl CheatsConfig {
         config: &Config,
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
-        running_contract: Option<String>,
-        running_version: Option<Version>,
+        running_artifact: Option<ArtifactId>,
     ) -> Self {
         let mut allowed_paths = vec![config.root.clone()];
         allowed_paths.extend(config.libs.iter().cloned());
@@ -94,8 +90,7 @@ impl CheatsConfig {
             evm_opts,
             labels: config.labels.clone(),
             available_artifacts,
-            running_contract,
-            running_version,
+            running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
         }
@@ -103,13 +98,7 @@ impl CheatsConfig {
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
-        Self::new(
-            config,
-            evm_opts,
-            self.available_artifacts.clone(),
-            self.running_contract.clone(),
-            self.running_version.clone(),
-        )
+        Self::new(config, evm_opts, self.available_artifacts.clone(), self.running_artifact.clone())
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -230,8 +219,7 @@ impl Default for CheatsConfig {
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
-            running_contract: Default::default(),
-            running_version: Default::default(),
+            running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,
         }
@@ -247,7 +235,6 @@ mod tests {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
-            None,
             None,
             None,
         )

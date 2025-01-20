@@ -57,6 +57,7 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { workspace = true, features = ["full"] }
 yansi.workspace = true
 tracing.workspace = true
+walkdir.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }

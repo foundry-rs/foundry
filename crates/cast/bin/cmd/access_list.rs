@@ -5,10 +5,9 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils,
+    utils::{self, LoadConfig},
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_config::Config;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -46,7 +45,7 @@ impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
         let Self { to, sig, args, tx, eth, block } = self;
 
-        let config = Config::from(&eth);
+        let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
 

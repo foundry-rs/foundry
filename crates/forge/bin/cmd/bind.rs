@@ -106,7 +106,7 @@ impl BindArgs {
             let _ = ProjectCompiler::new().compile(&project)?;
         }
 
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let artifacts = config.out;
         let bindings_root = self.bindings.clone().unwrap_or_else(|| artifacts.join("bindings"));
 
