@@ -3232,8 +3232,7 @@ Compiler run successful!
 
 // <https://github.com/foundry-rs/foundry/issues/6816>
 forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
-    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.args(["inspect", "src/Counter.sol:Counter", "abi"]).assert_success().stdout_eq(str![[r#"
 interface Counter {
     function increment() external;
     function number() external view returns (uint256);
@@ -3241,8 +3240,7 @@ interface Counter {
 }
 
 
-"#]],
-    );
+"#]]);
 });
 
 // checks that `clean` also works with the "out" value set in Config
