@@ -17,7 +17,7 @@ use foundry_compilers::{
     utils::canonicalize,
 };
 use regex::Regex;
-use std::{fmt, sync::LazyLock};
+use std::{collections::BTreeMap, fmt, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -106,11 +106,7 @@ impl InspectArgs {
                 print_json_str(&artifact.legacy_assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
-                if is_json {
-                    print_json(&artifact.method_identifiers)?;
-                } else {
-                    todo!("table version")
-                }
+                print_method_identifiers(&artifact.method_identifiers)?;
             }
             ContractArtifactField::GasEstimates => {
                 if is_json {
@@ -222,6 +218,25 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
                 storage_type.map_or("?", |t| &t.number_of_bytes),
                 &slot.contract,
             ]);
+        }
+        table
+    })
+}
+
+fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>>) -> Result<()> {
+    let Some(method_identifiers) = method_identifiers else {
+        eyre::bail!("Could not get method identifiers");
+    };
+
+    if shell::is_json() {
+        return print_json(method_identifiers)
+    }
+
+    let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
+
+    print_table(headers, |mut table| {
+        for (method, identifier) in method_identifiers {
+            table.add_row([method, identifier]);
         }
         table
     })
