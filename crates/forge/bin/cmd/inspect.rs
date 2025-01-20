@@ -79,7 +79,6 @@ impl InspectArgs {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
-        let is_json = shell::is_json();
         // Match on ContractArtifactFields and pretty-print
         match field {
             ContractArtifactField::Abi => {
@@ -87,7 +86,7 @@ impl InspectArgs {
                     .abi
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-                if !is_json {
+                if !shell::is_json() {
                     let source = foundry_cli::utils::abi_to_solidity(abi, &contract.name)?;
                     sh_println!("{source}")?;
                 } else {
