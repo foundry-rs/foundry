@@ -2,8 +2,10 @@ use alloy_provider::Provider;
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::RpcOpts, utils};
-use foundry_config::Config;
+use foundry_cli::{
+    opts::RpcOpts,
+    utils::{self, LoadConfig},
+};
 use futures::join;
 
 /// CLI arguments for `cast find-block`.
@@ -21,7 +23,7 @@ impl FindBlockArgs {
         let Self { timestamp, rpc } = self;
 
         let ts_target = timestamp;
-        let config = Config::from(&rpc);
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         let last_block_num = provider.get_block_number().await?;

@@ -59,7 +59,7 @@ impl ResolveArgs {
         let Self { root, skip } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
-        let config = Config::load_with_root(&root);
+        let config = Config::load_with_root(&root)?;
         let project = config.project()?;
 
         let graph = Graph::resolve(&project.paths)?;

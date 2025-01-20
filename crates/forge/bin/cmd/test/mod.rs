@@ -268,7 +268,7 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -282,7 +282,7 @@ impl TestArgs {
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Set up the project.
@@ -803,8 +803,8 @@ impl TestArgs {
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.watch.watchexec_config(|| {
-            let config = Config::from(self);
-            [config.src, config.test]
+            let config = self.load_config()?;
+            Ok([config.src, config.test])
         })
     }
 }

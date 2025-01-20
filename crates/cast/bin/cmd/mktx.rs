@@ -6,10 +6,9 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::get_provider,
+    utils::{get_provider, LoadConfig},
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast mktx`.
@@ -82,7 +81,7 @@ impl MakeTxArgs {
             None
         };
 
-        let config = Config::from(&eth);
+        let config = eth.load_config()?;
 
         // Retrieve the signer, and bail if it can't be constructed.
         let signer = eth.wallet.signer().await?;

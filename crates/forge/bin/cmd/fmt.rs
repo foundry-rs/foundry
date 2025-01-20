@@ -45,7 +45,7 @@ impl_figment_convert_basic!(FmtArgs);
 
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
 
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
