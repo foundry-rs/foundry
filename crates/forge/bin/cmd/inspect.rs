@@ -110,11 +110,7 @@ impl InspectArgs {
                 print_method_identifiers(&artifact.method_identifiers)?;
             }
             ContractArtifactField::GasEstimates => {
-                if is_json {
-                    print_json(&artifact.gas_estimates)?;
-                } else {
-                    todo!("prettier fmt")
-                }
+                print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
                 print_storage_layout(artifact.storage_layout.as_ref())?;
@@ -152,7 +148,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                print_errors(&out)?;
+                print_errors_events(&out, true)?;
             }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
@@ -168,11 +164,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                if is_json {
-                    print_json(&out)?;
-                } else {
-                    todo!("table version")
-                }
+                print_errors_events(&out, false)?;
             }
             ContractArtifactField::Eof => {
                 print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
@@ -239,15 +231,18 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
     })
 }
 
-fn print_errors(errors: &Map<String, Value>) -> Result<()> {
+fn print_errors_events(map: &Map<String, Value>, is_err: bool) -> Result<()> {
     if shell::is_json() {
-        return print_json(errors);
+        return print_json(map);
     }
 
-    let headers = vec![Cell::new("Error"), Cell::new("Selector")];
-
+    let headers = if is_err {
+        vec![Cell::new("Error"), Cell::new("Selector")]
+    } else {
+        vec![Cell::new("Event"), Cell::new("Topic")]
+    };
     print_table(headers, |mut table| {
-        for (method, selector) in errors {
+        for (method, selector) in map {
             table.add_row([method, selector.as_str().unwrap()]);
         }
         table
