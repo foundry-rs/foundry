@@ -31,7 +31,7 @@ pub struct InspectArgs {
     pub field: ContractArtifactField,
 
     /// Pretty print the selected field, if supported.
-    #[arg(long, default_value = "true")]
+    #[arg(long)]
     pub pretty: bool,
 
     /// All build arguments are supported
@@ -195,7 +195,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
         Cell::new("Contract"),
     ];
 
-    print_table(headers, |mut table| {
+    print_table(headers, |table| {
         for slot in &storage_layout.storage {
             let storage_type = storage_layout.types.get(&slot.storage_type);
             table.add_row([
@@ -207,7 +207,6 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
                 &slot.contract,
             ]);
         }
-        table
     })
 }
 
@@ -222,11 +221,10 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
 
-    print_table(headers, |mut table| {
+    print_table(headers, |table| {
         for (method, identifier) in method_identifiers {
             table.add_row([method, identifier]);
         }
-        table
     })
 }
 
@@ -240,21 +238,18 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool) -> Result<()> {
     } else {
         vec![Cell::new("Event"), Cell::new("Topic")]
     };
-    print_table(headers, |mut table| {
+    print_table(headers, |table| {
         for (method, selector) in map {
             table.add_row([method, selector.as_str().unwrap()]);
         }
-        table
     })
 }
 
-fn print_table(headers: Vec<Cell>, add_rows: impl Fn(Table) -> Table) -> Result<()> {
+fn print_table(headers: Vec<Cell>, add_rows: impl FnOnce(&mut Table)) -> Result<()> {
     let mut table = Table::new();
     table.apply_modifier(UTF8_ROUND_CORNERS);
     table.set_header(headers);
-
-    let table = add_rows(table);
-
+    add_rows(&mut table);
     sh_println!("\n{table}\n")?;
     Ok(())
 }
