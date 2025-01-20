@@ -17,6 +17,7 @@ use foundry_compilers::{
     utils::canonicalize,
 };
 use regex::Regex;
+use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fmt, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
@@ -151,11 +152,7 @@ impl InspectArgs {
                         );
                     }
                 }
-                if is_json {
-                    print_json(&out)?;
-                } else {
-                    todo!("table version")
-                }
+                print_errors(&out)?;
             }
             ContractArtifactField::Events => {
                 let mut out = serde_json::Map::new();
@@ -237,6 +234,21 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
     print_table(headers, |mut table| {
         for (method, identifier) in method_identifiers {
             table.add_row([method, identifier]);
+        }
+        table
+    })
+}
+
+fn print_errors(errors: &Map<String, Value>) -> Result<()> {
+    if shell::is_json() {
+        return print_json(errors);
+    }
+
+    let headers = vec![Cell::new("Error"), Cell::new("Selector")];
+
+    print_table(headers, |mut table| {
+        for (method, selector) in errors {
+            table.add_row([method, selector.as_str().unwrap()]);
         }
         table
     })
