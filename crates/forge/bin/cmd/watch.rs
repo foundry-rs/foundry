@@ -1,8 +1,11 @@
-use super::{build::BuildArgs, doc::DocArgs, snapshot::GasSnapshotArgs, test::TestArgs};
+use super::{
+    build::BuildArgs, coverage::CoverageArgs, doc::DocArgs, snapshot::GasSnapshotArgs,
+    test::TestArgs,
+};
 use alloy_primitives::map::HashSet;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::utils::{self, FoundryPathExt};
+use foundry_cli::utils::{self, FoundryPathExt, LoadConfig};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
@@ -311,6 +314,15 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
             }
         },
     )?;
+    run(config).await?;
+
+    Ok(())
+}
+
+pub async fn watch_coverage(args: CoverageArgs) -> Result<()> {
+    let config = args.load_config();
+    let config = args.watch().watchexec_config(|| [config.test, config.src])?;
+
     run(config).await?;
 
     Ok(())
