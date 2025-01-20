@@ -40,7 +40,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, pretty } = self;
+        let Self { contract, field, build, pretty: _ } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -202,29 +202,37 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
         return print_json(&storage_layout)
     }
 
-    let mut table = Table::new();
-    table.apply_modifier(UTF8_ROUND_CORNERS);
-
-    table.set_header(vec![
+    let headers = vec![
         Cell::new("Name"),
         Cell::new("Type"),
         Cell::new("Slot"),
         Cell::new("Offset"),
         Cell::new("Bytes"),
         Cell::new("Contract"),
-    ]);
+    ];
 
-    for slot in &storage_layout.storage {
-        let storage_type = storage_layout.types.get(&slot.storage_type);
-        table.add_row([
-            slot.label.as_str(),
-            storage_type.map_or("?", |t| &t.label),
-            &slot.slot,
-            &slot.offset.to_string(),
-            storage_type.map_or("?", |t| &t.number_of_bytes),
-            &slot.contract,
-        ]);
-    }
+    print_table(headers, |mut table| {
+        for slot in &storage_layout.storage {
+            let storage_type = storage_layout.types.get(&slot.storage_type);
+            table.add_row([
+                slot.label.as_str(),
+                storage_type.map_or("?", |t| &t.label),
+                &slot.slot,
+                &slot.offset.to_string(),
+                storage_type.map_or("?", |t| &t.number_of_bytes),
+                &slot.contract,
+            ]);
+        }
+        table
+    })
+}
+
+fn print_table(headers: Vec<Cell>, add_rows: impl Fn(Table) -> Table) -> Result<()> {
+    let mut table = Table::new();
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+    table.set_header(headers);
+
+    let table = add_rows(table);
 
     sh_println!("\n{table}\n")?;
     Ok(())
