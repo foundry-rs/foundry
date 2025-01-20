@@ -30,10 +30,6 @@ pub struct InspectArgs {
     #[arg(value_enum)]
     pub field: ContractArtifactField,
 
-    /// Pretty print the selected field, if supported.
-    #[arg(long)]
-    pub pretty: bool,
-
     /// All build arguments are supported
     #[command(flatten)]
     build: BuildOpts,
@@ -41,7 +37,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, pretty: _ } = self;
+        let Self { contract, field, build } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -118,10 +114,10 @@ impl InspectArgs {
                 print_json(&artifact.devdoc)?;
             }
             ContractArtifactField::Ir => {
-                print_yul(artifact.ir.as_deref(), self.pretty)?;
+                print_yul(artifact.ir.as_deref())?;
             }
             ContractArtifactField::IrOptimized => {
-                print_yul(artifact.ir_optimized.as_deref(), self.pretty)?;
+                print_yul(artifact.ir_optimized.as_deref())?;
             }
             ContractArtifactField::Metadata => {
                 print_json(&artifact.metadata)?;
@@ -448,7 +444,7 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
     Ok(())
 }
 
-fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
+fn print_yul(yul: Option<&str>) -> Result<()> {
     let Some(yul) = yul else {
         eyre::bail!("Could not get IR output");
     };
@@ -456,11 +452,7 @@ fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
     static YUL_COMMENTS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
 
-    if pretty {
-        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
-    } else {
-        sh_println!("{yul}")?;
-    }
+    sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
 
     Ok(())
 }
