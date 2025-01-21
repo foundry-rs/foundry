@@ -528,10 +528,9 @@ impl Backend {
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
-                // If rpc url is unspecified, the update the fork with the new block number
-                let maybe_rpc_url = {
-                    self.node_config.read().await.eth_rpc_url.clone()
-                };
+                // If rpc url is unspecified, then update the fork with the new block number and
+                // existing rpc url
+                let maybe_rpc_url = { self.node_config.read().await.eth_rpc_url.clone() };
 
                 if let Some(fork_url) = forking.json_rpc_url.or(maybe_rpc_url) {
                     // Set the fork block number
