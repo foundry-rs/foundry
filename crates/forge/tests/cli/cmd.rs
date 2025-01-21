@@ -3247,10 +3247,7 @@ forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
 "#]]);
 });
 
-forgetest!(inspect_counter_with_events_errs, |prj, cmd| {
-    prj.add_source(
-        "Counter.sol",
-        r#"
+const CUSTOM_COUNTER: &str = r#"
     contract Counter {
     uint256 public number;
     uint64 public count;
@@ -3303,9 +3300,9 @@ forgetest!(inspect_counter_with_events_errs, |prj, cmd| {
         count = s.count;
     }
 }
-    "#,
-    )
-    .unwrap();
+    "#;
+forgetest!(inspect_custom_counter_abi, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
     cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
 
@@ -3340,6 +3337,67 @@ forgetest!(inspect_counter_with_events_errs, |prj, cmd| {
 |-------------+-----------------------------------------------+--------------------------------------------------------------------|
 | receive     | receive() payable                             |                                                                    |
 ╰-------------+-----------------------------------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_events, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| Decremented(uint256) | 0xc9118d86370931e39644ee137c931308fa3774f6c90ab057f0c3febf427ef94a |
+|----------------------+--------------------------------------------------------------------|
+| Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_errors, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------------+------------╮
+| Method                     | Identifier |
++=========================================+
+| count()                    | 06661abd   |
+|----------------------------+------------|
+| decrement()                | 2baeceb7   |
+|----------------------------+------------|
+| increment()                | d09de08a   |
+|----------------------------+------------|
+| number()                   | 8381f58a   |
+|----------------------------+------------|
+| setNumber(uint256)         | 3fb5c1cb   |
+|----------------------------+------------|
+| setStruct((uint64),uint32) | 08ef7366   |
+|----------------------------+------------|
+| square()                   | d742cb01   |
+╰----------------------------+------------╯
 
 
 "#]]);
