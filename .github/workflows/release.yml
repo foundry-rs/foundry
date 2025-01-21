@@ -67,8 +67,8 @@ jobs:
     name: Release Docker
     needs: prepare
     uses: ./.github/workflows/docker-publish.yml
-    env:
-      TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
+    with:
+      tag_name: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
 
   release:
     permissions:

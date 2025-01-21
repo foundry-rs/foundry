@@ -9,6 +9,10 @@ on:
   # Trigger without any parameters a proactive rebuild
   workflow_dispatch: { }
   workflow_call:
+    inputs:
+      tag_name:
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -75,4 +79,4 @@ jobs:
           echo "LABELS -> ${{ steps.meta.outputs.labels }}"
 
       - name: Build and push foundry image
-        run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} TAG_NAME=${{ env.TAG_NAME }} PROFILE=maxperf docker-build-push
+        run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} PROFILE=maxperf TAG_NAME=${{ inputs.tag_name }} docker-build-push
