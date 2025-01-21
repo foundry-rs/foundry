@@ -165,7 +165,7 @@ fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
     out
 }
 
-fn parse_event_params(ev_params: &Vec<EventParam>) -> String {
+fn parse_event_params(ev_params: &[EventParam]) -> String {
     ev_params
         .iter()
         .map(|p| {
@@ -240,7 +240,7 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
     })
 }
 
-fn get_ty_sig(inputs: &Vec<Param>) -> String {
+fn get_ty_sig(inputs: &[Param]) -> String {
     inputs
         .iter()
         .map(|p| {
