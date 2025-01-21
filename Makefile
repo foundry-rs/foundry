@@ -5,7 +5,6 @@
 
 # Cargo profile for builds.
 PROFILE ?= dev
-
 # The docker image name
 DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry:latest
 BIN_DIR = dist/bin
