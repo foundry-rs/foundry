@@ -903,10 +903,10 @@ interface Vm {
     function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
-    /// Format: <cargo_version>+<git_sha>+<build_timestamp>
-    /// Sample output: 0.2.0+faa94c384+202407110019
+    /// Format: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>
+    /// Sample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug
     /// Note: Build timestamps may vary slightly across platforms due to separate CI jobs.
-    /// For reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)
+    /// For reliable version comparisons, use UNIX format (e.g., >= 1700000000)
     /// to compare timestamps while ignoring minor time differences.
     #[cheatcode(group = Testing, safety = Safe)]
     function getFoundryVersion() external view returns (string memory version);

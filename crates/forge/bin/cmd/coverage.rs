@@ -82,12 +82,12 @@ pub struct CoverageArgs {
 
 impl CoverageArgs {
     pub async fn run(self) -> Result<()> {
-        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Set fuzz seed so coverage reports are deterministic
@@ -107,7 +107,8 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let mut project = config.create_project(false, false)?;
+        let mut project = config.create_project(false, true)?;
+
         if self.ir_minimum {
             // print warning message
             sh_warn!("{}", concat!(
@@ -138,6 +139,13 @@ impl CoverageArgs {
             project.settings.solc.optimizer.details = None;
             project.settings.solc.via_ir = None;
         }
+        let mut warning =
+            "optimizer settings have been disabled for accurate coverage reports".to_string();
+        if !self.ir_minimum {
+            warning += ", if you encounter \"stack too deep\" errors, consider using `--ir-minimum` which enables viaIR with minimum optimization resolving most of the errors";
+        }
+
+        sh_warn!("{warning}")?;
 
         let output = ProjectCompiler::default()
             .compile(&project)?

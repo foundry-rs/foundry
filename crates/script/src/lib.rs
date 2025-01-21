@@ -222,7 +222,7 @@ impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
 
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
@@ -688,7 +688,7 @@ mod tests {
             "--etherscan-api-key",
             "goerli",
         ]);
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
     }
 
@@ -753,7 +753,7 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
