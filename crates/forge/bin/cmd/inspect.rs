@@ -240,11 +240,12 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
                 table.add_row(["function", &func_sig, selector.as_str()]);
             }
 
-            if let Some(contructor) = abi.constructor() {
-                let state_mut = contructor.state_mutability.as_json_str();
+            if let Some(constructor) = abi.constructor() {
+                let state_mut = constructor.state_mutability.as_json_str();
                 table.add_row([
                     "constructor",
-                    format!("constructor({}) {state_mut}", get_ty_sig(&contructor.inputs)).as_str(),
+                    format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs))
+                        .as_str(),
                     "",
                 ]);
             }
