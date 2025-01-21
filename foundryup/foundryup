@@ -4,21 +4,22 @@ set -eo pipefail
 # NOTE: if you make modifications to this script, please increment the version number.
 # Major / minor: incremented for each stable release of Foundry.
 # Patch: incremented for each change between stable releases.
-FOUNDRYUP_INSTALLER_VERSION="0.3.0"
+FOUNDRYUP_INSTALLER_VERSION="0.3.1"
 
-BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
-FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
+BASE_DIR=${XDG_DATA_HOME:-"$HOME/.local/share"}
+FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/foundry"}
+FOUNDRY_BIN_DIR=${XDG_BIN_HOME:-"$FOUNDRY_DIR/bin"}
+FOUNDRY_MAN_DIR="$BASE_DIR/man/man1"
 FOUNDRY_VERSIONS_DIR="$FOUNDRY_DIR/versions"
-FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
-FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
-FOUNDRY_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
-FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+
+FOUNDRYUP_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
+FOUNDRYUP_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 FOUNDRYUP_JOBS=""
 
 BINS=(forge cast anvil chisel)
 
-export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
+export RUSTFLAGS=${RUSTFLAGS:-"-C target-cpu=native"}
 
 main() {
   need_cmd git
@@ -52,17 +53,17 @@ main() {
     esac; shift
   done
 
-  CARGO_BUILD_ARGS=(--release)
+  CARGO_BUILD_ARGS=('--release')
 
-  if [ -n "$FOUNDRYUP_JOBS" ]; then
-    CARGO_BUILD_ARGS+=(--jobs "$FOUNDRYUP_JOBS")
+  if [[ -n $FOUNDRYUP_JOBS ]]; then
+    CARGO_BUILD_ARGS+=('--jobs' "$FOUNDRYUP_JOBS")
   fi
 
   # Print the banner after successfully parsing args
   banner
 
-  if [ -n "$FOUNDRYUP_PR" ]; then
-    if [ -z "$FOUNDRYUP_BRANCH" ]; then
+  if [[ -n $FOUNDRYUP_PR ]]; then
+    if [[ -z $FOUNDRYUP_BRANCH ]]; then
       FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
     else
       err "can't use --pr and --branch at the same time"
@@ -72,12 +73,12 @@ main() {
   check_bins_in_use
 
   # Installs foundry from a local repository if --path parameter is provided
-  if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
+  if [[ -n $FOUNDRYUP_LOCAL_REPO ]]; then
     need_cmd cargo
 
     # Ignore branches/versions as we do not want to modify local git state
-    if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRYUP_BRANCH" ] || [ -n "$FOUNDRYUP_VERSION" ]; then
-      warn "--branch, --install, --use, and --repo arguments are ignored during local install"
+    if [[ -n $FOUNDRYUP_REPO ]] || [[ -n $FOUNDRYUP_BRANCH ]] || [[ -n $FOUNDRYUP_VERSION ]]; then
+      warn '--branch, --install, --use, and --repo arguments are ignored during local install'
     fi
 
     # Enter local repo and build
@@ -92,21 +93,21 @@ main() {
       ensure ln -s "$PWD/target/release/$bin" "$FOUNDRY_BIN_DIR/$bin"
     done
 
-    say "done"
+    say 'done'
     exit 0
   fi
 
-  FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
+  FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-'foundry-rs/foundry'}
 
   # Install by downloading binaries
-  if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
+  if [[ $FOUNDRYUP_REPO == 'foundry-rs/foundry' && -z $FOUNDRYUP_BRANCH && -z $FOUNDRYUP_COMMIT ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
     # Normalize versions (handle channels, versions without v prefix
-    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
-      FOUNDRYUP_VERSION="nightly"
-    elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
+    if [[ $FOUNDRYUP_VERSION =~ "^nightly" ]]; then
+      FOUNDRYUP_VERSION='nightly'
+    elif [[ $FOUNDRYUP_VERSION == "[0-9]*" ]]; then
       # Add v prefix
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
@@ -133,14 +134,14 @@ main() {
 
     uname_m=$(uname -m)
     ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$uname_m}")
-    if [ "${ARCHITECTURE}" = "x86_64" ]; then
+    if [[ "${ARCHITECTURE}" = "x86_64" ]]; then
       # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
-      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+      if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]]; then
         ARCHITECTURE="arm64" # Rosetta.
       else
         ARCHITECTURE="amd64" # Intel.
       fi
-    elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
+    elif [[ "${ARCHITECTURE}" = "arm64" ]] || [[ "${ARCHITECTURE}" = "aarch64" ]]; then
       ARCHITECTURE="arm64" # Arm.
     else
       ARCHITECTURE="amd64" # Amd.
@@ -151,10 +152,10 @@ main() {
     BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
-    ensure mkdir -p $FOUNDRY_VERSIONS_DIR
+    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
     # Download and extract the binaries archive
     say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
-    if [ "$PLATFORM" = "win32" ]; then
+    if [[ "$PLATFORM" = "win32" ]]; then
       tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
@@ -163,9 +164,9 @@ main() {
       tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.tar.gz"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
-      ensure tar tf $tmp 1> /dev/null
-      ensure mkdir -p $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG
-      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf $tmp
+      ensure tar tf "$tmp" 1> /dev/null
+      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
       rm -f "$tmp"
     fi
 
@@ -180,14 +181,14 @@ main() {
 
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
-      cp $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin $bin_path
+      cp "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin" "$bin_path"
 
       # Print installed msg
       say "installed - $(ensure "$bin_path" --version)"
 
       # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
       which_path="$(command -v "$bin" || true)"
-      if [ -n "$which_path" ] && [ "$which_path" != "$bin_path" ]; then
+      if [[ -n "$which_path" ]] && [[ "$which_path" != "$bin_path" ]]; then
         warn ""
         cat 1>&2 <<EOF
 There are multiple binaries with the name '$bin' present in your 'PATH'.
@@ -209,7 +210,7 @@ EOF
     REPO_PATH="$FOUNDRY_DIR/$FOUNDRYUP_REPO"
 
     # If repo path does not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
-    if [ ! -d "$REPO_PATH" ]; then
+    if [[ ! -d "$REPO_PATH" ]]; then
       AUTHOR="$(echo "$FOUNDRYUP_REPO" | cut -d'/' -f1 -)"
       ensure mkdir -p "$FOUNDRY_DIR/$AUTHOR"
       cd "$FOUNDRY_DIR/$AUTHOR"
@@ -222,7 +223,7 @@ EOF
     ensure git checkout "origin/${FOUNDRYUP_BRANCH}"
 
     # If set, checkout specific commit from branch
-    if [ -n "$FOUNDRYUP_COMMIT" ]; then
+    if [[ -n "$FOUNDRYUP_COMMIT" ]]; then
       say "installing at commit $FOUNDRYUP_COMMIT"
       ensure git checkout "$FOUNDRYUP_COMMIT"
     fi
@@ -231,8 +232,8 @@ EOF
     ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
     for bin in "${BINS[@]}"; do
       for try_path in target/release/$bin target/release/$bin.exe; do
-        if [ -f "$try_path" ]; then
-          [ -e "$FOUNDRY_BIN_DIR/$bin" ] && warn "overwriting existing $bin in $FOUNDRY_BIN_DIR"
+        if [[ -f "$try_path" ]]; then
+          [[ -e "$FOUNDRY_BIN_DIR/$bin" ]] && warn "overwriting existing $bin in $FOUNDRY_BIN_DIR"
           mv -f "$try_path" "$FOUNDRY_BIN_DIR"
         fi
       done
@@ -288,19 +289,19 @@ update() {
 
   # Download to a temporary file first
   tmp_file="$(mktemp)"
-  ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
+  ensure download "$FOUNDRYUP_BIN_URL" "$tmp_file"
 
   # Replace the current foundryup with the downloaded file
-  ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
-  ensure chmod +x "$FOUNDRY_BIN_PATH"
+  ensure mv "$tmp_file" "$FOUNDRYUP_BIN_PATH"
+  ensure chmod +x "$FOUNDRYUP_BIN_PATH"
 
   say "successfully updated foundryup"
   exit 0
 }
 
 list() {
-  if [ -d "$FOUNDRY_VERSIONS_DIR" ]; then
-    for VERSION in $FOUNDRY_VERSIONS_DIR/*; do
+  if [[ -d "$FOUNDRY_VERSIONS_DIR" ]]; then
+    for VERSION in "$FOUNDRY_VERSIONS_DIR"/*; do
       say "${VERSION##*/}"
       for bin in "${BINS[@]}"; do
         bin_path="$VERSION/$bin"
@@ -318,15 +319,15 @@ list() {
 }
 
 use() {
-  [ -z "$FOUNDRYUP_VERSION" ] && err "no version provided"
+  [[ -z "$FOUNDRYUP_VERSION" ]] && err "no version provided"
   FOUNDRY_VERSION_DIR="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
-  if [ -d "$FOUNDRY_VERSION_DIR" ]; then
+  if [[ -d "$FOUNDRY_VERSION_DIR" ]]; then
 
     check_bins_in_use
 
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
-      cp $FOUNDRY_VERSION_DIR/$bin $bin_path
+      cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" --version)"
     done
@@ -383,7 +384,7 @@ ensure() {
 
 # Downloads $1 into $2 or stdout
 download() {
-  if [ -n "$2" ]; then
+  if [[ -n "$2" ]]; then
     # output into $2
     if check_cmd curl; then
       curl -#o "$2" -L "$1"
