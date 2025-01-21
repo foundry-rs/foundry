@@ -3,9 +3,8 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
-use chrono::DateTime;
+use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
-use std::env;
 
 pub(crate) mod assert;
 pub(crate) mod assume;
@@ -28,14 +27,7 @@ impl Cheatcode for breakpoint_1Call {
 impl Cheatcode for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let cargo_version = env!("CARGO_PKG_VERSION");
-        let git_sha = env!("VERGEN_GIT_SHA");
-        let build_timestamp = DateTime::parse_from_rfc3339(env!("VERGEN_BUILD_TIMESTAMP"))
-            .expect("Invalid build timestamp format")
-            .format("%Y%m%d%H%M")
-            .to_string();
-        let foundry_version = format!("{cargo_version}+{git_sha}+{build_timestamp}");
-        Ok(foundry_version.abi_encode())
+        Ok(SEMVER_VERSION.abi_encode())
     }
 }
 

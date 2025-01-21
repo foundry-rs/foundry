@@ -89,6 +89,9 @@ impl ForgeTestProfile {
 
         config.prompt_timeout = 0;
 
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(200);
+
         config.gas_limit = u64::MAX.into();
         config.chain = None;
         config.tx_origin = CALLER;

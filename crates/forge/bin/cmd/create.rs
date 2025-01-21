@@ -103,12 +103,12 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let mut config = self.try_load_config_emit_warnings()?;
+        let mut config = self.load_config()?;
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Find Project & Compile
@@ -248,7 +248,7 @@ impl CreateArgs {
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
         // ETHERSCAN_API_KEY value set.
-        let config = verify.load_config_emit_warnings();
+        let config = verify.load_config()?;
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 

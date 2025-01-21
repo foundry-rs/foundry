@@ -22,7 +22,7 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use maili_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use revm::{
     interpreter::InstructionResult,
     primitives::{OptimismFields, TxEnv},

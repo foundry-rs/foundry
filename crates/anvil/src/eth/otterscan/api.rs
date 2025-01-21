@@ -122,7 +122,7 @@ impl EthApi {
     pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
         node_info!("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
-        Ok(self.get_code(address, block_id).await?.len() > 0)
+        Ok(!self.get_code(address, block_id).await?.is_empty())
     }
 
     /// Trace a transaction and generate a trace call tree.
