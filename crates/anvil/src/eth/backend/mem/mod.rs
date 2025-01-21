@@ -528,7 +528,12 @@ impl Backend {
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
-                if let Some(fork_url) = forking.json_rpc_url {
+                // If rpc url is unspecified, the update the fork with the new block number
+                let maybe_rpc_url = {
+                    self.node_config.read().await.eth_rpc_url.clone()
+                };
+
+                if let Some(fork_url) = forking.json_rpc_url.or(maybe_rpc_url) {
                     // Set the fork block number
                     let mut node_config = self.node_config.write().await;
                     node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
@@ -542,23 +547,7 @@ impl Backend {
                     *self.fork.write() = Some(fork);
                     *self.env.write() = env;
                 } else {
-                    let mut node_config = self.node_config.write().await;
-                    // Set the fork block number for caching
-                    if let Some(fork_url) = node_config.eth_rpc_url.clone() {
-                        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
-
-                        let mut env = self.env.read().clone();
-                        let (forked_db, client_fork_config) = node_config
-                            .setup_fork_db_config(fork_url, &mut env, &self.fees)
-                            .await?;
-
-                        *self.db.write().await = Box::new(forked_db);
-                        let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-                        *self.fork.write() = Some(fork);
-                        *self.env.write() = env;
-                    }
-
-                    let gas_limit = node_config.fork_gas_limit(&fork_block);
+                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
 
                     env.cfg.chain_id = fork.chain_id();
