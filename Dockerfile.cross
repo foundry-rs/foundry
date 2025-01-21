@@ -6,6 +6,8 @@ FROM ubuntu:22.04
 # Filled by docker buildx
 ARG TARGETARCH
 
+ENV TAG_NAME=something
+
 COPY ./dist/bin/$TARGETARCH/* /usr/local/bin/
 
 ENTRYPOINT ["/bin/sh", "-c"]
