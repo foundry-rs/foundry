@@ -5,7 +5,6 @@
 
 # Cargo profile for builds.
 PROFILE ?= dev
-TAG_NAME ?= dev
 
 # The docker image name
 DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry:latest
@@ -58,7 +57,7 @@ docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker im
 		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
 	done
 
-	docker buildx build --file ./Dockerfile.cross --build-arg TAG_NAME=$(TAG_NAME) . \
+	docker buildx build --file ./Dockerfile.cross . \
 		--platform linux/amd64,linux/arm64 \
 		$(foreach tag,$(shell echo $(DOCKER_IMAGE_NAME) | tr ',' ' '),--tag $(tag)) \
 		--provenance=false \

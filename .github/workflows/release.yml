@@ -65,10 +65,7 @@ jobs:
 
   release-docker:
     name: Release Docker
-    needs: prepare
     uses: ./.github/workflows/docker-publish.yml
-    with:
-      tag_name: ${{ needs.prepare.outputs.tag_name }}
 
   release:
     permissions:
