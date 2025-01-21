@@ -50,7 +50,9 @@ main() {
       warn "unknown option: $1"
       usage
       exit 1
-    esac; shift
+      ;;
+    esac
+    shift
   done
 
   CARGO_BUILD_ARGS=('--release')
@@ -132,14 +134,14 @@ main() {
 
     uname_m=$(uname -m)
     ARCHITECTURE=$(tolower "${FOUNDRY_ARCH:-${uname_m}}")
-    if [[ "${ARCHITECTURE}" == 'x86_64' ]]; then
+    if [[ ${ARCHITECTURE} == 'x86_64' ]]; then
       # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
       if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" == '1' ]]; then
         ARCHITECTURE='arm64' # Rosetta.
       else
         ARCHITECTURE='amd64' # Intel.
       fi
-    elif [[ "${ARCHITECTURE}" == 'arm64' ]] || [[ "${ARCHITECTURE}" == 'aarch64' ]]; then
+    elif [[ ${ARCHITECTURE} == 'arm64' ]] || [[ ${ARCHITECTURE} == 'aarch64' ]]; then
       ARCHITECTURE='arm64' # Arm.
     else
       ARCHITECTURE='amd64' # Amd.
@@ -153,7 +155,7 @@ main() {
     ensure mkdir -p "${FOUNDRY_VERSIONS_DIR}"
     # Download and extract the binaries archive
     say "downloading forge, cast, anvil, and chisel for ${FOUNDRY_VERSION} version"
-    if [[ "${PLATFORM}" == 'win32' ]]; then
+    if [[ ${PLATFORM} == 'win32' ]]; then
       tmp="$(mktemp -d 2>/dev/null || echo '.')/foundry.zip"
       ensure download "${BIN_ARCHIVE_URL}" "${tmp}"
       ensure unzip "${tmp}" -d "${FOUNDRY_VERSIONS_DIR}/${FOUNDRY_VERSION}"
@@ -186,7 +188,7 @@ main() {
 
       # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
       which_path=$(command -v "${bin}" || true)
-      if [[ -n ${which_path} ]] && [[ "${which_path}" != "${bin_path}" ]]; then
+      if [[ -n ${which_path} ]] && [[ ${which_path} != "${bin_path}" ]]; then
         warn ""
         cat 1>&2 <<EOF
 There are multiple binaries with the name '${bin}' present in your 'PATH'.
@@ -382,7 +384,7 @@ ensure() {
 
 # Downloads $1 into $2 or stdout
 download() {
-  if [[ -n "$2" ]]; then
+  if [[ -n $2 ]]; then
     # output into $2
     if check_cmd curl; then
       curl -#o "$2" -L "$1"
