@@ -170,7 +170,7 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
         let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
         print_table(headers, |table| {
             let contract_ty = |c: &Option<String>, ty: &String| {
-                c.clone().map_or(ty.clone(), |c| format!("{}.{}", c, ty))
+                c.clone().map_or(ty.clone(), |c| format!("{c}.{ty}"))
             };
 
             let internal_ty = |ty: &InternalType| match ty {
@@ -206,11 +206,7 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
                     })
                     .collect::<Vec<_>>();
                 let selector = ev.selector().to_string();
-                table.add_row([
-                    "event",
-                    format!("{}({})", ev.name, types.join(",")).as_str(),
-                    selector.as_str(),
-                ]);
+                table.add_row(["event", &format!("{}({})", ev.name, types.join(",")), &selector]);
             }
 
             // Print errors
@@ -218,8 +214,8 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
                 let selector = er.selector().to_string();
                 table.add_row([
                     "error",
-                    format!("{}({})", er.name, get_ty_sig(&er.inputs)).as_str(),
-                    selector.as_str(),
+                    &format!("{}({})", er.name, get_ty_sig(&er.inputs)),
+                    &selector,
                 ]);
             }
 
@@ -227,7 +223,7 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
             for func in abi.functions.iter().flat_map(|(_, f)| f) {
                 let selector = func.selector().to_string();
                 let state_mut = func.state_mutability.as_json_str();
-                let func_sig = if func.outputs.len() > 0 {
+                let func_sig = if !func.outputs.is_empty() {
                     format!(
                         "{}({}) {state_mut} returns ({})",
                         func.name,
@@ -237,27 +233,26 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
                 } else {
                     format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
                 };
-                table.add_row(["function", &func_sig, selector.as_str()]);
+                table.add_row(["function", &func_sig, &selector]);
             }
 
             if let Some(constructor) = abi.constructor() {
                 let state_mut = constructor.state_mutability.as_json_str();
                 table.add_row([
                     "constructor",
-                    format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs))
-                        .as_str(),
+                    &format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs)),
                     "",
                 ]);
             }
 
             if let Some(fallback) = &abi.fallback {
                 let state_mut = fallback.state_mutability.as_json_str();
-                table.add_row(["fallback", format!("fallback() {state_mut}",).as_str(), ""]);
+                table.add_row(["fallback", &format!("fallback() {state_mut}"), ""]);
             }
 
             if let Some(receive) = &abi.receive {
                 let state_mut = receive.state_mutability.as_json_str();
-                table.add_row(["receive", format!("receive() {state_mut}",).as_str(), ""]);
+                table.add_row(["receive", &format!("receive() {state_mut}"), ""]);
             }
         })?;
     } else {
