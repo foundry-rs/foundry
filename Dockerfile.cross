@@ -5,8 +5,9 @@ FROM ubuntu:22.04
 
 # Filled by docker buildx
 ARG TARGETARCH
+ARG TAG_NAME
 
-ENV TAG_NAME=something
+ENV TAG_NAME=${TAG_NAME}
 
 COPY ./dist/bin/$TARGETARCH/* /usr/local/bin/
 
