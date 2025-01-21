@@ -56,7 +56,7 @@ mod summary;
 pub use filter::FilterArgs;
 use forge::{result::TestKind, traces::render_trace_arena_inner};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::{print_invariant_metrics, TestSummaryReport};
+use summary::{format_invariant_metrics_table, TestSummaryReport};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -569,7 +569,9 @@ impl TestArgs {
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind {
-                        print_invariant_metrics(metrics);
+                        if !metrics.is_empty() {
+                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                        }
                     }
 
                     // We only display logs at level 2 and above
