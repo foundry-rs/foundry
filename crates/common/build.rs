@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // if not on a tag: <BIN> 0.3.0-dev+ba03de0019.1737036656.debug
     // if on a tag: <BIN> 0.3.0-stable+ba03de0019.1737036656.release
     let tag_name = env::var("TAG_NAME").unwrap_or_else(|_| String::from("dev"));
-    let (is_nightly, version_suffix) = if tag_name == "nightly" {
+    let (is_nightly, version_suffix) = if tag_name.contains("nightly") {
         (true, "-nightly".to_string())
     } else {
         (false, format!("-{tag_name}"))
