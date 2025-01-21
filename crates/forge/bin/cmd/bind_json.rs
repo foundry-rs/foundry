@@ -65,7 +65,7 @@ impl BindJsonArgs {
     /// After that we'll still have enough information for bindings but compilation should succeed
     /// in most of the cases.
     fn preprocess(self) -> Result<PreprocessedState> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let project = config.create_project(false, true)?;
 
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));

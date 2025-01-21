@@ -32,7 +32,7 @@ impl_figment_convert_basic!(UpdateArgs);
 
 impl UpdateArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let (root, paths) = dependencies_paths(&self.dependencies, &config)?;
         // fetch the latest changes for each submodule (recursively if flag is set)
         let git = Git::new(&root);

@@ -238,7 +238,8 @@ impl RemappingsProvider<'_> {
             })
             .flat_map(|lib: PathBuf| {
                 // load config, of the nested lib if it exists
-                let config = Config::load_with_root(&lib).sanitized();
+                let Ok(config) = Config::load_with_root(&lib) else { return vec![] };
+                let config = config.sanitized();
 
                 // if the configured _src_ directory is set to something that
                 // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,

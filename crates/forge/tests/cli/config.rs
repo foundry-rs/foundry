@@ -171,7 +171,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj, cmd| {
     let expected =
-        Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
+        Config::load_with_root(prj.root()).unwrap().to_string_pretty().unwrap().trim().to_string();
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
 });
@@ -185,7 +185,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
 
-    let profile = Config::load_with_root(prj.root());
+    let profile = Config::load_with_root(prj.root()).unwrap();
     // ensure that the auto-generated internal remapping for forge-std's ds-test exists
     assert_eq!(profile.remappings.len(), 1);
     assert_eq!("forge-std/=lib/forge-std/src/", profile.remappings[0].to_string());
@@ -205,7 +205,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     // remappings work
     let remappings_txt =
         prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
-    let config = forge_utils::load_config_with_root(Some(prj.root()));
+    let config = forge_utils::load_config_with_root(Some(prj.root())).unwrap();
     assert_eq!(
         format!(
             "ds-test/={}/",
@@ -251,7 +251,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
 
-    let profile = Config::load_with_root(prj.root());
+    let profile = Config::load_with_root(prj.root()).unwrap();
     // ensure that the auto-generated internal remapping for forge-std's ds-test exists
     assert_eq!(profile.remappings.len(), 1);
     let r = &profile.remappings[0];
@@ -275,13 +275,13 @@ Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmat
     };
 
     install(&mut cmd, "transmissions11/solmate");
-    let profile = Config::load_with_root(prj.root());
+    let profile = Config::load_with_root(prj.root()).unwrap();
     // remappings work
     let remappings_txt = prj.create_file(
         "remappings.txt",
         "solmate/=lib/solmate/src/\nsolmate-contracts/=lib/solmate/src/",
     );
-    let config = forge_utils::load_config_with_root(Some(prj.root()));
+    let config = forge_utils::load_config_with_root(Some(prj.root())).unwrap();
     // trailing slashes are removed on windows `to_slash_lossy`
     let path = prj.root().join("lib/solmate/src/").to_slash_lossy().into_owned();
     #[cfg(windows)]
@@ -316,7 +316,7 @@ forgetest_init!(can_detect_config_vals, |prj, _cmd| {
     assert!(!config.auto_detect_solc);
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 
-    let mut config = Config::load_with_root(prj.root());
+    let mut config = Config::load_with_root(prj.root()).unwrap();
     config.eth_rpc_url = Some("http://127.0.0.1:8545".to_string());
     config.auto_detect_solc = false;
     // write to `foundry.toml`
@@ -868,7 +868,7 @@ contract MyScript is BaseScript {
 
     let nested = prj.paths().libraries[0].join("another-dep");
     pretty_err(&nested, fs::create_dir_all(&nested));
-    let mut lib_config = Config::load_with_root(&nested);
+    let mut lib_config = Config::load_with_root(&nested).unwrap();
     lib_config.remappings = vec![
         Remapping::from_str("test/=test/").unwrap().into(),
         Remapping::from_str("script/=script/").unwrap().into(),

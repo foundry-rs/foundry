@@ -152,7 +152,7 @@ impl BuildOpts {
     /// `find_project_root` and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         Ok(config.project()?)
     }
 
@@ -193,19 +193,6 @@ impl<'a> From<&'a BuildOpts> for Figment {
         };
 
         figment
-    }
-}
-
-impl<'a> From<&'a BuildOpts> for Config {
-    fn from(args: &'a BuildOpts) -> Self {
-        let figment: Figment = args.into();
-        let mut config = Self::from_provider(figment).sanitized();
-        // if `--config-path` is set we need to adjust the config's root path to the actual root
-        // path for the project, otherwise it will the parent dir of the `--config-path`
-        if args.project_paths.config_path.is_some() {
-            config.root = args.project_paths.project_root();
-        }
-        config
     }
 }
 
