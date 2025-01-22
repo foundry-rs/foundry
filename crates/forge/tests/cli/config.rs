@@ -641,6 +641,57 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
     );
 });
 
+// Test that remappings within root of the project have priority over remappings of sub-projects.
+// E.g. `@utils/libraries` mapping from library shouldn't be added if project already has `@utils`
+// remapping.
+// See <https://github.com/foundry-rs/foundry/issues/9146>
+// Test that
+// - project defined `@openzeppelin/contracts` remapping is added
+// - library defined `@openzeppelin/contracts-upgradeable` remapping is added
+// - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
+// with project defined `@openzeppelin/contracts` remapping
+// See <https://github.com/foundry-rs/foundry/issues/9271>
+forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
+    let mut config = cmd.config();
+    // Add `@utils/` remapping in project config.
+    config.remappings = vec![
+        Remapping::from_str("@utils/=src/").unwrap().into(),
+        Remapping::from_str("@openzeppelin/contracts=lib/openzeppelin-contracts/").unwrap().into(),
+    ];
+    let proj_toml_file = prj.paths().root.join("foundry.toml");
+    pretty_err(&proj_toml_file, fs::write(&proj_toml_file, config.to_string_pretty().unwrap()));
+
+    // Create a new lib in the `lib` folder with conflicting `@utils/libraries` remapping.
+    // This should be filtered out from final remappings as root project already has `@utils/`.
+    let nested = prj.paths().libraries[0].join("dep1");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested).unwrap();
+    lib_config.remappings = vec![
+        Remapping::from_str("@utils/libraries/=src/").unwrap().into(),
+        Remapping::from_str("@openzeppelin/contracts-upgradeable/=lib/openzeppelin-upgradeable/")
+            .unwrap()
+            .into(),
+        Remapping::from_str(
+            "@openzeppelin/contracts/upgradeable/=lib/openzeppelin-contracts/upgradeable/",
+        )
+        .unwrap()
+        .into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+
+    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+Global:
+- @utils/=src/
+- @openzeppelin/contracts/=lib/openzeppelin-contracts/
+- @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
+- dep1/=lib/dep1/src/
+- forge-std/=lib/forge-std/src/
+
+
+"#]]);
+});
+
 // test to check that foundry.toml libs section updates on install
 forgetest!(can_update_libs_section, |prj, cmd| {
     cmd.git_init();
