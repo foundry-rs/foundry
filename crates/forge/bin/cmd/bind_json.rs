@@ -77,7 +77,7 @@ impl BindJsonArgs {
         let mut sources = graph
             // resolve graph into mapping language -> version -> sources
             .into_sources_by_version(&project)?
-            .0
+            .sources
             .into_iter()
             // we are only interested in Solidity sources
             .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
