@@ -9,6 +9,7 @@ use foundry_evm_core::constants::MAGIC_SKIP;
 pub(crate) mod assert;
 pub(crate) mod assume;
 pub(crate) mod expect;
+pub(crate) mod revert_handlers;
 
 impl Cheatcode for breakpoint_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
