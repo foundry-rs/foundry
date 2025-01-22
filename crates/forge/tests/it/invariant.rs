@@ -688,24 +688,6 @@ async fn test_invariant_after_invariant() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_invariant_selectors_weight() {
-    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantSelectorsWeight.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
-        config.fuzz.seed = Some(U256::from(119u32));
-        config.invariant.runs = 1;
-        config.invariant.depth = 10;
-    });
-    let results = runner.test_collect(&filter);
-    assert_multiple(
-        &results,
-        BTreeMap::from([(
-            "default/fuzz/invariant/common/InvariantSelectorsWeight.t.sol:InvariantSelectorsWeightTest",
-            vec![("invariant_selectors_weight()", true, None, None, None)],
-        )]),
-    )
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn test_no_reverts_in_counterexample() {
     let filter =
         Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantSequenceNoReverts.t.sol");
@@ -1014,4 +996,81 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+// Tests that selector hits are uniformly distributed
+// <https://github.com/foundry-rs/foundry/issues/2986>
+forgetest_init!(invariant_selectors_weight, |prj, cmd| {
+    prj.write_config(Config {
+        optimizer: Some(true),
+        invariant: { InvariantConfig { runs: 1, depth: 10, ..Default::default() } },
+        ..Default::default()
+    });
+    prj.add_source(
+        "InvariantHandlers.sol",
+        r#"
+contract HandlerOne {
+    uint256 public hit1;
+
+    function selector1() external {
+        hit1 += 1;
+    }
+}
+
+contract HandlerTwo {
+    uint256 public hit2;
+    uint256 public hit3;
+    uint256 public hit4;
+    uint256 public hit5;
+
+    function selector2() external {
+        hit2 += 1;
+    }
+
+    function selector3() external {
+        hit3 += 1;
+    }
+
+    function selector4() external {
+        hit4 += 1;
+    }
+
+    function selector5() external {
+        hit5 += 1;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "InvariantSelectorsWeightTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/InvariantHandlers.sol";
+
+contract InvariantSelectorsWeightTest is Test {
+    HandlerOne handlerOne;
+    HandlerTwo handlerTwo;
+
+    function setUp() public {
+        handlerOne = new HandlerOne();
+        handlerTwo = new HandlerTwo();
+    }
+
+    function afterInvariant() public {
+        assertEq(handlerOne.hit1(), 2);
+        assertEq(handlerTwo.hit2(), 2);
+        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit4(), 1);
+        assertEq(handlerTwo.hit5(), 2);
+    }
+
+    function invariant_selectors_weight() public view {}
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
 });

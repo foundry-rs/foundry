@@ -267,6 +267,7 @@ pub struct EnvArgs {
 
     /// Whether to disable the block gas limit checks.
     #[arg(long, visible_alias = "no-gas-limit")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub disable_block_gas_limit: bool,
 }
 
