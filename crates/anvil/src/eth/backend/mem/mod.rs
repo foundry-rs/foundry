@@ -527,7 +527,7 @@ impl Backend {
                 .await?
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
-            {                
+            {
                 if let Some(fork_url) = forking.json_rpc_url {
                     // Set the fork block number
                     let mut node_config = self.node_config.write().await;

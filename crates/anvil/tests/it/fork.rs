@@ -1486,14 +1486,23 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
         let db = api.backend.get_db().read().await;
         let cache_debug = format!("{:?}", db.maybe_inner().unwrap().cache());
         let re = regex::Regex::new(r#"JsonBlockCacheDB \{ cache_path: Some\("([^"]+)"\)"#).unwrap();
-        let m = re
+        let cache_path = re
             .captures_iter(&cache_debug)
             .next()
             .expect("must have JsonBlockCacheDB match")
             .get(1)
             .expect("must have matching path")
             .as_str();
-        m.strip_suffix("/storage.json").unwrap().split("/").last().unwrap().parse::<u64>().unwrap()
+
+        std::path::PathBuf::from(cache_path)
+            .parent()
+            .expect("must have filename")
+            .file_name()
+            .expect("must have block number as dir name")
+            .to_str()
+            .expect("must be valid string")
+            .parse::<u64>()
+            .expect("must be valid number")
     }
 
     assert_eq!(BLOCK_NUMBER, get_block_from_cache_path(&mut api).await);
