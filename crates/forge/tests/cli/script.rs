@@ -1926,7 +1926,7 @@ forgetest_async!(adheres_to_json_flag, |prj, cmd| {
     }
 
     foundry_test_utils::util::initialize(prj.root());
-    prj.write_config(Config { optimizer: true, ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_script(
         "Foo",
         r#"

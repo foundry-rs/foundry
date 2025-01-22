@@ -17,6 +17,23 @@ use foundry_test_utils::{
 };
 use std::{fs, io::Write, path::Path, str::FromStr};
 
+casttest!(print_short_version, |_prj, cmd| {
+    cmd.arg("-V").assert_success().stdout_eq(str![[r#"
+cast [..]-[..] ([..] [..])
+
+"#]]);
+});
+
+casttest!(print_long_version, |_prj, cmd| {
+    cmd.arg("--version").assert_success().stdout_eq(str![[r#"
+cast Version: [..]
+Commit SHA: [..]
+Build Timestamp: [..]
+Build Profile: [..]
+
+"#]]);
+});
+
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"

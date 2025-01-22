@@ -134,6 +134,7 @@ jobs:
 
       - name: Build binaries
         env:
+          TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
@@ -272,7 +273,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, cleanup]
+    needs: [ prepare, release-docker, release, cleanup ]
     if: failure()
     steps:
       - uses: actions/checkout@v4

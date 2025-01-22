@@ -237,7 +237,7 @@ pub struct Config {
     ///      install it
     pub offline: bool,
     /// Whether to activate optimizer
-    pub optimizer: bool,
+    pub optimizer: Option<bool>,
     /// The number of runs specifies roughly how often each opcode of the deployed code will be
     /// executed across the life-time of the contract. This means it is a trade-off parameter
     /// between code size (deploy cost) and code execution cost (cost after deployment).
@@ -248,7 +248,7 @@ pub struct Config {
     /// A common misconception is that this parameter specifies the number of iterations of the
     /// optimizer. This is not true: The optimizer will always run as many times as it can
     /// still improve the code.
-    pub optimizer_runs: usize,
+    pub optimizer_runs: Option<usize>,
     /// Switch optimizer components on or off in detail.
     /// The "enabled" switch above provides two defaults which can be
     /// tweaked here. If "details" is given, "enabled" can be omitted.
@@ -581,53 +581,26 @@ impl Config {
     /// Docker image with eof-enabled solc binary
     pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
 
-    /// Returns the current `Config`
+    /// Loads the `Config` from the current directory.
     ///
     /// See [`figment`](Self::figment) for more details.
-    #[track_caller]
-    pub fn load() -> Self {
+    pub fn load() -> Result<Self, ExtractConfigError> {
         Self::from_provider(Self::figment())
     }
 
-    /// Returns the current `Config` with the given `providers` preset
+    /// Loads the `Config` with the given `providers` preset.
     ///
     /// See [`figment`](Self::figment) for more details.
-    #[track_caller]
-    pub fn load_with_providers(providers: FigmentProviders) -> Self {
+    pub fn load_with_providers(providers: FigmentProviders) -> Result<Self, ExtractConfigError> {
         Self::from_provider(Self::default().to_figment(providers))
     }
 
-    /// Returns the current `Config`
+    /// Loads the `Config` from the given root directory.
     ///
     /// See [`figment_with_root`](Self::figment_with_root) for more details.
     #[track_caller]
-    pub fn load_with_root(root: impl AsRef<Path>) -> Self {
+    pub fn load_with_root(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
         Self::from_provider(Self::figment_with_root(root.as_ref()))
-    }
-
-    /// Extract a `Config` from `provider`, panicking if extraction fails.
-    ///
-    /// # Panics
-    ///
-    /// If extraction fails, prints an error message indicating the failure and
-    /// panics. For a version that doesn't panic, use [`Config::try_from()`].
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use figment::providers::{Env, Format, Toml};
-    /// use foundry_config::Config;
-    ///
-    /// // Use foundry's default `Figment`, but allow values from `other.toml`
-    /// // to supersede its values.
-    /// let figment = Config::figment().merge(Toml::file("other.toml").nested());
-    ///
-    /// let config = Config::from_provider(figment);
-    /// ```
-    #[track_caller]
-    pub fn from_provider<T: Provider>(provider: T) -> Self {
-        trace!("load config with provider: {:?}", provider.metadata());
-        Self::try_from(provider).unwrap_or_else(|err| panic!("{}", err))
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -642,13 +615,21 @@ impl Config {
     /// // to supersede its values.
     /// let figment = Config::figment().merge(Toml::file("other.toml").nested());
     ///
-    /// let config = Config::try_from(figment);
+    /// let config = Config::from_provider(figment);
     /// ```
-    pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
-        Self::try_from_figment(Figment::from(provider))
+    #[doc(alias = "try_from")]
+    pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
+        trace!("load config with provider: {:?}", provider.metadata());
+        Self::from_figment(Figment::from(provider))
     }
 
-    fn try_from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
+    #[doc(hidden)]
+    #[deprecated(note = "use `Config::from_provider` instead")]
+    pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
+        Self::from_provider(provider)
+    }
+
+    fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
 
@@ -668,6 +649,8 @@ impl Config {
         }
         add_profile(&Self::DEFAULT_PROFILE);
         add_profile(&config.profile);
+
+        config.normalize_optimizer_settings();
 
         Ok(config)
     }
@@ -834,9 +817,35 @@ impl Config {
         self
     }
 
+    /// Normalizes optimizer settings.
+    /// See <https://github.com/foundry-rs/foundry/issues/9665>
+    pub fn normalized_optimizer_settings(mut self) -> Self {
+        self.normalize_optimizer_settings();
+        self
+    }
+
     /// Normalizes the evm version if a [SolcReq] is set to a valid version.
     pub fn normalize_evm_version(&mut self) {
         self.evm_version = self.get_normalized_evm_version();
+    }
+
+    /// Normalizes optimizer settings:
+    /// - with default settings, optimizer is set to false and optimizer runs to 200
+    /// - if optimizer is set and optimizer runs not specified, then optimizer runs is set to 200
+    /// - enable optimizer if not explicitly set and optimizer runs set to a value greater than 0
+    pub fn normalize_optimizer_settings(&mut self) {
+        match (self.optimizer, self.optimizer_runs) {
+            // Default: set the optimizer to false and optimizer runs to 200.
+            (None, None) => {
+                self.optimizer = Some(false);
+                self.optimizer_runs = Some(200);
+            }
+            // Set the optimizer runs to 200 if the `optimizer` config set.
+            (Some(_), None) => self.optimizer_runs = Some(200),
+            // Enables optimizer if the `optimizer_runs` has been set with a value greater than 0.
+            (None, Some(runs)) => self.optimizer = Some(runs > 0),
+            _ => {}
+        }
     }
 
     /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version or if the solc
@@ -921,8 +930,9 @@ impl Config {
     ///
     /// ```
     /// use foundry_config::Config;
-    /// let config = Config::load_with_root(".").sanitized();
-    /// let project = config.project();
+    /// let config = Config::load_with_root(".")?.sanitized();
+    /// let project = config.project()?;
+    /// # Ok::<_, eyre::Error>(())
     /// ```
     pub fn project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(self.cache, false)
@@ -1170,8 +1180,9 @@ impl Config {
     /// ```
     /// use foundry_compilers::solc::Solc;
     /// use foundry_config::Config;
-    /// let config = Config::load_with_root(".").sanitized();
+    /// let config = Config::load_with_root(".")?.sanitized();
     /// let paths = config.project_paths::<Solc>();
+    /// # Ok::<_, eyre::Error>(())
     /// ```
     pub fn project_paths<L>(&self) -> ProjectPathsConfig<L> {
         let mut builder = ProjectPathsConfig::builder()
@@ -1466,8 +1477,8 @@ impl Config {
     /// and  <https://github.com/ethereum/solidity/blob/bbb7f58be026fdc51b0b4694a6f25c22a1425586/docs/using-the-compiler.rst?plain=1#L293-L294>
     pub fn optimizer(&self) -> Optimizer {
         Optimizer {
-            enabled: Some(self.optimizer),
-            runs: Some(self.optimizer_runs),
+            enabled: self.optimizer,
+            runs: self.optimizer_runs,
             // we always set the details because `enabled` is effectively a specific details profile
             // that can still be modified
             details: self.optimizer_details.clone(),
@@ -1613,6 +1624,16 @@ impl Config {
         Self::with_root(root.as_ref()).into()
     }
 
+    #[doc(hidden)]
+    #[track_caller]
+    pub fn figment_with_root_opt(root: Option<&Path>) -> Figment {
+        let root = match root {
+            Some(root) => root,
+            None => &find_project_root(None).expect("could not determine project root"),
+        };
+        Self::figment_with_root(root)
+    }
+
     /// Creates a new Config that adds additional context extracted from the provided root.
     ///
     /// # Example
@@ -1690,7 +1711,7 @@ impl Config {
     where
         F: FnOnce(&Self, &mut toml_edit::DocumentMut) -> bool,
     {
-        let config = Self::load_with_root(root).sanitized();
+        let config = Self::load_with_root(root)?.sanitized();
         config.update(|doc| f(&config, doc))
     }
 
@@ -2298,8 +2319,8 @@ impl Default for Config {
             vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
-            optimizer: false,
-            optimizer_runs: 200,
+            optimizer: None,
+            optimizer_runs: None,
             optimizer_details: None,
             model_checker: None,
             extra_output: Default::default(),
@@ -2588,7 +2609,7 @@ mod tests {
     #[test]
     fn test_install_dir() {
         figment::Jail::expect_with(|jail| {
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
             jail.create_file(
                 "foundry.toml",
@@ -2597,7 +2618,7 @@ mod tests {
                 libs = ['node_modules', 'lib']
             ",
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
 
             jail.create_file(
@@ -2607,7 +2628,7 @@ mod tests {
                 libs = ['custom', 'node_modules', 'lib']
             ",
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.install_lib_dir(), PathBuf::from("custom"));
 
             Ok(())
@@ -2646,7 +2667,7 @@ mod tests {
             ",
             )?;
 
-            let config = crate::Config::load();
+            let config = crate::Config::load().unwrap();
             let expected: &[figment::Profile] = &["ci".into(), "default".into(), "local".into()];
             assert_eq!(config.profiles, expected);
 
@@ -2658,10 +2679,10 @@ mod tests {
     fn test_default_round_trip() {
         figment::Jail::expect_with(|_| {
             let original = Config::figment();
-            let roundtrip = Figment::from(Config::from_provider(&original));
+            let roundtrip = Figment::from(Config::from_provider(&original).unwrap());
             for figment in &[original, roundtrip] {
-                let config = Config::from_provider(figment);
-                assert_eq!(config, Config::default());
+                let config = Config::from_provider(figment).unwrap();
+                assert_eq!(config, Config::default().normalized_optimizer_settings());
             }
             Ok(())
         });
@@ -2673,7 +2694,7 @@ mod tests {
             jail.set_env("FOUNDRY_FFI", "true");
             jail.set_env("FFI", "true");
             jail.set_env("DAPP_FFI", "true");
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert!(!config.ffi);
 
             Ok(())
@@ -2701,7 +2722,7 @@ mod tests {
             ",
             )?;
             jail.set_env("FOUNDRY_PROFILE", "local");
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.libs, vec![PathBuf::from("modules")]);
 
             Ok(())
@@ -2721,15 +2742,15 @@ mod tests {
     #[test]
     fn test_default_libs() {
         figment::Jail::expect_with(|jail| {
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.libs, vec![PathBuf::from("lib")]);
 
             fs::create_dir_all(jail.directory().join("node_modules")).unwrap();
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.libs, vec![PathBuf::from("node_modules")]);
 
             fs::create_dir_all(jail.directory().join("lib")).unwrap();
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
 
             Ok(())
@@ -2752,12 +2773,12 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.src, PathBuf::from("defaultsrc"));
             assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
 
             jail.set_env("FOUNDRY_PROFILE", "custom");
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.src, PathBuf::from("customsrc"));
             assert_eq!(config.test, PathBuf::from("defaulttest"));
             assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
@@ -2777,7 +2798,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"mytest"));
             Ok(())
@@ -2796,7 +2817,7 @@ mod tests {
                 cache = true
             "#,
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert!(config.remappings.is_empty());
 
             jail.create_file(
@@ -2807,7 +2828,7 @@ mod tests {
             ",
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.remappings,
                 vec![
@@ -2817,7 +2838,7 @@ mod tests {
             );
 
             jail.set_env("DAPP_REMAPPINGS", "ds-test=lib/ds-test/\nother/=lib/other/");
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert_eq!(
                 config.remappings,
@@ -2847,7 +2868,7 @@ mod tests {
                 cache = true
             "#,
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert!(config.remappings.is_empty());
 
             jail.create_file(
@@ -2858,7 +2879,7 @@ mod tests {
             ",
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.remappings,
                 vec![
@@ -2868,7 +2889,7 @@ mod tests {
             );
 
             jail.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/src/\nenv-lib/=lib/env-lib/");
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             // Remappings should now be:
             // - ds-test from environment (lib/ds-test/src/)
@@ -2908,11 +2929,11 @@ mod tests {
             "#,
             )?;
 
-            let mut config = Config::load();
+            let mut config = Config::load().unwrap();
             config.libs.push("libs".into());
             config.update_libs().unwrap();
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.libs, vec![PathBuf::from("node_modules"), PathBuf::from("libs"),]);
             Ok(())
         });
@@ -2932,8 +2953,14 @@ mod tests {
                 ),
             )?;
 
-            let config = Config::load();
-            assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config,
+                Config {
+                    gas_limit: gas.into(),
+                    ..Config::default().normalized_optimizer_settings()
+                }
+            );
 
             Ok(())
         });
@@ -2951,7 +2978,7 @@ mod tests {
             "#,
             )?;
 
-            let _config = Config::load();
+            let _config = Config::load().unwrap();
 
             Ok(())
         });
@@ -2963,7 +2990,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env("FOUNDRY_CONFIG", "this config does not exist");
 
-            let _config = Config::load();
+            let _config = Config::load().unwrap();
 
             Ok(())
         });
@@ -2984,7 +3011,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert!(config
                 .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                 .is_err());
@@ -3031,7 +3058,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert!(config.etherscan.clone().resolved().has_unresolved());
 
@@ -3084,7 +3111,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             let etherscan = config.get_etherscan_config().unwrap().unwrap();
             assert_eq!(etherscan.chain, Some(NamedChain::Sepolia.into()));
             assert_eq!(etherscan.key, "FX42Z3BBJJEWXWGYV2X1CIPRSCN");
@@ -3107,7 +3134,7 @@ mod tests {
             )?;
             jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
 
-            let mut config = Config::load();
+            let mut config = Config::load().unwrap();
             assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
 
             config.eth_rpc_url = Some("mainnet".to_string());
@@ -3136,7 +3163,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
 
             Ok(())
@@ -3154,13 +3181,13 @@ mod tests {
                 polygonMumbai = "https://polygon-mumbai.g.alchemy.com/v2/${_RESOLVE_RPC_ALIAS}"
             "#,
             )?;
-            let mut config = Config::load();
+            let mut config = Config::load().unwrap();
             config.eth_rpc_url = Some("polygonMumbai".to_string());
             assert!(config.get_rpc_url().unwrap().is_err());
 
             jail.set_env("_RESOLVE_RPC_ALIAS", "123455");
 
-            let mut config = Config::load();
+            let mut config = Config::load().unwrap();
             config.eth_rpc_url = Some("polygonMumbai".to_string());
             assert_eq!(
                 "https://polygon-mumbai.g.alchemy.com/v2/123455",
@@ -3188,7 +3215,7 @@ mod tests {
             jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARB_ONE", "123455");
             jail.set_env("TEST_RESOLVE_RPC_ALIAS_ARBISCAN", "123455");
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
             assert!(config.is_err());
@@ -3211,7 +3238,7 @@ mod tests {
             )?;
             jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 RpcEndpoints::new([
                     (
@@ -3279,7 +3306,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             jail.set_env("_CONFIG_AUTH", "123456");
             jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
@@ -3355,7 +3382,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert_eq!(config.get_rpc_url().unwrap().unwrap(), "https://example.com/");
 
@@ -3414,7 +3441,7 @@ mod tests {
             "#,
             )?;
 
-            let mut config = Config::load();
+            let mut config = Config::load().unwrap();
 
             let optimism = config.get_etherscan_api_key(Some(NamedChain::Optimism.into()));
             assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
@@ -3441,7 +3468,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             let mumbai = config
                 .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
@@ -3466,7 +3493,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             let mumbai = config
                 .get_etherscan_config_with_chain(Some(NamedChain::PolygonMumbai.into()))
@@ -3496,7 +3523,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             let mumbai = config.get_etherscan_config_with_chain(None).unwrap().unwrap();
             assert_eq!(mumbai.key, "https://etherscan-mumbai.com/".to_string());
@@ -3538,7 +3565,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config,
                 Config {
@@ -3581,7 +3608,7 @@ mod tests {
                     ]),
                     build_info_path: Some("build-info".into()),
                     always_use_create_2_factory: true,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3600,7 +3627,7 @@ mod tests {
             ",
             )?;
 
-            let config = Config::load_with_root(jail.directory());
+            let config = Config::load_with_root(jail.directory()).unwrap();
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
@@ -3685,7 +3712,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load_with_root(jail.directory());
+            let config = Config::load_with_root(jail.directory()).unwrap();
 
             assert_eq!(config.ignored_file_paths, vec![PathBuf::from("something")]);
             assert_eq!(config.fuzz.seed, Some(U256::from(1000)));
@@ -3723,7 +3750,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
@@ -3734,7 +3761,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
@@ -3745,11 +3772,11 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
 
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
             Ok(())
         });
@@ -3768,7 +3795,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             Ok(())
@@ -3783,7 +3810,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
 
             Ok(())
@@ -3806,7 +3833,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config,
                 Config {
@@ -3816,7 +3843,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     auto_detect_solc: false,
                     evm_version: EvmVersion::Berlin,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3836,7 +3863,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert_eq!(
                 config.extra_output,
@@ -3861,26 +3888,26 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config,
                 Config {
                     src: "mysrc".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
             jail.set_env("FOUNDRY_SRC", r"other-src");
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config,
                 Config {
                     src: "other-src".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    ..Config::default()
+                    ..Config::default().normalized_optimizer_settings()
                 }
             );
 
@@ -3908,7 +3935,7 @@ mod tests {
                 src = "other-src"
             "#,
             )?;
-            let loaded = Config::load();
+            let loaded = Config::load().unwrap();
             assert_eq!(loaded.evm_version, EvmVersion::Berlin);
             let base = loaded.into_basic();
             let default = Config::default();
@@ -3949,7 +3976,7 @@ mod tests {
                 dictionary_weight = 101
             ",
             )?;
-            let _config = Config::load();
+            let _config = Config::load().unwrap();
             Ok(())
         });
     }
@@ -3977,7 +4004,7 @@ mod tests {
             )?;
 
             let invariant_default = InvariantConfig::default();
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert_ne!(config.invariant.runs, config.fuzz.runs);
             assert_eq!(config.invariant.runs, 420);
@@ -4001,7 +4028,7 @@ mod tests {
             );
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
-            let ci_config = Config::load();
+            let ci_config = Config::load().unwrap();
             assert_eq!(ci_config.fuzz.runs, 1);
             assert_eq!(ci_config.invariant.runs, 400);
             assert_eq!(ci_config.fuzz.dictionary.dictionary_weight, 5);
@@ -4034,12 +4061,12 @@ mod tests {
             ",
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 100);
             assert_eq!(config.invariant.runs, 120);
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.runs, 500);
 
@@ -4059,15 +4086,15 @@ mod tests {
             jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
             jail.set_env("DAPP_BUILD_OPTIMIZE", 0);
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert_eq!(config.block_number, 1337);
             assert_eq!(config.sender, addr);
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
-            assert_eq!(config.optimizer_runs, 999);
-            assert!(!config.optimizer);
+            assert_eq!(config.optimizer_runs, Some(999));
+            assert!(!config.optimizer.unwrap());
 
             Ok(())
         });
@@ -4080,7 +4107,7 @@ mod tests {
                 "DAPP_LIBRARIES",
                 "[src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6]",
             );
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
                 vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
@@ -4091,7 +4118,7 @@ mod tests {
                 "DAPP_LIBRARIES",
                 "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
             );
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
                 vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
@@ -4102,7 +4129,7 @@ mod tests {
                 "DAPP_LIBRARIES",
                 "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6,src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
             );
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
                 vec![
@@ -4133,7 +4160,7 @@ mod tests {
                     ]
             ",
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             let libs = config.parsed_libraries().unwrap().libs;
 
@@ -4183,11 +4210,11 @@ mod tests {
     #[test]
     fn config_roundtrip() {
         figment::Jail::expect_with(|jail| {
-            let default = Config::default();
+            let default = Config::default().normalized_optimizer_settings();
             let basic = default.clone().into_basic();
             jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
 
-            let mut other = Config::load();
+            let mut other = Config::load().unwrap();
             clear_warning(&mut other);
             assert_eq!(default, other);
 
@@ -4195,7 +4222,7 @@ mod tests {
             assert_eq!(basic, other);
 
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
-            let mut other = Config::load();
+            let mut other = Config::load().unwrap();
             clear_warning(&mut other);
             assert_eq!(default, other);
 
@@ -4213,7 +4240,7 @@ mod tests {
                 fs_permissions = [{ access = "read-write", path = "./"}]
             "#,
             )?;
-            let loaded = Config::load();
+            let loaded = Config::load().unwrap();
 
             assert_eq!(
                 loaded.fs_permissions,
@@ -4227,7 +4254,7 @@ mod tests {
                 fs_permissions = [{ access = "none", path = "./"}]
             "#,
             )?;
-            let loaded = Config::load();
+            let loaded = Config::load().unwrap();
             assert_eq!(loaded.fs_permissions, FsPermissions::new(vec![PathPermission::none("./")]));
 
             Ok(())
@@ -4250,7 +4277,7 @@ mod tests {
                 stackAllocation = true
             ",
             )?;
-            let mut loaded = Config::load();
+            let mut loaded = Config::load().unwrap();
             clear_warning(&mut loaded);
             assert_eq!(
                 loaded.optimizer_details,
@@ -4267,7 +4294,7 @@ mod tests {
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
 
-            let mut reloaded = Config::load();
+            let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
             assert_eq!(loaded, reloaded);
 
@@ -4290,7 +4317,7 @@ mod tests {
                 timeout = 10000
             ",
             )?;
-            let mut loaded = Config::load();
+            let mut loaded = Config::load().unwrap();
             clear_warning(&mut loaded);
             assert_eq!(
                 loaded.model_checker,
@@ -4317,7 +4344,7 @@ mod tests {
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
 
-            let mut reloaded = Config::load();
+            let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
             assert_eq!(loaded, reloaded);
 
@@ -4340,7 +4367,7 @@ mod tests {
                 timeout = 10000
             ",
             )?;
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
 
             // NOTE(onbjerg): We have to canonicalize the path here using dunce because figment will
             // canonicalize the jail path using the standard library. The standard library *always*
@@ -4392,7 +4419,7 @@ mod tests {
                 bracket_spacing = true
             ",
             )?;
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
             assert_eq!(
                 loaded.fmt,
                 FormatterConfig {
@@ -4419,7 +4446,7 @@ mod tests {
             ",
             )?;
 
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
             assert_eq!(
                 loaded.invariant,
                 InvariantConfig {
@@ -4452,7 +4479,7 @@ mod tests {
             jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
             jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
             assert_eq!(config.invariant.depth, 5);
@@ -4497,7 +4524,7 @@ mod tests {
                 out = 'my-out'
             ",
             )?;
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
             assert_eq!(loaded.out.file_name().unwrap(), "my-out");
             assert_eq!(
@@ -4522,11 +4549,11 @@ mod tests {
             ",
             )?;
             jail.set_env("ETHERSCAN_API_KEY", "");
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
             assert!(loaded.etherscan_api_key.is_none());
 
             jail.set_env("ETHERSCAN_API_KEY", "DUMMY");
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
             assert_eq!(loaded.etherscan_api_key, Some("DUMMY".into()));
 
             Ok(())
@@ -4548,7 +4575,7 @@ mod tests {
             let figment = Config::figment_with_root(jail.directory())
                 .merge(("etherscan_api_key", "USER_KEY"));
 
-            let loaded = Config::from_provider(figment);
+            let loaded = Config::from_provider(figment).unwrap();
             assert_eq!(loaded.etherscan_api_key, Some("USER_KEY".into()));
 
             Ok(())
@@ -4566,7 +4593,7 @@ mod tests {
             ",
             )?;
 
-            let loaded = Config::load().sanitized();
+            let loaded = Config::load().unwrap().sanitized();
             assert_eq!(loaded.evm_version, EvmVersion::London);
             Ok(())
         });
@@ -4622,7 +4649,6 @@ mod tests {
         }
 
         let _figment: Figment = From::from(&MyArgs::default());
-        let _config: Config = From::from(&MyArgs::default());
 
         #[derive(Default)]
         struct Outer {
@@ -4633,7 +4659,6 @@ mod tests {
         impl_figment_convert!(Outer, start, other, another);
 
         let _figment: Figment = From::from(&Outer::default());
-        let _config: Config = From::from(&Outer::default());
     }
 
     #[test]
@@ -4726,7 +4751,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.ignored_error_codes,
                 vec![
@@ -4751,7 +4776,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.ignored_file_paths, vec![Path::new("something").to_path_buf()]);
 
             Ok(())
@@ -4769,7 +4794,7 @@ mod tests {
             ",
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.optimizer_details, Some(OptimizerDetails::default()));
 
             Ok(())
@@ -4788,7 +4813,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.labels,
                 AddressHashMap::from_iter(vec![
@@ -4820,7 +4845,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.vyper,
                 VyperConfig {
@@ -4850,7 +4875,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::load();
+            let config = Config::load().unwrap();
 
             assert_eq!(
                 config.soldeer,
