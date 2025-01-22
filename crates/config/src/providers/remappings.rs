@@ -410,8 +410,8 @@ mod tests {
 
         remappings.push(Remapping {
             context: None,
-            name: "@openzeppelin/".to_string(),
-            path: "lib/openzeppelin/".to_string(),
+            name: "@openzeppelin-contracts/".to_string(),
+            path: "lib/openzeppelin-contracts/".to_string(),
         });
         remappings.push(Remapping {
             context: None,
@@ -426,12 +426,13 @@ mod tests {
         });
 
         let result = remappings.into_inner();
-
         assert_eq!(result.len(), 3, "Should have 3 remappings");
-        assert!(result.iter().any(
-            |r| r.name == "@openzeppelin/contracts/" && r.path == "lib/openzeppelin/contracts/"
-        ));
-        assert!(result.iter().any(|r| r.name == "MyContract.sol" && r.path == "os/Contract.sol"));
+        assert_eq!(result.first().unwrap().name, "@openzeppelin-contracts/");
+        assert_eq!(result.first().unwrap().path, "lib/openzeppelin-contracts/");
+        assert_eq!(result.get(1).unwrap().name, "@openzeppelin/contracts/");
+        assert_eq!(result.get(1).unwrap().path, "lib/openzeppelin/contracts/");
+        assert_eq!(result.get(2).unwrap().name, "MyContract.sol");
+        assert_eq!(result.get(2).unwrap().path, "os/Contract.sol");
     }
 
     #[test]
