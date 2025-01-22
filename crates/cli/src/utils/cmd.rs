@@ -175,7 +175,9 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     NamedChain::Moonbase |
                     NamedChain::Moonbeam |
                     NamedChain::MoonbeamDev |
-                    NamedChain::Moonriver
+                    NamedChain::Moonriver |
+                    NamedChain::Sonic |
+                    NamedChain::SonicTestnet
             );
     }
     false
