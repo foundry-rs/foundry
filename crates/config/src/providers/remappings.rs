@@ -69,7 +69,7 @@ impl Remappings {
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    pub fn push(&mut self, remapping: Remapping) {
+    fn push(&mut self, remapping: Remapping) {
         // Special handling for .sol file remappings, only allow one remapping per source file.
         if remapping.name.ends_with(".sol") && !remapping.path.ends_with(".sol") {
             return;
@@ -88,7 +88,18 @@ impl Remappings {
             // @prb/=node_modules/@prb/ as the one being checked,
             // we want to keep the already existing one, which is the first one. This way we avoid
             // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
-            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
+            // Remappings are added from root of the project down to libraries, so
+            // we also want to exclude any conflicting remappings added from libraries. For example,
+            // if we have `@utils/=src/` added in project remappings and `@utils/libraries/=src/`
+            // added in a dependency, we don't want to add the new one as it conflicts with project
+            // existing remapping.
+            let mut existing_name_path = existing.name.clone();
+            if !existing_name_path.ends_with('/') {
+                existing_name_path.push('/')
+            }
+            let is_conflicting = remapping.name.starts_with(&existing_name_path) ||
+                existing.name.starts_with(&remapping.name);
+            is_conflicting && existing.context == remapping.context
         }) {
             return;
         };
@@ -399,8 +410,8 @@ mod tests {
 
         remappings.push(Remapping {
             context: None,
-            name: "@openzeppelin/".to_string(),
-            path: "lib/openzeppelin/".to_string(),
+            name: "@openzeppelin-contracts/".to_string(),
+            path: "lib/openzeppelin-contracts/".to_string(),
         });
         remappings.push(Remapping {
             context: None,
@@ -415,12 +426,13 @@ mod tests {
         });
 
         let result = remappings.into_inner();
-
         assert_eq!(result.len(), 3, "Should have 3 remappings");
-        assert!(result.iter().any(
-            |r| r.name == "@openzeppelin/contracts/" && r.path == "lib/openzeppelin/contracts/"
-        ));
-        assert!(result.iter().any(|r| r.name == "MyContract.sol" && r.path == "os/Contract.sol"));
+        assert_eq!(result.first().unwrap().name, "@openzeppelin-contracts/");
+        assert_eq!(result.first().unwrap().path, "lib/openzeppelin-contracts/");
+        assert_eq!(result.get(1).unwrap().name, "@openzeppelin/contracts/");
+        assert_eq!(result.get(1).unwrap().path, "lib/openzeppelin/contracts/");
+        assert_eq!(result.get(2).unwrap().name, "MyContract.sol");
+        assert_eq!(result.get(2).unwrap().path, "os/Contract.sol");
     }
 
     #[test]
