@@ -237,18 +237,22 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
+    let local_optimizer: u64 = if local_settings.optimizer == Some(true) { 1 } else { 0 };
     if etherscan_settings.optimization_used != local_optimizer {
         let str = format!(
             "Optimizer mismatch: local={}, onchain={}",
-            local_settings.optimizer, etherscan_settings.optimization_used
+            local_settings.optimizer.unwrap_or(false),
+            etherscan_settings.optimization_used
         );
         mismatches.push(str);
     }
-    if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
+    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64) ||
+        (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs, etherscan_settings.runs
+            local_settings.optimizer_runs.unwrap(),
+            etherscan_settings.runs
         );
         mismatches.push(str);
     }
@@ -309,7 +313,7 @@ pub fn check_args_len(
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
     if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if !constructor.inputs.is_empty() && args.len() == 0 {
+        if !constructor.inputs.is_empty() && args.is_empty() {
             eyre::bail!(
                 "Contract expects {} constructor argument(s), but none were provided",
                 constructor.inputs.len()

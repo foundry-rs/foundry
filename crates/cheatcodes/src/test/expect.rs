@@ -2,29 +2,12 @@ use std::collections::VecDeque;
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    address, hex,
     map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use alloy_sol_types::{SolError, SolValue};
-use foundry_common::ContractsByArtifact;
-use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::{
-    return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
-};
-use spec::Vm;
+use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
 
-/// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
-/// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
-/// to populate the return with dummy bytes so the decode doesn't fail.
-///
-/// 8192 bytes was arbitrarily chosen because it is long enough for return values up to 256 words in
-/// size.
-static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
-
-/// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
-
+use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
 ///
 /// For each address, we track the expected calls per call data. We track it in such manner
@@ -87,7 +70,7 @@ pub struct ExpectedRevert {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
-    /// Actual reverter of the call.
+    /// Address that reverted the call.
     pub reverted_by: Option<Address>,
     /// Number of times this revert is expected.
     pub count: u64,
@@ -605,6 +588,20 @@ impl Cheatcode for expectSafeMemoryCallCall {
     }
 }
 
+impl RevertParameters for ExpectedRevert {
+    fn reverter(&self) -> Option<Address> {
+        self.reverter
+    }
+
+    fn reason(&self) -> Option<&[u8]> {
+        self.reason.as_deref()
+    }
+
+    fn partial_match(&self) -> bool {
+        self.partial_match
+    }
+}
+
 /// Handles expected calls specified by the `expectCall` cheatcodes.
 ///
 /// It can handle calls in two ways:
@@ -920,136 +917,6 @@ fn expect_revert(
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_revert(
-    is_cheatcode: bool,
-    is_create: bool,
-    expected_revert: &mut ExpectedRevert,
-    status: InstructionResult,
-    retdata: Bytes,
-    known_contracts: &Option<ContractsByArtifact>,
-) -> Result<(Option<Address>, Bytes)> {
-    let success_return = || {
-        if is_create {
-            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
-        } else {
-            (None, DUMMY_CALL_OUTPUT.clone())
-        }
-    };
-
-    let stringify = |data: &[u8]| {
-        if let Ok(s) = String::abi_decode(data, true) {
-            return s;
-        }
-        if data.is_ascii() {
-            return std::str::from_utf8(data).unwrap().to_owned();
-        }
-        hex::encode_prefixed(data)
-    };
-
-    if expected_revert.count == 0 {
-        if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {
-            ensure!(
-                matches!(status, return_ok!()),
-                "call reverted when it was expected not to revert"
-            );
-            return Ok(success_return());
-        }
-
-        // Flags to track if the reason and reverter match.
-        let mut reason_match = expected_revert.reason.as_ref().map(|_| false);
-        let mut reverter_match = expected_revert.reverter.as_ref().map(|_| false);
-
-        // Reverter check
-        if let (Some(expected_reverter), Some(actual_reverter)) =
-            (expected_revert.reverter, expected_revert.reverted_by)
-        {
-            if expected_reverter == actual_reverter {
-                reverter_match = Some(true);
-            }
-        }
-
-        // Reason check
-        let expected_reason = expected_revert.reason.as_deref();
-        if let Some(expected_reason) = expected_reason {
-            let mut actual_revert: Vec<u8> = retdata.into();
-            actual_revert = decode_revert(actual_revert);
-
-            if actual_revert == expected_reason {
-                reason_match = Some(true);
-            }
-        };
-
-        match (reason_match, reverter_match) {
-            (Some(true), Some(true)) => Err(fmt_err!(
-                "expected 0 reverts with reason: {}, from address: {}, but got one",
-                &stringify(expected_reason.unwrap_or_default()),
-                expected_revert.reverter.unwrap()
-            )),
-            (Some(true), None) => Err(fmt_err!(
-                "expected 0 reverts with reason: {}, but got one",
-                &stringify(expected_reason.unwrap_or_default())
-            )),
-            (None, Some(true)) => Err(fmt_err!(
-                "expected 0 reverts from address: {}, but got one",
-                expected_revert.reverter.unwrap()
-            )),
-            _ => Ok(success_return()),
-        }
-    } else {
-        ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
-
-        // If expected reverter address is set then check it matches the actual reverter.
-        if let (Some(expected_reverter), Some(actual_reverter)) =
-            (expected_revert.reverter, expected_revert.reverted_by)
-        {
-            if expected_reverter != actual_reverter {
-                return Err(fmt_err!(
-                    "Reverter != expected reverter: {} != {}",
-                    actual_reverter,
-                    expected_reverter
-                ));
-            }
-        }
-
-        let expected_reason = expected_revert.reason.as_deref();
-        // If None, accept any revert.
-        let Some(expected_reason) = expected_reason else {
-            return Ok(success_return());
-        };
-
-        if !expected_reason.is_empty() && retdata.is_empty() {
-            bail!("call reverted as expected, but without data");
-        }
-
-        let mut actual_revert: Vec<u8> = retdata.into();
-
-        // Compare only the first 4 bytes if partial match.
-        if expected_revert.partial_match && actual_revert.get(..4) == expected_reason.get(..4) {
-            return Ok(success_return())
-        }
-
-        // Try decoding as known errors.
-        actual_revert = decode_revert(actual_revert);
-
-        if actual_revert == expected_reason ||
-            (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
-        {
-            Ok(success_return())
-        } else {
-            let (actual, expected) = if let Some(contracts) = known_contracts {
-                let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
-                (
-                    &decoder.decode(actual_revert.as_slice(), Some(status)),
-                    &decoder.decode(expected_reason, Some(status)),
-                )
-            } else {
-                (&stringify(&actual_revert), &stringify(expected_reason))
-            };
-            Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
-        }
-    }
-}
-
 fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) -> bool {
     if log.topics().len() != expected.topics().len() {
         return false
@@ -1080,16 +947,4 @@ fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) 
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Default::default())
-}
-
-fn decode_revert(revert: Vec<u8>) -> Vec<u8> {
-    if matches!(
-        revert.get(..4).map(|s| s.try_into().unwrap()),
-        Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-    ) {
-        if let Ok(decoded) = Vec::<u8>::abi_decode(&revert[4..], false) {
-            return decoded;
-        }
-    }
-    revert
 }

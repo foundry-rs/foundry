@@ -324,6 +324,18 @@ interface Vm {
         address implementation;
     }
 
+    /// Represents a "potential" revert reason from a single subsequent call when using `vm.assumeNoReverts`.
+    /// Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced
+    /// as normal.
+    struct PotentialRevert {
+        /// The allowed origin of the revert opcode; address(0) allows reverts from any address
+        address reverter;
+        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        bool partialMatch;
+        /// The data to use to match encountered reverts
+        bytes revertData;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -894,6 +906,14 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assumeNoRevert() external pure;
 
+    /// Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverts with the any of the potential revert parameters.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
+
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
     function breakpoint(string calldata char) external pure;
@@ -903,10 +923,10 @@ interface Vm {
     function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
-    /// Format: <cargo_version>+<git_sha>+<build_timestamp>
-    /// Sample output: 0.2.0+faa94c384+202407110019
+    /// Format: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>
+    /// Sample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug
     /// Note: Build timestamps may vary slightly across platforms due to separate CI jobs.
-    /// For reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)
+    /// For reliable version comparisons, use UNIX format (e.g., >= 1700000000)
     /// to compare timestamps while ignoring minor time differences.
     #[cheatcode(group = Testing, safety = Safe)]
     function getFoundryVersion() external view returns (string memory version);

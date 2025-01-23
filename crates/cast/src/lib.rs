@@ -454,6 +454,8 @@ where
                     _ => "avalanche",
                 }
             }
+            "0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee" => "ink",
+            "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834" => "ink-sepolia",
             _ => "unknown",
         })
     }
