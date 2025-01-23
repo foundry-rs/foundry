@@ -187,7 +187,7 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
-        let config = self.load_config_emit_warnings();
+        let config = self.load_config()?;
 
         if self.guess_constructor_args && config.get_rpc_url().is_none() {
             eyre::bail!(
@@ -262,7 +262,7 @@ impl VerifyArgs {
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        let mut config = self.load_config_emit_warnings();
+        let mut config = self.load_config()?;
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;

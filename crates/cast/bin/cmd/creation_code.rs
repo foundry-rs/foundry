@@ -1,3 +1,4 @@
+use super::interface::{fetch_abi_from_etherscan, load_abi_from_file};
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{ext::TraceApi, Provider};
@@ -8,12 +9,9 @@ use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils,
+    utils::{self, LoadConfig},
 };
 use foundry_common::provider::RetryProvider;
-use foundry_config::Config;
-
-use super::interface::{fetch_abi_from_etherscan, load_abi_from_file};
 
 /// CLI arguments for `cast creation-code`.
 #[derive(Parser)]
@@ -47,11 +45,10 @@ pub struct CreationCodeArgs {
 
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, etherscan, rpc, disassemble, without_args, only_args, abi_path } =
+        let Self { contract, mut etherscan, rpc, disassemble, without_args, only_args, abi_path } =
             self;
 
-        let mut etherscan = etherscan;
-        let config = Config::from(&rpc);
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
         let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;

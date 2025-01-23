@@ -10,7 +10,7 @@ use alloy_signer_local::{
 use cast::revm::primitives::Authorization;
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{opts::RpcOpts, utils};
+use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
@@ -369,7 +369,7 @@ impl WalletSubcommands {
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
-                let provider = utils::get_provider(&Config::from(&rpc))?;
+                let provider = utils::get_provider(&rpc.load_config()?)?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce
                 } else {

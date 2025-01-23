@@ -93,7 +93,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use maili_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
