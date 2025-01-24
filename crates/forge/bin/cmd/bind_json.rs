@@ -1,7 +1,7 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::with_compilation_reporter, fs};
 use foundry_compilers::{
     artifacts::{
@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 
-foundry_config::impl_figment_convert!(BindJsonArgs, opts);
+foundry_config::impl_figment_convert!(BindJsonArgs, build);
 
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
@@ -39,7 +39,7 @@ pub struct BindJsonArgs {
     pub out: Option<PathBuf>,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl BindJsonArgs {
@@ -65,7 +65,7 @@ impl BindJsonArgs {
     /// After that we'll still have enough information for bindings but compilation should succeed
     /// in most of the cases.
     fn preprocess(self) -> Result<PreprocessedState> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let project = config.create_project(false, true)?;
 
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
@@ -77,7 +77,7 @@ impl BindJsonArgs {
         let mut sources = graph
             // resolve graph into mapping language -> version -> sources
             .into_sources_by_version(&project)?
-            .0
+            .sources
             .into_iter()
             // we are only interested in Solidity sources
             .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))

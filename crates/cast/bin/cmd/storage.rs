@@ -10,8 +10,9 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
-    opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
+    opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
+    utils::LoadConfig,
 };
 use foundry_common::{
     abi::find_source,
@@ -64,7 +65,7 @@ pub struct StorageArgs {
     etherscan: EtherscanOpts,
 
     #[command(flatten)]
-    build: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -85,7 +86,7 @@ impl figment::Provider for StorageArgs {
 
 impl StorageArgs {
     pub async fn run(self) -> Result<()> {
-        let config = Config::from(&self);
+        let config = self.load_config()?;
 
         let Self { address, slot, block, build, .. } = self;
         let provider = utils::get_provider(&config)?;
@@ -350,11 +351,11 @@ mod tests {
     #[test]
     fn parse_storage_etherscan_api_key() {
         let args =
-            StorageArgs::parse_from(["foundry-cli", "addr", "--etherscan-api-key", "dummykey"]);
+            StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
         std::env::set_var("ETHERSCAN_API_KEY", "FXY");
-        let config = Config::from(&args);
+        let config = args.load_config().unwrap();
         std::env::remove_var("ETHERSCAN_API_KEY");
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
 

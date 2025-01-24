@@ -13,7 +13,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
-    opts::{CoreBuildArgs, EthereumOpts, EtherscanOpts, TransactionOpts},
+    opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
@@ -35,7 +35,7 @@ use foundry_config::{
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
-merge_impl_figment_convert!(CreateArgs, opts, eth);
+merge_impl_figment_convert!(CreateArgs, build, eth);
 
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
@@ -85,7 +85,7 @@ pub struct CreateArgs {
     pub timeout: Option<u64>,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 
     #[command(flatten)]
     tx: TransactionOpts,
@@ -103,12 +103,12 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let mut config = self.try_load_config_emit_warnings()?;
+        let mut config = self.load_config()?;
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Find Project & Compile
@@ -236,11 +236,11 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: self.opts.libraries.clone(),
+            libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
-            via_ir: self.opts.via_ir,
-            evm_version: self.opts.compiler.evm_version,
+            via_ir: self.build.via_ir,
+            evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
             compilation_profile: Some(id.profile.to_string()),
@@ -248,7 +248,7 @@ impl CreateArgs {
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
         // ETHERSCAN_API_KEY value set.
-        let config = verify.load_config_emit_warnings();
+        let config = verify.load_config()?;
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 
@@ -397,8 +397,8 @@ impl CreateArgs {
 
         sh_println!("Starting contract verification...")?;
 
-        let num_of_optimizations = if self.opts.compiler.optimize.unwrap_or_default() {
-            self.opts.compiler.optimizer_runs
+        let num_of_optimizations = if self.build.compiler.optimize.unwrap_or_default() {
+            self.build.compiler.optimizer_runs
         } else {
             None
         };
@@ -416,11 +416,11 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: self.opts.libraries.clone(),
+            libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier,
-            via_ir: self.opts.via_ir,
-            evm_version: self.opts.compiler.evm_version,
+            via_ir: self.build.via_ir,
+            evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
             compilation_profile: Some(id.profile.to_string()),

@@ -7,7 +7,7 @@ use alloy_primitives::{hex, Address};
 use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
-use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
+use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
@@ -48,7 +48,7 @@ impl BroadcastedState {
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
-    pub project_paths: ProjectPathsArgs,
+    pub project_paths: ProjectPathOpts,
     pub etherscan: EtherscanOpts,
     pub retry: RetryArgs,
     pub verifier: VerifierArgs,
@@ -64,11 +64,11 @@ impl VerifyBundle {
         verifier: VerifierArgs,
     ) -> Self {
         let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
+            if config.optimizer == Some(true) { config.optimizer_runs } else { None };
 
         let config_path = config.get_config_path();
 
-        let project_paths = ProjectPathsArgs {
+        let project_paths = ProjectPathOpts {
             root: Some(project.paths.root.clone()),
             contracts: Some(project.paths.sources.clone()),
             remappings: project.paths.remappings.clone(),
@@ -120,9 +120,14 @@ impl VerifyBundle {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
+                // Strip artifact profile from contract name when creating contract info.
                 let contract = ContractInfo {
                     path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact.name.clone(),
+                    name: artifact
+                        .name
+                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .unwrap_or_else(|| &artifact.name)
+                        .to_string(),
                 };
 
                 // We strip the build metadadata information, since it can lead to
