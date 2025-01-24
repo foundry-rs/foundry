@@ -268,7 +268,7 @@ impl CoverageArgs {
         let data = outcome.results.iter().flat_map(|(_, suite)| {
             let mut hits = Vec::new();
             for result in suite.test_results.values() {
-                let Some(hit_maps) = result.coverage.as_ref() else { continue };
+                let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
                 for map in hit_maps.0.values() {
                     if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
                         hits.push((id, map, true));
@@ -407,7 +407,7 @@ pub struct BytecodeData {
     /// The source maps are indexed by *instruction counters*, which are the indexes of
     /// instructions in the bytecode *minus any push bytes*.
     ///
-    /// Since our coverage inspector collects hit data using program counters, the anchors
+    /// Since our line coverage inspector collects hit data using program counters, the anchors
     /// also need to be based on program counters.
     ic_pc_map: IcPcMap,
 }

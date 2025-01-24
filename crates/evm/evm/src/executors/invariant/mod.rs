@@ -130,8 +130,8 @@ pub struct InvariantTestData {
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
     // Last call results of the invariant test.
     pub last_call_results: Option<RawCallResult>,
-    // Coverage information collected from all fuzzed calls.
-    pub coverage: Option<HitMaps>,
+    // Line coverage information collected from all fuzzed calls.
+    pub line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
     pub metrics: Map<String, InvariantMetrics>,
 
@@ -171,7 +171,7 @@ impl InvariantTest {
             last_run_inputs: vec![],
             gas_report_traces: vec![],
             last_call_results,
-            coverage: None,
+            line_coverage: None,
             metrics: Map::default(),
             branch_runner,
         });
@@ -203,9 +203,9 @@ impl InvariantTest {
         self.execution_data.borrow_mut().last_run_inputs.clone_from(inputs);
     }
 
-    /// Merge current collected coverage with the new coverage from last fuzzed call.
+    /// Merge current collected line coverage with the new coverage from last fuzzed call.
     pub fn merge_coverage(&self, new_coverage: Option<HitMaps>) {
-        HitMaps::merge_opt(&mut self.execution_data.borrow_mut().coverage, new_coverage);
+        HitMaps::merge_opt(&mut self.execution_data.borrow_mut().line_coverage, new_coverage);
     }
 
     /// Update metrics for a fuzzed selector, extracted from tx details.
@@ -384,8 +384,8 @@ impl<'a> InvariantExecutor<'a> {
                     invariant_test.record_metrics(tx, call_result.reverted, discarded);
                 }
 
-                // Collect coverage from last fuzzed call.
-                invariant_test.merge_coverage(call_result.coverage.clone());
+                // Collect line coverage from last fuzzed call.
+                invariant_test.merge_coverage(call_result.line_coverage.clone());
 
                 if discarded {
                     current_run.inputs.pop();
@@ -495,7 +495,7 @@ impl<'a> InvariantExecutor<'a> {
             reverts: result.failures.reverts,
             last_run_inputs: result.last_run_inputs,
             gas_report_traces: result.gas_report_traces,
-            coverage: result.coverage,
+            line_coverage: result.line_coverage,
             metrics: result.metrics,
         })
     }

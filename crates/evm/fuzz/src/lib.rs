@@ -181,8 +181,8 @@ pub struct FuzzTestResult {
     /// Those traces should not be displayed.
     pub gas_report_traces: Vec<CallTraceArena>,
 
-    /// Raw coverage info
-    pub coverage: Option<HitMaps>,
+    /// Raw line coverage info
+    pub line_coverage: Option<HitMaps>,
 
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,

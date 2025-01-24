@@ -402,9 +402,9 @@ pub struct TestResult {
     #[serde(skip)]
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 
-    /// Raw coverage info
+    /// Raw line coverage info
     #[serde(skip)]
-    pub coverage: Option<HitMaps>,
+    pub line_coverage: Option<HitMaps>,
 
     /// Labeled addresses
     pub labeled_addresses: AddressHashMap<String>,
@@ -472,7 +472,7 @@ impl TestResult {
             labeled_addresses: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
-            coverage: setup.coverage.clone(),
+            line_coverage: setup.coverage.clone(),
             ..Default::default()
         }
     }
@@ -489,7 +489,7 @@ impl TestResult {
             reason: setup.reason,
             logs: setup.logs,
             traces: setup.traces,
-            coverage: setup.coverage,
+            line_coverage: setup.coverage,
             labeled_addresses: setup.labels,
             ..Default::default()
         }
@@ -522,7 +522,7 @@ impl TestResult {
         self.logs.extend(raw_call_result.logs);
         self.labeled_addresses.extend(raw_call_result.labels);
         self.traces.extend(raw_call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(raw_call_result.coverage);
+        self.merge_coverages(raw_call_result.line_coverage);
 
         self.status = match success {
             true => TestStatus::Success,
@@ -553,7 +553,7 @@ impl TestResult {
         self.logs.extend(result.logs);
         self.labeled_addresses.extend(result.labeled_addresses);
         self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(result.coverage);
+        self.merge_coverages(result.line_coverage);
 
         self.status = if result.skipped {
             TestStatus::Skipped
@@ -646,12 +646,12 @@ impl TestResult {
         self.logs.extend(call_result.logs);
         self.labeled_addresses.extend(call_result.labels);
         self.traces.extend(call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(call_result.coverage);
+        self.merge_coverages(call_result.line_coverage);
     }
 
     /// Merges the given coverage result into `self`.
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
-        HitMaps::merge_opt(&mut self.coverage, other_coverage);
+        HitMaps::merge_opt(&mut self.line_coverage, other_coverage);
     }
 }
 
@@ -774,6 +774,6 @@ impl TestSetup {
         self.logs.extend(raw.logs);
         self.labels.extend(raw.labels);
         self.traces.extend(raw.traces.map(|traces| (trace_kind, traces)));
-        HitMaps::merge_opt(&mut self.coverage, raw.coverage);
+        HitMaps::merge_opt(&mut self.coverage, raw.line_coverage);
     }
 }
