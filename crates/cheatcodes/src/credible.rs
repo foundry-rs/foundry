@@ -1,6 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::TxKind;
-use alloy_sol_types::{sol, SolValue};
+use alloy_sol_types::SolValue;
 use assertion_executor::{db::fork_db::ForkDb, store::MockStore, AssertionExecutorBuilder};
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
 use revm::{
