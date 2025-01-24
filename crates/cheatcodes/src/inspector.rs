@@ -1179,7 +1179,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         }
 
         // `expectRevert`: track the max call depth during `expectRevert`
-        if let Some(ref mut expected) = self.expected_revert {
+        if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
         }
     }
