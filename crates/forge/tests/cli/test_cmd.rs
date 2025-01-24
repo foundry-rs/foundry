@@ -2994,7 +2994,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 });
 
-
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
