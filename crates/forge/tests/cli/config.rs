@@ -1004,6 +1004,7 @@ show_progress = false
 eof = false
 transaction_timeout = 120
 ffi = false
+allow_internal_expect_revert = false
 always_use_create_2_factory = false
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -1205,6 +1206,7 @@ exclude = []
     "timeout": null
   },
   "ffi": false,
+  "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
