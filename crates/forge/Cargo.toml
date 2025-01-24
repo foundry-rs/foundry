@@ -17,13 +17,6 @@ workspace = true
 name = "forge"
 path = "bin/main.rs"
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
@@ -34,8 +27,6 @@ foundry-evm.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
-
-ethers-contract-abigen = { workspace = true, features = ["providers"] }
 
 revm-inspectors.workspace = true
 
@@ -89,7 +80,6 @@ semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
-solar-ast.workspace = true
 solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true

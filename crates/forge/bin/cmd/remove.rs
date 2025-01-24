@@ -29,7 +29,7 @@ impl_figment_convert_basic!(RemoveArgs);
 
 impl RemoveArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let (root, paths) = super::update::dependencies_paths(&self.dependencies, &config)?;
         let git_modules = root.join(".git/modules");
 

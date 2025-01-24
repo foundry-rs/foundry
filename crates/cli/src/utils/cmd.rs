@@ -191,58 +191,46 @@ pub fn has_batch_support(chain_id: u64) -> bool {
 
 /// Helpers for loading configuration.
 ///
-/// This is usually implicitly implemented on a "&CmdArgs" struct via impl macros defined in
-/// `forge_config` (see [`foundry_config::impl_figment_convert`] for more details) and the impl
-/// definition on `T: Into<Config> + Into<Figment>` below.
+/// This is usually implemented through the macros defined in [`foundry_config`]. See
+/// [`foundry_config::impl_figment_convert`] for more details.
 ///
-/// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
-/// also prints `Config::__warnings` to stderr
+/// By default each function will emit warnings generated during loading, unless the `_no_warnings`
+/// variant is used.
 pub trait LoadConfig {
-    /// Load and sanitize the [`Config`] based on the options provided in self
-    ///
-    /// Returns an error if loading the config failed
-    fn try_load_config(self) -> Result<Config, ExtractConfigError>;
-    /// Load and sanitize the [`Config`] based on the options provided in self
-    fn load_config(self) -> Config;
-    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
-    fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)>;
-    /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
-    fn load_config_unsanitized(self) -> Config;
+    /// Load the [`Config`] based on the options provided in self.
+    fn figment(&self) -> Figment;
+
+    /// Load and sanitize the [`Config`] based on the options provided in self.
+    fn load_config(&self) -> Result<Config, ExtractConfigError> {
+        self.load_config_no_warnings().inspect(emit_warnings)
+    }
+
+    /// Same as [`LoadConfig::load_config`] but does not emit warnings.
+    fn load_config_no_warnings(&self) -> Result<Config, ExtractConfigError> {
+        self.load_config_unsanitized_no_warnings().map(Config::sanitized)
+    }
+
     /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information.
-    ///
-    /// Returns an error if loading failed
-    fn try_load_config_unsanitized(self) -> Result<Config, ExtractConfigError>;
-    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
-    fn load_config_emit_warnings(self) -> Config;
-    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
-    ///
-    /// Returns an error if loading failed
-    fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError>;
-    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
-    fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)>;
+    fn load_config_unsanitized(&self) -> Result<Config, ExtractConfigError> {
+        self.load_config_unsanitized_no_warnings().inspect(emit_warnings)
+    }
+
     /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
-    fn load_config_unsanitized_emit_warnings(self) -> Config;
-    fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError>;
-}
-
-impl<T> LoadConfig for T
-where
-    T: Into<Config> + Into<Figment>,
-{
-    fn try_load_config(self) -> Result<Config, ExtractConfigError> {
-        let figment: Figment = self.into();
-        Ok(Config::try_from(figment)?.sanitized())
+    fn load_config_unsanitized_no_warnings(&self) -> Result<Config, ExtractConfigError> {
+        Config::from_provider(self.figment())
     }
 
-    fn load_config(self) -> Config {
-        self.into()
+    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
+    fn load_config_and_evm_opts(&self) -> Result<(Config, EvmOpts)> {
+        self.load_config_and_evm_opts_no_warnings().inspect(|(config, _)| emit_warnings(config))
     }
 
-    fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)> {
-        let figment: Figment = self.into();
+    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
+    fn load_config_and_evm_opts_no_warnings(&self) -> Result<(Config, EvmOpts)> {
+        let figment = self.figment();
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
-        let config = Config::try_from(figment)?.sanitized();
+        let config = Config::from_provider(figment)?.sanitized();
 
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
@@ -252,45 +240,14 @@ where
 
         Ok((config, evm_opts))
     }
+}
 
-    fn load_config_unsanitized(self) -> Config {
-        let figment: Figment = self.into();
-        Config::from_provider(figment)
-    }
-
-    fn try_load_config_unsanitized(self) -> Result<Config, ExtractConfigError> {
-        let figment: Figment = self.into();
-        Config::try_from(figment)
-    }
-
-    fn load_config_emit_warnings(self) -> Config {
-        let config = self.load_config();
-        config.warnings.iter().for_each(|w| sh_warn!("{w}").unwrap());
-        config
-    }
-
-    fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
-        let config = self.try_load_config()?;
-        emit_warnings(&config);
-        Ok(config)
-    }
-
-    fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
-        let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        emit_warnings(&config);
-        Ok((config, evm_opts))
-    }
-
-    fn load_config_unsanitized_emit_warnings(self) -> Config {
-        let config = self.load_config_unsanitized();
-        emit_warnings(&config);
-        config
-    }
-
-    fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
-        let config = self.try_load_config_unsanitized()?;
-        emit_warnings(&config);
-        Ok(config)
+impl<T> LoadConfig for T
+where
+    for<'a> Figment: From<&'a T>,
+{
+    fn figment(&self) -> Figment {
+        self.into()
     }
 }
 

@@ -49,7 +49,13 @@ fn run() -> Result<()> {
             }
         }
         ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),
-        ForgeSubcommand::Coverage(cmd) => utils::block_on(cmd.run()),
+        ForgeSubcommand::Coverage(cmd) => {
+            if cmd.is_watch() {
+                utils::block_on(watch::watch_coverage(cmd))
+            } else {
+                utils::block_on(cmd.run())
+            }
+        }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
             if cmd.is_watch() {
@@ -58,7 +64,6 @@ fn run() -> Result<()> {
                 cmd.run().map(drop)
             }
         }
-        ForgeSubcommand::Debug(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::VerifyContract(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyCheck(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
@@ -87,7 +92,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
-            let config = utils::load_config_with_root(root.as_deref());
+            let config = utils::load_config_with_root(root.as_deref())?;
             let project = config.project()?;
             config.cleanup(&project)?;
             Ok(())

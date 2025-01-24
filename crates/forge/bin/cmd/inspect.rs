@@ -1,9 +1,10 @@
+use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
-use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
+use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof, shell};
 use foundry_compilers::{
     artifacts::{
@@ -17,7 +18,8 @@ use foundry_compilers::{
     utils::canonicalize,
 };
 use regex::Regex;
-use std::{fmt, sync::LazyLock};
+use serde_json::{Map, Value};
+use std::{collections::BTreeMap, fmt, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -29,18 +31,14 @@ pub struct InspectArgs {
     #[arg(value_enum)]
     pub field: ContractArtifactField,
 
-    /// Pretty print the selected field, if supported.
-    #[arg(long)]
-    pub pretty: bool,
-
     /// All build arguments are supported
     #[command(flatten)]
-    build: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build, pretty } = self;
+        let Self { contract, field, build } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -58,8 +56,8 @@ impl InspectArgs {
         };
 
         // Build modified Args
-        let modified_build_args = CoreBuildArgs {
-            compiler: CompilerArgs { extra_output: cos, optimize: optimized, ..build.compiler },
+        let modified_build_args = BuildOpts {
+            compiler: CompilerOpts { extra_output: cos, optimize: optimized, ..build.compiler },
             ..build
         };
 
@@ -85,12 +83,7 @@ impl InspectArgs {
                     .abi
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-                if pretty {
-                    let source = foundry_cli::utils::abi_to_solidity(abi, &contract.name)?;
-                    sh_println!("{source}")?;
-                } else {
-                    print_json(abi)?;
-                }
+                print_abi(abi)?;
             }
             ContractArtifactField::Bytecode => {
                 print_json_str(&artifact.bytecode, Some("object"))?;
@@ -105,7 +98,7 @@ impl InspectArgs {
                 print_json_str(&artifact.legacy_assembly, None)?;
             }
             ContractArtifactField::MethodIdentifiers => {
-                print_json(&artifact.method_identifiers)?;
+                print_method_identifiers(&artifact.method_identifiers)?;
             }
             ContractArtifactField::GasEstimates => {
                 print_json(&artifact.gas_estimates)?;
@@ -117,10 +110,10 @@ impl InspectArgs {
                 print_json(&artifact.devdoc)?;
             }
             ContractArtifactField::Ir => {
-                print_yul(artifact.ir.as_deref(), self.pretty)?;
+                print_yul(artifact.ir.as_deref())?;
             }
             ContractArtifactField::IrOptimized => {
-                print_yul(artifact.ir_optimized.as_deref(), self.pretty)?;
+                print_yul(artifact.ir_optimized.as_deref())?;
             }
             ContractArtifactField::Metadata => {
                 print_json(&artifact.metadata)?;
@@ -132,37 +125,12 @@ impl InspectArgs {
                 print_json_str(&artifact.ewasm, None)?;
             }
             ContractArtifactField::Errors => {
-                let mut out = serde_json::Map::new();
-                if let Some(abi) = &artifact.abi {
-                    let abi = &abi;
-                    // Print the signature of all errors.
-                    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
-                        let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
-                        let sig = format!("{:x}", er.selector());
-                        let sig_trimmed = &sig[0..8];
-                        out.insert(
-                            format!("{}({})", er.name, types.join(",")),
-                            sig_trimmed.to_string().into(),
-                        );
-                    }
-                }
-                print_json(&out)?;
+                let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);
+                print_errors_events(&out, true)?;
             }
             ContractArtifactField::Events => {
-                let mut out = serde_json::Map::new();
-                if let Some(abi) = &artifact.abi {
-                    let abi = &abi;
-                    // Print the topic of all events including anonymous.
-                    for ev in abi.events.iter().flat_map(|(_, events)| events) {
-                        let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
-                        let topic = hex::encode(keccak256(ev.signature()));
-                        out.insert(
-                            format!("{}({})", ev.name, types.join(",")),
-                            format!("0x{topic}").into(),
-                        );
-                    }
-                }
-                print_json(&out)?;
+                let out = artifact.abi.as_ref().map_or(Map::new(), parse_events);
+                print_errors_events(&out, false)?;
             }
             ContractArtifactField::Eof => {
                 print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
@@ -176,6 +144,127 @@ impl InspectArgs {
     }
 }
 
+fn parse_errors(abi: &JsonAbi) -> Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+        let types = get_ty_sig(&er.inputs);
+        let sig = format!("{:x}", er.selector());
+        let sig_trimmed = &sig[0..8];
+        out.insert(format!("{}({})", er.name, types), sig_trimmed.to_string().into());
+    }
+    out
+}
+
+fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    for ev in abi.events.iter().flat_map(|(_, events)| events) {
+        let types = parse_event_params(&ev.inputs);
+        let topic = hex::encode(keccak256(ev.signature()));
+        out.insert(format!("{}({})", ev.name, types), format!("0x{topic}").into());
+    }
+    out
+}
+
+fn parse_event_params(ev_params: &[EventParam]) -> String {
+    ev_params
+        .iter()
+        .map(|p| {
+            if let Some(ty) = p.internal_type() {
+                return internal_ty(ty)
+            }
+            p.ty.clone()
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn print_abi(abi: &JsonAbi) -> Result<()> {
+    if shell::is_json() {
+        return print_json(abi)
+    }
+
+    let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
+    print_table(headers, |table| {
+        // Print events
+        for ev in abi.events.iter().flat_map(|(_, events)| events) {
+            let types = parse_event_params(&ev.inputs);
+            let selector = ev.selector().to_string();
+            table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+        }
+
+        // Print errors
+        for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
+            let selector = er.selector().to_string();
+            table.add_row([
+                "error",
+                &format!("{}({})", er.name, get_ty_sig(&er.inputs)),
+                &selector,
+            ]);
+        }
+
+        // Print functions
+        for func in abi.functions.iter().flat_map(|(_, f)| f) {
+            let selector = func.selector().to_string();
+            let state_mut = func.state_mutability.as_json_str();
+            let func_sig = if !func.outputs.is_empty() {
+                format!(
+                    "{}({}) {state_mut} returns ({})",
+                    func.name,
+                    get_ty_sig(&func.inputs),
+                    get_ty_sig(&func.outputs)
+                )
+            } else {
+                format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
+            };
+            table.add_row(["function", &func_sig, &selector]);
+        }
+
+        if let Some(constructor) = abi.constructor() {
+            let state_mut = constructor.state_mutability.as_json_str();
+            table.add_row([
+                "constructor",
+                &format!("constructor({}) {state_mut}", get_ty_sig(&constructor.inputs)),
+                "",
+            ]);
+        }
+
+        if let Some(fallback) = &abi.fallback {
+            let state_mut = fallback.state_mutability.as_json_str();
+            table.add_row(["fallback", &format!("fallback() {state_mut}"), ""]);
+        }
+
+        if let Some(receive) = &abi.receive {
+            let state_mut = receive.state_mutability.as_json_str();
+            table.add_row(["receive", &format!("receive() {state_mut}"), ""]);
+        }
+    })
+}
+
+fn get_ty_sig(inputs: &[Param]) -> String {
+    inputs
+        .iter()
+        .map(|p| {
+            if let Some(ty) = p.internal_type() {
+                return internal_ty(ty);
+            }
+            p.ty.clone()
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn internal_ty(ty: &InternalType) -> String {
+    let contract_ty =
+        |c: &Option<String>, ty: &String| c.clone().map_or(ty.clone(), |c| format!("{c}.{ty}"));
+    match ty {
+        InternalType::AddressPayable(addr) => addr.clone(),
+        InternalType::Contract(contract) => contract.clone(),
+        InternalType::Enum { contract, ty } => contract_ty(contract, ty),
+        InternalType::Struct { contract, ty } => contract_ty(contract, ty),
+        InternalType::Other { contract, ty } => contract_ty(contract, ty),
+    }
+}
+
 pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
         eyre::bail!("Could not get storage layout");
@@ -185,30 +274,70 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
         return print_json(&storage_layout)
     }
 
-    let mut table = Table::new();
-    table.apply_modifier(UTF8_ROUND_CORNERS);
-
-    table.set_header(vec![
+    let headers = vec![
         Cell::new("Name"),
         Cell::new("Type"),
         Cell::new("Slot"),
         Cell::new("Offset"),
         Cell::new("Bytes"),
         Cell::new("Contract"),
-    ]);
+    ];
 
-    for slot in &storage_layout.storage {
-        let storage_type = storage_layout.types.get(&slot.storage_type);
-        table.add_row([
-            slot.label.as_str(),
-            storage_type.map_or("?", |t| &t.label),
-            &slot.slot,
-            &slot.offset.to_string(),
-            storage_type.map_or("?", |t| &t.number_of_bytes),
-            &slot.contract,
-        ]);
+    print_table(headers, |table| {
+        for slot in &storage_layout.storage {
+            let storage_type = storage_layout.types.get(&slot.storage_type);
+            table.add_row([
+                slot.label.as_str(),
+                storage_type.map_or("?", |t| &t.label),
+                &slot.slot,
+                &slot.offset.to_string(),
+                storage_type.map_or("?", |t| &t.number_of_bytes),
+                &slot.contract,
+            ]);
+        }
+    })
+}
+
+fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>>) -> Result<()> {
+    let Some(method_identifiers) = method_identifiers else {
+        eyre::bail!("Could not get method identifiers");
+    };
+
+    if shell::is_json() {
+        return print_json(method_identifiers)
     }
 
+    let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
+
+    print_table(headers, |table| {
+        for (method, identifier) in method_identifiers {
+            table.add_row([method, identifier]);
+        }
+    })
+}
+
+fn print_errors_events(map: &Map<String, Value>, is_err: bool) -> Result<()> {
+    if shell::is_json() {
+        return print_json(map);
+    }
+
+    let headers = if is_err {
+        vec![Cell::new("Error"), Cell::new("Selector")]
+    } else {
+        vec![Cell::new("Event"), Cell::new("Topic")]
+    };
+    print_table(headers, |table| {
+        for (method, selector) in map {
+            table.add_row([method, selector.as_str().unwrap()]);
+        }
+    })
+}
+
+fn print_table(headers: Vec<Cell>, add_rows: impl FnOnce(&mut Table)) -> Result<()> {
+    let mut table = Table::new();
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+    table.set_header(headers);
+    add_rows(&mut table);
     sh_println!("\n{table}\n")?;
     Ok(())
 }
@@ -407,7 +536,7 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
     Ok(())
 }
 
-fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
+fn print_yul(yul: Option<&str>) -> Result<()> {
     let Some(yul) = yul else {
         eyre::bail!("Could not get IR output");
     };
@@ -415,11 +544,7 @@ fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
     static YUL_COMMENTS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
 
-    if pretty {
-        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
-    } else {
-        sh_println!("{yul}")?;
-    }
+    sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
 
     Ok(())
 }

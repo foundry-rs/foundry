@@ -30,7 +30,7 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
-snapbox = { version = "0.6", features = ["json", "regex"] }
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
 
 [dev-dependencies]
