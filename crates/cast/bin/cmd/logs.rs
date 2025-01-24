@@ -6,9 +6,8 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Filt
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::EthereumOpts, utils};
+use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
 use foundry_common::ens::NameOrAddress;
-use foundry_config::Config;
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -58,7 +57,7 @@ impl LogsArgs {
         let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
             self;
 
-        let config = Config::from(&eth);
+        let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         let cast = Cast::new(&provider);

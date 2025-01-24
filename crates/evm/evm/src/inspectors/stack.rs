@@ -1030,9 +1030,9 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         false
     }
 
-    fn console_log(&mut self, input: String) {
+    fn console_log(&mut self, msg: &str) {
         call_inspectors!([&mut self.log_collector], |inspector| InspectorExt::console_log(
-            inspector, input
+            inspector, msg
         ));
     }
 

@@ -7,7 +7,9 @@ use foundry_test_utils::Filter;
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
+    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
+        config.optimizer = Some(true);
+    });
     let result = runner.test_collect(&filter);
     let results = result
         .into_iter()

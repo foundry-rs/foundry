@@ -767,8 +767,7 @@ impl<'a> InvariantExecutor<'a> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, contract)) =
-                    self.project_contracts.find_by_name_or_identifier(identifier)?
+                if let Some(abi) = self.project_contracts.find_abi_by_name_or_identifier(identifier)
                 {
                     combined
                         // Check if there's an entry for the given key in the 'combined' map.
@@ -776,12 +775,10 @@ impl<'a> InvariantExecutor<'a> {
                         // If the entry exists, extends its ABI with the function list.
                         .and_modify(|entry| {
                             // Extend the ABI's function list with the new functions.
-                            entry.abi.functions.extend(contract.abi.functions.clone());
+                            entry.abi.functions.extend(abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| {
-                            TargetedContract::new(identifier.to_string(), contract.abi.clone())
-                        });
+                        .or_insert_with(|| TargetedContract::new(identifier.to_string(), abi));
                 }
             }
         }

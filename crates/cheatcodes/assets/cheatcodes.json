@@ -604,6 +604,27 @@
           "description": "Address of the contract implementation that will be delegated to.\n Gets encoded into delegation code: 0xef0100 || implementation."
         }
       ]
+    },
+    {
+      "name": "PotentialRevert",
+      "description": "Represents a \"potential\" revert reason from a single subsequent call when using `vm.assumeNoReverts`.\n Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced\n as normal.",
+      "fields": [
+        {
+          "name": "reverter",
+          "ty": "address",
+          "description": "The allowed origin of the revert opcode; address(0) allows reverts from any address"
+        },
+        {
+          "name": "partialMatch",
+          "ty": "bool",
+          "description": "When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data"
+        },
+        {
+          "name": "revertData",
+          "ty": "bytes",
+          "description": "The data to use to match encountered reverts"
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -3089,7 +3110,7 @@
     },
     {
       "func": {
-        "id": "assumeNoRevert",
+        "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
         "declaration": "function assumeNoRevert() external pure;",
         "visibility": "external",
@@ -3101,6 +3122,46 @@
           91,
           54,
           106
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_1",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.",
+        "declaration": "function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert((address,bool,bytes))",
+        "selector": "0xd8591eeb",
+        "selectorBytes": [
+          216,
+          89,
+          30,
+          235
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_2",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverts with the any of the potential revert parameters.",
+        "declaration": "function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert((address,bool,bytes)[])",
+        "selector": "0x8a4592cc",
+        "selectorBytes": [
+          138,
+          69,
+          146,
+          204
         ]
       },
       "group": "testing",
@@ -5714,7 +5775,7 @@
     {
       "func": {
         "id": "getFoundryVersion",
-        "description": "Returns the Foundry version.\nFormat: <cargo_version>+<git_sha>+<build_timestamp>\nSample output: 0.2.0+faa94c384+202407110019\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)\nto compare timestamps while ignoring minor time differences.",
+        "description": "Returns the Foundry version.\nFormat: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>\nSample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use UNIX format (e.g., >= 1700000000)\nto compare timestamps while ignoring minor time differences.",
         "declaration": "function getFoundryVersion() external view returns (string memory version);",
         "visibility": "external",
         "mutability": "view",

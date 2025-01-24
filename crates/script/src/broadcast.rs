@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::TxEnvelope;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
     map::{AddressHashMap, AddressHashSet},
@@ -49,10 +49,16 @@ where
     Ok(())
 }
 
-pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
+pub async fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block_number: Option<u64>,
+) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller).await?)
+
+    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
+    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
 }
 
 pub async fn send_transaction(
@@ -413,11 +419,11 @@ impl BundledState {
             let (total_gas, total_gas_price, total_paid) =
                 sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
                     let gas_used = receipt.gas_used;
-                    let gas_price = receipt.effective_gas_price;
+                    let gas_price = receipt.effective_gas_price as u64;
                     (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
                 });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
+            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
             seq_progress.inner.write().set_status(&format!(

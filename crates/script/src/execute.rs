@@ -187,7 +187,7 @@ impl PreExecutionState {
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
             if self.build_data.predeploy_libraries.libraries_count() > 0 &&
-                self.args.evm_args.sender.is_none()
+                self.args.evm.sender.is_none()
             {
                 for tx in txs.iter() {
                     if tx.transaction.to().is_none() {

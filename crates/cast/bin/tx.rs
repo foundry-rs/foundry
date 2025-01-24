@@ -3,7 +3,7 @@ use alloy_json_abi::Function;
 use alloy_network::{
     AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
 };
-use alloy_primitives::{hex, Address, Bytes, TxKind};
+use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -379,8 +379,11 @@ where
 
         let auth = match auth {
             CliAuthorizationList::Address(address) => {
-                let auth =
-                    Authorization { chain_id: self.chain.id(), nonce: tx_nonce + 1, address };
+                let auth = Authorization {
+                    chain_id: U256::from(self.chain.id()),
+                    nonce: tx_nonce + 1,
+                    address,
+                };
 
                 let Some(signer) = sender.as_signer() else {
                     eyre::bail!("No signer available to sign authorization");
