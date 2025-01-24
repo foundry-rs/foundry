@@ -59,7 +59,7 @@ pub async fn get_block_gas_limit(provider_url: &str, block_number: Option<u64>) 
     let block = provider.get_block(block_id, BlockTransactionsKind::Hashes).await?;
 
     if let Some(block) = block {
-        return Ok(block.header.gas_limit);
+        Ok(block.header.gas_limit)
     } else {
         bail!("Failed to get block for block number: {}", block_number.unwrap_or_default())
     }
