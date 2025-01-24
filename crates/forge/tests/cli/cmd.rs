@@ -1573,6 +1573,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 
     // report for all
     prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports: (vec!["*".to_string()]),
         gas_reports_ignore: (vec![]),
         ..Default::default()
@@ -1682,112 +1683,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .is_json(),
     );
 
-    prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
-    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
-...
-╭----------------------------------------+-----------------+-------+--------+-------+---------╮
-| src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
-+=============================================================================================+
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                        |                 |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
-╰----------------------------------------+-----------------+-------+--------+-------+---------╯
-
-╭------------------------------------------+-----------------+--------+--------+--------+---------╮
-| src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
-+=================================================================================================+
-| Deployment Cost                          | Deployment Size |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                          |                 |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| Function Name                            | Min             | Avg    | Median | Max    | # Calls |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
-╰------------------------------------------+-----------------+--------+--------+--------+---------╯
-
-╭----------------------------------------+-----------------+-------+--------+-------+---------╮
-| src/Contracts.sol:ContractTwo Contract |                 |       |        |       |         |
-+=============================================================================================+
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                        |                 |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
-╰----------------------------------------+-----------------+-------+--------+-------+---------╯
-
-
-Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
-
-"#]]);
-    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
-        str![[r#"
-[
-  {
-    "contract": "src/Contracts.sol:ContractOne",
-    "deployment": {
-      "gas": 101532,
-      "size": 241
-    },
-    "functions": {
-      "foo()": {
-        "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
-      }
-    }
-  },
-  {
-    "contract": "src/Contracts.sol:ContractThree",
-    "deployment": {
-      "gas": 101748,
-      "size": 242
-    },
-    "functions": {
-      "baz()": {
-        "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
-      }
-    }
-  },
-  {
-    "contract": "src/Contracts.sol:ContractTwo",
-    "deployment": {
-      "gas": 101520,
-      "size": 241
-    },
-    "functions": {
-      "bar()": {
-        "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
-      }
-    }
-  }
-]
-"#]]
-        .is_json(),
-    );
-
-    prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
+    prj.write_config(Config { optimizer: Some(true), gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -1893,6 +1789,116 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 
     prj.write_config(Config {
+        optimizer: Some(true),
+        gas_reports: (vec!["*".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+╭----------------------------------------+-----------------+-------+--------+-------+---------╮
+| src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
++=============================================================================================+
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| 101532                                 | 241             |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+|                                        |                 |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+╰----------------------------------------+-----------------+-------+--------+-------+---------╯
+
+╭------------------------------------------+-----------------+--------+--------+--------+---------╮
+| src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
++=================================================================================================+
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| 101748                                   | 242             |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+|                                          |                 |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| Function Name                            | Min             | Avg    | Median | Max    | # Calls |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+╰------------------------------------------+-----------------+--------+--------+--------+---------╯
+
+╭----------------------------------------+-----------------+-------+--------+-------+---------╮
+| src/Contracts.sol:ContractTwo Contract |                 |       |        |       |         |
++=============================================================================================+
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| 101520                                 | 241             |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+|                                        |                 |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+╰----------------------------------------+-----------------+-------+--------+-------+---------╯
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 101532,
+      "size": 241
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45370,
+        "mean": 45370,
+        "median": 45370,
+        "max": 45370
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 101748,
+      "size": 242
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 259210,
+        "mean": 259210,
+        "median": 259210,
+        "max": 259210
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 101520,
+      "size": 241
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64832,
+        "mean": 64832,
+        "median": 64832,
+        "max": 64832
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
+
+    prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports: (vec![
             "ContractOne".to_string(),
             "ContractTwo".to_string(),
@@ -2010,7 +2016,11 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for One
-    prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
+    prj.write_config(Config {
+        optimizer: Some(true),
+        gas_reports: vec!["ContractOne".to_string()],
+        ..Default::default()
+    });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2057,7 +2067,11 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 
     // report for Two
-    prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
+    prj.write_config(Config {
+        optimizer: Some(true),
+        gas_reports: vec!["ContractTwo".to_string()],
+        ..Default::default()
+    });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2105,6 +2119,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
     // report for Three
     prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports: vec!["ContractThree".to_string()],
         ..Default::default()
     });
@@ -2160,6 +2175,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 
     // ignore ContractOne
     prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports: (vec!["*".to_string()]),
         gas_reports_ignore: (vec!["ContractOne".to_string()]),
         ..Default::default()
@@ -2242,6 +2258,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     // ignore ContractTwo
     cmd.forge_fuse();
     prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports: (vec![]),
         gas_reports_ignore: (vec!["ContractTwo".to_string()]),
         ..Default::default()
@@ -2328,6 +2345,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     // indicating the "double listing".
     cmd.forge_fuse();
     prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports: (vec![
             "ContractOne".to_string(),
             "ContractTwo".to_string(),
@@ -2461,6 +2479,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 });
 
 forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -2579,6 +2598,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9115>
 forgetest_init!(gas_report_with_fallback, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_test(
         "DelegateProxyTest.sol",
         r#"
@@ -2722,6 +2742,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_test(
         "NestedDeployTest.sol",
         r#"
@@ -3160,6 +3181,7 @@ Error: No source files found in specified build paths.
 
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
+    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
@@ -3208,24 +3230,183 @@ Compiler run successful!
         .stdout_eq(str![[r#""{...}""#]].is_json());
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6816>
 forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
-    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]).assert_success().stdout_eq(
-        str![[r#"
-interface Counter {
-    function increment() external;
-    function number() external view returns (uint256);
-    function setNumber(uint256 newNumber) external;
+    cmd.args(["inspect", "src/Counter.sol:Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭----------+---------------------------------+------------╮
+| Type     | Signature                       | Selector   |
++=========================================================+
+| function | increment() nonpayable          | 0xd09de08a |
+|----------+---------------------------------+------------|
+| function | number() view returns (uint256) | 0x8381f58a |
+|----------+---------------------------------+------------|
+| function | setNumber(uint256) nonpayable   | 0x3fb5c1cb |
+╰----------+---------------------------------+------------╯
+
+
+"#]]);
+});
+
+const CUSTOM_COUNTER: &str = r#"
+    contract Counter {
+    uint256 public number;
+    uint64 public count;
+    struct MyStruct {
+        uint64 count;
+    }
+    struct ErrWithMsg {
+        string message;
+    }
+
+    event Incremented(uint256 newValue);
+    event Decremented(uint256 newValue);
+
+    error NumberIsZero();
+    error CustomErr(ErrWithMsg e);
+
+    constructor(uint256 _number) {
+        number = _number;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() external {
+        number++;
+    }
+
+    function decrement() public payable {
+        if (number == 0) {
+            return;
+        }
+        number--;
+    }
+
+    function square() public {
+        number = number * number;
+    }
+
+    fallback() external payable {
+        ErrWithMsg memory err = ErrWithMsg("Fallback function is not allowed");
+        revert CustomErr(err);
+    }
+
+    receive() external payable {
+        count++;
+    }
+
+    function setStruct(MyStruct memory s, uint32 b) public {
+        count = s.count;
+    }
 }
+    "#;
+forgetest!(inspect_custom_counter_abi, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------+-----------------------------------------------+--------------------------------------------------------------------╮
+| Type        | Signature                                     | Selector                                                           |
++==================================================================================================================================+
+| event       | Decremented(uint256)                          | 0xc9118d86370931e39644ee137c931308fa3774f6c90ab057f0c3febf427ef94a |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| event       | Incremented(uint256)                          | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| error       | CustomErr(Counter.ErrWithMsg)                 | 0x0625625a                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| error       | NumberIsZero()                                | 0xde5d32ac                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | count() view returns (uint64)                 | 0x06661abd                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | decrement() payable                           | 0x2baeceb7                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | increment() nonpayable                        | 0xd09de08a                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | number() view returns (uint256)               | 0x8381f58a                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | setNumber(uint256) nonpayable                 | 0x3fb5c1cb                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | setStruct(Counter.MyStruct,uint32) nonpayable | 0x08ef7366                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | square() nonpayable                           | 0xd742cb01                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| constructor | constructor(uint256) nonpayable               |                                                                    |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| fallback    | fallback() payable                            |                                                                    |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| receive     | receive() payable                             |                                                                    |
+╰-------------+-----------------------------------------------+--------------------------------------------------------------------╯
 
 
-"#]],
-    );
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_events, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| Decremented(uint256) | 0xc9118d86370931e39644ee137c931308fa3774f6c90ab057f0c3febf427ef94a |
+|----------------------+--------------------------------------------------------------------|
+| Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_errors, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------------+------------╮
+| Method                     | Identifier |
++=========================================+
+| count()                    | 06661abd   |
+|----------------------------+------------|
+| decrement()                | 2baeceb7   |
+|----------------------------+------------|
+| increment()                | d09de08a   |
+|----------------------------+------------|
+| number()                   | 8381f58a   |
+|----------------------------+------------|
+| setNumber(uint256)         | 3fb5c1cb   |
+|----------------------------+------------|
+| setStruct((uint64),uint32) | 08ef7366   |
+|----------------------------+------------|
+| square()                   | d742cb01   |
+╰----------------------------+------------╯
+
+
+"#]]);
 });
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
     prj.write_config(Config {
+        optimizer: Some(true),
         gas_reports_include_tests: true,
         fuzz: FuzzConfig { runs: 1, ..Default::default() },
         ..Default::default()

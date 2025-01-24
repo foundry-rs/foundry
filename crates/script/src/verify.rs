@@ -64,7 +64,7 @@ impl VerifyBundle {
         verifier: VerifierArgs,
     ) -> Self {
         let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
+            if config.optimizer == Some(true) { config.optimizer_runs } else { None };
 
         let config_path = config.get_config_path();
 
@@ -120,9 +120,14 @@ impl VerifyBundle {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
+                // Strip artifact profile from contract name when creating contract info.
                 let contract = ContractInfo {
                     path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact.name.clone(),
+                    name: artifact
+                        .name
+                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .unwrap_or_else(|| &artifact.name)
+                        .to_string(),
                 };
 
                 // We strip the build metadadata information, since it can lead to

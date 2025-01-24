@@ -10,23 +10,18 @@ use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{
+    ens::NameOrAddress,
+    version::{LONG_VERSION, SHORT_VERSION},
+};
 use std::{path::PathBuf, str::FromStr};
-
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
 
 /// Perform Ethereum RPC calls from the comfort of your command line.
 #[derive(Parser)]
 #[command(
     name = "cast",
-    version = VERSION_MESSAGE,
+    version = SHORT_VERSION,
+    long_version = LONG_VERSION,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
     next_display_order = None,
 )]
