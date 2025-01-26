@@ -34,7 +34,7 @@ See also [Getting Help](../../README.md#getting-help)
 We use GitHub Actions for CI.
 We use [cargo-nextest][nextest] as the test runner
 If `cargo test` passes locally, that's a good sign that CI will be green as well.
-We also have tests that make use of forking mode which can be long running if the required state is not already cached locally.
+We also have tests that make use of forking mode which can be long-running if the required state is not already cached locally.
 Forking-related tests are executed exclusively in a separate CI job, they are identified by `fork` in their name.
 So all of them can be easily skipped by `cargo t -- --skip fork`
 
