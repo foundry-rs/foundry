@@ -71,7 +71,7 @@ Session
 Environment
         !fork <url> | !f <url> - Fork an RPC for the current session. Supply 0 arguments to return to a local network
         !traces | !t - Enable / disable traces for the current session
-        !calldata [data] | !cd [data] - Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument provided.
+        !calldata [data] | !cd [data] - Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument is provided.
 
 Debug
         !memdump | !md - Dump the raw memory of the current state
