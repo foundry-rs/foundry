@@ -76,6 +76,6 @@ foundryup --path ./git/foundry
 
 ---
 
-**Tip**: All flags have a single character shorthand equivalent! You can use `-i` instead of `--install`, etc.
+**Tip**: All flags have a single-character shorthand equivalent! You can use `-i` instead of `--install`, etc.
 
 ---
