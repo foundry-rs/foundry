@@ -81,7 +81,7 @@ fn test_verify_bytecode_with_ignore(
     let source_code = cmd
         .cast_fuse()
         .args([
-            "etherscan-source",
+            "source",
             addr,
             "--flatten",
             "--etherscan-api-key",

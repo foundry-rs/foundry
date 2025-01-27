@@ -639,7 +639,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             flatten,
         } => {
             let config = etherscan.load_config()?;
-            let chain = etherscan.chain.unwrap_or_default();
+            let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain));
             match (directory, flatten) {
                 (Some(dir), false) => {
