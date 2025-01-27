@@ -242,6 +242,7 @@ contract MemSafetyTest is DSTest {
 
     /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
     ///      will cause the test to fail while using the `MLOAD` opcode.
+    /// forge-config: default.allow_internal_expect_revert = true
     function testExpectSafeMemory_MLOAD_REVERT() public {
         vm.expectSafeMemory(0x80, 0x100);
 
@@ -292,8 +293,10 @@ contract MemSafetyTest is DSTest {
         }
     }
 
+
     /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
     ///      will cause the test to fail while using the `LOG0` opcode.
+    /// forge-config: default.allow_internal_expect_revert = true
     function testExpectSafeMemory_LOG0_REVERT() public {
         vm.expectSafeMemory(0x80, 0x100);
         vm.expectRevert();
