@@ -34,9 +34,9 @@ fn run() -> Result<()> {
     utils::subscriber();
     utils::enable_paint();
 
-    if let Some(to) = utils::should_redirect_to() {
+    if let Some(to) = utils::should_redirect_to()? {
         utils::redirect_execution(to)?;
-        return Ok(());
+        return Ok(())
     }
 
     let args = Forge::parse();

@@ -163,6 +163,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         compilation_restrictions: Default::default(),
         eof: false,
         binary_mappings: Default::default(),
+        allow_alternative_binaries: None,
         network_family: Default::default(),
         _non_exhaustive: (),
     };
@@ -1003,8 +1004,8 @@ ignored_warnings_from = []
 deny_warnings = false
 test_failures_file = "cache/test-failures"
 show_progress = false
+additional_compiler_profiles = []
 eof = false
-transaction_timeout = 120
 ffi = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
@@ -1033,16 +1034,17 @@ bytecode_hash = "ipfs"
 cbor_metadata = true
 sparse_mode = false
 build_info = false
+network_family = "ethereum"
 compilation_restrictions = []
-additional_compiler_profiles = []
-assertions_revert = true
+legacy_assertions = false
 isolate = false
 disable_block_gas_limit = false
-odyssey = false
+transaction_timeout = 120
 unchecked_cheatcode_artifacts = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
-legacy_assertions = false
+odyssey = false
+assertions_revert = true
 
 [[profile.default.fs_permissions]]
 access = "read"
@@ -1295,7 +1297,10 @@ exclude = []
   "transaction_timeout": 120,
   "eof": false,
   "additional_compiler_profiles": [],
-  "compilation_restrictions": []
+  "compilation_restrictions": [],
+  "binary_mappings": null,
+  "allow_alternative_binaries": null,
+  "network_family": "ethereum"
 }
 
 "#]]);

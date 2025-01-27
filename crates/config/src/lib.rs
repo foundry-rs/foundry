@@ -128,7 +128,7 @@ use compilation::{CompilationRestrictions, SettingsOverrides};
 mod binary_mappings;
 use binary_mappings::BinaryMappings;
 
-mod network_family;
+pub mod network_family;
 
 /// Foundry configuration
 ///
@@ -525,6 +525,10 @@ pub struct Config {
     /// Configuration for alternative versions of foundry tools to be used.
     #[serde(default)]
     pub binary_mappings: Option<BinaryMappings>,
+
+    /// Whether redirecting the execution to another binary is executed.
+    #[serde(default)]
+    pub allow_alternative_binaries: Option<bool>,
 
     /// Network family configuration.
     /// If specified, network family can be used to change certain defaults (such as
@@ -2436,6 +2440,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             eof: false,
             binary_mappings: Default::default(),
+            allow_alternative_binaries: None,
             network_family: NetworkFamily::Ethereum,
             _non_exhaustive: (),
         }
@@ -4924,7 +4929,7 @@ mod tests {
     fn test_binary_mappings() {
         figment::Jail::expect_with(|jail| {
             // No mappings by default.
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(config.binary_mappings(), BinaryMappings::default());
 
             // Load specified mappings.
@@ -4935,7 +4940,7 @@ mod tests {
                 binary_mappings = { "forge" = "forge-zksync", "anvil" = "anvil-zksync" }
             "#,
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.binary_mappings(),
                 BinaryMappings::from([
@@ -4943,6 +4948,7 @@ mod tests {
                     (binary_mappings::BinaryName::Anvil, PathBuf::from("anvil-zksync"))
                 ])
             );
+            assert_eq!(config.allow_alternative_binaries, None);
 
             // Override via network family.
             jail.create_file(
@@ -4950,9 +4956,10 @@ mod tests {
                 r#"
                 [profile.default]
                 network_family = "zksync"
+                allow_alternative_binaries = true
             "#,
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.binary_mappings(),
                 BinaryMappings::from([
@@ -4961,6 +4968,7 @@ mod tests {
                     (binary_mappings::BinaryName::Anvil, PathBuf::from("anvil-zksync"))
                 ])
             );
+            assert_eq!(config.allow_alternative_binaries, Some(true));
 
             // Config precedence.
             jail.create_file(
@@ -4971,7 +4979,7 @@ mod tests {
                 network_family = "zksync"
             "#,
             )?;
-            let config = Config::load();
+            let config = Config::load().unwrap();
             assert_eq!(
                 config.binary_mappings(),
                 BinaryMappings::from([
