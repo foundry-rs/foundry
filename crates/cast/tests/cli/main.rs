@@ -2111,3 +2111,18 @@ contract WETH9 {
     uint8  public decimals = 18;
 ..."#]]);
 });
+
+casttest!(fetch_src_default, |_prj, cmd| {
+    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let etherscan_api_key = next_mainnet_etherscan_api_key();
+
+    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+});

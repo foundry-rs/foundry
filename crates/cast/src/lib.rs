@@ -21,7 +21,7 @@ use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -2209,22 +2209,20 @@ fn explorer_client(
 ) -> Result<Client> {
     let mut builder = Client::builder().with_chain_id(chain);
 
-    let explorer_url = if let Some(url) = &explorer_url {
-        url
-    } else {
-        chain
-            .etherscan_urls()
-            .map(|(_, url)| url)
-            .wrap_err("explorer browser url not provided, use --explorer-url")?
-    };
+    let deduced = chain.etherscan_urls();
 
+    let explorer_url = explorer_url
+        .or(deduced.map(|d| d.1.to_string()))
+        .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
     builder = builder.with_url(explorer_url)?;
+
+    let api_url = api_url
+        .or(deduced.map(|d| d.0.to_string()))
+        .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
+    builder = builder.with_api_url(api_url)?;
 
     if let Some(api_key) = api_key {
         builder = builder.with_api_key(api_key);
-    }
-    if let Some(explorer_api_url) = api_url {
-        builder = builder.with_api_url(explorer_api_url)?;
     }
 
     builder.build().map_err(Into::into)
