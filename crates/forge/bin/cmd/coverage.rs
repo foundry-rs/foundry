@@ -275,7 +275,7 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .set_coverage(true)
-            .build::<MultiCompiler>(&root, output, env, evm_opts)?;
+            .build::<MultiCompiler>(root, output, env, evm_opts)?;
 
         let known_contracts = runner.known_contracts.clone();
 
