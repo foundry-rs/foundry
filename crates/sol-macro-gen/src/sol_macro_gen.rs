@@ -336,12 +336,10 @@ edition = "2021"
 }
 
 fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
-    if syn::parse_str::<syn::File>(&format!("pub mod {name};"))
-        .is_err_and(|e| e.to_string().contains("expected identifier, found keyword"))
-    {
-        write!(contents, "pub mod r#{name};")?;
-    } else {
+    if syn::parse_str::<syn::Ident>(&format!("pub mod {name};")).is_ok() {
         write!(contents, "pub mod {name};")?;
+    } else {
+        write!(contents, "pub mod r#{name};")?;
     }
     Ok(())
 }
