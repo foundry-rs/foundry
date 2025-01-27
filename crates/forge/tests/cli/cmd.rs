@@ -3519,3 +3519,34 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
             .is_json(),
         );
 });
+
+// <https://github.com/foundry-rs/foundry/issues/5847>
+forgetest_init!(can_bind_enum_modules, |prj, cmd| {
+    prj.clear();
+
+    prj.add_source(
+        "Enum.sol",
+        r#"
+    contract Enum {
+        enum MyEnum { A, B, C }
+    }
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "UseEnum.sol",
+        r#"
+    import "./Enum.sol";
+    contract UseEnum {
+        Enum.MyEnum public myEnum;
+    }"#,
+    )
+    .unwrap();
+
+    cmd.arg("bind").assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Generating bindings for 11 contracts
+Bindings have been generated to [..]"#]]);
+});
