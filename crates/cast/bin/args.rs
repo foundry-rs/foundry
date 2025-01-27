@@ -921,9 +921,9 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the source code of a contract from Etherscan.
+    /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
-    EtherscanSource {
+    Source {
         /// The contract's address.
         address: String,
 
@@ -937,6 +937,15 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         etherscan: EtherscanOpts,
+
+        /// Alternative explorer api url to use that adheres to the etherscan api. If not provided,
+        /// defaults to etherscan.
+        #[arg(long, env = "EXPLORER_API_URL")]
+        explorer_api_url: Option<String>,
+
+        /// Alternative explorer browser url.
+        #[arg(long, env = "EXPLORER_URL")]
+        explorer_url: Option<String>,
     },
 
     /// Wallet management utilities.

@@ -1949,9 +1949,11 @@ impl SimpleCast {
     pub async fn etherscan_source(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<String> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         Ok(metadata.source_code())
     }
@@ -1979,10 +1981,12 @@ impl SimpleCast {
     pub async fn expand_etherscan_source_to_directory(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_directory: PathBuf,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> eyre::Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
@@ -1994,10 +1998,12 @@ impl SimpleCast {
     pub async fn etherscan_source_flatten(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_path: Option<PathBuf>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
             eyre::bail!("Empty contract source code")
@@ -2189,6 +2195,35 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+fn explorer_client(
+    chain: Chain,
+    api_key: Option<String>,
+    api_url: Option<String>,
+    explorer_url: Option<String>,
+) -> Result<Client> {
+    let mut builder = Client::builder().with_chain_id(chain);
+
+    let explorer_url = if let Some(url) = &explorer_url {
+        url
+    } else {
+        chain
+            .etherscan_urls()
+            .map(|(_, url)| url)
+            .wrap_err("explorer browser url not provided, use --explorer-url")?
+    };
+
+    builder = builder.with_url(explorer_url)?;
+
+    if let Some(api_key) = api_key {
+        builder = builder.with_api_key(api_key);
+    }
+    if let Some(explorer_api_url) = api_url {
+        builder = builder.with_api_url(explorer_api_url)?;
+    }
+
+    builder.build().map_err(Into::into)
 }
 
 #[cfg(test)]

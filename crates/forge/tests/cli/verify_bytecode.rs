@@ -25,7 +25,7 @@ fn test_verify_bytecode(
     // fetch and flatten source code
     let source_code = cmd
         .cast_fuse()
-        .args(["etherscan-source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
+        .args(["source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
         .assert_success()
         .get_output()
         .stdout_lossy();
