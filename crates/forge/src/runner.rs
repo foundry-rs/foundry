@@ -377,7 +377,13 @@ impl<'a> ContractRunner<'a> {
             .collect::<Vec<_>>();
 
         if !test_fail_instances.is_empty() {
-            return SuiteResult::new(start.elapsed(),[(format!("Found {} instances: {}", test_fail_instances.len(), test_fail_instances.join(", ")), TestResult::fail("`testFail*` has been deprecated. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string()))].into(), warnings)
+            let instances = format!(
+                "Found {} instances: {}",
+                test_fail_instances.len(),
+                test_fail_instances.join(", ")
+            );
+            let fail =  TestResult::fail("`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string());
+            return SuiteResult::new(start.elapsed(), [(instances, fail)].into(), warnings)
         }
 
         let test_results = functions
