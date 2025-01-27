@@ -938,12 +938,12 @@ pub enum CastSubcommand {
         #[command(flatten)]
         etherscan: EtherscanOpts,
 
-        /// Alternative explorer api url to use that adheres to the etherscan api. If not provided,
-        /// defaults to etherscan.
+        /// Alternative explorer API URL to use that adheres to the Etherscan API. If not provided,
+        /// defaults to Etherscan.
         #[arg(long, env = "EXPLORER_API_URL")]
         explorer_api_url: Option<String>,
 
-        /// Alternative explorer browser url.
+        /// Alternative explorer browser URL.
         #[arg(long, env = "EXPLORER_URL")]
         explorer_url: Option<String>,
     },
