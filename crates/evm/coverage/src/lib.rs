@@ -120,13 +120,13 @@ impl CoverageReport {
         hit_map: &HitMap,
         is_deployed_code: bool,
     ) -> Result<()> {
-        // Add bytecode level hits
+        // Add bytecode level hits.
         self.bytecode_hits
             .entry(contract_id.clone())
             .and_modify(|m| m.merge(hit_map))
             .or_insert_with(|| hit_map.clone());
 
-        // Add source level hits
+        // Add source level hits.
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for anchor in anchors {
@@ -139,6 +139,7 @@ impl CoverageReport {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -290,9 +291,9 @@ impl Display for ContractId {
 /// An item anchor describes what instruction marks a [CoverageItem] as covered.
 #[derive(Clone, Debug)]
 pub struct ItemAnchor {
-    /// The program counter for the opcode of this anchor
+    /// The program counter for the opcode of this anchor.
     pub instruction: u32,
-    /// The item ID this anchor points to
+    /// The item ID this anchor points to.
     pub item_id: u32,
 }
 
