@@ -630,20 +630,50 @@ async fn main_args(args: CastArgs) -> Result<()> {
             "{}",
             SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?
         )?,
-        CastSubcommand::EtherscanSource { address, directory, etherscan, flatten } => {
+        CastSubcommand::Source {
+            address,
+            directory,
+            explorer_api_url,
+            explorer_url,
+            etherscan,
+            flatten,
+        } => {
             let config = etherscan.load_config()?;
             let chain = config.chain.unwrap_or_default();
-            let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+            let api_key = config.get_etherscan_api_key(Some(chain));
             match (directory, flatten) {
                 (Some(dir), false) => {
-                    SimpleCast::expand_etherscan_source_to_directory(chain, address, api_key, dir)
-                        .await?
+                    SimpleCast::expand_etherscan_source_to_directory(
+                        chain,
+                        address,
+                        api_key,
+                        dir,
+                        explorer_api_url,
+                        explorer_url,
+                    )
+                    .await?
                 }
-                (None, false) => {
-                    sh_println!("{}", SimpleCast::etherscan_source(chain, address, api_key).await?)?
-                }
+                (None, false) => sh_println!(
+                    "{}",
+                    SimpleCast::etherscan_source(
+                        chain,
+                        address,
+                        api_key,
+                        explorer_api_url,
+                        explorer_url
+                    )
+                    .await?
+                )?,
                 (dir, true) => {
-                    SimpleCast::etherscan_source_flatten(chain, address, api_key, dir).await?;
+                    SimpleCast::etherscan_source_flatten(
+                        chain,
+                        address,
+                        api_key,
+                        dir,
+                        explorer_api_url,
+                        explorer_url,
+                    )
+                    .await?;
                 }
             }
         }
