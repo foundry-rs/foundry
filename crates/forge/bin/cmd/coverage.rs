@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
-        analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles},
+        analysis::{SourceAnalysis, SourceFile, SourceFiles},
         anchors::find_anchors,
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
@@ -165,7 +165,7 @@ impl CoverageArgs {
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
-            // Filter out dependencies
+            // Filter out dependencies.
             if !self.include_libs && project_paths.has_library_ancestor(path) {
                 continue;
             }
@@ -187,7 +187,7 @@ impl CoverageArgs {
             }
         }
 
-        // Get source maps and bytecodes
+        // Get source maps and bytecodes.
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
             .par_bridge() // This parses source maps, so we want to run it in parallel.
@@ -197,34 +197,20 @@ impl CoverageArgs {
             })
             .collect();
 
-        // Add coverage items
+        // Add coverage items.
         for (version, sources) in &versioned_sources {
-            let source_analysis = SourceAnalyzer::new(sources).analyze()?;
-
-            // Build helper mapping used by `find_anchors`
-            let mut items_by_source_id = HashMap::<_, Vec<_>>::with_capacity_and_hasher(
-                source_analysis.items.len(),
-                Default::default(),
-            );
-
-            for (item_id, item) in source_analysis.items.iter().enumerate() {
-                items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
-            }
-
+            let source_analysis = SourceAnalysis::new(sources)?;
             let anchors = artifacts
                 .par_iter()
                 .filter(|artifact| artifact.contract_id.version == *version)
                 .map(|artifact| {
-                    let creation_code_anchors =
-                        artifact.creation.find_anchors(&source_analysis, &items_by_source_id);
-                    let deployed_code_anchors =
-                        artifact.deployed.find_anchors(&source_analysis, &items_by_source_id);
+                    let creation_code_anchors = artifact.creation.find_anchors(&source_analysis);
+                    let deployed_code_anchors = artifact.deployed.find_anchors(&source_analysis);
                     (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
                 })
-                .collect::<Vec<_>>();
-
-            report.add_anchors(anchors);
-            report.add_items(version.clone(), source_analysis.items);
+                .collect_vec_list();
+            report.add_anchors(anchors.into_iter().flatten());
+            report.add_analysis(version.clone(), source_analysis);
         }
 
         report.add_source_maps(artifacts.into_iter().map(|artifact| {
@@ -418,18 +404,8 @@ impl BytecodeData {
         Self { source_map, bytecode, ic_pc_map }
     }
 
-    pub fn find_anchors(
-        &self,
-        source_analysis: &SourceAnalysis,
-        items_by_source_id: &HashMap<usize, Vec<usize>>,
-    ) -> Vec<ItemAnchor> {
-        find_anchors(
-            &self.bytecode,
-            &self.source_map,
-            &self.ic_pc_map,
-            &source_analysis.items,
-            items_by_source_id,
-        )
+    pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> Vec<ItemAnchor> {
+        find_anchors(&self.bytecode, &self.source_map, &self.ic_pc_map, source_analysis)
     }
 }
 

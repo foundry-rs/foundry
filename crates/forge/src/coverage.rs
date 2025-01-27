@@ -201,10 +201,10 @@ impl CoverageReporter for DebugReporter {
                     let _ = sh_println!(
                         "  - Refers to item: {}",
                         report
-                            .items
+                            .analyses
                             .get(&contract_id.version)
                             .and_then(|items| items.get(anchor.item_id))
-                            .map_or("None".to_owned(), |item| item.to_string())
+                            .map_or_else(|| "None".to_owned(), |item| item.to_string())
                     );
                 });
             sh_println!()?;
@@ -241,7 +241,7 @@ impl CoverageReporter for BytecodeReporter {
 
             for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
                 let hits = hits
-                    .get(code.offset as usize)
+                    .get(code.offset)
                     .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
