@@ -1,4 +1,4 @@
-use alloy_primitives::map::HashMap;
+use alloy_primitives::map::rustc_hash::FxHashMap;
 use eyre::Result;
 use revm::interpreter::{
     opcode::{PUSH0, PUSH1, PUSH32},
@@ -13,7 +13,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(transparent)]
 pub struct PcIcMap {
-    pub inner: HashMap<u32, u32>,
+    pub inner: FxHashMap<u32, u32>,
 }
 
 impl PcIcMap {
@@ -42,7 +42,7 @@ impl PcIcMap {
 ///
 /// Inverse of [`PcIcMap`].
 pub struct IcPcMap {
-    pub inner: HashMap<u32, u32>,
+    pub inner: FxHashMap<u32, u32>,
 }
 
 impl IcPcMap {
@@ -67,10 +67,10 @@ impl IcPcMap {
     }
 }
 
-fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<u32, u32> {
+fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<u32, u32> {
     assert!(code.len() <= u32::MAX as usize, "bytecode is too big");
 
-    let mut map = HashMap::default();
+    let mut map = FxHashMap::with_capacity_and_hasher(code.len(), Default::default());
 
     let mut pc = 0usize;
     let mut cumulative_push_size = 0usize;
@@ -91,6 +91,9 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<u32, u32> {
 
         pc += 1;
     }
+
+    map.shrink_to_fit();
+
     map
 }
 

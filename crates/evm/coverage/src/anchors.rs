@@ -149,7 +149,7 @@ pub fn find_anchor_branch(
 /// Calculates whether `element` is within the range of the target `location`.
 fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> bool {
     // Source IDs must match.
-    let source_ids_match = element.index().is_some_and(|a| a as usize == location.source_id);
+    let source_ids_match = element.index_i32() == location.source_id as i32;
     if !source_ids_match {
         return false;
     }

@@ -142,16 +142,16 @@ impl CoverageReport {
         Ok(())
     }
 
-    /// Removes all the coverage items that should be ignored by the filter.
+    /// Retains all the coverage items specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
-    pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
+    pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
         self.analyses.retain(|version, analysis| {
             analysis.all_items_mut().retain(|item| {
                 self.source_paths
                     .get(&(version.clone(), item.loc.source_id))
-                    .map(|path| filter(path))
+                    .map(|path| predicate(path))
                     .unwrap_or(false)
             });
             !analysis.all_items().is_empty()

@@ -14,19 +14,18 @@ use forge::{
     MultiContractRunnerBuilder,
 };
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{
         sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
     },
     compilers::multi::MultiCompiler,
-    Artifact, ArtifactId, Project, ProjectCompileOutput,
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::{
-    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -35,7 +34,7 @@ use std::{
 foundry_config::impl_figment_convert!(CoverageArgs, test);
 
 /// CLI arguments for `forge coverage`.
-#[derive(Clone, Debug, Parser)]
+#[derive(Parser)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -76,12 +75,16 @@ pub struct CoverageArgs {
     #[arg(long)]
     include_libs: bool,
 
+    /// The coverage reporters to use. Constructed from the other fields.
+    #[arg(skip)]
+    reporters: Vec<Box<dyn CoverageReporter>>,
+
     #[command(flatten)]
     test: TestArgs,
 }
 
 impl CoverageArgs {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
@@ -96,12 +99,40 @@ impl CoverageArgs {
         // Coverage analysis requires the Solc AST output.
         config.ast = true;
 
-        let (project, output) = self.build(&config)?;
+        let (paths, output) = {
+            let (project, output) = self.build(&config)?;
+            (project.paths, output)
+        };
+
+        self.populate_reporters(&paths.root);
+
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&project, &output)?;
+        let report = self.prepare(&paths, &output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(project, &output, report, Arc::new(config), evm_opts).await
+        self.collect(&paths.root, &output, report, Arc::new(config), evm_opts).await
+    }
+
+    fn populate_reporters(&mut self, root: &Path) {
+        self.reporters = self
+            .report
+            .iter()
+            .map(|report_kind| match report_kind {
+                CoverageReportKind::Summary => {
+                    Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
+                }
+                CoverageReportKind::Lcov => {
+                    let path =
+                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
+                }
+                CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
+                    root.to_path_buf(),
+                    root.join("bytecode-coverage"),
+                )),
+                CoverageReportKind::Debug => Box::new(DebugReporter),
+            })
+            .collect::<Vec<_>>();
     }
 
     /// Builds the project.
@@ -156,11 +187,14 @@ impl CoverageArgs {
 
     /// Builds the coverage report.
     #[instrument(name = "prepare", skip_all)]
-    fn prepare(&self, project: &Project, output: &ProjectCompileOutput) -> Result<CoverageReport> {
+    fn prepare(
+        &self,
+        project_paths: &ProjectPathsConfig,
+        output: &ProjectCompileOutput,
+    ) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
 
         // Collect source files.
-        let project_paths = &project.paths;
         let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
@@ -213,23 +247,24 @@ impl CoverageArgs {
             report.add_analysis(version.clone(), source_analysis);
         }
 
-        report.add_source_maps(artifacts.into_iter().map(|artifact| {
-            (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
-        }));
+        if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+            report.add_source_maps(artifacts.into_iter().map(|artifact| {
+                (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
+            }));
+        }
 
         Ok(report)
     }
 
     /// Runs tests, collects coverage data and generates the final report.
     async fn collect(
-        self,
-        project: Project,
+        mut self,
+        root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
         config: Arc<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()> {
-        let root = project.paths.root;
         let verbosity = evm_opts.verbosity;
 
         // Build the contract runner
@@ -245,8 +280,7 @@ impl CoverageArgs {
         let known_contracts = runner.known_contracts.clone();
 
         let filter = self.test.filter(&config);
-        let outcome =
-            self.test.run_tests(runner, config.clone(), verbosity, &filter, output).await?;
+        let outcome = self.test.run_tests(runner, config, verbosity, &filter, output).await?;
 
         outcome.ensure_ok(false)?;
 
@@ -284,33 +318,20 @@ impl CoverageArgs {
             }
         }
 
-        // Filter out ignored sources from the report
-        let file_pattern = filter.args().coverage_pattern_inverse.as_ref();
-        let file_root = &filter.paths().root;
-        report.filter_out_ignored_sources(|path: &Path| {
-            file_pattern.is_none_or(|re| {
-                !re.is_match(&path.strip_prefix(file_root).unwrap_or(path).to_string_lossy())
-            })
-        });
-
-        // Output final report
-        for report_kind in self.report {
-            match report_kind {
-                CoverageReportKind::Summary => CoverageSummaryReporter::default().report(&report),
-                CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
-                    let mut file = io::BufWriter::new(fs::create_file(path)?);
-                    LcovReporter::new(&mut file, self.lcov_version.clone()).report(&report)
-                }
-                CoverageReportKind::Bytecode => {
-                    let destdir = root.join("bytecode-coverage");
-                    fs::create_dir_all(&destdir)?;
-                    BytecodeReporter::new(root.clone(), destdir).report(&report)
-                }
-                CoverageReportKind::Debug => DebugReporter.report(&report),
-            }?;
+        // Filter out ignored sources from the report.
+        if let Some(not_re) = &filter.args().coverage_pattern_inverse {
+            let file_root = filter.paths().root.as_path();
+            report.retain_sources(|path: &Path| {
+                let path = path.strip_prefix(file_root).unwrap_or(path);
+                !not_re.is_match(&path.to_string_lossy())
+            });
         }
+
+        // Output final reports.
+        for reporter in &mut self.reporters {
+            reporter.report(&report)?;
+        }
+
         Ok(())
     }
 
