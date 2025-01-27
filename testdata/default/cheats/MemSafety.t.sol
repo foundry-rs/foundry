@@ -293,7 +293,6 @@ contract MemSafetyTest is DSTest {
         }
     }
 
-
     /// @dev Tests that expanding memory outside of the range given to `expectSafeMemory`
     ///      will cause the test to fail while using the `LOG0` opcode.
     /// forge-config: default.allow_internal_expect_revert = true
