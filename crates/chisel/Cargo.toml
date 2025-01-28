@@ -23,7 +23,6 @@ path = "bin/main.rs"
 [dependencies]
 # forge
 forge-fmt.workspace = true
-foundry-block-explorers.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
@@ -38,7 +37,6 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-json-abi.workspace = true
-alloy-rpc-types.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs = "5"

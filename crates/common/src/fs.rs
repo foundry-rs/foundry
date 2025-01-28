@@ -1,4 +1,5 @@
-//! Contains various `std::fs` wrapper functions that also contain the target path in their errors
+//! Contains various `std::fs` wrapper functions that also contain the target path in their errors.
+
 use crate::errors::FsPathError;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -7,7 +8,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-type Result<T> = std::result::Result<T, FsPathError>;
+/// The [`fs`](self) result type.
+pub type Result<T> = std::result::Result<T, FsPathError>;
 
 /// Wrapper for [`File::create`].
 pub fn create_file(path: impl AsRef<Path>) -> Result<fs::File> {
