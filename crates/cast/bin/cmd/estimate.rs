@@ -6,10 +6,9 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, parse_ether_value},
+    utils::{self, parse_ether_value, LoadConfig},
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_config::Config;
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.
@@ -69,7 +68,7 @@ impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
         let Self { to, mut sig, mut args, mut tx, block, eth, command } = self;
 
-        let config = Config::from(&eth);
+        let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
 

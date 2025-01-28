@@ -20,13 +20,6 @@ workspace = true
 name = "chisel"
 path = "bin/main.rs"
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # forge
 forge-fmt.workspace = true
@@ -62,6 +55,7 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { workspace = true, features = ["full"] }
 yansi.workspace = true
 tracing.workspace = true
+walkdir.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }

@@ -3,11 +3,9 @@ use alloy_primitives::map::HashSet;
 use figment::providers::{Format, Toml};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{error::Error, fmt, str::FromStr};
-/// The message shown upon panic if the config could not be extracted from the figment
-pub const FAILED_TO_EXTRACT_CONFIG_PANIC_MSG: &str = "failed to extract foundry config:";
 
 /// Represents a failed attempt to extract `Config` from a `Figment`
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ExtractConfigError {
     /// error thrown when extracting the `Config`
     pub(crate) error: figment::Error,
@@ -40,11 +38,17 @@ impl fmt::Display for ExtractConfigError {
                 unique_errors.push(err);
             }
         }
-        writeln!(f, "{FAILED_TO_EXTRACT_CONFIG_PANIC_MSG}")?;
+        writeln!(f, "failed to extract foundry config:")?;
         for err in unique_errors {
             writeln!(f, "{err}")?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Debug for ExtractConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 

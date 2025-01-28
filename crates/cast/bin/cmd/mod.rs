@@ -1,4 +1,4 @@
-//! Subcommands for cast
+//! `cast` subcommands.
 //!
 //! All subcommands should respect the `foundry_config::Config`.
 //! If a subcommand accepts values that are supported by the `Config`, then the subcommand should

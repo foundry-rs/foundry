@@ -201,8 +201,11 @@ contract MockCallRevertTest is DSTest {
 
         // post-mock
         assertEq(target.numberA(), 1);
-        vm.expectRevert();
-        target.numberB();
+        try target.numberB() {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 
     function testMockRevertWithCustomError() public {
@@ -216,8 +219,11 @@ contract MockCallRevertTest is DSTest {
         vm.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), customError);
 
         assertEq(target.numberA(), 1);
-        vm.expectRevert(customError);
-        target.numberB();
+        try target.numberB() {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(customError));
+        }
     }
 
     function testMockNestedRevert() public {
@@ -228,8 +234,11 @@ contract MockCallRevertTest is DSTest {
 
         vm.mockCallRevert(address(inner), abi.encodeWithSelector(inner.numberB.selector), ERROR_MESSAGE);
 
-        vm.expectRevert(ERROR_MESSAGE);
-        target.sum();
+        try target.sum() {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 
     function testMockCalldataRevert() public {
@@ -241,8 +250,11 @@ contract MockCallRevertTest is DSTest {
 
         assertEq(target.add(6, 4), 10);
 
-        vm.expectRevert(ERROR_MESSAGE);
-        target.add(5, 5);
+        try target.add(5, 5) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 
     function testClearMockRevertedCalls() public {
@@ -263,8 +275,11 @@ contract MockCallRevertTest is DSTest {
 
         assertEq(mock.add(1, 2), 3);
 
-        vm.expectRevert(ERROR_MESSAGE);
-        mock.add(2, 3);
+        try mock.add(2, 3) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 
     function testMockCallRevertWithValue() public {
@@ -275,8 +290,11 @@ contract MockCallRevertTest is DSTest {
         assertEq(mock.pay(1), 1);
         assertEq(mock.pay(2), 2);
 
-        vm.expectRevert(ERROR_MESSAGE);
-        mock.pay{value: 10}(1);
+        try mock.pay{value: 10}(1) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 
     function testMockCallResetsMockCallRevert() public {
@@ -296,8 +314,11 @@ contract MockCallRevertTest is DSTest {
 
         vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
 
-        vm.expectRevert(ERROR_MESSAGE);
-        mock.add(2, 3);
+        try mock.add(2, 3) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 
     function testMockCallRevertWithCall() public {
@@ -317,7 +338,10 @@ contract MockCallRevertTest is DSTest {
 
         vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
 
-        vm.expectRevert(ERROR_MESSAGE);
-        mock.add(1, 2);
+        try mock.add(2, 3) {
+            revert();
+        } catch (bytes memory err) {
+            require(keccak256(err) == keccak256(ERROR_MESSAGE));
+        }
     }
 }
