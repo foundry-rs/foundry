@@ -993,7 +993,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "hyper 1.5.2",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "k256",
  "maili-consensus",
  "op-alloy-rpc-types",
@@ -1008,7 +1008,7 @@ dependencies = [
  "thiserror 2.0.11",
  "tikv-jemallocator",
  "tokio",
- "tower 0.4.13",
+ "tower 0.5.2",
  "tracing",
  "tracing-subscriber",
  "yansi",
@@ -2042,7 +2042,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "indicatif",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "rand",
  "rayon",
  "regex",
@@ -2083,12 +2083,6 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
-
-[[package]]
-name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
@@ -2101,7 +2095,7 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "clap",
- "dirs 5.0.1",
+ "dirs 6.0.0",
  "eyre",
  "forge-fmt",
  "foundry-cli",
@@ -2243,15 +2237,15 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
 name = "clearscreen"
-version = "3.0.0"
+version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f8c93eb5f77c9050c7750e14f13ef1033a40a0aac70c6371535b6763a01438c"
+checksum = "8c41dc435a7b98e4608224bbf65282309f5403719df9113621b30f8b6f74e2f4"
 dependencies = [
- "nix 0.28.0",
+ "nix 0.29.0",
  "terminfo",
- "thiserror 1.0.69",
+ "thiserror 2.0.11",
  "which",
- "winapi",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2823,20 +2817,20 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3aa72a6f96ea37bbc5aa912f6788242832f75369bdfdadcb0e38423f100059"
-dependencies = [
- "dirs-sys 0.3.7",
-]
-
-[[package]]
-name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
  "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]
@@ -2851,25 +2845,26 @@ dependencies = [
 
 [[package]]
 name = "dirs-sys"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
-dependencies = [
- "libc",
- "redox_users",
- "winapi",
-]
-
-[[package]]
-name = "dirs-sys"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users",
+ "redox_users 0.4.6",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.5.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2879,7 +2874,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
 dependencies = [
  "libc",
- "redox_users",
+ "redox_users 0.4.6",
  "winapi",
 ]
 
@@ -3055,6 +3050,12 @@ dependencies = [
  "log",
  "regex",
 ]
+
+[[package]]
+name = "env_home"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
 
 [[package]]
 name = "env_logger"
@@ -3355,7 +3356,7 @@ dependencies = [
  "hyper 1.5.2",
  "indicatif",
  "inferno",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "mockall",
  "opener",
  "parking_lot",
@@ -3403,7 +3404,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "mdbook",
  "rayon",
  "regex",
@@ -3422,7 +3423,7 @@ dependencies = [
  "alloy-primitives",
  "ariadne",
  "foundry-config",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "similar-asserts",
  "solang-parser",
  "thiserror 2.0.11",
@@ -3464,7 +3465,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "indicatif",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "parking_lot",
  "revm-inspectors",
  "semver 1.0.25",
@@ -3531,7 +3532,7 @@ dependencies = [
  "foundry-evm",
  "foundry-test-utils",
  "futures",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "regex",
  "reqwest",
  "revm-primitives",
@@ -3599,7 +3600,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-traces",
  "foundry-wallets",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "jsonpath_lib",
  "k256",
  "memchr",
@@ -3654,7 +3655,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "indicatif",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "rayon",
  "regex",
  "serde",
@@ -3705,7 +3706,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-macros",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "num-format",
  "reqwest",
  "semver 1.0.25",
@@ -3715,7 +3716,7 @@ dependencies = [
  "terminal_size",
  "thiserror 2.0.11",
  "tokio",
- "tower 0.4.13",
+ "tower 0.5.2",
  "tracing",
  "url",
  "vergen",
@@ -3858,7 +3859,7 @@ dependencies = [
  "Inflector",
  "alloy-chains",
  "alloy-primitives",
- "dirs-next",
+ "dirs 6.0.0",
  "dunce",
  "eyre",
  "figment",
@@ -3866,7 +3867,7 @@ dependencies = [
  "foundry-compilers",
  "glob",
  "globset",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "mesc",
  "number_prefix",
  "path-slash",
@@ -3943,7 +3944,7 @@ dependencies = [
  "foundry-common-fmt",
  "foundry-macros",
  "foundry-test-utils",
- "itertools 0.13.0",
+ "itertools 0.14.0",
 ]
 
 [[package]]
@@ -3969,7 +3970,7 @@ dependencies = [
  "foundry-fork-db",
  "foundry-test-utils",
  "futures",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "parking_lot",
  "revm",
  "revm-inspectors",
@@ -4010,7 +4011,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-coverage",
  "foundry-evm-traces",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "parking_lot",
  "proptest",
  "rand",
@@ -4036,7 +4037,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-linking",
  "futures",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "rayon",
  "revm",
  "revm-inspectors",
@@ -5999,25 +6000,13 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
-dependencies = [
- "bitflags 2.8.0",
- "cfg-if",
- "cfg_aliases 0.1.1",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.8.0",
  "cfg-if",
- "cfg_aliases 0.2.1",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -7107,7 +7096,7 @@ version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c40286217b4ba3a71d644d752e6a0b71f13f1b6a2c5311acfcbe0c2418ed904"
 dependencies = [
- "cfg_aliases 0.2.1",
+ "cfg_aliases",
  "libc",
  "once_cell",
  "socket2",
@@ -7245,6 +7234,17 @@ dependencies = [
  "getrandom",
  "libredox",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "redox_users"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd6f9d3d47bdd2ad6945c5015a226ec6155d0bcdfd8f7cd29f86b71f8de99d2b"
+dependencies = [
+ "getrandom",
+ "libredox",
+ "thiserror 2.0.11",
 ]
 
 [[package]]
@@ -8744,11 +8744,10 @@ dependencies = [
 
 [[package]]
 name = "terminfo"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "666cd3a6681775d22b200409aad3b089c5b99fb11ecdd8a204d9d62f8148498f"
+checksum = "d4ea810f0692f9f51b382fff5893887bb4580f5fa246fde546e0b13e7fcee662"
 dependencies = [
- "dirs 4.0.0",
  "fnv",
  "nom",
  "phf",
@@ -9151,9 +9150,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.5.2"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e9cd434a998747dd2c4276bc96ee2e0c7a2eadf3cae88e52be55a05fa9053f5"
+checksum = "403fa3b783d4b626a8ad51d766ab03cb6d2dbfc46b1c5d4448395e6628dc9697"
 dependencies = [
  "bitflags 2.8.0",
  "bytes",
@@ -9799,12 +9798,12 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "6.0.3"
+version = "7.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
+checksum = "fb4a9e33648339dc1642b0e36e21b3385e6148e289226f657c809dee59df5028"
 dependencies = [
  "either",
- "home",
+ "env_home",
  "rustix",
  "winsafe",
 ]
