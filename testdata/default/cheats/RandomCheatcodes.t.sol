@@ -11,9 +11,7 @@ contract RandomCheatcodesTest is DSTest {
     int128 constant max = 170141183460469231731687303715884105727;
 
     function test_int128() public {
-        vm._expectCheatcodeRevert(
-            "vm.randomInt: number of bits cannot exceed 256"
-        );
+        vm._expectCheatcodeRevert("vm.randomInt: number of bits cannot exceed 256");
         int256 val = vm.randomInt(type(uint256).max);
 
         val = vm.randomInt(128);
@@ -35,9 +33,7 @@ contract RandomCheatcodesTest is DSTest {
     }
 
     function test_randomUintLimit() public {
-        vm._expectCheatcodeRevert(
-            "vm.randomUint: number of bits cannot exceed 256"
-        );
+        vm._expectCheatcodeRevert("vm.randomUint: number of bits cannot exceed 256");
         uint256 val = vm.randomUint(type(uint256).max);
     }
 
