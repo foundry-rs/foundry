@@ -1838,7 +1838,7 @@ impl Config {
 
     /// Returns the path to foundry's config dir: `~/.foundry/`.
     pub fn foundry_dir() -> Option<PathBuf> {
-        dirs_next::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
+        dirs::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
     }
 
     /// Returns the path to foundry's cache dir: `~/.foundry/cache`.
@@ -1891,7 +1891,7 @@ impl Config {
     /// | macOS    | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
     /// | Windows  | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry           |
     pub fn data_dir() -> eyre::Result<PathBuf> {
-        let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
+        let path = dirs::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
         Ok(path)
     }
