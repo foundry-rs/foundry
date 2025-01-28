@@ -248,7 +248,6 @@ auto_impl = "1"
 bytes = "1.8"
 walkdir = "2"
 prettyplease = "0.2"
-ahash = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
