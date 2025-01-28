@@ -3376,6 +3376,23 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_path_only_identifier, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 

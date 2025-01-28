@@ -15,6 +15,7 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
     },
+    info::ContractInfo as CompilerContractInfo,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
@@ -25,6 +26,7 @@ use std::{
     fmt::Display,
     io::IsTerminal,
     path::{Path, PathBuf},
+    str::FromStr,
     time::Instant,
 };
 
@@ -539,4 +541,71 @@ pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
     };
 
     foundry_compilers::report::with_scoped(&reporter, f)
+}
+
+/// Container type for parsing contract identifiers from CLI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathOrContractInfo {
+    /// Non-canoncalized path provided via CLI.
+    Path(PathBuf),
+    /// Contract info provided via CLI.
+    ContractInfo(CompilerContractInfo),
+}
+
+impl PathOrContractInfo {
+    pub fn path(&self) -> Option<PathBuf> {
+        match self {
+            Self::Path(path) => Some(path.to_path_buf()),
+            Self::ContractInfo(info) => info.path.as_ref().map(PathBuf::from),
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Path(_) => None,
+            Self::ContractInfo(info) => Some(&info.name),
+        }
+    }
+}
+
+impl FromStr for PathOrContractInfo {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        if let Ok(contract) = CompilerContractInfo::from_str(s) {
+            return Ok(Self::ContractInfo(contract));
+        }
+        Ok(Self::Path(PathBuf::from(s)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_contract_identifiers() {
+        let t = vec!["src/Counter.sol", "src/Counter.sol:Counter", "Counter"];
+
+        let i1 = PathOrContractInfo::from_str(t[0]).unwrap();
+        assert_eq!(i1, PathOrContractInfo::Path(PathBuf::from(t[0])));
+
+        let i2 = PathOrContractInfo::from_str(t[1]).unwrap();
+        assert_eq!(
+            i2,
+            PathOrContractInfo::ContractInfo(CompilerContractInfo {
+                path: Some("src/Counter.sol".to_string()),
+                name: "Counter".to_string()
+            })
+        );
+
+        let i3 = PathOrContractInfo::from_str(t[2]).unwrap();
+        assert_eq!(
+            i3,
+            PathOrContractInfo::ContractInfo(CompilerContractInfo {
+                path: None,
+                name: "Counter".to_string()
+            })
+        );
+    }
 }
