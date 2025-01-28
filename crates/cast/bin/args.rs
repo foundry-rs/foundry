@@ -16,7 +16,7 @@ use foundry_common::{
 };
 use std::{path::PathBuf, str::FromStr};
 
-/// Perform Ethereum RPC calls from the comfort of your command line.
+/// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
     name = "cast",
