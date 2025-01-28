@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: 3.11
       - name: Install Vyper
-        run: pip install vyper~=0.4.0
+        run: pip install vyper~=0.4.1b5
 
       - name: Forge RPC cache
         uses: actions/cache@v3
