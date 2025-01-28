@@ -33,7 +33,7 @@ pub mod serde_helpers;
 pub mod term;
 pub mod traits;
 pub mod transactions;
-mod utils;
+pub mod utils;
 pub mod version;
 
 pub use constants::*;

@@ -2,23 +2,21 @@ use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
-use eyre::{Context, OptionExt, Result};
+use eyre::{Context, Result};
 use forge::revm::primitives::Eof;
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     fmt::pretty_eof,
     shell,
+    utils::{find_target_artifact, find_target_path},
 };
-use foundry_compilers::{
-    artifacts::{
-        output_selection::{
-            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
-        },
-        CompactBytecode, StorageLayout,
+use foundry_compilers::artifacts::{
+    output_selection::{
+        BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+        EvmOutputSelection, EwasmOutputSelection,
     },
-    utils::canonicalize,
+    CompactBytecode, StorageLayout,
 };
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -68,32 +66,11 @@ impl InspectArgs {
         // Build the project
         let project = modified_build_args.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
-        let target_name = contract.name();
-        let target_path = if let Some(path) = contract.path() {
-            canonicalize(project.root().join(path))?
-        } else {
-            project.find_contract_path(target_name.ok_or_eyre("<CONTRACT_NAME> not provided")?)?
-        };
+        let target_path = find_target_path(&project, &contract)?;
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
-        let artifact = if let Some(name) = target_name {
-            output
-                .remove(&target_path, name)
-                .ok_or_eyre(format!("Could not find artifact `{name}` in the compiled artifacts"))?
-        } else {
-            let possible_targets = output
-                .artifact_ids()
-                .filter(|(id, _artifact)| id.source == target_path)
-                .collect::<Vec<_>>();
-            if possible_targets.len() > 1 {
-                eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
-            } else if possible_targets.is_empty() {
-                eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
-            }
-
-            possible_targets[0].1.clone()
-        };
+        let artifact = find_target_artifact(&mut output, &target_path, contract.name())?;
 
         // Match on ContractArtifactFields and pretty-print
         match field {

@@ -544,7 +544,12 @@ pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
 }
 
 /// Container type for parsing contract identifiers from CLI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Passed string can be of the following forms:
+/// - `src/Counter.sol` - path to the contract file, in the case where it only contains one contract
+/// - `src/Counter.sol:Counter` - path to the contract file and the contract name
+/// - `Counter` - contract name only
+#[derive(Clone, PartialEq, Eq)]
 pub enum PathOrContractInfo {
     /// Non-canoncalized path provided via CLI.
     Path(PathBuf),
@@ -579,13 +584,24 @@ impl FromStr for PathOrContractInfo {
     }
 }
 
+impl std::fmt::Debug for PathOrContractInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Path(path) => write!(f, "ContractPath: {:?}", path.display()),
+            Self::ContractInfo(info) => {
+                write!(f, "{}", info.name)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parse_contract_identifiers() {
-        let t = vec!["src/Counter.sol", "src/Counter.sol:Counter", "Counter"];
+        let t = ["src/Counter.sol", "src/Counter.sol:Counter", "Counter"];
 
         let i1 = PathOrContractInfo::from_str(t[0]).unwrap();
         assert_eq!(i1, PathOrContractInfo::Path(PathBuf::from(t[0])));
