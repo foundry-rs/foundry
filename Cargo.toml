@@ -212,6 +212,7 @@ alloy-json-abi = "0.8.18"
 alloy-primitives = { version = "0.8.18", features = [
     "getrandom",
     "rand",
+    "map-fxhash",
     "map-foldhash",
 ] }
 alloy-sol-macro-expander = "0.8.18"
