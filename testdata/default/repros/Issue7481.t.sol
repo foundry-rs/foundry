@@ -9,6 +9,7 @@ import "cheats/Vm.sol";
 contract Issue7481Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
+    /// forge-config: default.allow_internal_expect_revert = true
     function testRevertTransact() public {
         vm.expectRevert("vm.createSelectFork: invalid rpc url: mainnet");
         vm.createSelectFork("mainnet", 19514903);

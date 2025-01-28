@@ -11,7 +11,7 @@ contract Issue3708Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
-        string memory RPC_URL = "https://mainnet.optimism.io";
+        string memory RPC_URL = "https://optimism.llamarpc.com";
         uint256 forkId = vm.createSelectFork(RPC_URL);
 
         bytes memory code =
