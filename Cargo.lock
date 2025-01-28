@@ -2100,12 +2100,10 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
- "alloy-rpc-types",
  "clap",
  "dirs 5.0.1",
  "eyre",
  "forge-fmt",
- "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
  "foundry-compilers",
@@ -3656,6 +3654,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "indicatif",
+ "itertools 0.13.0",
  "rayon",
  "regex",
  "serde",
@@ -4001,7 +4000,6 @@ dependencies = [
 name = "foundry-evm-fuzz"
 version = "0.3.1"
 dependencies = [
- "ahash",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
@@ -4012,7 +4010,6 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-coverage",
  "foundry-evm-traces",
- "indexmap 2.7.1",
  "itertools 0.13.0",
  "parking_lot",
  "proptest",

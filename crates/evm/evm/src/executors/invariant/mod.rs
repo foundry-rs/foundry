@@ -348,7 +348,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if self.config.fail_on_revert && invariant_test.reverts() > 0 {
-                return Err(TestCaseError::fail("Revert occurred."))
+                return Err(TestCaseError::fail("call reverted"))
             }
 
             while current_run.depth < self.config.depth {
@@ -362,7 +362,7 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 let tx = current_run.inputs.last().ok_or_else(|| {
-                    TestCaseError::fail("No input generated to call fuzzed target.")
+                    TestCaseError::fail("no input generated to called fuzz target")
                 })?;
 
                 // Execute call from the randomly generated sequence without committing state.
@@ -375,9 +375,7 @@ impl<'a> InvariantExecutor<'a> {
                         tx.call_details.calldata.clone(),
                         U256::ZERO,
                     )
-                    .map_err(|e| {
-                        TestCaseError::fail(format!("Could not make raw evm call: {e}"))
-                    })?;
+                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
@@ -394,7 +392,9 @@ impl<'a> InvariantExecutor<'a> {
                         invariant_test.set_error(InvariantFuzzError::MaxAssumeRejects(
                             self.config.max_assume_rejects,
                         ));
-                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
+                        return Err(TestCaseError::fail(
+                            "reached maximum number of `vm.assume` rejects",
+                        ));
                     }
                 } else {
                     // Commit executed call result.
@@ -452,7 +452,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
-                        return Err(TestCaseError::fail("Test cannot continue."))
+                        return Err(TestCaseError::fail("test cannot continue"))
                     }
 
                     invariant_test.set_last_call_results(result.call_result);

@@ -1,6 +1,7 @@
 # Formatter (`fmt`)
 
-Solidity formatter that respects (some parts of) the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
+Solidity formatter that respects (some parts of)
+the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
 is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity/prettier-plugin-solidity) cases.
 
 ## Architecture
@@ -17,13 +18,19 @@ and works as following:
 1. Implement `Formatter` callback functions for each PT node type.
    Every callback function should write formatted output for the current node
    and call `Visitable::visit` function for child nodes delegating the output writing.
-1. Implement `Visitable` trait and its `visit` function for each PT node type. Every `visit` function should call corresponding `Formatter`'s callback function.
+1. Implement `Visitable` trait and its `visit` function for each PT node type. Every `visit` function should call
+   corresponding `Formatter`'s callback function.
 
 ### Output
 
-The formatted output is written into the output buffer in _chunks_. The `Chunk` struct holds the content to be written & metadata for it. This includes the comments surrounding the content as well as the `needs_space` flag specifying whether this _chunk_ needs a space. The flag overrides the default behavior of `Formatter::next_char_needs_space` method.
+The formatted output is written into the output buffer in _chunks_. The `Chunk` struct holds the content to be written &
+metadata for it. This includes the comments surrounding the content as well as the `needs_space` flag specifying whether
+this _chunk_ needs a space. The flag overrides the default behavior of `Formatter::next_char_needs_space` method.
 
-The content gets written into the `FormatBuffer` which contains the information about the current indentation level, indentation length, current state as well as the other data determining the rules for writing the content. `FormatBuffer` implements the `std::fmt::Write` trait where it evaluates the current information and decides how the content should be written to the destination.
+The content gets written into the `FormatBuffer` which contains the information about the current indentation level,
+indentation length, current state as well as the other data determining the rules for writing the content.
+`FormatBuffer` implements the `std::fmt::Write` trait where it evaluates the current information and decides how the
+content should be written to the destination.
 
 ### Comments
 
@@ -107,17 +114,22 @@ event Greet(string indexed name);
 
 The formatter supports multiple configuration options defined in `FormatterConfig`.
 
-| Option                           | Default  | Description                                                                                    |
-| -------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| line_length                      | 120      | Maximum line length where formatter will try to wrap the line                                  |
-| tab_width                        | 4        | Number of spaces per indentation level                                                         |
-| bracket_spacing                  | false    | Print spaces between brackets                                                                  |
-| int_types                        | long     | Style of uint/int256 types. Available options: `long`, `short`, `preserve`                     |
-| func_attrs_with_params_multiline | true     | If function parameters are multiline then always put the function attributes on separate lines |
-| quote_style                      | double   | Style of quotation marks. Available options: `double`, `single`, `preserve`                    |
-| number_underscore                | preserve | Style of underscores in number literals. Available options: `remove`, `thousands`, `preserve`  |
-
-TODO: update ^
+| Option                       | Default          | Description                                                                                                                                                 |
+|------------------------------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| line_length                  | 120              | Maximum line length where formatter will try to wrap the line                                                                                               |
+| tab_width                    | 4                | Number of spaces per indentation level                                                                                                                      |
+| bracket_spacing              | false            | Print spaces between brackets                                                                                                                               |
+| int_types                    | long             | Style of uint/int256 types. Available options: `long`, `short`, `preserve`                                                                                  |
+| multiline_func_header        | attributes_first | Style of multiline function header in case it doesn't fit. Available options: `params_first`, `params_first_multi`, `attributes_first`, `all`, `all_params` |
+| quote_style                  | double           | Style of quotation marks. Available options: `double`, `single`, `preserve`                                                                                 |
+| number_underscore            | preserve         | Style of underscores in number literals. Available options: `preserve`, `remove`, `thousands`                                                               |
+| hex_underscore               | remove           | Style of underscores in hex literals. Available options: `preserve`, `remove`, `bytes`                                                                      |
+| single_line_statement_blocks | preserve         | Style of single line blocks in statements. Available options: `single`, `multi`, `preserve`                                                                 |
+| override_spacing             | false            | Print space in state variable, function and modifier `override` attribute                                                                                   |
+| wrap_comments                | false            | Wrap comments on `line_length` reached                                                                                                                      |
+| ignore                       | []               | Globs to ignore                                                                                                                                             |
+| contract_new_lines           | false            | Add new line at start and end of contract declarations                                                                                                      |
+| sort_imports                 | false            | Sort import statements alphabetically in groups                                                                                                             |
 
 ### Disable Line
 
@@ -128,7 +140,8 @@ The formatter can be disabled on specific lines by adding a comment `// forgefmt
 uint x = 100;
 ```
 
-Alternatively, the comment can also be placed at the end of the line. In this case, you'd have to use `disable-line` instead:
+Alternatively, the comment can also be placed at the end of the line. In this case, you'd have to use `disable-line`
+instead:
 
 ```solidity
 uint x = 100; // forgefmt: disable-line
@@ -136,7 +149,8 @@ uint x = 100; // forgefmt: disable-line
 
 ### Disable Block
 
-The formatter can be disabled for a section of code by adding a comment `// forgefmt: disable-start` before and a comment `// forgefmt: disable-end` after, like this:
+The formatter can be disabled for a section of code by adding a comment `// forgefmt: disable-start` before and a
+comment `// forgefmt: disable-end` after, like this:
 
 ```solidity
 // forgefmt: disable-start
@@ -147,15 +161,19 @@ uint y = 101;
 
 ### Testing
 
-Tests reside under the `fmt/testdata` folder and specify the malformatted & expected Solidity code. The source code file is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are needed for tests covering available configuration options.
+Tests reside under the `fmt/testdata` folder and specify the malformatted & expected Solidity code. The source code file
+is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are
+needed for tests covering available configuration options.
 
-The default configuration values can be overridden from within the expected file by adding a comment in the format `// config: {config_entry} = {config_value}`. For example:
+The default configuration values can be overridden from within the expected file by adding a comment in the format
+`// config: {config_entry} = {config_value}`. For example:
 
 ```solidity
 // config: line_length = 160
 ```
 
-The `test_directory` macro is used to specify a new folder with source files for the test suite. Each test suite has the following process:
+The `test_directory` macro is used to specify a new folder with source files for the test suite. Each test suite has the
+following process:
 
 1. Preparse comments with config values
 2. Parse and compare the AST for source & expected files.
