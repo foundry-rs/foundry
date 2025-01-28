@@ -12,6 +12,7 @@ contract SkipTest is DSTest {
         revert("Should not reach this revert");
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfNotSkip() public {
         vm.skip(false);
         vm.expectRevert("This test should fail");
@@ -23,6 +24,7 @@ contract SkipTest is DSTest {
         revert("Should not reach revert");
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfFuzzSkip(uint256 x) public {
         vm.skip(false);
         vm.expectRevert("This test should fail");

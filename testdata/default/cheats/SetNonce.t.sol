@@ -26,6 +26,7 @@ contract SetNonceTest is DSTest {
         foo.f();
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfInvalidNonce() public {
         vm.setNonce(address(foo), 10);
         // set lower nonce should fail

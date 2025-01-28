@@ -29,6 +29,7 @@ contract DebugLogsTest is DSTest {
         fails.failure();
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfWithRequire() public {
         emit log_uint(5);
         vm.expectRevert();

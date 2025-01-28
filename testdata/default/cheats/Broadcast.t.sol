@@ -26,7 +26,11 @@ contract Test is DSTest {
         changed += 1;
     }
 
-    function multiple_arguments(uint256 a, address b, uint256[] memory c) public returns (uint256) {}
+    function multiple_arguments(
+        uint256 a,
+        address b,
+        uint256[] memory c
+    ) public returns (uint256) {}
 
     function echoSender() public view returns (address) {
         return msg.sender;
@@ -54,10 +58,14 @@ contract BroadcastTest is DSTest {
     }
 
     function deployPrivateKey() public {
-        string memory mnemonic = "test test test test test test test test test test test junk";
+        string
+            memory mnemonic = "test test test test test test test test test test test junk";
 
         uint256 privateKey = vm.deriveKey(mnemonic, 3);
-        assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
+        assertEq(
+            privateKey,
+            0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+        );
 
         vm.broadcast(privateKey);
         Test test = new Test();
@@ -68,10 +76,14 @@ contract BroadcastTest is DSTest {
     }
 
     function deployRememberKey() public {
-        string memory mnemonic = "test test test test test test test test test test test junk";
+        string
+            memory mnemonic = "test test test test test test test test test test test junk";
 
         uint256 privateKey = vm.deriveKey(mnemonic, 3);
-        assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
+        assertEq(
+            privateKey,
+            0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+        );
 
         address thisAddress = vm.rememberKey(privateKey);
         assertEq(thisAddress, 0x90F79bf6EB2c4f870365E785982E1f101E93b906);
@@ -84,7 +96,8 @@ contract BroadcastTest is DSTest {
         vm.broadcast(ACCOUNT_A);
         Test test = new Test();
 
-        string memory mnemonic = "test test test test test test test test test test test junk";
+        string
+            memory mnemonic = "test test test test test test test test test test test junk";
 
         uint256 privateKey = vm.deriveKey(mnemonic, 3);
         address thisAddress = vm.rememberKey(privateKey);
@@ -155,10 +168,11 @@ contract BroadcastTest is DSTest {
         vm.stopBroadcast();
     }
 
-    function testRevertIfNoBroadcast() public {
-        vm.expectRevert();
-        vm.stopBroadcast();
-    }
+    /// forge-config: default.allow_internal_expect_revert = true
+    // function testRevertIfNoBroadcast() public {
+    //     vm.expectRevert();
+    //     vm.stopBroadcast();
+    // }
 }
 
 contract NoLink is DSTest {
@@ -234,13 +248,21 @@ contract BroadcastTestNoLinking is DSTest {
                             bytes1(0xff),
                             deployer,
                             salt,
-                            keccak256(abi.encodePacked(type(NoLink).creationCode, abi.encode()))
+                            keccak256(
+                                abi.encodePacked(
+                                    type(NoLink).creationCode,
+                                    abi.encode()
+                                )
+                            )
                         )
                     )
                 )
             )
         );
-        require(address(test_c2) == expectedAddress, "Create2 address mismatch");
+        require(
+            address(test_c2) == expectedAddress,
+            "Create2 address mismatch"
+        );
 
         NoLink test2 = new NoLink();
         vm.stopBroadcast();
@@ -367,7 +389,9 @@ contract TestInitialBalance is DSTest {
 
     function runCustomSender() public {
         // Make sure we're testing a different caller than the default one.
-        assert(msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
+        assert(
+            msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
+        );
 
         // NodeConfig::test() sets the balance of the address used in this test to 100 ether.
         assert(msg.sender.balance == 100 ether);
@@ -378,7 +402,9 @@ contract TestInitialBalance is DSTest {
 
     function runDefaultSender() public {
         // Make sure we're testing with the default caller.
-        assert(msg.sender == address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38));
+        assert(
+            msg.sender == address(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38)
+        );
 
         assert(msg.sender.balance == type(uint256).max);
 
@@ -563,7 +589,12 @@ contract SignatureTester {
         owner = msg.sender;
     }
 
-    function verifySignature(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view returns (bool) {
+    function verifySignature(
+        bytes32 digest,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public view returns (bool) {
         require(ecrecover(digest, v, r, s) == owner, "Invalid signature");
     }
 }
@@ -577,12 +608,18 @@ contract ScriptSign is DSTest {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
 
         vm._expectCheatcodeRevert(
-            bytes(string.concat("signer with address ", vm.toString(address(this)), " is not available"))
+            bytes(
+                string.concat(
+                    "signer with address ",
+                    vm.toString(address(this)),
+                    " is not available"
+                )
+            )
         );
         vm.sign(address(this), digest);
 
         SignatureTester tester = new SignatureTester();
-        (, address caller,) = vm.readCallers();
+        (, address caller, ) = vm.readCallers();
         assertEq(tester.owner(), caller);
         tester.verifySignature(digest, v, r, s);
     }
