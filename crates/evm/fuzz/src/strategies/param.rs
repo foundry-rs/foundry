@@ -132,14 +132,19 @@ pub fn fuzz_param_from_state(
         DynSolType::Address => {
             let deployed_libs = state.deployed_libs.clone();
             value()
-                .prop_filter_map("filter address fuzzed from state", move |value| {
+                .prop_flat_map(move |value| {
                     let fuzzed_addr = Address::from_word(value);
+
                     // Do not use addresses of deployed libraries as fuzz input.
                     // See <https://github.com/foundry-rs/foundry/issues/8639>.
                     if !deployed_libs.contains(&fuzzed_addr) {
-                        Some(DynSolValue::Address(fuzzed_addr))
+                        Just(DynSolValue::Address(fuzzed_addr)).boxed()
                     } else {
-                        None
+                        // Return a value from internal fuzzer in lieu of a library address.
+                        // We cannot filter out this value (via `prop_filter_map`) as proptest can
+                        // invoke this closure after test execution, and
+                        // returning a `None` will cause it to panic. See <https://github.com/foundry-rs/foundry/issues/9764>.
+                        fuzz_param(&DynSolType::Address)
                     }
                 })
                 .boxed()
