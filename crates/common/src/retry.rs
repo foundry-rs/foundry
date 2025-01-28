@@ -102,8 +102,7 @@ impl Retry {
 
     fn log(&self, err: Error, warn: bool) {
         let msg = format!(
-            "{msg}{delay} ({retries} tries remaining)",
-            msg = crate::errors::display_chain(&err),
+            "{err}{delay} ({retries} tries remaining)",
             delay = if self.delay.is_zero() {
                 String::new()
             } else {
