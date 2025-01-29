@@ -226,8 +226,11 @@ pub struct Config {
     ///
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
     /// file, see `BackwardsCompatTomlProvider`.
+    ///
+    /// Avoid using this field directly; call the related `solc` methods instead.
+    #[doc(hidden)]
     pub solc: Option<SolcReq>,
-    /// whether to autodetect the solc compiler version to use
+    /// Whether to autodetect the solc compiler version to use.
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
     ///
@@ -317,6 +320,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to allow `expectRevert` for internal functions.
+    pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
     /// Sets a timeout in seconds for vm.prompt cheatcodes
@@ -799,7 +804,7 @@ impl Config {
 
         self.fs_permissions.join_all(&root);
 
-        if let Some(ref mut model_checker) = self.model_checker {
+        if let Some(model_checker) = &mut self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
                 .into_iter()
                 .map(|(path, contracts)| {
@@ -848,12 +853,9 @@ impl Config {
         }
     }
 
-    /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version or if the solc
-    /// path is a valid solc binary.
-    ///
-    /// Otherwise it returns the configured [EvmVersion].
+    /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc.as_ref().and_then(|solc| solc.try_version().ok()) {
+        if let Some(version) = self.solc_version() {
             if let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
                 return evm_version;
             }
@@ -1116,7 +1118,8 @@ impl Config {
                 Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
             };
         }
-        if let Some(ref solc) = self.solc {
+
+        if let Some(solc) = &self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
                     if let Some(solc) = Solc::find_svm_installed_version(version)? {
@@ -1212,6 +1215,11 @@ impl Config {
         } else {
             Ok(SolcCompiler::AutoDetect)
         }
+    }
+
+    /// Returns the solc version, if any.
+    pub fn solc_version(&self) -> Option<Version> {
+        self.solc.as_ref().and_then(|solc| solc.try_version().ok())
     }
 
     /// Returns configured [Vyper] compiler.
@@ -1830,7 +1838,7 @@ impl Config {
 
     /// Returns the path to foundry's config dir: `~/.foundry/`.
     pub fn foundry_dir() -> Option<PathBuf> {
-        dirs_next::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
+        dirs::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
     }
 
     /// Returns the path to foundry's cache dir: `~/.foundry/cache`.
@@ -1883,7 +1891,7 @@ impl Config {
     /// | macOS    | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
     /// | Windows  | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry           |
     pub fn data_dir() -> eyre::Result<PathBuf> {
-        let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
+        let path = dirs::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
         Ok(path)
     }
@@ -2341,6 +2349,7 @@ impl Default for Config {
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
+            allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,

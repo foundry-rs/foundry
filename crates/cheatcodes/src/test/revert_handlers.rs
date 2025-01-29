@@ -144,6 +144,7 @@ pub(crate) fn handle_assume_no_revert(
 pub(crate) fn handle_expect_revert(
     is_cheatcode: bool,
     is_create: bool,
+    internal_expect_revert: bool,
     expected_revert: &ExpectedRevert,
     status: InstructionResult,
     retdata: Bytes,
@@ -156,6 +157,14 @@ pub(crate) fn handle_expect_revert(
             (None, DUMMY_CALL_OUTPUT.clone())
         }
     };
+
+    // Check depths if it's not an expect cheatcode call and if internal expect reverts not enabled.
+    if !is_cheatcode && !internal_expect_revert {
+        ensure!(
+            expected_revert.max_depth > expected_revert.depth,
+            "call didn't revert at a lower depth than cheatcode call depth"
+        );
+    }
 
     if expected_revert.count == 0 {
         if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {

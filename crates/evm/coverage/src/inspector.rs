@@ -38,7 +38,7 @@ impl<DB: Database> Inspector<DB> for CoverageCollector {
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, _context: &mut EvmContext<DB>) {
         let map = self.get_or_insert_map(interpreter);
-        map.hit(interpreter.program_counter());
+        map.hit(interpreter.program_counter() as u32);
     }
 }
 

@@ -37,7 +37,7 @@ Build Profile: [..]
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
-Perform Ethereum RPC calls from the comfort of your command line
+A Swiss Army knife for interacting with Ethereum applications from the command line
 
 Usage: cast[..] <COMMAND>
 
@@ -2085,4 +2085,44 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
     cmd.cast_fuse()
         .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
         .assert_success();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/4776>
+casttest!(fetch_src_blockscout, |_prj, cmd| {
+    let url = "https://eth.blockscout.com/api";
+
+    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+    cmd.args([
+        "source",
+        &weth.to_string(),
+        "--chain-id",
+        "1",
+        "--explorer-api-url",
+        url,
+        "--flatten",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+});
+
+casttest!(fetch_src_default, |_prj, cmd| {
+    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let etherscan_api_key = next_mainnet_etherscan_api_key();
+
+    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
 });
