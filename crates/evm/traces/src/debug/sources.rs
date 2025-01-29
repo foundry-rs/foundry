@@ -245,7 +245,7 @@ impl ContractSources {
     pub fn find_source_mapping(
         &self,
         contract_name: &str,
-        pc: usize,
+        pc: u32,
         init_code: bool,
     ) -> Option<(SourceElement, &SourceData)> {
         self.get_sources(contract_name)?.find_map(|(artifact, source)| {
@@ -265,10 +265,10 @@ impl ContractSources {
                 }?;
                 let ic = pc_ic_map.get(pc)?;
 
-                source_map.get(ic)?
+                source_map.get(ic as usize)
             } else {
-                source_map.get(pc)?
-            };
+                source_map.get(pc as usize)
+            }?;
             // if the source element has an index, find the sourcemap for that index
             let res = source_element
                 .index()

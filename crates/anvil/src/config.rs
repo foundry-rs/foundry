@@ -1173,6 +1173,8 @@ latest block number: {latest_block}"
         };
 
         let gas_limit = self.fork_gas_limit(&block);
+        self.gas_limit = Some(gas_limit);
+
         env.block = BlockEnv {
             number: U256::from(fork_block_number),
             timestamp: U256::from(block.header.timestamp),

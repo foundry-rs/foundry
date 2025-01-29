@@ -3277,19 +3277,177 @@ Compiler run successful!
         .stdout_eq(str![[r#""{...}""#]].is_json());
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6816>
 forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
-    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]).assert_success().stdout_eq(
-        str![[r#"
-interface Counter {
-    function increment() external;
-    function number() external view returns (uint256);
-    function setNumber(uint256 newNumber) external;
+    cmd.args(["inspect", "src/Counter.sol:Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭----------+---------------------------------+------------╮
+| Type     | Signature                       | Selector   |
++=========================================================+
+| function | increment() nonpayable          | 0xd09de08a |
+|----------+---------------------------------+------------|
+| function | number() view returns (uint256) | 0x8381f58a |
+|----------+---------------------------------+------------|
+| function | setNumber(uint256) nonpayable   | 0x3fb5c1cb |
+╰----------+---------------------------------+------------╯
+
+
+"#]]);
+});
+
+const CUSTOM_COUNTER: &str = r#"
+    contract Counter {
+    uint256 public number;
+    uint64 public count;
+    struct MyStruct {
+        uint64 count;
+    }
+    struct ErrWithMsg {
+        string message;
+    }
+
+    event Incremented(uint256 newValue);
+    event Decremented(uint256 newValue);
+
+    error NumberIsZero();
+    error CustomErr(ErrWithMsg e);
+
+    constructor(uint256 _number) {
+        number = _number;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() external {
+        number++;
+    }
+
+    function decrement() public payable {
+        if (number == 0) {
+            return;
+        }
+        number--;
+    }
+
+    function square() public {
+        number = number * number;
+    }
+
+    fallback() external payable {
+        ErrWithMsg memory err = ErrWithMsg("Fallback function is not allowed");
+        revert CustomErr(err);
+    }
+
+    receive() external payable {
+        count++;
+    }
+
+    function setStruct(MyStruct memory s, uint32 b) public {
+        count = s.count;
+    }
 }
+    "#;
+forgetest!(inspect_custom_counter_abi, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------+-----------------------------------------------+--------------------------------------------------------------------╮
+| Type        | Signature                                     | Selector                                                           |
++==================================================================================================================================+
+| event       | Decremented(uint256)                          | 0xc9118d86370931e39644ee137c931308fa3774f6c90ab057f0c3febf427ef94a |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| event       | Incremented(uint256)                          | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| error       | CustomErr(Counter.ErrWithMsg)                 | 0x0625625a                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| error       | NumberIsZero()                                | 0xde5d32ac                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | count() view returns (uint64)                 | 0x06661abd                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | decrement() payable                           | 0x2baeceb7                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | increment() nonpayable                        | 0xd09de08a                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | number() view returns (uint256)               | 0x8381f58a                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | setNumber(uint256) nonpayable                 | 0x3fb5c1cb                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | setStruct(Counter.MyStruct,uint32) nonpayable | 0x08ef7366                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| function    | square() nonpayable                           | 0xd742cb01                                                         |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| constructor | constructor(uint256) nonpayable               |                                                                    |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| fallback    | fallback() payable                            |                                                                    |
+|-------------+-----------------------------------------------+--------------------------------------------------------------------|
+| receive     | receive() payable                             |                                                                    |
+╰-------------+-----------------------------------------------+--------------------------------------------------------------------╯
 
 
-"#]],
-    );
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_events, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| Decremented(uint256) | 0xc9118d86370931e39644ee137c931308fa3774f6c90ab057f0c3febf427ef94a |
+|----------------------+--------------------------------------------------------------------|
+| Incremented(uint256) | 0x20d8a6f5a693f9d1d627a598e8820f7a55ee74c183aa8f1a30e8d4e8dd9a8d84 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_errors, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------------+------------╮
+| Method                     | Identifier |
++=========================================+
+| count()                    | 06661abd   |
+|----------------------------+------------|
+| decrement()                | 2baeceb7   |
+|----------------------------+------------|
+| increment()                | d09de08a   |
+|----------------------------+------------|
+| number()                   | 8381f58a   |
+|----------------------------+------------|
+| setNumber(uint256)         | 3fb5c1cb   |
+|----------------------------+------------|
+| setStruct((uint64),uint32) | 08ef7366   |
+|----------------------------+------------|
+| square()                   | d742cb01   |
+╰----------------------------+------------╯
+
+
+"#]]);
 });
 
 // checks that `clean` also works with the "out" value set in Config
@@ -3407,4 +3565,35 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/5847>
+forgetest_init!(can_bind_enum_modules, |prj, cmd| {
+    prj.clear();
+
+    prj.add_source(
+        "Enum.sol",
+        r#"
+    contract Enum {
+        enum MyEnum { A, B, C }
+    }
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "UseEnum.sol",
+        r#"
+    import "./Enum.sol";
+    contract UseEnum {
+        Enum.MyEnum public myEnum;
+    }"#,
+    )
+    .unwrap();
+
+    cmd.arg("bind").assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Generating bindings for 11 contracts
+Bindings have been generated to [..]"#]]);
 });

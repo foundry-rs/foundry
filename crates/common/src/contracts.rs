@@ -259,6 +259,15 @@ impl ContractsByArtifact {
         Ok(contracts.first().cloned())
     }
 
+    /// Finds abi for contract which has the same contract name or identifier as `id`.
+    pub fn find_abi_by_name_or_identifier(&self, id: &str) -> Option<JsonAbi> {
+        self.iter()
+            .find(|(artifact, _)| {
+                artifact.name.split(".").next().unwrap() == id || artifact.identifier() == id
+            })
+            .map(|(_, contract)| contract.abi.clone())
+    }
+
     /// Flattens the contracts into functions, events and errors.
     pub fn flatten(&self) -> (BTreeMap<Selector, Function>, BTreeMap<B256, Event>, JsonAbi) {
         let mut funcs = BTreeMap::new();
