@@ -189,7 +189,7 @@ impl DependencyInstallOpts {
                         dep_id = Some(DepIdentifier::Branch {
                             name: tag_or_branch.to_string(),
                             rev,
-                            overide: false,
+                            r#override: false,
                         });
                     }
 

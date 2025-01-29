@@ -100,9 +100,13 @@ impl<'a> Lockfile<'a> {
                             })?;
 
                         let dep_id = if let Some(tag) = maybe_tag {
-                            DepIdentifier::Tag { name: tag, rev: rev.to_string(), overide: false }
+                            DepIdentifier::Tag {
+                                name: tag,
+                                rev: rev.to_string(),
+                                r#override: false,
+                            }
                         } else {
-                            DepIdentifier::Rev { rev: rev.to_string(), overide: false }
+                            DepIdentifier::Rev { rev: rev.to_string(), r#override: false }
                         };
                         e.insert(dep_id.clone());
                         out_of_sync.insert(rel_path.to_path_buf(), dep_id);
@@ -209,7 +213,7 @@ impl<'a> Lockfile<'a> {
 /// Identifies whether a dependency (submodule) is referenced by a branch,
 /// tag or rev (commit hash).
 ///
-/// Each enum variant consists of an `overide` flag which is used in `forge update` to decide
+/// Each enum variant consists of an `r#override` flag which is used in `forge update` to decide
 /// whether to update a dep or not. This flag is skipped during serialization.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DepIdentifier {
@@ -220,27 +224,27 @@ pub enum DepIdentifier {
         name: String,
         rev: String,
         #[serde(skip)]
-        overide: bool,
+        r#override: bool,
     },
     /// Release tag `name` and the `rev` it is currently pointing to.
     /// Running `forge update` does not update the tag/rev.
-    /// Dependency will remain pinned to the existing tag/rev unless overridden like so `forge
+    /// Dependency will remain pinned to the existing tag/rev unless r#override like so `forge
     /// update owner/dep@tag=diffent_tag`.
     #[serde(rename = "tag")]
     Tag {
         name: String,
         rev: String,
         #[serde(skip)]
-        overide: bool,
+        r#override: bool,
     },
     /// Commit hash `rev` the submodule is currently pointing to.
     /// Running `forge update` does not update the rev.
-    /// Dependency will remain pinned to the existing rev unless overridden.
+    /// Dependency will remain pinned to the existing rev unless r#override.
     #[serde(rename = "rev", untagged)]
     Rev {
         rev: String,
         #[serde(skip)]
-        overide: bool,
+        r#override: bool,
     },
 }
 
@@ -252,16 +256,16 @@ impl DepIdentifier {
         // Get the tags for the submodule
         if git.has_tag(s, lib_path)? {
             let rev = git.get_rev(s, lib_path)?;
-            return Ok(Self::Tag { name: String::from(s), rev, overide: false });
+            return Ok(Self::Tag { name: String::from(s), rev, r#override: false });
         }
 
         if git.has_branch(s, lib_path)? {
             let rev = git.get_rev(s, lib_path)?;
-            return Ok(Self::Branch { name: String::from(s), rev, overide: false });
+            return Ok(Self::Branch { name: String::from(s), rev, r#override: false });
         }
 
         if git.has_rev(s, lib_path)? {
-            return Ok(Self::Rev { rev: String::from(s), overide: false });
+            return Ok(Self::Rev { rev: String::from(s), r#override: false });
         }
 
         Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
@@ -285,21 +289,21 @@ impl DepIdentifier {
         }
     }
 
-    /// Marks as dependency as overriden.
+    /// Marks as dependency as overridden.
     pub fn mark_overide(&mut self) {
         match self {
-            Self::Branch { overide, .. } => *overide = true,
-            Self::Tag { overide, .. } => *overide = true,
-            Self::Rev { overide, .. } => *overide = true,
+            Self::Branch { r#override, .. } => *r#override = true,
+            Self::Tag { r#override, .. } => *r#override = true,
+            Self::Rev { r#override, .. } => *r#override = true,
         }
     }
 
-    /// Returns whether the dependency has been overriden.
-    pub fn overriden(&self) -> bool {
+    /// Returns whether the dependency has been overridden.
+    pub fn overridden(&self) -> bool {
         match self {
-            Self::Branch { overide, .. } => *overide,
-            Self::Tag { overide, .. } => *overide,
-            Self::Rev { overide, .. } => *overide,
+            Self::Branch { r#override, .. } => *r#override,
+            Self::Tag { r#override, .. } => *r#override,
+            Self::Rev { r#override, .. } => *r#override,
         }
     }
 }
@@ -323,18 +327,18 @@ mod tests {
         let branch = DepIdentifier::Branch {
             name: "main".to_string(),
             rev: "b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string(),
-            overide: false,
+            r#override: false,
         };
 
         let tag = DepIdentifier::Tag {
             name: "v0.1.0".to_string(),
             rev: "b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string(),
-            overide: false,
+            r#override: false,
         };
 
         let rev = DepIdentifier::Rev {
             rev: "b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string(),
-            overide: false,
+            r#override: false,
         };
 
         let branch_str = serde_json::to_string(&branch).unwrap();

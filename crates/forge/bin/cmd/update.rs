@@ -52,7 +52,7 @@ impl UpdateArgs {
         if dep_overrides.is_empty() {
             // running `forge update`, update all deps
             foundry_lock.iter_mut().for_each(|(_path, dep_id)| {
-                // Set overide flag to true if the dep is a branch
+                // Set r#override flag to true if the dep is a branch
                 if let DepIdentifier::Branch { .. } = dep_id {
                     dep_id.mark_overide();
                 }
@@ -66,7 +66,7 @@ impl UpdateArgs {
                     foundry_lock.override_dep(rel_path, dep_id)?
                 } else {
                     sh_warn!(
-                        "Could not override submodule at {} with tag {}, try using forge install",
+                        "Could not r#override submodule at {} with tag {}, try using forge install",
                         rel_path.display(),
                         override_tag
                     )?;
@@ -99,7 +99,7 @@ impl UpdateArgs {
         }
 
         if prev_len != foundry_lock.len() ||
-            foundry_lock.iter().any(|(_, dep_id)| dep_id.overriden())
+            foundry_lock.iter().any(|(_, dep_id)| dep_id.overridden())
         {
             fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
         }
@@ -107,12 +107,12 @@ impl UpdateArgs {
         Ok(())
     }
 
-    /// Returns the `lib/paths` of the dependencies that have been updated/overriden.
+    /// Returns the `lib/paths` of the dependencies that have been updated/overridden.
     fn update_dep_paths(&self, foundry_lock: &Lockfile<'_>) -> Vec<PathBuf> {
         foundry_lock
             .iter()
             .filter_map(|(path, dep_id)| {
-                if dep_id.overriden() {
+                if dep_id.overridden() {
                     return Some(path.to_path_buf());
                 }
                 None
