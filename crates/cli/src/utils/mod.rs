@@ -659,51 +659,6 @@ impl Submodule {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub enum TagType {
-    Branch(String),
-    Tag(String),
-    Rev(String),
-}
-
-impl TagType {
-    /// Resolves the [TagType] for a submodule at a given path.
-    /// `lib_path` is the absolute path to the submodule.
-    pub fn resolve_type(git: &Git<'_>, lib_path: &Path, s: &str) -> Result<Self> {
-        // Get the tags for the submodule
-        if git.has_tag(s, lib_path)? {
-            return Ok(Self::Tag(String::from(s)));
-        }
-
-        if git.has_branch(s, lib_path)? {
-            return Ok(Self::Branch(String::from(s)));
-        }
-
-        if git.has_rev(s, lib_path)? {
-            return Ok(Self::Rev(String::from(s)));
-        }
-
-        Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
-    }
-
-    /// Returns the raw string representation of the [TagType]. i.e without the type prefix.
-    pub fn raw_string(&self) -> &String {
-        match self {
-            Self::Branch(s) | Self::Tag(s) | Self::Rev(s) => s,
-        }
-    }
-}
-
-impl std::fmt::Display for TagType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Branch(s) => write!(f, "branch={s}"),
-            Self::Tag(s) => write!(f, "tag={s}"),
-            Self::Rev(s) => write!(f, "rev={s}"),
-        }
-    }
-}
-
 impl FromStr for Submodule {
     type Err = eyre::Report;
 

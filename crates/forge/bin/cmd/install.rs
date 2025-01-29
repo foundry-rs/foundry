@@ -1,17 +1,15 @@
-use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use forge::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig, TagType},
+    utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use regex::Regex;
 use semver::Version;
 use std::{
-    collections::hash_map::Entry,
     io::IsTerminal,
     path::{Path, PathBuf},
     str,
@@ -187,7 +185,7 @@ impl DependencyInstallOpts {
                             .exec()?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
-                        // Resolve tag type should be TagType::Branch
+
                         dep_id =
                             Some(DepIdentifier::Branch { name: tag_or_branch.to_string(), rev });
                     }
@@ -552,55 +550,6 @@ impl Installer<'_> {
 fn match_yn(input: String) -> bool {
     let s = input.trim().to_lowercase();
     matches!(s.as_str(), "" | "y" | "yes")
-}
-
-/// Reads and syncs the foundry.lock file with the current state of the submodules.
-///
-/// Takes the absolute path to the foundry.lock file and an optional Git instance.
-///
-/// Returns a tuple of the foundry.lock HashMap.
-pub fn read_or_generate_foundry_lock(
-    path: &Path,
-    git: Option<&Git<'_>>,
-) -> Result<(HashMap<PathBuf, TagType>, bool)> {
-    let mut lock: HashMap<PathBuf, TagType> = if !path.exists() {
-        HashMap::default()
-    } else {
-        let str_lock = fs::read_to_string(path)?;
-        let lock: HashMap<PathBuf, TagType> = serde_json::from_str(&str_lock).unwrap_or_default();
-        lock
-    };
-
-    trace!(?lock, "read foundry.lock");
-
-    let mut out_of_sync = false;
-
-    if git.is_none() {
-        return Ok((lock, out_of_sync))
-    }
-
-    let git = git.unwrap();
-    // Check if foundry.lock is in sync with the current state of the submodules
-    let submodules = git.submodules()?;
-    for sub in &submodules {
-        let rel_path = sub.path();
-        let rev = sub.rev();
-
-        let tag = if let Ok(Some(tag)) = git.tag_for_commit(rev, &git.root.join(rel_path)) {
-            TagType::Tag(tag)
-        } else {
-            TagType::Rev(rev.to_string())
-        };
-
-        let entry = lock.entry(rel_path.to_path_buf());
-
-        if let Entry::Vacant(e) = entry {
-            out_of_sync = true;
-            e.insert(tag);
-        }
-    }
-
-    Ok((lock, out_of_sync))
 }
 
 #[cfg(test)]

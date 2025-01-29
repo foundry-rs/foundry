@@ -92,11 +92,11 @@ impl<'a> Lockfile<'a> {
                         let maybe_tag =
                             git.tag_for_commit(rev, &git.root.join(rel_path)).or_else(|err| {
                                 // Ignore Err: No such file or directory as it is possible that lib/
-                                // dir cleaned.
+                                // dir has been cleaned.
                                 if err.to_string().contains("No such file or directory") {
                                     return Ok(None)
                                 }
-                                return Err(err);
+                                Err(err)
                             })?;
 
                         let dep_id = if let Some(tag) = maybe_tag {
