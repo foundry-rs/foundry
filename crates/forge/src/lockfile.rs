@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::map::HashMap;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_cli::utils::Git;
 use serde::{Deserialize, Serialize};
 
@@ -100,9 +100,9 @@ impl<'a> Lockfile<'a> {
                             })?;
 
                         let dep_id = if let Some(tag) = maybe_tag {
-                            DepIdentifier::Tag { name: tag, rev: rev.to_string() }
+                            DepIdentifier::Tag { name: tag, rev: rev.to_string(), overide: false }
                         } else {
-                            DepIdentifier::Rev(rev.to_string())
+                            DepIdentifier::Rev { rev: rev.to_string(), overide: false }
                         };
                         e.insert(dep_id.clone());
                         out_of_sync.insert(rel_path.to_path_buf(), dep_id);
@@ -166,6 +166,23 @@ impl<'a> Lockfile<'a> {
         self.deps.remove(path)
     }
 
+    /// Override a dependency in the lockfile.
+    ///
+    /// This is used in `forge update` to decide whether a dep's tag/branch/rev should be updated.
+    ///
+    /// Throws an error if the dependency is not found in the lockfile.
+    pub fn override_dep(&mut self, dep: &Path, mut new_dep_id: DepIdentifier) -> Result<()> {
+        self.deps
+            .get_mut(dep)
+            .map(|d| {
+                new_dep_id.mark_overide();
+                *d = new_dep_id;
+            })
+            .ok_or_eyre(format!("Dependency not found in lockfile: {}", dep.display()))?;
+
+        Ok(())
+    }
+
     /// Returns the num of dependencies in the lockfile.
     pub fn len(&self) -> usize {
         self.deps.len()
@@ -180,48 +197,71 @@ impl<'a> Lockfile<'a> {
     pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &DepIdentifier)> {
         self.deps.iter()
     }
+
+    /// Returns an mutable iterator over the lockfile.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PathBuf, &mut DepIdentifier)> {
+        self.deps.iter_mut()
+    }
 }
 
 // Implement .iter() for &LockFile
 
 /// Identifies whether a dependency (submodule) is referenced by a branch,
 /// tag or rev (commit hash).
+///
+/// Each enum variant consists of an `overide` flag which is used in `forge update` to decide
+/// whether to update a dep or not. This flag is skipped during serialization.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DepIdentifier {
     /// `name` of the branch and the `rev`  it is currently pointing to.
     /// Running `forge update`, will update the `name` branch to the latest `rev`.
     #[serde(rename = "branch")]
-    Branch { name: String, rev: String },
+    Branch {
+        name: String,
+        rev: String,
+        #[serde(skip)]
+        overide: bool,
+    },
     /// Release tag `name` and the `rev` it is currently pointing to.
     /// Running `forge update` does not update the tag/rev.
     /// Dependency will remain pinned to the existing tag/rev unless overridden like so `forge
     /// update owner/dep@tag=diffent_tag`.
     #[serde(rename = "tag")]
-    Tag { name: String, rev: String },
+    Tag {
+        name: String,
+        rev: String,
+        #[serde(skip)]
+        overide: bool,
+    },
     /// Commit hash `rev` the submodule is currently pointing to.
     /// Running `forge update` does not update the rev.
     /// Dependency will remain pinned to the existing rev unless overridden.
-    #[serde(rename = "rev")]
-    Rev(String),
+    #[serde(rename = "rev", untagged)]
+    Rev {
+        rev: String,
+        #[serde(skip)]
+        overide: bool,
+    },
 }
 
 impl DepIdentifier {
     /// Resolves the [`DepIdentifier`] for a submodule at a given path.
     /// `lib_path` is the absolute path to the submodule.
     pub fn resolve_type(git: &Git<'_>, lib_path: &Path, s: &str) -> Result<Self> {
+        trace!(lib_path = ?lib_path, resolving_type = ?s, "resolving submodule identifier");
         // Get the tags for the submodule
         if git.has_tag(s, lib_path)? {
             let rev = git.get_rev(s, lib_path)?;
-            return Ok(Self::Tag { name: String::from(s), rev });
+            return Ok(Self::Tag { name: String::from(s), rev, overide: false });
         }
 
         if git.has_branch(s, lib_path)? {
             let rev = git.get_rev(s, lib_path)?;
-            return Ok(Self::Branch { name: String::from(s), rev });
+            return Ok(Self::Branch { name: String::from(s), rev, overide: false });
         }
 
         if git.has_rev(s, lib_path)? {
-            return Ok(Self::Rev(String::from(s)));
+            return Ok(Self::Rev { rev: String::from(s), overide: false });
         }
 
         Err(eyre::eyre!("Could not resolve tag type for submodule at path {}", lib_path.display()))
@@ -232,7 +272,7 @@ impl DepIdentifier {
         match self {
             Self::Branch { rev, .. } => rev,
             Self::Tag { rev, .. } => rev,
-            Self::Rev(rev) => rev,
+            Self::Rev { rev, .. } => rev,
         }
     }
 
@@ -241,7 +281,25 @@ impl DepIdentifier {
         match self {
             Self::Branch { name, .. } => name,
             Self::Tag { name, .. } => name,
-            Self::Rev(rev) => rev,
+            Self::Rev { rev, .. } => rev,
+        }
+    }
+
+    /// Marks as dependency as overriden.
+    pub fn mark_overide(&mut self) {
+        match self {
+            Self::Branch { overide, .. } => *overide = true,
+            Self::Tag { overide, .. } => *overide = true,
+            Self::Rev { overide, .. } => *overide = true,
+        }
+    }
+
+    /// Returns whether the dependency has been overriden.
+    pub fn overriden(&self) -> bool {
+        match self {
+            Self::Branch { overide, .. } => *overide,
+            Self::Tag { overide, .. } => *overide,
+            Self::Rev { overide, .. } => *overide,
         }
     }
 }
@@ -249,9 +307,9 @@ impl DepIdentifier {
 impl std::fmt::Display for DepIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Branch { name, rev } => write!(f, "branch={name}@{rev}"),
-            Self::Tag { name, rev } => write!(f, "tag={name}@{rev}"),
-            Self::Rev(rev) => write!(f, "rev={rev}"),
+            Self::Branch { name, rev, .. } => write!(f, "branch={name}@{rev}"),
+            Self::Tag { name, rev, .. } => write!(f, "tag={name}@{rev}"),
+            Self::Rev { rev, .. } => write!(f, "rev={rev}"),
         }
     }
 }
@@ -265,14 +323,19 @@ mod tests {
         let branch = DepIdentifier::Branch {
             name: "main".to_string(),
             rev: "b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string(),
+            overide: false,
         };
 
         let tag = DepIdentifier::Tag {
             name: "v0.1.0".to_string(),
             rev: "b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string(),
+            overide: false,
         };
 
-        let rev = DepIdentifier::Rev("b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string());
+        let rev = DepIdentifier::Rev {
+            rev: "b7954c3e9ce1d487b49489f5800f52f4b77b7351".to_string(),
+            overide: false,
+        };
 
         let branch_str = serde_json::to_string(&branch).unwrap();
         let tag_str = serde_json::to_string(&tag).unwrap();

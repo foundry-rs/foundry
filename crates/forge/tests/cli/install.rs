@@ -309,7 +309,7 @@ forgetest!(
 
         assert!(matches!(
             lock.get(&PathBuf::from("lib/forge-std")).unwrap(),
-            &DepIdentifier::Rev(_)
+            &DepIdentifier::Rev { .. }
         ));
         assert!(matches!(
             lock.get(&PathBuf::from("lib/solady")).unwrap(),
