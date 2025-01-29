@@ -36,7 +36,7 @@ impl_figment_convert_basic!(UpdateArgs);
 
 impl UpdateArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         // dep_overrides consists of absolute paths of dependencies and their tags
         let (root, paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
         // Mapping of relative path of lib to its tag type

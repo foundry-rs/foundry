@@ -91,7 +91,7 @@ impl GeigerArgs {
             sh_warn!("`--full` is deprecated as reports are not generated anymore\n")?;
         }
 
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let sources = self.sources(&config).wrap_err("Failed to resolve files")?;
 
         if config.ffi {

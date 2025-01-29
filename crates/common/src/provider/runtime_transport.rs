@@ -176,7 +176,7 @@ impl RuntimeTransport {
             );
         }
 
-        if !headers.iter().any(|(k, _v)| k.as_str().starts_with("User-Agent:")) {
+        if !headers.contains_key(reqwest::header::USER_AGENT) {
             headers.insert(
                 reqwest::header::USER_AGENT,
                 HeaderValue::from_str(DEFAULT_USER_AGENT)
@@ -331,4 +331,43 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 #[cfg(not(windows))]
 fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
     url.to_file_path()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    #[tokio::test]
+    async fn test_user_agent_header() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+
+        let http_handler = axum::routing::get(|actual_headers: HeaderMap| {
+            let user_agent = HeaderName::from_str("User-Agent").unwrap();
+            assert_eq!(actual_headers[user_agent], HeaderValue::from_str("test-agent").unwrap());
+
+            async { "" }
+        });
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, http_handler.into_make_service()).await.unwrap()
+        });
+
+        let transport = RuntimeTransportBuilder::new(url.clone())
+            .with_headers(vec!["User-Agent: test-agent".to_string()])
+            .build();
+        let inner = transport.connect_http().await.unwrap();
+
+        match inner {
+            InnerTransport::Http(http) => {
+                let _ = http.client().get(url).send().await.unwrap();
+
+                // assert inside http_handler
+            }
+            _ => unreachable!(),
+        }
+
+        server_task.abort();
+    }
 }

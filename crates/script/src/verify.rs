@@ -120,9 +120,14 @@ impl VerifyBundle {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
+                // Strip artifact profile from contract name when creating contract info.
                 let contract = ContractInfo {
                     path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact.name.clone(),
+                    name: artifact
+                        .name
+                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .unwrap_or_else(|| &artifact.name)
+                        .to_string(),
                 };
 
                 // We strip the build metadadata information, since it can lead to

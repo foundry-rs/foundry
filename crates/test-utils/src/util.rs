@@ -207,6 +207,7 @@ impl ExtTester {
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
         test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
+        test_cmd.env("FOUNDRY_ALLOW_INTERNAL_EXPECT_REVERT", "true");
 
         test_cmd.assert_success();
     }

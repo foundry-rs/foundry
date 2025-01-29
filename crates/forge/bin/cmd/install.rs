@@ -28,6 +28,7 @@ pub const FOUNDRY_LOCK: &str = "foundry.lock";
 #[command(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
     forge install [OPTIONS] <github username>/<github project>@<tag>...
     forge install [OPTIONS] <alias>=<github username>/<github project>@<tag>...
+    forge install [OPTIONS] <https://<github token>@git url>...)]
     forge install [OPTIONS] <https:// git url>...")]
 pub struct InstallArgs {
     /// The dependencies to install.
@@ -62,7 +63,7 @@ impl_figment_convert_basic!(InstallArgs);
 
 impl InstallArgs {
     pub fn run(self) -> Result<()> {
-        let mut config = self.try_load_config_emit_warnings()?;
+        let mut config = self.load_config()?;
         self.opts.install(&mut config, self.dependencies)
     }
 }

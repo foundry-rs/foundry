@@ -1,12 +1,16 @@
 # This image is meant to enable cross-architecture builds.
 # It assumes the foundry binaries have already been compiled for `$TARGETPLATFORM` and are
 # locatable in `./dist/bin/$TARGETARCH`
-FROM ubuntu:22.04
+FROM alpine:3.20
 
 # Filled by docker buildx
 ARG TARGETARCH
 
+RUN apk add --no-cache git
+
 COPY ./dist/bin/$TARGETARCH/* /usr/local/bin/
+
+RUN adduser -Du 1000 foundry
 
 ENTRYPOINT ["/bin/sh", "-c"]
 
