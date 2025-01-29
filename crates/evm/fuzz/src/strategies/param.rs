@@ -132,15 +132,16 @@ pub fn fuzz_param_from_state(
         DynSolType::Address => {
             let deployed_libs = state.deployed_libs.clone();
             value()
-                .prop_filter_map("filter address fuzzed from state", move |value| {
-                    let fuzzed_addr = Address::from_word(value);
+                .prop_map(move |value| {
+                    let addr_from_state = Address::from_word(value);
                     // Do not use addresses of deployed libraries as fuzz input.
                     // See <https://github.com/foundry-rs/foundry/issues/8639>.
-                    if !deployed_libs.contains(&fuzzed_addr) {
-                        Some(DynSolValue::Address(fuzzed_addr))
+                    let fuzzed_addr = if !deployed_libs.contains(&addr_from_state) {
+                        addr_from_state
                     } else {
-                        None
-                    }
+                        Address::random_with(&mut rand::thread_rng())
+                    };
+                    DynSolValue::Address(fuzzed_addr)
                 })
                 .boxed()
         }
