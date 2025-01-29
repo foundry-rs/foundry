@@ -4,10 +4,9 @@ use forge::{DepIdentifier, Lockfile};
 use foundry_cli::utils::Submodules;
 use foundry_compilers::artifacts::Remapping;
 use foundry_config::Config;
-use foundry_test_utils::util::{read_string, TestCommand};
+use foundry_test_utils::util::{pretty_err, read_string, TestCommand};
 use semver::Version;
 use std::{fs, path::PathBuf, process::Command, str::FromStr};
-use foundry_test_utils::util::pretty_err;
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
