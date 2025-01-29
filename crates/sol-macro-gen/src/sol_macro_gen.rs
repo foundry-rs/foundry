@@ -165,7 +165,7 @@ edition = "2021"
                 write!(&mut lib_contents, "{contents}")?;
             } else {
                 fs::write(path, contents).wrap_err("failed to write to file")?;
-                writeln!(&mut lib_contents, "pub mod {name};")?;
+                write_mod_name(&mut lib_contents, &name)?;
             }
         }
 
@@ -194,12 +194,7 @@ edition = "2021"
             let name = instance.name.to_lowercase();
             if !single_file {
                 // Module
-                write!(
-                    mod_contents,
-                    r#"pub mod {};
-                "#,
-                    instance.name.to_lowercase()
-                )?;
+                write_mod_name(&mut mod_contents, &name)?;
                 let mut contents = String::new();
 
                 write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
@@ -270,12 +265,7 @@ edition = "2021"
                     .to_string();
 
                 self.check_file_contents(&path, &tokens)?;
-
-                write!(
-                    &mut super_contents,
-                    r#"pub mod {name};
-                    "#
-                )?;
+                write_mod_name(&mut super_contents, &name)?;
             }
 
             let super_path =
@@ -343,4 +333,13 @@ edition = "2021"
 
         Ok(())
     }
+}
+
+fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
+    if syn::parse_str::<syn::Ident>(&format!("pub mod {name};")).is_ok() {
+        write!(contents, "pub mod {name};")?;
+    } else {
+        write!(contents, "pub mod r#{name};")?;
+    }
+    Ok(())
 }

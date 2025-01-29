@@ -87,6 +87,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             ..Default::default()
         },
         ffi: true,
+        allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
@@ -962,6 +963,7 @@ contract CounterTest {
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 [profile.default]
@@ -1003,6 +1005,7 @@ show_progress = false
 eof = false
 transaction_timeout = 120
 ffi = false
+allow_internal_expect_revert = false
 always_use_create_2_factory = false
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -1204,6 +1207,7 @@ exclude = []
     "timeout": null
   },
   "ffi": false,
+  "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
