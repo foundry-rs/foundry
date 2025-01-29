@@ -54,6 +54,8 @@ pub struct CheatsConfig {
     pub assertions_revert: bool,
     /// Optional seed for the RNG algorithm.
     pub seed: Option<U256>,
+    /// Whether to allow `expectRevert` to work for internal calls.
+    pub internal_expect_revert: bool,
 }
 
 impl CheatsConfig {
@@ -93,6 +95,7 @@ impl CheatsConfig {
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
+            internal_expect_revert: config.allow_internal_expect_revert,
         }
     }
 
@@ -222,6 +225,7 @@ impl Default for CheatsConfig {
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,
+            internal_expect_revert: false,
         }
     }
 }
