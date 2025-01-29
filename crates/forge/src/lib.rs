@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Forge is a fast and flexible Ethereum testing framework.
+
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]

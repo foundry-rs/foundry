@@ -260,7 +260,7 @@ impl ScriptArgs {
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
-                    Some(ref path) => pre_simulation.run_debug_file_dumper(path),
+                    Some(path) => pre_simulation.dump_debugger(&path),
                     None => pre_simulation.run_debugger(),
                 };
             }
