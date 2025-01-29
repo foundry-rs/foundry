@@ -230,7 +230,7 @@ mod tests {
             fn $name() {
                 Jail::expect_with(|jail| {
                     // setup home directory,
-                    // **Note** this only has an effect on unix, as [`dirs_next::home_dir()`] on windows uses `FOLDERID_Profile`
+                    // **Note** this only has an effect on unix, as [`dirs::home_dir()`] on windows uses `FOLDERID_Profile`
                     jail.set_env("HOME", jail.directory().display().to_string());
                     std::fs::create_dir(jail.directory().join(".foundry")).unwrap();
 
@@ -302,7 +302,7 @@ mod tests {
         Ok(())
     });
 
-    // mocking the `$HOME` has no effect on windows, see [`dirs_next::home_dir()`]
+    // mocking the `$HOME` has no effect on windows, see [`dirs::home_dir()`]
     fix_test!(
         #[cfg(not(windows))]
         test_global_toml_is_edited,
