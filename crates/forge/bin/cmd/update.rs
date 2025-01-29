@@ -1,10 +1,10 @@
 use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::FOUNDRY_LOCK;
+use forge::{DepIdentifier, DepMap, Lockfile, FOUNDRY_LOCK};
 use foundry_cli::{
     opts::Dependency,
-    utils::{Git, LoadConfig, Submodules, TagType},
+    utils::{Git, LoadConfig, Submodules},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -42,24 +42,21 @@ impl UpdateArgs {
         // e.g "lib/forge-std" -> TagType::Tag("v0.1.0")
         let git = Git::new(&root);
         let foundry_lock_path = root.join(FOUNDRY_LOCK);
-        let (mut foundry_lock, out_of_sync) =
-            crate::cmd::install::read_or_generate_foundry_lock(&foundry_lock_path, Some(&git))?;
-        if out_of_sync {
-            fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
-        }
 
+        let mut foundry_lock = Lockfile::new(&config.root).with_git(&git);
+        let _out_of_sync_deps = foundry_lock.sync()?;
         let prev_len = foundry_lock.len();
 
         // Mapping of relative path of dependency to its override tag
-        let mut overrides: HashMap<PathBuf, TagType> = HashMap::default();
+        let mut overrides: DepMap = HashMap::default();
         // update the submodules' tags if any overrides are present
         for (dep_path, override_tag) in &dep_overrides {
             let rel_path = dep_path
                 .strip_prefix(&root)
                 .wrap_err("Dependency path is not relative to the repository root")?;
-            if let Ok(tag_type) = TagType::resolve_type(&git, dep_path, override_tag) {
-                foundry_lock.insert(rel_path.to_path_buf(), tag_type.clone());
-                overrides.insert(rel_path.to_path_buf(), tag_type);
+            if let Ok(dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
+                foundry_lock.insert(rel_path.to_path_buf(), dep_id.clone());
+                overrides.insert(rel_path.to_path_buf(), dep_id);
             } else {
                 sh_warn!(
                     "Could not override submodule at {} with tag {}, try using forge install",
@@ -97,8 +94,8 @@ impl UpdateArgs {
         }
 
         // checkout the submodules at the correct tags
-        for (path, tag) in &foundry_lock {
-            git.checkout_at(tag.raw_string(), &root.join(path))?;
+        for (path, tag) in foundry_lock.iter() {
+            git.checkout_at(tag.checkout_id(), &root.join(path))?;
         }
 
         if prev_len != foundry_lock.len() || !overrides.is_empty() {
@@ -114,15 +111,15 @@ impl UpdateArgs {
         &self,
         paths: &[PathBuf],
         submodules: &Submodules,
-        foundry_lock: &HashMap<PathBuf, TagType>,
+        foundry_lock: &Lockfile<'_>,
         overrides: &HashMap<PathBuf, String>,
     ) -> Option<Vec<PathBuf>> {
         let paths_to_avoid = foundry_lock
             .iter()
-            .filter_map(|(path, tag_type)| {
+            .filter_map(|(path, dep_id)| {
                 // Don't update submodules that are pinned to a release tag / rev unless a override
                 // has been specified.
-                if let TagType::Tag(_) | TagType::Rev(_) = tag_type {
+                if let DepIdentifier::Tag { .. } | DepIdentifier::Rev(_) = dep_id {
                     if !overrides.contains_key(path) {
                         return Some(path.clone());
                     }

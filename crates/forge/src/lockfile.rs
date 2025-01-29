@@ -166,11 +166,23 @@ impl<'a> Lockfile<'a> {
         self.deps.remove(path)
     }
 
+    /// Returns the num of dependencies in the lockfile.
+    pub fn len(&self) -> usize {
+        self.deps.len()
+    }
+
     /// Returns whether the lockfile is empty.
     pub fn is_empty(&self) -> bool {
         self.deps.is_empty()
     }
+
+    /// Returns an iterator over the lockfile.
+    pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &DepIdentifier)> {
+        self.deps.iter()
+    }
 }
+
+// Implement .iter() for &LockFile
 
 /// Identifies whether a dependency (submodule) is referenced by a branch,
 /// tag or rev (commit hash).
@@ -220,6 +232,15 @@ impl DepIdentifier {
         match self {
             Self::Branch { rev, .. } => rev,
             Self::Tag { rev, .. } => rev,
+            Self::Rev(rev) => rev,
+        }
+    }
+
+    /// Get the name/rev to checkout at.
+    pub fn checkout_id(&self) -> &str {
+        match self {
+            Self::Branch { name, .. } => name,
+            Self::Tag { name, .. } => name,
             Self::Rev(rev) => rev,
         }
     }
