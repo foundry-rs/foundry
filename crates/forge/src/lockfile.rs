@@ -34,7 +34,7 @@ impl<'a> Lockfile<'a> {
     ///
     /// `project_root` is the absolute path to the project root.
     ///
-    /// You will need to call [`LockFile::load`] or [`LockFile::sync`] to load the lockfile.
+    /// You will need to call [`Lockfile::read`] or [`Lockfile::sync`] to load the lockfile.
     pub fn new(project_root: &Path) -> Self {
         Self { deps: HashMap::default(), git: None, lockfile_path: project_root.join(FOUNDRY_LOCK) }
     }
@@ -194,13 +194,13 @@ pub enum DepIdentifier {
     Branch { name: String, rev: String },
     /// Release tag `name` and the `rev` it is currently pointing to.
     /// Running `forge update` does not update the tag/rev.
-    /// Dependecy will remain pinned to the existing tag/rev unless overridden like so `forge
+    /// Dependency will remain pinned to the existing tag/rev unless overridden like so `forge
     /// update owner/dep@tag=diffent_tag`.
     #[serde(rename = "tag")]
     Tag { name: String, rev: String },
     /// Commit hash `rev` the submodule is currently pointing to.
     /// Running `forge update` does not update the rev.
-    /// Dependecy will remain pinned to the existing rev unless overridden.
+    /// Dependency will remain pinned to the existing rev unless overridden.
     #[serde(rename = "rev")]
     Rev(String),
 }
