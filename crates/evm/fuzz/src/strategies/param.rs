@@ -135,16 +135,25 @@ pub fn fuzz_param_from_state(
             value()
                 .prop_map(move |value| {
                     let mut fuzzed_addr = Address::from_word(value);
-                    let mut rng = StdRng::seed_from_u64(0x1337); // use deterministic rng
+                    if !deployed_libs.contains(&fuzzed_addr) {
+                        DynSolValue::Address(fuzzed_addr)
+                    } else {
+                        let mut rng = StdRng::seed_from_u64(0x1337); // use deterministic rng
 
-                    // Do not use addresses of deployed libraries as fuzz input, instead return a
-                    // deterministically random address. We cannot filter out this value (via
-                    // `prop_filter_map`) as proptest can invoke this closure after test execution,
-                    // and returning a `None` will cause it to panic. See <https://github.com/foundry-rs/foundry/issues/9764> and <https://github.com/foundry-rs/foundry/issues/8639>.
-                    while deployed_libs.contains(&fuzzed_addr) {
-                        fuzzed_addr.randomize_with(&mut rng);
+                        // Do not use addresses of deployed libraries as fuzz input, instead return
+                        // a deterministically random address. We cannot filter out this value (via
+                        // `prop_filter_map`) as proptest can invoke this closure after test
+                        // execution, and returning a `None` will cause it to panic.
+                        // See <https://github.com/foundry-rs/foundry/issues/9764> and <https://github.com/foundry-rs/foundry/issues/8639>.
+                        loop {
+                            fuzzed_addr.randomize_with(&mut rng);
+                            if !deployed_libs.contains(&fuzzed_addr) {
+                                break;
+                            }
+                        }
+
+                        DynSolValue::Address(fuzzed_addr)
                     }
-                    DynSolValue::Address(fuzzed_addr)
                 })
                 .boxed()
         }
