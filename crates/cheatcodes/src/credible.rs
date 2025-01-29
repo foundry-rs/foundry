@@ -1,7 +1,7 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::TxKind;
 use alloy_sol_types::SolValue;
-use assertion_executor::{db::fork_db::ForkDb, store::MockStore, AssertionExecutorBuilder};
+use assertion_executor::{db::fork_db::ForkDb, store::MockStore, ExecutorConfig};
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
 use revm::{
     primitives::{AccountInfo, Address, Bytecode, TxEnv, B256, U256},
@@ -67,7 +67,9 @@ impl Cheatcode for assertionExCall {
         let assertions_bytecode =
             assertions.iter().map(|bytes| Bytecode::LegacyRaw(bytes.to_vec().into())).collect();
 
-        let mut store = MockStore::new(spec_id, chain_id.clone());
+        let config = ExecutorConfig { spec_id, chain_id, assertion_gas_limit: 3_000_000 };
+
+        let mut store = MockStore::new(config.clone());
         store.insert(*assertion_adopter, assertions_bytecode).expect("Failed to store assertions");
 
         let decoded_tx = AssertionExTransaction::abi_decode(&tx, true)?;
@@ -90,8 +92,7 @@ impl Cheatcode for assertionExCall {
 
             let (reader, handle) = store.cancellable_reader(cancellation_token.clone());
 
-            let mut assertion_executor =
-                AssertionExecutorBuilder::new(db, reader).with_chain_id(chain_id).build();
+            let mut assertion_executor = config.build(db, reader);
 
             // Commit current journal state so that it is available for assertions and
             // triggering tx
@@ -99,15 +100,21 @@ impl Cheatcode for assertionExCall {
             fork_db.commit(state);
 
             // Store assertions
-            let result = assertion_executor.validate_transaction(block, tx_env, &mut fork_db).await;
+            let validate_result =
+                assertion_executor.validate_transaction(block, tx_env, &mut fork_db).await;
 
             cancellation_token.cancel();
 
             let _ = handle.await;
 
-            result
+            validate_result
         }) {
-            Ok(val) => Ok(val.is_some().abi_encode()),
+            Ok(val) => Ok((
+                val.result_and_state.is_some(),
+                val.total_assertion_gas,
+                val.total_assertions_ran,
+            )
+                .abi_encode()),
             Err(e) => Result::Err(format!("Error in assertionExCall: {:#?}", e).into()),
         }
     }
