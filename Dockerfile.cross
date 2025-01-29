@@ -6,7 +6,14 @@ FROM ubuntu:22.04
 # Filled by docker buildx
 ARG TARGETARCH
 
+RUN apt update && apt install -y git
+
 COPY ./dist/bin/$TARGETARCH/* /usr/local/bin/
+
+RUN groupadd -g 1000 foundry && \
+    useradd -m -u 1000 -g foundry foundry
+
+USER foundry
 
 ENTRYPOINT ["/bin/sh", "-c"]
 

@@ -963,6 +963,7 @@ contract CounterTest {
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 [profile.default]

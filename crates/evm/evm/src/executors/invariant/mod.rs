@@ -401,6 +401,12 @@ impl<'a> InvariantExecutor<'a> {
                     current_run.executor.commit(&mut call_result);
 
                     // Collect data for fuzzing from the state changeset.
+                    // This step updates the state dictionary and therefore invalidates the
+                    // ValueTree in use by the current run. This manifestsitself in proptest
+                    // observing a different input case than what it was called with, and creates
+                    // inconsistencies whenever proptest tries to use the input case after test
+                    // execution.
+                    // See <https://github.com/foundry-rs/foundry/issues/9764>.
                     let mut state_changeset = call_result.state_changeset.clone();
                     if !call_result.reverted {
                         collect_data(
