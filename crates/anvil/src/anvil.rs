@@ -3,7 +3,7 @@
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use eyre::Result;
-use foundry_cli::{opts::GlobalArgs, utils};
+use foundry_cli::{handler, opts::GlobalArgs, utils};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 
 #[cfg(all(feature = "jemalloc", unix))]
@@ -47,7 +47,9 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    handler::install();
     utils::load_dotenv();
+    utils::enable_paint();
 
     let mut args = Anvil::parse();
     args.global.init()?;

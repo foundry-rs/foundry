@@ -25,8 +25,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Set the version suffix and whether the version is a nightly build.
     // if not on a tag: <BIN> 0.3.0-dev+ba03de0019.1737036656.debug
     // if on a tag: <BIN> 0.3.0-stable+ba03de0019.1737036656.release
-    let tag_name = env::var("TAG_NAME").unwrap_or_else(|_| String::from("dev"));
-    let (is_nightly, version_suffix) = if tag_name == "nightly" {
+    let tag_name = env::var("TAG_NAME")
+        .or_else(|_| env::var("CARGO_TAG_NAME"))
+        .unwrap_or_else(|_| String::from("dev"));
+    let (is_nightly, version_suffix) = if tag_name.contains("nightly") {
         (true, "-nightly".to_string())
     } else {
         (false, format!("-{tag_name}"))
@@ -40,8 +42,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Set formatted version strings
     let pkg_version = env::var("CARGO_PKG_VERSION")?;
 
-    // Append the profile to the version string, defaulting to "debug".
-    let profile = env::var("PROFILE").unwrap_or_else(|_| String::from("debug"));
+    // Append the profile to the version string
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let profile = out_dir.rsplit(std::path::MAIN_SEPARATOR).nth(3).unwrap();
 
     // Set the build timestamp.
     let build_timestamp = env::var("VERGEN_BUILD_TIMESTAMP")?;

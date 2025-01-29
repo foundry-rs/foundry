@@ -65,7 +65,10 @@ jobs:
 
   release-docker:
     name: Release Docker
+    needs: prepare
     uses: ./.github/workflows/docker-publish.yml
+    with:
+      tag_name: ${{ needs.prepare.outputs.tag_name }}
 
   release:
     permissions:
@@ -74,8 +77,6 @@ jobs:
       attestations: write
     name: ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
-    env:
-      TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
     timeout-minutes: 240
     needs: prepare
     strategy:
@@ -136,6 +137,7 @@ jobs:
 
       - name: Build binaries
         env:
+          TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}

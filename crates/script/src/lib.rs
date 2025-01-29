@@ -260,7 +260,7 @@ impl ScriptArgs {
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
-                    Some(ref path) => pre_simulation.run_debug_file_dumper(path),
+                    Some(path) => pre_simulation.dump_debugger(&path),
                     None => pre_simulation.run_debugger(),
                 };
             }
@@ -303,6 +303,11 @@ impl ScriptArgs {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
             if !shell::is_json() {
+                if shell::verbosity() >= 4 {
+                    sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+                    bundled.sequence.show_transactions()?;
+                }
+
                 sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             }
             return Ok(());

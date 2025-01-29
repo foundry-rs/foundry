@@ -23,7 +23,7 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
     } else {
-        provider.get_block_number().await.wrap_err("Failed to get latest block number")?
+        provider.get_block_number().await.wrap_err("failed to get latest block number")?
     };
     let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
@@ -44,12 +44,11 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
                 error!("{NON_ARCHIVE_NODE_WARNING}");
             }
             eyre::bail!(
-                "Failed to get block for block number: {}\nlatest block number: {}",
-                block_number,
-                latest_block
+                "failed to get block for block number: {block_number}; \
+                 latest block number: {latest_block}"
             );
         }
-        eyre::bail!("Failed to get block for block number: {}", block_number)
+        eyre::bail!("failed to get block for block number: {block_number}")
     };
 
     let mut cfg = CfgEnv::default();
