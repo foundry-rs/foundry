@@ -33,7 +33,7 @@ use foundry_evm::{
 };
 use futures::future::join_all;
 use itertools::Itertools;
-use std::path::PathBuf;
+use std::path::Path;
 use yansi::Paint;
 
 /// State after linking, contains the linked build data along with library addresses and optional
@@ -187,7 +187,7 @@ impl PreExecutionState {
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
             if self.build_data.predeploy_libraries.libraries_count() > 0 &&
-                self.args.evm_args.sender.is_none()
+                self.args.evm.sender.is_none()
             {
                 for tx in txs.iter() {
                     if tx.transaction.to().is_none() {
@@ -495,7 +495,7 @@ impl PreSimulationState {
         Ok(())
     }
 
-    pub fn run_debug_file_dumper(self, path: &PathBuf) -> Result<()> {
+    pub fn dump_debugger(self, path: &Path) -> Result<()> {
         self.create_debugger().dump_to_file(path)?;
         Ok(())
     }

@@ -80,7 +80,7 @@ impl<'a> DebugStepsWalker<'a> {
     fn src_map(&self, step: usize) -> Option<(SourceElement, &SourceData)> {
         self.sources.find_source_mapping(
             self.contract_name,
-            self.node.trace.steps[step].pc,
+            self.node.trace.steps[step].pc as u32,
             self.node.trace.kind.is_any_create(),
         )
     }

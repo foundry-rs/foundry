@@ -9,31 +9,26 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, GlobalOpts, RpcOpts};
-use foundry_common::ens::NameOrAddress;
+use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
+use foundry_common::{
+    ens::NameOrAddress,
+    version::{LONG_VERSION, SHORT_VERSION},
+};
 use std::{path::PathBuf, str::FromStr};
 
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
-
-/// Perform Ethereum RPC calls from the comfort of your command line.
+/// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
     name = "cast",
-    version = VERSION_MESSAGE,
+    version = SHORT_VERSION,
+    long_version = LONG_VERSION,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
     next_display_order = None,
 )]
 pub struct Cast {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: CastSubcommand,
@@ -926,9 +921,9 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the source code of a contract from Etherscan.
+    /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
-    EtherscanSource {
+    Source {
         /// The contract's address.
         address: String,
 
@@ -942,6 +937,15 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         etherscan: EtherscanOpts,
+
+        /// Alternative explorer API URL to use that adheres to the Etherscan API. If not provided,
+        /// defaults to Etherscan.
+        #[arg(long, env = "EXPLORER_API_URL")]
+        explorer_api_url: Option<String>,
+
+        /// Alternative explorer browser URL.
+        #[arg(long, env = "EXPLORER_URL")]
+        explorer_url: Option<String>,
     },
 
     /// Wallet management utilities.

@@ -57,6 +57,8 @@ use std::{
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
+pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
+
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
 /// Default chain id of the node
@@ -69,15 +71,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
-/// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
-pub const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
 
 const BANNER: &str = r"
                              _   _
@@ -498,10 +491,10 @@ impl NodeConfig {
             blob_excess_gas_and_price.clone()
         } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
         {
-            BlobExcessGasAndPrice::new(excess_blob_gas as u64)
+            BlobExcessGasAndPrice::new(excess_blob_gas, false)
         } else {
             // If no excess blob gas is configured, default to 0
-            BlobExcessGasAndPrice::new(0)
+            BlobExcessGasAndPrice::new(0, false)
         }
     }
 
@@ -800,7 +793,7 @@ impl NodeConfig {
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
     pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
-        self.fork_chain_id = fork_chain_id.map(Into::into);
+        self.fork_chain_id = fork_chain_id;
         self
     }
 
@@ -1180,6 +1173,8 @@ latest block number: {latest_block}"
         };
 
         let gas_limit = self.fork_gas_limit(&block);
+        self.gas_limit = Some(gas_limit);
+
         env.block = BlockEnv {
             number: U256::from(fork_block_number),
             timestamp: U256::from(block.header.timestamp),
@@ -1213,11 +1208,12 @@ latest block number: {latest_block}"
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
                 env.block.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas));
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
                 let next_block_blob_excess_gas = fees
                     .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
+                    false,
                 ));
             }
         }

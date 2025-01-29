@@ -17,10 +17,27 @@ use foundry_test_utils::{
 };
 use std::{fs, io::Write, path::Path, str::FromStr};
 
+casttest!(print_short_version, |_prj, cmd| {
+    cmd.arg("-V").assert_success().stdout_eq(str![[r#"
+cast [..]-[..] ([..] [..])
+
+"#]]);
+});
+
+casttest!(print_long_version, |_prj, cmd| {
+    cmd.arg("--version").assert_success().stdout_eq(str![[r#"
+cast Version: [..]
+Commit SHA: [..]
+Build Timestamp: [..]
+Build Profile: [..]
+
+"#]]);
+});
+
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
-Perform Ethereum RPC calls from the comfort of your command line
+A Swiss Army knife for interacting with Ethereum applications from the command line
 
 Usage: cast[..] <COMMAND>
 
@@ -105,7 +122,6 @@ totalDifficulty      [..]
 blobGasUsed          [..]
 excessBlobGas        [..]
 requestsHash         [..]
-targetBlobsPerBlock  [..]
 transactions:        [
 ...
 ]
@@ -1833,7 +1849,7 @@ Nothing to compile
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
 Traces:
-  [13520] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
     │           data: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
     └─ ← [Return] 62 bytes of code
@@ -1853,7 +1869,7 @@ Executing previous transactions from the block.
 Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
-  [13520] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
     └─ ← [Return] 62 bytes of code
 
@@ -1915,7 +1931,7 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         .stdout_eq(str![[r#"
 Executing previous transactions from the block.
 Traces:
-  [22287] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
     │   @ 0: 0 → 111
     └─ ← [Stop] 
@@ -2006,8 +2022,8 @@ contract CounterInExternalLibScript is Script {
         .stdout_eq(str![[r#"
 ...
 Traces:
-  [37739] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-    ├─ [22411] 0xfAb06527117d29EA121998AC4fAB9Fc88bF5f979::updateCounterInExternalLib(0, 100) [delegatecall]
+  [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    ├─ [..] 0x52F3e85EC3F0f9D0a2200D646482fcD134D5adc9::updateCounterInExternalLib(0, 100) [delegatecall]
     │   └─ ← [Stop] 
     └─ ← [Return] 62 bytes of code
 
@@ -2069,4 +2085,44 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
     cmd.cast_fuse()
         .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
         .assert_success();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/4776>
+casttest!(fetch_src_blockscout, |_prj, cmd| {
+    let url = "https://eth.blockscout.com/api";
+
+    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+    cmd.args([
+        "source",
+        &weth.to_string(),
+        "--chain-id",
+        "1",
+        "--explorer-api-url",
+        url,
+        "--flatten",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
+});
+
+casttest!(fetch_src_default, |_prj, cmd| {
+    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let etherscan_api_key = next_mainnet_etherscan_api_key();
+
+    cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+contract WETH9 {
+    string public name     = "Wrapped Ether";
+    string public symbol   = "WETH";
+    uint8  public decimals = 18;
+..."#]]);
 });

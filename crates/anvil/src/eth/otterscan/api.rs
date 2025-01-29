@@ -122,7 +122,7 @@ impl EthApi {
     pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
         node_info!("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
-        Ok(self.get_code(address, block_id).await?.len() > 0)
+        Ok(!self.get_code(address, block_id).await?.is_empty())
     }
 
     /// Trace a transaction and generate a trace call tree.
@@ -384,7 +384,7 @@ impl EthApi {
 
         let total_fees = receipts
             .iter()
-            .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
+            .fold(0, |acc, receipt| acc + (receipt.gas_used as u128) * receipt.effective_gas_price);
 
         let Block { header, uncles, transactions, withdrawals } = block.inner;
 
