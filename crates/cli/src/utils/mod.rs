@@ -473,6 +473,10 @@ impl<'a> Git<'a> {
             .map(|stdout| &stdout == "commit")
     }
 
+    pub fn get_rev(self, tag_or_branch: impl AsRef<OsStr>, at: &Path) -> Result<String> {
+        self.cmd_at(at).args(["rev-list", "-n", "1"]).arg(tag_or_branch).get_stdout_lossy()
+    }
+
     pub fn ensure_clean(self) -> Result<()> {
         if self.is_clean()? {
             Ok(())

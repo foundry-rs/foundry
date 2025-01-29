@@ -1,6 +1,7 @@
 use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
+use forge::FOUNDRY_LOCK;
 use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig, Submodules, TagType},
@@ -8,8 +9,6 @@ use foundry_cli::{
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use std::path::PathBuf;
-
-use super::install::FOUNDRY_LOCK;
 
 /// CLI arguments for `forge update`.
 #[derive(Clone, Debug, Parser)]
