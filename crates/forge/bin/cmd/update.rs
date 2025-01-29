@@ -1,10 +1,10 @@
 use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::{DepIdentifier, DepMap, Lockfile, FOUNDRY_LOCK};
+use forge::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
 use foundry_cli::{
     opts::Dependency,
-    utils::{Git, LoadConfig, Submodules},
+    utils::{Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
@@ -37,9 +37,9 @@ impl UpdateArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
         // dep_overrides consists of absolute paths of dependencies and their tags
-        let (root, paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
+        let (root, _paths, dep_overrides) = dependencies_paths(&self.dependencies, &config)?;
         // Mapping of relative path of lib to its tag type
-        // e.g "lib/forge-std" -> TagType::Tag("v0.1.0")
+        // e.g "lib/forge-std" -> DepIdentifier::Tag { name: "v0.1.0", rev: "1234567" }
         let git = Git::new(&root);
         let foundry_lock_path = root.join(FOUNDRY_LOCK);
 
@@ -47,46 +47,46 @@ impl UpdateArgs {
         let _out_of_sync_deps = foundry_lock.sync()?;
         let prev_len = foundry_lock.len();
 
-        // Mapping of relative path of dependency to its override tag
-        let mut overrides: DepMap = HashMap::default();
         // update the submodules' tags if any overrides are present
-        for (dep_path, override_tag) in &dep_overrides {
-            let rel_path = dep_path
-                .strip_prefix(&root)
-                .wrap_err("Dependency path is not relative to the repository root")?;
-            if let Ok(dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
-                foundry_lock.insert(rel_path.to_path_buf(), dep_id.clone());
-                overrides.insert(rel_path.to_path_buf(), dep_id);
-            } else {
-                sh_warn!(
-                    "Could not override submodule at {} with tag {}, try using forge install",
-                    rel_path.display(),
-                    override_tag
-                )?;
+
+        if dep_overrides.is_empty() {
+            // running `forge update`, update all deps
+            foundry_lock.iter_mut().for_each(|(_path, dep_id)| {
+                // Set overide flag to true if the dep is a branch
+                if let DepIdentifier::Branch { .. } = dep_id {
+                    dep_id.mark_overide();
+                }
+            });
+        } else {
+            for (dep_path, override_tag) in &dep_overrides {
+                let rel_path = dep_path
+                    .strip_prefix(&root)
+                    .wrap_err("Dependency path is not relative to the repository root")?;
+                if let Ok(dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
+                    foundry_lock.override_dep(rel_path, dep_id)?
+                } else {
+                    sh_warn!(
+                        "Could not override submodule at {} with tag {}, try using forge install",
+                        rel_path.display(),
+                        override_tag
+                    )?;
+                }
             }
         }
 
         // fetch the latest changes for each submodule (recursively if flag is set)
         let git = Git::new(&root);
-        let submodules = git.submodules()?;
         if self.recursive {
             // update submodules recursively
-            let update_paths =
-                self.update_paths(&paths, &submodules, &foundry_lock, &dep_overrides);
-            if let Some(update_paths) = update_paths {
-                git.submodule_update(self.force, true, false, true, update_paths)?;
-            } else {
-                git.submodule_update(self.force, true, false, true, Vec::<PathBuf>::new())?;
-            }
+            let update_paths = self.update_dep_paths(&foundry_lock);
+            git.submodule_update(self.force, true, false, true, update_paths)?;
         } else {
-            let update_paths =
-                self.update_paths(&paths, &submodules, &foundry_lock, &dep_overrides);
-            if let Some(update_paths) = update_paths {
-                // update root submodules
-                git.submodule_update(self.force, true, false, false, update_paths)?;
-            } else {
-                // update all submodules
-                git.submodule_update(self.force, true, false, false, Vec::<PathBuf>::new())?;
+            let update_paths = self.update_dep_paths(&foundry_lock);
+            let is_empty = update_paths.is_empty();
+            // update submodules
+            git.submodule_update(self.force, true, false, false, update_paths)?;
+
+            if !is_empty {
                 // initialize submodules of each submodule recursively (otherwise direct submodule
                 // dependencies will revert to last commit)
                 git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
@@ -94,68 +94,30 @@ impl UpdateArgs {
         }
 
         // checkout the submodules at the correct tags
-        for (path, tag) in foundry_lock.iter() {
-            git.checkout_at(tag.checkout_id(), &root.join(path))?;
+        for (path, dep_id) in foundry_lock.iter() {
+            git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
         }
 
-        if prev_len != foundry_lock.len() || !overrides.is_empty() {
+        if prev_len != foundry_lock.len() ||
+            foundry_lock.iter().any(|(_, dep_id)| dep_id.overriden())
+        {
             fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
         }
 
         Ok(())
     }
 
-    /// Gets the relatives paths to the submodules that need to be updated.
-    /// If None, it means all submodules need to be updated.
-    fn update_paths(
-        &self,
-        paths: &[PathBuf],
-        submodules: &Submodules,
-        foundry_lock: &Lockfile<'_>,
-        overrides: &HashMap<PathBuf, String>,
-    ) -> Option<Vec<PathBuf>> {
-        let paths_to_avoid = foundry_lock
+    /// Returns the `lib/paths` of the dependencies that have been updated/overriden.
+    fn update_dep_paths(&self, foundry_lock: &Lockfile<'_>) -> Vec<PathBuf> {
+        foundry_lock
             .iter()
             .filter_map(|(path, dep_id)| {
-                // Don't update submodules that are pinned to a release tag / rev unless a override
-                // has been specified.
-                if let DepIdentifier::Tag { .. } | DepIdentifier::Rev(_) = dep_id {
-                    if !overrides.contains_key(path) {
-                        return Some(path.clone());
-                    }
+                if dep_id.overriden() {
+                    return Some(path.to_path_buf());
                 }
                 None
             })
-            .collect::<Vec<_>>();
-
-        match (paths.is_empty(), paths_to_avoid.is_empty()) {
-            (true, true) => {
-                // running `forge update`
-                None
-            }
-            (true, false) => {
-                // running `forge update`
-                Some(
-                    submodules
-                        .into_iter()
-                        .filter_map(|s| {
-                            if !paths_to_avoid.contains(s.path()) {
-                                return Some(s.path().to_path_buf());
-                            }
-                            None
-                        })
-                        .collect(),
-                )
-            }
-            (false, true) => {
-                // running `forge update <deps>`
-                Some(paths.to_vec())
-            }
-            (false, false) => {
-                // running `forge update <deps>`
-                Some(paths.iter().filter(|path| !paths_to_avoid.contains(path)).cloned().collect())
-            }
-        }
+            .collect()
     }
 }
 
@@ -174,12 +136,12 @@ pub fn dependencies_paths(
     for dep in deps {
         let name = dep.name();
         let dep_path = libs.join(name);
-        let rel_path = dep_path
-            .strip_prefix(&git_root)
-            .wrap_err("Library directory is not relative to the repository root")?;
         if !dep_path.exists() {
             eyre::bail!("Could not find dependency {name:?} in {}", dep_path.display());
         }
+        let rel_path = dep_path
+            .strip_prefix(&git_root)
+            .wrap_err("Library directory is not relative to the repository root")?;
 
         if let Some(tag) = &dep.tag {
             overrides.insert(dep_path.to_owned(), tag.to_owned());

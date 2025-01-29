@@ -186,8 +186,11 @@ impl DependencyInstallOpts {
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
-                        dep_id =
-                            Some(DepIdentifier::Branch { name: tag_or_branch.to_string(), rev });
+                        dep_id = Some(DepIdentifier::Branch {
+                            name: tag_or_branch.to_string(),
+                            rev,
+                            overide: false,
+                        });
                     }
 
                     trace!(?dep_id, ?tag_or_branch, "resolved dep id");
