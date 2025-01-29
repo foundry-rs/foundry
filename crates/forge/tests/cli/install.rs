@@ -7,6 +7,59 @@ use foundry_config::Config;
 use foundry_test_utils::util::{read_string, TestCommand};
 use semver::Version;
 use std::{fs, path::PathBuf, process::Command, str::FromStr};
+use foundry_test_utils::util::pretty_err;
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
+    prj.clear();
+
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    // Build the project
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Missing dependencies found. Installing now...
+
+[UPDATING_DEPENDENCIES]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    // Expect compilation to be skipped as no files have changed
+    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
+    prj.clear();
+
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+Missing dependencies found. Installing now...
+
+[UPDATING_DEPENDENCIES]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
 
 // test to check that install/remove works properly
 forgetest!(can_install_and_remove, |prj, cmd| {

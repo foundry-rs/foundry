@@ -89,8 +89,17 @@ impl<'a> Lockfile<'a> {
                     }
                     Entry::Vacant(e) => {
                         // Find out if rev has a tag associated with it.
-                        let tag = git.tag_for_commit(rev, &git.root.join(rel_path))?;
-                        let dep_id = if let Some(tag) = tag {
+                        let maybe_tag =
+                            git.tag_for_commit(rev, &git.root.join(rel_path)).or_else(|err| {
+                                // Ignore Err: No such file or directory as it is possible that lib/
+                                // dir cleaned.
+                                if err.to_string().contains("No such file or directory") {
+                                    return Ok(None)
+                                }
+                                return Err(err);
+                            })?;
+
+                        let dep_id = if let Some(tag) = maybe_tag {
                             DepIdentifier::Tag { name: tag, rev: rev.to_string() }
                         } else {
                             DepIdentifier::Rev(rev.to_string())
@@ -132,7 +141,6 @@ impl<'a> Lockfile<'a> {
     /// Writes the lockfile to the project root.
     pub fn write(&self) -> Result<()> {
         foundry_common::fs::write_json_file(&self.lockfile_path, &self.deps)?;
-
         trace!(at= ?self.lockfile_path, "wrote lockfile");
 
         Ok(())
