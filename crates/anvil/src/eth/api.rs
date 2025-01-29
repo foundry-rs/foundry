@@ -72,7 +72,7 @@ use anvil_core::{
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
-    types::{ReorgOptions, TransactionData, Work},
+    types::{ReorgOptions, RollbackOptions, TransactionData, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -455,6 +455,9 @@ impl EthApi {
             }
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
+            }
+            EthRequest::Rollback(rollback_options) => {
+                self.anvil_rollback(rollback_options).await.to_rpc_result()
             }
             EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
             EthRequest::WalletSendTransaction(tx) => {
@@ -2064,6 +2067,36 @@ impl EthApi {
         };
 
         self.backend.reorg(depth, block_pool_txs, common_block).await?;
+        Ok(())
+    }
+
+    /// Rollback the chain to a specific depth.
+    ///
+    /// e.g depth = 3
+    ///     A  -> B  -> C  -> D  -> E
+    ///     A  -> B
+    ///
+    /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
+    /// chain height, i.e. can't rollback past the genesis block.
+    ///
+    /// Handler for RPC call: `anvil_rollback`
+    pub async fn anvil_rollback(&self, options: RollbackOptions) -> Result<()> {
+        node_info!("anvil_rollback");
+        let depth = options.depth;
+
+        // Check reorg depth doesn't exceed current chain height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            )),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        self.backend.rollback(common_block).await?;
         Ok(())
     }
 

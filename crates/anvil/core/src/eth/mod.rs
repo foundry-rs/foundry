@@ -1,4 +1,7 @@
-use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
+use crate::{
+    eth::subscription::SubscriptionId,
+    types::{ReorgOptions, RollbackOptions},
+};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     anvil::{Forking, MineOptions},
@@ -776,6 +779,10 @@ pub enum EthRequest {
     /// Reorg the chain
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
     Reorg(ReorgOptions),
+
+    /// Rollback the chain
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_rollback",))]
+    Rollback(RollbackOptions),
 
     /// Wallet
     #[cfg_attr(feature = "serde", serde(rename = "wallet_getCapabilities", with = "empty_params"))]

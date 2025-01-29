@@ -28,7 +28,7 @@ use anvil_core::{
         wallet::{Capabilities, DelegationCapability, WalletCapabilities},
         EthRequest,
     },
-    types::{ReorgOptions, TransactionData},
+    types::{ReorgOptions, RollbackOptions, TransactionData},
 };
 use foundry_evm::revm::primitives::SpecId;
 use std::{
@@ -803,6 +803,25 @@ async fn test_reorg() {
         })
         .await;
     assert!(res.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await; // block height 1
+    api.mine_one().await; // block height 2
+
+    let original_block0_hash =
+        provider.get_block(1.into(), false.into()).await.unwrap().unwrap().header.hash;
+    api.anvil_rollback(RollbackOptions { depth: 1 }).await.unwrap();
+    // assert the chain rolled back to block height 1, and the block hash is kept the same
+    let height = provider.get_block_number().await.unwrap();
+    assert_eq!(height, 1);
+    let new_block1_hash =
+        provider.get_block(1.into(), false.into()).await.unwrap().unwrap().header.hash;
+    assert_eq!(original_block0_hash, new_block1_hash);
 }
 
 // === wallet endpoints === //
