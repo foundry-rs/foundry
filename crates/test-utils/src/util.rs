@@ -29,7 +29,7 @@ use std::{
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
-const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
