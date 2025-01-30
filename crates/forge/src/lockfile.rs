@@ -306,7 +306,7 @@ impl DepIdentifier {
         }
     }
 
-    /// Marks as dependency as overriden.
+    /// Marks as dependency as overridden.
     pub fn mark_overide(&mut self) {
         match self {
             Self::Branch { r#override, .. } => *r#override = true,
@@ -315,7 +315,7 @@ impl DepIdentifier {
         }
     }
 
-    /// Returns whether the dependency has been overriden.
+    /// Returns whether the dependency has been overridden.
     pub fn overridden(&self) -> bool {
         match self {
             Self::Branch { r#override, .. } => *r#override,
