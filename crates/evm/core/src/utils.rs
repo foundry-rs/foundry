@@ -1,15 +1,15 @@
 pub use crate::ic::*;
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
     InspectorExt,
 };
+use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Selector, TxKind, U256};
-use alloy_provider::{
-    network::{BlockResponse, HeaderResponse},
-    Network,
-};
+use alloy_network::AnyTxEnvelope;
+use alloy_primitives::{Address, Selector, TxKind, B256, U256};
+use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
+use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -18,6 +18,7 @@ use revm::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
+    precompile::secp256r1::P256VERIFY,
     primitives::{CreateScheme, EVMError, HandlerCfg, SpecId, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
@@ -35,11 +36,12 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     env: &mut revm::primitives::Env,
     block: &N::BlockResponse,
 ) {
+    use NamedChain::*;
     if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
         let block_number = block.header().number();
 
         match chain {
-            NamedChain::Mainnet => {
+            Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
@@ -47,10 +49,13 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
 
                 return;
             }
-            NamedChain::Arbitrum |
-            NamedChain::ArbitrumGoerli |
-            NamedChain::ArbitrumNova |
-            NamedChain::ArbitrumTestnet => {
+            Moonbeam | Moonbase | Moonriver | MoonbeamDev => {
+                if env.block.prevrandao.is_none() {
+                    // <https://github.com/foundry-rs/foundry/issues/4232>
+                    env.block.prevrandao = Some(B256::random());
+                }
+            }
+            c if c.is_arbitrum() => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
                 if let Some(l1_block_number) = block
@@ -85,14 +90,21 @@ pub fn get_function<'a>(
 }
 
 /// Configures the env for the given RPC transaction.
-pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
-    configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
+/// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
+pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxEnvelope>) {
+    let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from);
+    if let AnyTxEnvelope::Ethereum(tx) = &tx.inner {
+        configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
+    }
 }
 
 /// Configures the env for the given RPC transaction request.
+/// `impersonated_from` is the address of the impersonated account. This helps account for an
+/// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
 pub fn configure_tx_req_env(
     env: &mut revm::primitives::Env,
     tx: &TransactionRequest,
+    impersonated_from: Option<Address>,
 ) -> eyre::Result<()> {
     let TransactionRequest {
         nonce,
@@ -115,7 +127,10 @@ pub fn configure_tx_req_env(
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
     env.tx.transact_to = to.unwrap_or(TxKind::Create);
-    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
+    // If the transaction is impersonated, we need to set the caller to the from
+    // address Ref: https://github.com/foundry-rs/foundry/issues/9541
+    env.tx.caller =
+        impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
     env.tx.nonce = nonce;
     env.tx.value = value.unwrap_or_default();
@@ -148,12 +163,16 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
+fn get_create2_factory_call_inputs(
+    salt: U256,
+    inputs: CreateInputs,
+    deployer: Address,
+) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
         caller: inputs.caller,
-        bytecode_address: DEFAULT_CREATE2_DEPLOYER,
-        target_address: DEFAULT_CREATE2_DEPLOYER,
+        bytecode_address: deployer,
+        target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value),
         input: calldata.into(),
@@ -164,7 +183,7 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
     }
 }
 
-/// Used for routing certain CREATE2 invocations through [DEFAULT_CREATE2_DEPLOYER].
+/// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
 ///
 /// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
 /// true. Keeps track of overridden frames and handles outcome in the overridden insert_call_outcome
@@ -189,8 +208,10 @@ pub fn create2_handler_register<I: InspectorExt>(
 
             let gas_limit = inputs.gas_limit;
 
+            // Get CREATE2 deployer.
+            let create2_deployer = ctx.external.create2_deployer();
             // Generate call inputs for CREATE2 factory.
-            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs);
+            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs, create2_deployer);
 
             // Call inspector to change input or return outcome.
             let outcome = ctx.external.call(&mut ctx.evm, &mut call_inputs);
@@ -201,12 +222,21 @@ pub fn create2_handler_register<I: InspectorExt>(
                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
 
             // Sanity check that CREATE2 deployer exists.
-            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.info.code_hash;
+            let code_hash = ctx.evm.load_account(create2_deployer)?.info.code_hash;
             if code_hash == KECCAK_EMPTY {
                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
-                        output: "missing CREATE2 deployer".into(),
+                        output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    memory_offset: 0..0,
+                })))
+            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 deployer bytecode".into(),
                         gas: Gas::new(gas_limit),
                     },
                     memory_offset: 0..0,
@@ -266,13 +296,13 @@ pub fn create2_handler_register<I: InspectorExt>(
         });
 }
 
-/// Adds Alphanet P256 precompile to the list of loaded precompiles.
-pub fn alphanet_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
+/// Adds Odyssey P256 precompile to the list of loaded precompiles.
+pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
     let prev = handler.pre_execution.load_precompiles.clone();
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
 
-        loaded_precompiles.extend([ALPHANET_P256]);
+        loaded_precompiles.extend([ODYSSEY_P256, P256VERIFY]);
 
         loaded_precompiles
     });
@@ -301,8 +331,8 @@ pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
 
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    if inspector.is_alphanet() {
-        handler.append_handler_register_plain(alphanet_handler_register);
+    if inspector.is_odyssey() {
+        handler.append_handler_register_plain(odyssey_handler_register);
     }
     handler.append_handler_register_plain(create2_handler_register);
 
@@ -319,8 +349,8 @@ pub fn new_evm_with_existing_context<'a>(
 
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
-    if inspector.is_alphanet() {
-        handler.append_handler_register_plain(alphanet_handler_register);
+    if inspector.is_odyssey() {
+        handler.append_handler_register_plain(odyssey_handler_register);
     }
     handler.append_handler_register_plain(create2_handler_register);
 

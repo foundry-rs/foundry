@@ -1,7 +1,7 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
@@ -20,23 +20,13 @@ use foundry_config::{
 use serde::Serialize;
 use std::path::PathBuf;
 
-foundry_config::merge_impl_figment_convert!(BuildArgs, args);
+foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 
 /// CLI arguments for `forge build`.
 ///
 /// CLI arguments take the highest precedence in the Config/Figment hierarchy.
 /// In order to override them in the foundry `Config` they need to be merged into an existing
 /// `figment::Provider`, like `foundry_config::Config` is.
-///
-/// # Example
-///
-/// ```
-/// use foundry_cli::cmd::forge::build::BuildArgs;
-/// use foundry_config::Config;
-/// # fn t(args: BuildArgs) {
-/// let config = Config::from(&args);
-/// # }
-/// ```
 ///
 /// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
 /// then merged into an existing `Config`, effectively overwriting them.
@@ -68,7 +58,7 @@ pub struct BuildArgs {
 
     #[command(flatten)]
     #[serde(flatten)]
-    pub args: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
     #[serde(skip)]
@@ -77,11 +67,11 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
-        let mut config = self.try_load_config_emit_warnings()?;
+        let mut config = self.load_config()?;
 
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         let project = config.project()?;
@@ -122,7 +112,7 @@ impl BuildArgs {
     /// [`utils::find_project_root`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> Result<Project> {
-        self.args.project()
+        self.build.project()
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -136,9 +126,9 @@ impl BuildArgs {
         // Use the path arguments or if none where provided the `src`, `test` and `script`
         // directories as well as the `foundry.toml` configuration file.
         self.watch.watchexec_config(|| {
-            let config = Config::from(self);
-            let foundry_toml: PathBuf = config.root.0.join(Config::FILE_NAME);
-            [config.src, config.test, config.script, foundry_toml]
+            let config = self.load_config()?;
+            let foundry_toml: PathBuf = config.root.join(Config::FILE_NAME);
+            Ok([config.src, config.test, config.script, foundry_toml])
         })
     }
 }

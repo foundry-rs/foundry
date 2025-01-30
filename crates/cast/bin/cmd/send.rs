@@ -11,9 +11,9 @@ use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
+    utils::LoadConfig,
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
@@ -85,7 +85,7 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     #[allow(unknown_lints, dependency_on_unit_never_type_fallback)]
-    pub async fn run(self) -> Result<(), eyre::Report> {
+    pub async fn run(self) -> eyre::Result<()> {
         let Self {
             eth,
             to,
@@ -115,7 +115,7 @@ impl SendTxArgs {
             None
         };
 
-        let config = Config::from(&eth);
+        let config = eth.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)

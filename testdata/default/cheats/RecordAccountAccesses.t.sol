@@ -3,6 +3,7 @@ pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
+import "../logs/console.sol";
 
 /// @notice Helper contract with a construction that makes a call to itself then
 ///         optionally reverts if zero-length data is passed
@@ -261,6 +262,16 @@ contract RecordAccountAccessesTest is DSTest {
         two.write(bytes32(uint256(5678)), bytes32(uint256(123469)));
         two.write(bytes32(uint256(5678)), bytes32(uint256(1234)));
 
+        string memory diffs = cheats.getStateDiff();
+        assertEq(
+            "0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9\n- state diff:\n@ 0x00000000000000000000000000000000000000000000000000000000000004d3: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x000000000000000000000000000000000000000000000000000000000000162e\n\n0xc7183455a4C133Ae270771860664b6B7ec320bB1\n- state diff:\n@ 0x000000000000000000000000000000000000000000000000000000000000162e: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x00000000000000000000000000000000000000000000000000000000000004d2\n\n",
+            diffs
+        );
+        string memory diffsJson = cheats.getStateDiffJson();
+        assertEq(
+            "{\"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9\":{\"label\":null,\"balanceDiff\":null,\"stateDiff\":{\"0x00000000000000000000000000000000000000000000000000000000000004d3\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000162e\"}}},\"0xc7183455a4c133ae270771860664b6b7ec320bb1\":{\"label\":null,\"balanceDiff\":null,\"stateDiff\":{\"0x000000000000000000000000000000000000000000000000000000000000162e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x00000000000000000000000000000000000000000000000000000000000004d2\"}}}}",
+            diffsJson
+        );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 4, "incorrect length");
 
@@ -331,6 +342,13 @@ contract RecordAccountAccessesTest is DSTest {
         (succ,) = address(5678).call("");
         // contract calls to self in constructor
         SelfCaller caller = new SelfCaller{value: 2 ether}("hello2 world2");
+
+        string memory callerAddress = cheats.toString(address(caller));
+        string memory expectedStateDiff =
+            "0x000000000000000000000000000000000000162e\n- balance diff: 0 \xE2\x86\x92 1000000000000000000\n\n";
+        expectedStateDiff = string.concat(expectedStateDiff, callerAddress);
+        expectedStateDiff = string.concat(expectedStateDiff, "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n\n");
+        assertEq(expectedStateDiff, cheats.getStateDiff());
 
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 6);
@@ -451,6 +469,14 @@ contract RecordAccountAccessesTest is DSTest {
         uint256 initBalance = address(this).balance;
         cheats.startStateDiffRecording();
         try this.revertingCall{value: 1 ether}(address(1234), "") {} catch {}
+        assertEq(
+            "0x00000000000000000000000000000000000004d2\n- balance diff: 0 \xE2\x86\x92 100000000000000000\n\n",
+            cheats.getStateDiff()
+        );
+        assertEq(
+            "{\"0x00000000000000000000000000000000000004d2\":{\"label\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0x16345785d8a0000\"},\"stateDiff\":{}}}",
+            cheats.getStateDiffJson()
+        );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 2);
         assertEq(
@@ -768,6 +794,15 @@ contract RecordAccountAccessesTest is DSTest {
     function testNestedStorage() public {
         cheats.startStateDiffRecording();
         nestedStorer.run();
+        cheats.label(address(nestedStorer), "NestedStorer");
+        assertEq(
+            "0x2e234DAe75C793f67A35089C9d99245E1C58470b\nlabel: NestedStorer\n- state diff:\n@ 0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n@ 0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e: 0x0000000000000000000000000000000000000000000000000000000000000000 \xE2\x86\x92 0x0000000000000000000000000000000000000000000000000000000000000001\n\n",
+            cheats.getStateDiff()
+        );
+        assertEq(
+            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":\"NestedStorer\",\"balanceDiff\":null,\"stateDiff\":{\"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"}}}}",
+            cheats.getStateDiffJson()
+        );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
         assertEq(called.length, 3, "incorrect account access length");
 

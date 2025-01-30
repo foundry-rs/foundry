@@ -13,7 +13,7 @@ use crate::{
 use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use forge_fmt::FormatterConfig;
-use foundry_config::{Config, RpcEndpoint};
+use foundry_config::{Config, RpcEndpointUrl};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
@@ -38,14 +38,16 @@ use strum::IntoEnumIterator;
 use tracing::debug;
 use yansi::Paint;
 
-/// Prompt arrow character
-pub static PROMPT_ARROW: char = '➜';
-static DEFAULT_PROMPT: &str = "➜ ";
+/// Prompt arrow character.
+pub const PROMPT_ARROW: char = '➜';
+/// Prompt arrow string.
+pub const PROMPT_ARROW_STR: &str = "➜";
+const DEFAULT_PROMPT: &str = "➜ ";
 
 /// Command leader character
-pub static COMMAND_LEADER: char = '!';
+pub const COMMAND_LEADER: char = '!';
 /// Chisel character
-pub static CHISEL_CHAR: &str = "⚒️";
+pub const CHISEL_CHAR: &str = "⚒️";
 
 /// Matches Solidity comments
 static COMMENT_RE: LazyLock<Regex> =
@@ -320,7 +322,7 @@ impl ChiselDispatcher {
             },
             ChiselCommand::Source => match self.format_source() {
                 Ok(formatted_source) => DispatchResult::CommandSuccess(Some(
-                    SolidityHelper::highlight(&formatted_source).into_owned(),
+                    SolidityHelper::new().highlight(&formatted_source).into_owned(),
                 )),
                 Err(_) => {
                     DispatchResult::CommandFailed(String::from("Failed to format session source"))
@@ -355,9 +357,9 @@ impl ChiselDispatcher {
                 {
                     endpoint.clone()
                 } else {
-                    RpcEndpoint::Env(arg.to_string()).into()
+                    RpcEndpointUrl::Env(arg.to_string()).into()
                 };
-                let fork_url = match endpoint.resolve() {
+                let fork_url = match endpoint.resolve().url() {
                     Ok(fork_url) => fork_url,
                     Err(e) => {
                         return DispatchResult::CommandFailed(Self::make_error(format!(

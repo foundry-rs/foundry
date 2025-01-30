@@ -9,7 +9,9 @@ use anvil::{spawn, NodeConfig};
 use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;
 use foundry_test_utils::{
-    forgetest, forgetest_async, str,
+    forgetest, forgetest_async,
+    snapbox::IntoData,
+    str,
     util::{OutputExt, TestCommand, TestProject},
 };
 use std::str::FromStr;
@@ -145,6 +147,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
     prj.write_config(config);
 
+    // Dry-run without the `--broadcast` flag
     cmd.forge_fuse().args([
         "create",
         format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
@@ -154,20 +157,131 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
         pk.as_str(),
     ]);
 
+    // Dry-run
     cmd.assert().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
-[TX_HASH]
+Contract: Counter
+Transaction: {
+  "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "to": null,
+  "maxFeePerGas": "0x77359401",
+  "maxPriorityFeePerGas": "0x1",
+  "gas": "0x241e7",
+  "input": "[..]",
+  "nonce": "0x0",
+  "chainId": "0x7a69"
+}
+ABI: [
+  {
+    "type": "function",
+    "name": "increment",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "number",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setNumber",
+    "inputs": [
+      {
+        "name": "newNumber",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  }
+]
+
 
 "#]]);
+
+    // Dry-run with `--json` flag
+    cmd.arg("--json").assert().stdout_eq(
+        str![[r#"
+{
+  "contract": "Counter",
+  "transaction": {
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "to": null,
+    "maxFeePerGas": "0x77359401",
+    "maxPriorityFeePerGas": "0x1",
+    "gas": "0x241e7",
+    "input": "[..]",
+    "nonce": "0x0",
+    "chainId": "0x7a69"
+  },
+  "abi": [
+    {
+      "type": "function",
+      "name": "increment",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "number",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setNumber",
+      "inputs": [
+        {
+          "name": "newNumber",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    }
+  ]
+}
+
+"#]]
+        .is_json(),
+    );
+
+    cmd.forge_fuse().args([
+        "create",
+        format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+        "--broadcast",
+    ]);
 
     cmd.assert().stdout_eq(str![[r#"
 No files changed, compilation skipped
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
@@ -193,6 +307,7 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
         "--from",
         format!("{dev:?}").as_str(),
         "--unlocked",
+        "--broadcast",
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
@@ -204,6 +319,7 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
+
     cmd.assert().stdout_eq(str![[r#"
 No files changed, compilation skipped
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -248,6 +364,7 @@ contract ConstructorContract {
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--broadcast",
             "--constructor-args",
             "My Constructor",
         ])
@@ -285,6 +402,7 @@ contract TupleArrayConstructorContract {
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--broadcast",
             "--constructor-args",
             "[(1,2), (2,3), (3,4)]",
         ])
@@ -335,6 +453,7 @@ contract UniswapV2Swap {
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--broadcast",
         ])
         .assert_success()
         .stdout_eq(str![[r#"

@@ -59,22 +59,18 @@ impl ResolveArgs {
         let Self { root, skip } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
-        let config = Config::load_with_root(&root);
+        let config = Config::load_with_root(&root)?;
         let project = config.project()?;
 
         let graph = Graph::resolve(&project.paths)?;
-        let (sources, _) = graph.into_sources_by_version(
-            project.offline,
-            &project.locked_versions,
-            &project.compiler,
-        )?;
+        let sources = graph.into_sources_by_version(&project)?.sources;
 
         let mut output: BTreeMap<String, Vec<ResolvedCompiler>> = BTreeMap::new();
 
         for (language, sources) in sources {
             let mut versions_with_paths: Vec<ResolvedCompiler> = sources
                 .iter()
-                .map(|(version, sources)| {
+                .map(|(version, sources, _)| {
                     let paths: Vec<String> = sources
                         .iter()
                         .filter_map(|(path_file, _)| {

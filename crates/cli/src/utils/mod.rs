@@ -110,6 +110,10 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.timeout(Duration::from_secs(rpc_timeout));
     }
 
+    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
+        builder = builder.headers(rpc_headers);
+    }
+
     Ok(builder)
 }
 
@@ -189,7 +193,7 @@ pub fn load_dotenv() {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
-    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), try_find_project_root(None)) {
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root(None)) {
         load(&prj_root);
         if cwd != prj_root {
             // prj root and cwd can be identical
@@ -283,7 +287,7 @@ impl<'a> Git<'a> {
 
     #[inline]
     pub fn from_config(config: &'a Config) -> Self {
-        Self::new(config.root.0.as_path())
+        Self::new(config.root.as_path())
     }
 
     pub fn root_of(relative_to: &Path) -> Result<PathBuf> {
@@ -440,8 +444,8 @@ impl<'a> Git<'a> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
     }
 
-    pub fn has_branch(self, branch: impl AsRef<OsStr>) -> Result<bool> {
-        self.cmd()
+    pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
             .args(["branch", "--list", "--no-color"])
             .arg(branch)
             .get_stdout_lossy()
@@ -560,6 +564,12 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
     pub fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
+        cmd
+    }
+
+    pub fn cmd_at(self, path: &Path) -> Command {
+        let mut cmd = Self::cmd_no_root();
+        cmd.current_dir(path);
         cmd
     }
 

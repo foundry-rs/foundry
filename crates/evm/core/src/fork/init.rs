@@ -1,10 +1,8 @@
 use crate::utils::apply_chain_and_block_specific_env_changes;
+use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
-use alloy_provider::{
-    network::{BlockResponse, HeaderResponse},
-    Network, Provider,
-};
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_provider::{network::BlockResponse, Network, Provider};
+use alloy_rpc_types::{BlockNumberOrTag, BlockTransactionsKind};
 use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -25,12 +23,15 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
     } else {
-        provider.get_block_number().await.wrap_err("Failed to get latest block number")?
+        provider.get_block_number().await.wrap_err("failed to get latest block number")?
     };
     let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
         provider.get_chain_id(),
-        provider.get_block_by_number(BlockNumberOrTag::Number(block_number), false)
+        provider.get_block_by_number(
+            BlockNumberOrTag::Number(block_number),
+            BlockTransactionsKind::Hashes
+        )
     )?;
     let block = if let Some(block) = block {
         block
@@ -43,12 +44,11 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
                 error!("{NON_ARCHIVE_NODE_WARNING}");
             }
             eyre::bail!(
-                "Failed to get block for block number: {}\nlatest block number: {}",
-                block_number,
-                latest_block
+                "failed to get block for block number: {block_number}; \
+                 latest block number: {latest_block}"
             );
         }
-        eyre::bail!("Failed to get block for block number: {}", block_number)
+        eyre::bail!("failed to get block for block number: {block_number}")
     };
 
     let mut cfg = CfgEnv::default();
@@ -66,7 +66,7 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
         block: BlockEnv {
             number: U256::from(block.header().number()),
             timestamp: U256::from(block.header().timestamp()),
-            coinbase: block.header().coinbase(),
+            coinbase: block.header().beneficiary(),
             difficulty: block.header().difficulty(),
             prevrandao: block.header().mix_hash(),
             basefee: U256::from(block.header().base_fee_per_gas().unwrap_or_default()),

@@ -1,3 +1,5 @@
+use super::interface::{fetch_abi_from_etherscan, load_abi_from_file};
+use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{ext::TraceApi, Provider};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
@@ -7,12 +9,9 @@ use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils,
+    utils::{self, LoadConfig},
 };
 use foundry_common::provider::RetryProvider;
-use foundry_config::Config;
-
-use super::interface::{fetch_abi_from_etherscan, load_abi_from_file};
 
 /// CLI arguments for `cast creation-code`.
 #[derive(Parser)]
@@ -46,11 +45,10 @@ pub struct CreationCodeArgs {
 
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, etherscan, rpc, disassemble, without_args, only_args, abi_path } =
+        let Self { contract, mut etherscan, rpc, disassemble, without_args, only_args, abi_path } =
             self;
 
-        let mut etherscan = etherscan;
-        let config = Config::from(&rpc);
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
         let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;
@@ -143,9 +141,9 @@ pub async fn fetch_creation_code(
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
     let tx_data = tx_data.ok_or_eyre("Could not find creation tx data.")?;
 
-    let bytecode = if tx_data.inner.to.is_none() {
+    let bytecode = if tx_data.to().is_none() {
         // Contract was created using a standard transaction
-        tx_data.inner.input
+        tx_data.input().clone()
     } else {
         // Contract was created using a factory pattern or create2
         // Extract creation code from tx traces

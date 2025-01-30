@@ -1,12 +1,14 @@
 //! Wrappers for transactions.
 
 use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_eips::eip7702::SignedAuthorization;
+use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{
     network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
 };
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -57,7 +59,7 @@ impl TransactionReceiptWithRevertReason {
 
         if let Some(block_hash) = self.receipt.block_hash {
             match provider
-                .call(&WithOtherFields::new(transaction.inner.into()))
+                .call(&transaction.inner.inner.into())
                 .block(BlockId::Hash(block_hash.into()))
                 .await
             {
@@ -86,12 +88,51 @@ impl UIfmt for TransactionReceiptWithRevertReason {
         if let Some(revert_reason) = &self.revert_reason {
             format!(
                 "{}
-revertReason            {}",
+revertReason         {}",
                 self.receipt.pretty(),
                 revert_reason
             )
         } else {
             self.receipt.pretty()
+        }
+    }
+}
+
+impl UIfmt for TransactionMaybeSigned {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Signed { tx, .. } => tx.pretty(),
+            Self::Unsigned(tx) => format!(
+                "
+accessList           {}
+chainId              {}
+gasLimit             {}
+gasPrice             {}
+input                {}
+maxFeePerBlobGas     {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+to                   {}
+type                 {}
+value                {}",
+                tx.access_list
+                    .as_ref()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                tx.chain_id.pretty(),
+                tx.gas_limit().unwrap_or_default(),
+                tx.gas_price.pretty(),
+                tx.input.input.pretty(),
+                tx.max_fee_per_blob_gas.pretty(),
+                tx.max_fee_per_gas.pretty(),
+                tx.max_priority_fee_per_gas.pretty(),
+                tx.nonce.pretty(),
+                tx.to.as_ref().map(|a| a.to()).unwrap_or_default().pretty(),
+                tx.transaction_type.unwrap_or_default(),
+                tx.value.pretty(),
+            ),
         }
     }
 }
@@ -178,6 +219,10 @@ impl TransactionMaybeSigned {
         Ok(Self::Signed { tx, from })
     }
 
+    pub fn is_unsigned(&self) -> bool {
+        matches!(self, Self::Unsigned(_))
+    }
+
     pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
         match self {
             Self::Unsigned(tx) => Some(tx),
@@ -225,6 +270,14 @@ impl TransactionMaybeSigned {
             Self::Signed { tx, .. } => Some(tx.nonce()),
             Self::Unsigned(tx) => tx.nonce,
         }
+    }
+
+    pub fn authorization_list(&self) -> Option<Vec<SignedAuthorization>> {
+        match self {
+            Self::Signed { tx, .. } => tx.authorization_list().map(|auths| auths.to_vec()),
+            Self::Unsigned(tx) => tx.authorization_list.as_deref().map(|auths| auths.to_vec()),
+        }
+        .filter(|auths| !auths.is_empty())
     }
 }
 

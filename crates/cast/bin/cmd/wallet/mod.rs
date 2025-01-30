@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, Signature, B256};
+use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_signer_local::{
@@ -10,7 +10,7 @@ use alloy_signer_local::{
 use cast::revm::primitives::Authorization;
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{opts::RpcOpts, utils};
+use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
@@ -369,7 +369,7 @@ impl WalletSubcommands {
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
-                let provider = utils::get_provider(&Config::from(&rpc))?;
+                let provider = utils::get_provider(&rpc.load_config()?)?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce
                 } else {
@@ -380,7 +380,7 @@ impl WalletSubcommands {
                 } else {
                     provider.get_chain_id().await?
                 };
-                let auth = Authorization { chain_id, address, nonce };
+                let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
                 sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;

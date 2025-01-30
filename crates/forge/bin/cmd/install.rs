@@ -24,6 +24,7 @@ static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
 #[command(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
     forge install [OPTIONS] <github username>/<github project>@<tag>...
     forge install [OPTIONS] <alias>=<github username>/<github project>@<tag>...
+    forge install [OPTIONS] <https://<github token>@git url>...)]
     forge install [OPTIONS] <https:// git url>...")]
 pub struct InstallArgs {
     /// The dependencies to install.
@@ -58,7 +59,7 @@ impl_figment_convert_basic!(InstallArgs);
 
 impl InstallArgs {
     pub fn run(self) -> Result<()> {
-        let mut config = self.try_load_config_emit_warnings()?;
+        let mut config = self.load_config()?;
         self.opts.install(&mut config, self.dependencies)
     }
 }
@@ -164,7 +165,7 @@ impl DependencyInstallOpts {
                 // Pin branch to submodule if branch is used
                 if let Some(branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    if git.has_branch(branch)? {
+                    if git.has_branch(branch, &path)? {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
                             .args(["submodule", "set-branch", "-b", branch])

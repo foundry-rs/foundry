@@ -1,10 +1,10 @@
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockTransactionsKind, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 
@@ -78,7 +78,7 @@ async fn can_send_multiple_blobs_in_one_tx() {
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    assert_eq!(receipt.blob_gas_used, Some(MAX_DATA_GAS_PER_BLOCK as u128));
+    assert_eq!(receipt.blob_gas_used, Some(MAX_DATA_GAS_PER_BLOCK));
     assert_eq!(receipt.blob_gas_price, Some(0x1)); // 1 wei
 }
 
@@ -176,8 +176,14 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     let second_receipt = second_tx.get_receipt().await.unwrap();
 
     let (first_block, second_block) = tokio::join!(
-        provider.get_block_by_number(first_receipt.block_number.unwrap().into(), false),
-        provider.get_block_by_number(second_receipt.block_number.unwrap().into(), false)
+        provider.get_block_by_number(
+            first_receipt.block_number.unwrap().into(),
+            BlockTransactionsKind::Hashes
+        ),
+        provider.get_block_by_number(
+            second_receipt.block_number.unwrap().into(),
+            BlockTransactionsKind::Hashes
+        )
     );
     assert_eq!(
         first_block.unwrap().unwrap().header.blob_gas_used,
@@ -239,12 +245,12 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
         receipt.block_number.expect("Failed to get block number")
     );
 
-    assert!(tx.max_fee_per_blob_gas.unwrap() >= BLOB_TX_MIN_BLOB_GASPRICE);
+    assert!(tx.max_fee_per_blob_gas().unwrap() >= BLOB_TX_MIN_BLOB_GASPRICE);
     assert_eq!(receipt.from, alice);
     assert_eq!(receipt.to, Some(bob));
     assert_eq!(
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
-        DATA_GAS_PER_BLOB as u128
+        DATA_GAS_PER_BLOB
     );
 }
 
@@ -285,11 +291,11 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() 
         receipt.block_number.expect("Failed to get block number")
     );
 
-    assert!(tx.max_fee_per_blob_gas.unwrap() >= BLOB_TX_MIN_BLOB_GASPRICE);
+    assert!(tx.max_fee_per_blob_gas().unwrap() >= BLOB_TX_MIN_BLOB_GASPRICE);
     assert_eq!(receipt.from, alice);
     assert_eq!(receipt.to, Some(bob));
     assert_eq!(
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
-        DATA_GAS_PER_BLOB as u128
+        DATA_GAS_PER_BLOB
     );
 }

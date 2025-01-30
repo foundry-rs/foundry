@@ -20,17 +20,9 @@ workspace = true
 name = "chisel"
 path = "bin/main.rs"
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # forge
 forge-fmt.workspace = true
-foundry-block-explorers.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
@@ -45,24 +37,25 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-json-abi.workspace = true
-alloy-rpc-types.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
-dirs = "5"
+dirs.workspace = true
 eyre.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 revm.workspace = true
-rustyline = "14"
+rustyline = "15"
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
+solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { workspace = true, features = ["full"] }
 yansi.workspace = true
 tracing.workspace = true
+walkdir.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }

@@ -1,8 +1,8 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{AnyNetworkBlock, BlockId, Transaction};
+use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
@@ -12,12 +12,15 @@ use foundry_block_explorers::{
 use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
+    traces::TraceMode,
+};
 use reqwest::Url;
 use revm_primitives::{
     db::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId,
+    Bytecode, Env, SpecId, TxKind,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -234,18 +237,22 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
+    let local_optimizer: u64 = if local_settings.optimizer == Some(true) { 1 } else { 0 };
     if etherscan_settings.optimization_used != local_optimizer {
         let str = format!(
             "Optimizer mismatch: local={}, onchain={}",
-            local_settings.optimizer, etherscan_settings.optimization_used
+            local_settings.optimizer.unwrap_or(false),
+            etherscan_settings.optimization_used
         );
         mismatches.push(str);
     }
-    if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
+    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64) ||
+        (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs, etherscan_settings.runs
+            local_settings.optimizer_runs.unwrap(),
+            etherscan_settings.runs
         );
         mismatches.push(str);
     }
@@ -306,7 +313,7 @@ pub fn check_args_len(
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
     if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if !constructor.inputs.is_empty() && args.len() == 0 {
+        if !constructor.inputs.is_empty() && args.is_empty() {
             eyre::bail!(
                 "Contract expects {} constructor argument(s), but none were provided",
                 constructor.inputs.len()
@@ -325,24 +332,25 @@ pub async fn get_tracing_executor(
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
-    let (env, fork, _chain, is_alphanet) =
+    let create2_deployer = evm_opts.create2_deployer;
+    let (env, fork, _chain, is_odyssey) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
         env.clone(),
         fork,
         Some(fork_config.evm_version),
-        false,
-        false,
-        is_alphanet,
+        TraceMode::Call,
+        is_odyssey,
+        create2_deployer,
     );
 
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyNetworkBlock) {
+pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.miner;
+    env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
@@ -353,11 +361,12 @@ pub fn deploy_contract(
     executor: &mut TracingExecutor,
     env: &Env,
     spec_id: SpecId,
-    transaction: &Transaction,
+    to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
     let env_with_handler = EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(spec_id));
 
-    if let Some(to) = transaction.to {
+    if to.is_some_and(|to| to.is_call()) {
+        let TxKind::Call(to) = to.unwrap() else { unreachable!() };
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
         }

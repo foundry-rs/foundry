@@ -1,16 +1,19 @@
-use alloy_primitives::map::HashMap;
+use alloy_primitives::map::rustc_hash::FxHashMap;
+use eyre::Result;
 use revm::interpreter::{
     opcode::{PUSH0, PUSH1, PUSH32},
     OpCode,
 };
 use revm_inspectors::opcode::immediate_size;
+use serde::Serialize;
 
 /// Maps from program counter to instruction counter.
 ///
 /// Inverse of [`IcPcMap`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
 pub struct PcIcMap {
-    pub inner: HashMap<usize, usize>,
+    pub inner: FxHashMap<u32, u32>,
 }
 
 impl PcIcMap {
@@ -30,7 +33,7 @@ impl PcIcMap {
     }
 
     /// Returns the instruction counter for the given program counter.
-    pub fn get(&self, pc: usize) -> Option<usize> {
+    pub fn get(&self, pc: u32) -> Option<u32> {
         self.inner.get(&pc).copied()
     }
 }
@@ -39,7 +42,7 @@ impl PcIcMap {
 ///
 /// Inverse of [`PcIcMap`].
 pub struct IcPcMap {
-    pub inner: HashMap<usize, usize>,
+    pub inner: FxHashMap<u32, u32>,
 }
 
 impl IcPcMap {
@@ -59,22 +62,24 @@ impl IcPcMap {
     }
 
     /// Returns the program counter for the given instruction counter.
-    pub fn get(&self, ic: usize) -> Option<usize> {
+    pub fn get(&self, ic: u32) -> Option<u32> {
         self.inner.get(&ic).copied()
     }
 }
 
-fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<usize, usize> {
-    let mut map = HashMap::default();
+fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<u32, u32> {
+    assert!(code.len() <= u32::MAX as usize, "bytecode is too big");
 
-    let mut pc = 0;
-    let mut cumulative_push_size = 0;
+    let mut map = FxHashMap::with_capacity_and_hasher(code.len(), Default::default());
+
+    let mut pc = 0usize;
+    let mut cumulative_push_size = 0usize;
     while pc < code.len() {
         let ic = pc - cumulative_push_size;
         if PC_FIRST {
-            map.insert(pc, ic);
+            map.insert(pc as u32, ic as u32);
         } else {
-            map.insert(ic, pc);
+            map.insert(ic as u32, pc as u32);
         }
 
         if (PUSH1..=PUSH32).contains(&code[pc]) {
@@ -86,6 +91,9 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<usize, usize> {
 
         pc += 1;
     }
+
+    map.shrink_to_fit();
+
     map
 }
 
@@ -96,22 +104,29 @@ pub struct Instruction<'a> {
     /// Immediate data following the opcode.
     pub immediate: &'a [u8],
     /// Program counter of the opcode.
-    pub pc: usize,
+    pub pc: u32,
 }
 
 /// Decodes raw opcode bytes into [`Instruction`]s.
-pub fn decode_instructions(code: &[u8]) -> Vec<Instruction<'_>> {
-    let mut pc = 0;
+pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction<'_>>> {
+    assert!(code.len() <= u32::MAX as usize, "bytecode is too big");
+
+    let mut pc = 0usize;
     let mut steps = Vec::new();
 
     while pc < code.len() {
         let op = OpCode::new(code[pc]);
-        let immediate_size = op.map(|op| immediate_size(op, &code[pc + 1..])).unwrap_or(0) as usize;
+        pc += 1;
+        let immediate_size = op.map(|op| immediate_size(op, &code[pc..])).unwrap_or(0) as usize;
 
-        steps.push(Instruction { op, pc, immediate: &code[pc + 1..pc + 1 + immediate_size] });
+        if pc + immediate_size > code.len() {
+            eyre::bail!("incomplete sequence of bytecode");
+        }
 
-        pc += 1 + immediate_size;
+        steps.push(Instruction { op, pc: pc as u32, immediate: &code[pc..pc + immediate_size] });
+
+        pc += immediate_size;
     }
 
-    steps
+    Ok(steps)
 }

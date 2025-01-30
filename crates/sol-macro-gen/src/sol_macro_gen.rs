@@ -11,7 +11,7 @@
 
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{SolInput, SolInputKind};
-use eyre::{Context, Ok, OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_common::fs;
 use proc_macro2::{Span, TokenStream};
 use std::{
@@ -39,7 +39,7 @@ impl SolMacroGen {
             #path
         };
 
-        let sol_input: SolInput = syn::parse2(tokens).wrap_err("Failed to parse SolInput {e}")?;
+        let sol_input: SolInput = syn::parse2(tokens).wrap_err("failed to parse input")?;
 
         Ok(sol_input)
     }
@@ -69,24 +69,35 @@ impl MultiSolMacroGen {
 
     pub fn generate_bindings(&mut self) -> Result<()> {
         for instance in &mut self.instances {
-            let input = instance.get_sol_input()?.normalize_json()?;
-
-            let SolInput { attrs: _attrs, path: _path, kind } = input;
-
-            let tokens = match kind {
-                SolInputKind::Sol(mut file) => {
-                    let sol_attr: syn::Attribute = syn::parse_quote! {
-                        #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
-                    };
-                    file.attrs.push(sol_attr);
-                    expand(file).wrap_err("Failed to expand SolInput")?
-                }
-                _ => unreachable!(),
-            };
-
-            instance.expansion = Some(tokens);
+            Self::generate_binding(instance).wrap_err_with(|| {
+                format!(
+                    "failed to generate bindings for {}:{}",
+                    instance.path.display(),
+                    instance.name
+                )
+            })?;
         }
 
+        Ok(())
+    }
+
+    fn generate_binding(instance: &mut SolMacroGen) -> Result<()> {
+        let input = instance.get_sol_input()?.normalize_json()?;
+
+        let SolInput { attrs: _, path: _, kind } = input;
+
+        let tokens = match kind {
+            SolInputKind::Sol(mut file) => {
+                let sol_attr: syn::Attribute = syn::parse_quote! {
+                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
+                };
+                file.attrs.push(sol_attr);
+                expand(file).wrap_err("failed to expand")?
+            }
+            _ => unreachable!(),
+        };
+
+        instance.expansion = Some(tokens);
         Ok(())
     }
 
@@ -139,27 +150,28 @@ edition = "2021"
         )?;
 
         // Write src
+        let parse_error = |name: &str| {
+            format!("failed to parse generated tokens as an AST for {name};\nthis is likely a bug")
+        };
         for instance in &self.instances {
+            let contents = instance.expansion.as_ref().unwrap();
+
             let name = instance.name.to_lowercase();
-            let contents = instance.expansion.as_ref().unwrap().to_string();
-
-            if !single_file {
-                let path = src.join(format!("{name}.rs"));
-                let file = syn::parse_file(&contents)?;
-                let contents = prettyplease::unparse(&file);
-
-                fs::write(path.clone(), contents).wrap_err("Failed to write file")?;
-                writeln!(&mut lib_contents, "pub mod {name};")?;
-            } else {
+            let path = src.join(format!("{name}.rs"));
+            let file = syn::parse2(contents.clone())
+                .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
+            let contents = prettyplease::unparse(&file);
+            if single_file {
                 write!(&mut lib_contents, "{contents}")?;
+            } else {
+                fs::write(path, contents).wrap_err("failed to write to file")?;
+                write_mod_name(&mut lib_contents, &name)?;
             }
         }
 
         let lib_path = src.join("lib.rs");
-        let lib_file = syn::parse_file(&lib_contents)?;
-
+        let lib_file = syn::parse_file(&lib_contents).wrap_err_with(|| parse_error("lib.rs"))?;
         let lib_contents = prettyplease::unparse(&lib_file);
-
         fs::write(lib_path, lib_contents).wrap_err("Failed to write lib.rs")?;
 
         Ok(())
@@ -182,12 +194,7 @@ edition = "2021"
             let name = instance.name.to_lowercase();
             if !single_file {
                 // Module
-                write!(
-                    mod_contents,
-                    r#"pub mod {};
-                "#,
-                    instance.name.to_lowercase()
-                )?;
+                write_mod_name(&mut mod_contents, &name)?;
                 let mut contents = String::new();
 
                 write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
@@ -258,12 +265,7 @@ edition = "2021"
                     .to_string();
 
                 self.check_file_contents(&path, &tokens)?;
-
-                write!(
-                    &mut super_contents,
-                    r#"pub mod {name};
-                    "#
-                )?;
+                write_mod_name(&mut super_contents, &name)?;
             }
 
             let super_path =
@@ -331,4 +333,13 @@ edition = "2021"
 
         Ok(())
     }
+}
+
+fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
+    if syn::parse_str::<syn::Ident>(&format!("pub mod {name};")).is_ok() {
+        write!(contents, "pub mod {name};")?;
+    } else {
+        write!(contents, "pub mod r#{name};")?;
+    }
+    Ok(())
 }

@@ -16,7 +16,7 @@ use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, ContractData};
+use foundry_common::{shell, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -64,7 +64,11 @@ impl PreSimulationState {
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
                 if let Some(TxKind::Call(_)) = to {
-                    builder.set_call(&address_to_abi, &self.execution_artifacts.decoder)?;
+                    builder.set_call(
+                        &address_to_abi,
+                        &self.execution_artifacts.decoder,
+                        self.script_config.evm_opts.create2_deployer,
+                    )?;
                 } else {
                     builder.set_create(false, sender.create(nonce), &address_to_abi)?;
                 }
@@ -112,10 +116,10 @@ impl PreSimulationState {
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
-            .map(|transaction| async {
+            .map(|mut transaction| async {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
+                let tx = transaction.tx_mut();
 
-                let tx = transaction.tx();
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
                     .simulate(
@@ -124,6 +128,7 @@ impl PreSimulationState {
                         to,
                         tx.input().map(Bytes::copy_from_slice),
                         tx.value(),
+                        tx.authorization_list(),
                     )
                     .wrap_err("Internal EVM error during simulation")?;
 
@@ -150,7 +155,7 @@ impl PreSimulationState {
             })
             .collect::<Vec<_>>();
 
-        if self.script_config.evm_opts.verbosity > 3 {
+        if !shell::is_json() && self.script_config.evm_opts.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
@@ -205,9 +210,8 @@ impl PreSimulationState {
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
-                let contract_name = get_contract_name(contract_id);
                 if let Ok(Some((_, data))) =
-                    self.build_data.known_contracts.find_by_name_or_identifier(contract_name)
+                    self.build_data.known_contracts.find_by_name_or_identifier(contract_id)
                 {
                     return Some((*addr, data));
                 }
@@ -220,9 +224,11 @@ impl PreSimulationState {
     async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
 
-        let n = rpcs.len();
-        let s = if n != 1 { "s" } else { "" };
-        sh_println!("\n## Setting up {n} EVM{s}.")?;
+        if !shell::is_json() {
+            let n = rpcs.len();
+            let s = if n != 1 { "s" } else { "" };
+            sh_println!("\n## Setting up {n} EVM{s}.")?;
+        }
 
         let futs = rpcs.into_iter().map(|rpc| async move {
             let mut script_config = self.script_config.clone();
@@ -348,24 +354,34 @@ impl FilledTransactionsState {
                     provider_info.gas_price()?
                 };
 
-                sh_println!("\n==========================")?;
-                sh_println!("\nChain {}", provider_info.chain)?;
+                let estimated_gas_price_raw = format_units(per_gas, 9)
+                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                let estimated_gas_price =
+                    estimated_gas_price_raw.trim_end_matches('0').trim_end_matches('.');
 
-                sh_println!(
-                    "\nEstimated gas price: {} gwei",
-                    format_units(per_gas, 9)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                        .trim_end_matches('0')
-                        .trim_end_matches('.')
-                )?;
-                sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                sh_println!(
-                    "\nEstimated amount required: {} ETH",
-                    format_units(total_gas.saturating_mul(per_gas), 18)
-                        .unwrap_or_else(|_| "[Could not calculate]".to_string())
-                        .trim_end_matches('0')
-                )?;
-                sh_println!("\n==========================")?;
+                let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
+                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                let estimated_amount = estimated_amount_raw.trim_end_matches('0');
+
+                if !shell::is_json() {
+                    sh_println!("\n==========================")?;
+                    sh_println!("\nChain {}", provider_info.chain)?;
+
+                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
+                    sh_println!("\nEstimated amount required: {estimated_amount} ETH",)?;
+                    sh_println!("\n==========================")?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        serde_json::json!({
+                            "chain": provider_info.chain,
+                            "estimated_gas_price": estimated_gas_price,
+                            "estimated_total_gas_used": total_gas,
+                            "estimated_amount_required": estimated_amount,
+                        })
+                    )?;
+                }
             }
         }
 
@@ -411,7 +427,7 @@ impl FilledTransactionsState {
             )?)
         };
 
-        let commit = get_commit_hash(&self.script_config.config.root.0);
+        let commit = get_commit_hash(&self.script_config.config.root);
 
         let libraries = self
             .build_data

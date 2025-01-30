@@ -20,13 +20,6 @@ name = "cast"
 name = "cast"
 path = "bin/main.rs"
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # lib
 foundry-block-explorers.workspace = true
@@ -94,6 +87,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
+alloy-node-bindings.workspace = true
 
 async-trait.workspace = true
 divan.workspace = true

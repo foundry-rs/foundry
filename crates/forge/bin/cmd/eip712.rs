@@ -1,19 +1,15 @@
 use clap::{Parser, ValueHint};
 use eyre::{Ok, OptionExt, Result};
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
-use foundry_compilers::{
-    artifacts::{
-        output_selection::OutputSelection,
-        visitor::{Visitor, Walk},
-        ContractDefinition, EnumDefinition, SourceUnit, StructDefinition, TypeDescriptions,
-        TypeName,
-    },
-    CompilerSettings,
+use foundry_compilers::artifacts::{
+    output_selection::OutputSelection,
+    visitor::{Visitor, Walk},
+    ContractDefinition, EnumDefinition, SourceUnit, StructDefinition, TypeDescriptions, TypeName,
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
 
-foundry_config::impl_figment_convert!(Eip712Args, opts);
+foundry_config::impl_figment_convert!(Eip712Args, build);
 
 /// CLI arguments for `forge eip712`.
 #[derive(Clone, Debug, Parser)]
@@ -23,15 +19,15 @@ pub struct Eip712Args {
     pub target_path: PathBuf,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let mut project = config.create_project(false, true)?;
         let target_path = dunce::canonicalize(self.target_path)?;
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::ast_output_selection();
         });
 

@@ -3,7 +3,8 @@
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use eyre::Result;
-use foundry_cli::{opts::ShellOpts, utils};
+use foundry_cli::{handler, opts::GlobalArgs, utils};
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -11,16 +12,17 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// A fast local Ethereum development node.
 #[derive(Parser)]
-#[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
+#[command(name = "anvil", version = SHORT_VERSION, long_version = LONG_VERSION, next_display_order = None)]
 pub struct Anvil {
+    /// Include the global arguments.
+    #[command(flatten)]
+    pub global: GlobalArgs,
+
     #[command(flatten)]
     pub node: NodeArgs,
 
     #[command(subcommand)]
     pub cmd: Option<AnvilSubcommand>,
-
-    #[clap(flatten)]
-    pub shell: ShellOpts,
 }
 
 #[derive(Subcommand)]
@@ -45,11 +47,13 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    handler::install();
     utils::load_dotenv();
+    utils::enable_paint();
 
     let mut args = Anvil::parse();
-    args.shell.shell().set();
-    args.node.evm_opts.resolve_rpc_alias();
+    args.global.init()?;
+    args.node.evm.resolve_rpc_alias();
 
     if let Some(cmd) = &args.cmd {
         match cmd {
@@ -87,6 +91,16 @@ mod tests {
     #[test]
     fn can_parse_help() {
         let _: Anvil = Anvil::parse_from(["anvil", "--help"]);
+    }
+
+    #[test]
+    fn can_parse_short_version() {
+        let _: Anvil = Anvil::parse_from(["anvil", "-V"]);
+    }
+
+    #[test]
+    fn can_parse_long_version() {
+        let _: Anvil = Anvil::parse_from(["anvil", "--version"]);
     }
 
     #[test]

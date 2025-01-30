@@ -1,7 +1,7 @@
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{Error, Event, Function};
 use alloy_primitives::{hex, map::HashSet};
 use foundry_common::{
-    abi::{get_event, get_func},
+    abi::{get_error, get_event, get_func},
     fs,
     selectors::{OpenChainClient, SelectorType},
 };
@@ -12,16 +12,35 @@ use tokio::sync::RwLock;
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct CachedSignatures {
-    events: BTreeMap<String, String>,
-    functions: BTreeMap<String, String>,
+pub struct CachedSignatures {
+    pub errors: BTreeMap<String, String>,
+    pub events: BTreeMap<String, String>,
+    pub functions: BTreeMap<String, String>,
 }
 
+impl CachedSignatures {
+    #[instrument(target = "evm::traces")]
+    pub fn load(cache_path: PathBuf) -> Self {
+        let path = cache_path.join("signatures");
+        if path.is_file() {
+            fs::read_json_file(&path)
+                .map_err(
+                    |err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"),
+                )
+                .unwrap_or_default()
+        } else {
+            if let Err(err) = std::fs::create_dir_all(cache_path) {
+                warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
+            }
+            Self::default()
+        }
+    }
+}
 /// An identifier that tries to identify functions and events using signatures found at
 /// `https://openchain.xyz` or a local cache.
 #[derive(Debug)]
 pub struct SignaturesIdentifier {
-    /// Cached selectors for functions and events.
+    /// Cached selectors for functions, events and custom errors.
     cached: CachedSignatures,
     /// Location where to save `CachedSignatures`.
     cached_path: Option<PathBuf>,
@@ -42,16 +61,7 @@ impl SignaturesIdentifier {
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             trace!(target: "evm::traces", ?path, "reading signature cache");
-            let cached = if path.is_file() {
-                fs::read_json_file(&path)
-                    .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
-                    .unwrap_or_default()
-            } else {
-                if let Err(err) = std::fs::create_dir_all(cache_path) {
-                    warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
-                }
-                CachedSignatures::default()
-            };
+            let cached = CachedSignatures::load(cache_path);
             Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
         } else {
             Self {
@@ -92,6 +102,7 @@ impl SignaturesIdentifier {
         let cache = match selector_type {
             SelectorType::Function => &mut self.cached.functions,
             SelectorType::Event => &mut self.cached.events,
+            SelectorType::Error => &mut self.cached.errors,
         };
 
         let hex_identifiers: Vec<String> =
@@ -147,6 +158,19 @@ impl SignaturesIdentifier {
     /// Identifies `Event` from its cache or `https://api.openchain.xyz`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
         self.identify_events(&[identifier]).await.pop().unwrap()
+    }
+
+    /// Identifies `Error`s from its cache or `https://api.openchain.xyz`.
+    pub async fn identify_errors(
+        &mut self,
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Vec<Option<Error>> {
+        self.identify(SelectorType::Error, identifiers, get_error).await
+    }
+
+    /// Identifies `Error` from its cache or `https://api.openchain.xyz`.
+    pub async fn identify_error(&mut self, identifier: &[u8]) -> Option<Error> {
+        self.identify_errors(&[identifier]).await.pop().unwrap()
     }
 }
 

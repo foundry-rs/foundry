@@ -103,6 +103,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub always_use_create_2_factory: bool,
 
+    /// The CREATE2 deployer address to use, this will override the one in the config.
+    #[arg(long, value_name = "ADDRESS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create2_deployer: Option<Address>,
+
     /// Sets the number of assumed available compute units per second for this provider
     ///
     /// default value: 330
@@ -135,10 +140,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
-    /// Whether to enable Alphanet features.
-    #[arg(long, alias = "odyssey")]
+    /// Whether to enable Odyssey features.
+    #[arg(long, alias = "alphanet")]
     #[serde(skip)]
-    pub alphanet: bool,
+    pub odyssey: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -165,8 +170,8 @@ impl Provider for EvmArgs {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
-        if self.alphanet {
-            dict.insert("alphanet".to_string(), self.alphanet.into());
+        if self.odyssey {
+            dict.insert("odyssey".to_string(), self.odyssey.into());
         }
 
         if self.always_use_create_2_factory {
@@ -196,11 +201,6 @@ impl Provider for EvmArgs {
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
-    /// The block gas limit.
-    #[arg(long, value_name = "GAS_LIMIT")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gas_limit: Option<u64>,
-
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
     #[arg(long, value_name = "CODE_SIZE")]
@@ -253,7 +253,7 @@ pub struct EnvArgs {
     pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
-    #[arg(long, value_name = "GAS_LIMIT")]
+    #[arg(long, visible_alias = "gas-limit", value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 
@@ -267,6 +267,7 @@ pub struct EnvArgs {
 
     /// Whether to disable the block gas limit checks.
     #[arg(long, visible_alias = "no-gas-limit")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub disable_block_gas_limit: bool,
 }
 
@@ -300,7 +301,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
@@ -313,7 +314,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.memory_limit, Config::default().memory_limit);
 
         let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
@@ -328,7 +329,7 @@ mod tests {
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
         assert_eq!(env.chain, Some(Chain::mainnet()));
         let args = EvmArgs { env, ..Default::default() };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 }

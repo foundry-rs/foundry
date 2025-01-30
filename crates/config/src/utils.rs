@@ -14,25 +14,21 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use toml_edit::{DocumentMut, Item};
 
-/// Loads the config for the current project workspace
-pub fn load_config() -> Config {
+// TODO: Why do these exist separately from `Config::load`?
+
+/// Loads the config for the current project workspace.
+pub fn load_config() -> eyre::Result<Config> {
     load_config_with_root(None)
 }
 
 /// Loads the config for the current project workspace or the provided root path.
-///
-/// # Panics
-///
-/// Panics if the project root cannot be found. See [`find_project_root`].
-#[track_caller]
-pub fn load_config_with_root(root: Option<&Path>) -> Config {
+pub fn load_config_with_root(root: Option<&Path>) -> eyre::Result<Config> {
     let root = match root {
         Some(root) => root,
-        None => &find_project_root(None),
+        None => &find_project_root(None)?,
     };
-    Config::load_with_root(root).sanitized()
+    Ok(Config::load_with_root(root)?.sanitized())
 }
 
 /// Returns the path of the top-level directory of the working git tree.
@@ -60,20 +56,10 @@ pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
 ///
 /// Returns `repo` or `cwd` if no `foundry.toml` is found in the tree.
 ///
-/// # Panics
-///
-/// Panics if:
+/// Returns an error if:
 /// - `cwd` is `Some` and is not a valid directory;
 /// - `cwd` is `None` and the [`std::env::current_dir`] call fails.
-#[track_caller]
-pub fn find_project_root(cwd: Option<&Path>) -> PathBuf {
-    try_find_project_root(cwd).expect("Could not find project root")
-}
-
-/// Returns the root path to set for the project root.
-///
-/// Same as [`find_project_root`], but returns an error instead of panicking.
-pub fn try_find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
+pub fn find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
     let cwd = match cwd {
         Some(path) => path,
         None => &std::env::current_dir()?,
@@ -186,45 +172,6 @@ pub(crate) fn get_dir_remapping(dir: impl AsRef<Path>) -> Option<Remapping> {
     }
 }
 
-/// Returns all available `profile` keys in a given `.toml` file
-///
-/// i.e. The toml below would return would return `["default", "ci", "local"]`
-/// ```toml
-/// [profile.default]
-/// ...
-/// [profile.ci]
-/// ...
-/// [profile.local]
-/// ```
-pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<String>> {
-    let mut result = vec![Config::DEFAULT_PROFILE.to_string()];
-
-    if !toml_path.as_ref().exists() {
-        return Ok(result)
-    }
-
-    let doc = read_toml(toml_path)?;
-
-    if let Some(Item::Table(profiles)) = doc.as_table().get(Config::PROFILE_SECTION) {
-        for (profile, _) in profiles {
-            let p = profile.to_string();
-            if !result.contains(&p) {
-                result.push(p);
-            }
-        }
-    }
-
-    Ok(result)
-}
-
-/// Returns a [`toml_edit::Document`] loaded from the provided `path`.
-/// Can raise an error in case of I/O or parsing errors.
-fn read_toml(path: impl AsRef<Path>) -> eyre::Result<DocumentMut> {
-    let path = path.as_ref().to_owned();
-    let doc: DocumentMut = std::fs::read_to_string(path)?.parse()?;
-    Ok(doc)
-}
-
 /// Deserialize stringified percent. The value must be between 0 and 100 inclusive.
 pub(crate) fn deserialize_stringified_percent<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
@@ -299,8 +246,8 @@ impl FromStr for Numeric {
 
 /// Returns the [SpecId] derived from [EvmVersion]
 #[inline]
-pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
-    if alphanet {
+pub fn evm_spec_id(evm_version: EvmVersion, odyssey: bool) -> SpecId {
+    if odyssey {
         return SpecId::OSAKA;
     }
     match evm_version {
@@ -317,43 +264,5 @@ pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
         EvmVersion::Shanghai => SpecId::SHANGHAI,
         EvmVersion::Cancun => SpecId::CANCUN,
         EvmVersion::Prague => SpecId::OSAKA, // Osaka enables EOF
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::get_available_profiles;
-    use std::path::Path;
-
-    #[test]
-    fn get_profiles_from_toml() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r"
-                [foo.baz]
-                libs = ['node_modules', 'lib']
-
-                [profile.default]
-                libs = ['node_modules', 'lib']
-
-                [profile.ci]
-                libs = ['node_modules', 'lib']
-
-                [profile.local]
-                libs = ['node_modules', 'lib']
-            ",
-            )?;
-
-            let path = Path::new("./foundry.toml");
-            let profiles = get_available_profiles(path).unwrap();
-
-            assert_eq!(
-                profiles,
-                vec!["default".to_string(), "ci".to_string(), "local".to_string()]
-            );
-
-            Ok(())
-        });
     }
 }

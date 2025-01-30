@@ -5,24 +5,22 @@
 
 use crate::{
     dispatcher::PROMPT_ARROW,
-    prelude::{ChiselCommand, COMMAND_LEADER},
+    prelude::{ChiselCommand, COMMAND_LEADER, PROMPT_ARROW_STR},
 };
 use rustyline::{
     completion::Completer,
-    highlight::Highlighter,
+    highlight::{CmdKind, Highlighter},
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
     Helper,
 };
-use solang_parser::{
-    lexer::{Lexer, Token},
-    pt,
+use solar_parse::{
+    interface::{Session, SessionGlobals},
+    token::{Token, TokenKind},
+    Lexer,
 };
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, ops::Range, str::FromStr};
 use yansi::{Color, Style};
-
-/// The default pre-allocation for solang parsed comments
-const DEFAULT_COMMENTS: usize = 5;
 
 /// The maximum length of an ANSI prefix + suffix characters using [SolidityHelper].
 ///
@@ -33,20 +31,35 @@ const DEFAULT_COMMENTS: usize = 5;
 /// * 4 - suffix: `\x1B[0m`
 const MAX_ANSI_LEN: usize = 9;
 
-/// `(start, style, end)`
-pub type SpannedStyle = (usize, Style, usize);
-
 /// A rustyline helper for Solidity code
-#[derive(Clone, Debug, Default)]
 pub struct SolidityHelper {
-    /// Whether the dispatcher has errored.
-    pub errored: bool,
+    errored: bool,
+
+    do_paint: bool,
+    sess: Session,
+    globals: SessionGlobals,
+}
+
+impl Default for SolidityHelper {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SolidityHelper {
     /// Create a new SolidityHelper.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            errored: false,
+            do_paint: yansi::is_enabled(),
+            sess: Session::builder().with_silent_emitter(None).build(),
+            globals: SessionGlobals::new(),
+        }
+    }
+
+    /// Returns whether the helper is in an errored state.
+    pub fn errored(&self) -> bool {
+        self.errored
     }
 
     /// Set the errored field.
@@ -55,54 +68,9 @@ impl SolidityHelper {
         self
     }
 
-    /// Get styles for a solidity source string
-    pub fn get_styles(input: &str) -> Vec<SpannedStyle> {
-        let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
-        let mut errors = Vec::with_capacity(5);
-        let mut out = Lexer::new(input, 0, &mut comments, &mut errors)
-            .map(|(start, token, end)| (start, token.style(), end))
-            .collect::<Vec<_>>();
-
-        // highlight comments too
-        let comments_iter = comments.into_iter().map(|comment| {
-            let loc = match comment {
-                pt::Comment::Line(loc, _) |
-                pt::Comment::Block(loc, _) |
-                pt::Comment::DocLine(loc, _) |
-                pt::Comment::DocBlock(loc, _) => loc,
-            };
-            (loc.start(), Style::new().dim(), loc.end())
-        });
-        out.extend(comments_iter);
-
-        out
-    }
-
-    /// Get contiguous styles for a solidity source string
-    pub fn get_contiguous_styles(input: &str) -> Vec<SpannedStyle> {
-        let mut styles = Self::get_styles(input);
-        styles.sort_unstable_by_key(|(start, _, _)| *start);
-
-        let len = input.len();
-        // len / 4 is just a random average of whitespaces in the input
-        let mut out = Vec::with_capacity(styles.len() + len / 4 + 1);
-        let mut index = 0;
-        for (start, style, end) in styles {
-            if index < start {
-                out.push((index, Style::default(), start));
-            }
-            out.push((start, style, end));
-            index = end;
-        }
-        if index < len {
-            out.push((index, Style::default(), len));
-        }
-        out
-    }
-
-    /// Highlights a solidity source string
-    pub fn highlight(input: &str) -> Cow<'_, str> {
-        if !yansi::is_enabled() {
+    /// Highlights a Solidity source string.
+    pub fn highlight<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        if !self.do_paint() {
             return Cow::Borrowed(input)
         }
 
@@ -133,52 +101,53 @@ impl SolidityHelper {
 
             Cow::Owned(out)
         } else {
-            let styles = Self::get_contiguous_styles(input);
-            let len = styles.len();
-            if len == 0 {
-                Cow::Borrowed(input)
-            } else {
-                let mut out = String::with_capacity(input.len() + MAX_ANSI_LEN * len);
-                for (start, style, end) in styles {
-                    Self::paint_unchecked(&input[start..end], style, &mut out);
-                }
-                Cow::Owned(out)
-            }
+            let mut out = String::with_capacity(input.len() * 2);
+            self.with_contiguous_styles(input, |style, range| {
+                Self::paint_unchecked(&input[range], style, &mut out);
+            });
+            Cow::Owned(out)
         }
     }
 
-    /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
-    fn validate_closed(input: &str) -> ValidationResult {
-        let mut bracket_depth = 0usize;
-        let mut paren_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut comments = Vec::with_capacity(DEFAULT_COMMENTS);
-        // returns on any encountered error, so allocate for just one
-        let mut errors = Vec::with_capacity(1);
-        for (_, token, _) in Lexer::new(input, 0, &mut comments, &mut errors) {
-            match token {
-                Token::OpenBracket => {
-                    bracket_depth += 1;
+    /// Returns a list of styles and the ranges they should be applied to.
+    ///
+    /// Covers the entire source string, including any whitespace.
+    fn with_contiguous_styles(&self, input: &str, mut f: impl FnMut(Style, Range<usize>)) {
+        self.enter(|sess| {
+            let len = input.len();
+            let mut index = 0;
+            for token in Lexer::new(sess, input) {
+                let range = token.span.lo().to_usize()..token.span.hi().to_usize();
+                let style = token_style(&token);
+                if index < range.start {
+                    f(Style::default(), index..range.start);
                 }
-                Token::OpenCurlyBrace => {
-                    brace_depth += 1;
-                }
-                Token::OpenParenthesis => {
-                    paren_depth += 1;
-                }
-                Token::CloseBracket => {
-                    bracket_depth = bracket_depth.saturating_sub(1);
-                }
-                Token::CloseCurlyBrace => {
-                    brace_depth = brace_depth.saturating_sub(1);
-                }
-                Token::CloseParenthesis => {
-                    paren_depth = paren_depth.saturating_sub(1);
-                }
-                _ => {}
+                index = range.end;
+                f(style, range);
             }
-        }
-        if (bracket_depth | brace_depth | paren_depth) == 0 {
+            if index < len {
+                f(Style::default(), index..len);
+            }
+        });
+    }
+
+    /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
+    fn validate_closed(&self, input: &str) -> ValidationResult {
+        let mut depth = [0usize; 3];
+        self.enter(|sess| {
+            for token in Lexer::new(sess, input) {
+                match token.kind {
+                    TokenKind::OpenDelim(delim) => {
+                        depth[delim as usize] += 1;
+                    }
+                    TokenKind::CloseDelim(delim) => {
+                        depth[delim as usize] = depth[delim as usize].saturating_sub(1);
+                    }
+                    _ => {}
+                }
+            }
+        });
+        if depth == [0; 3] {
             ValidationResult::Valid(None)
         } else {
             ValidationResult::Incomplete
@@ -186,8 +155,7 @@ impl SolidityHelper {
     }
 
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or
-    /// `yansi::is_enabled`
-    #[inline]
+    /// `self.do_paint`.
     fn paint_unchecked(string: &str, style: Style, out: &mut String) {
         if style == Style::default() {
             out.push_str(string);
@@ -198,20 +166,29 @@ impl SolidityHelper {
         }
     }
 
-    #[inline]
     fn paint_unchecked_owned(string: &str, style: Style) -> String {
         let mut out = String::with_capacity(MAX_ANSI_LEN + string.len());
         Self::paint_unchecked(string, style, &mut out);
         out
     }
+
+    /// Returns whether to color the output.
+    fn do_paint(&self) -> bool {
+        self.do_paint
+    }
+
+    /// Enters the session.
+    fn enter(&self, f: impl FnOnce(&Session)) {
+        self.globals.set(|| self.sess.enter(|| f(&self.sess)));
+    }
 }
 
 impl Highlighter for SolidityHelper {
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        Self::highlight(line)
+        self.highlight(line)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize, _forced: bool) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, _kind: CmdKind) -> bool {
         pos == line.len()
     }
 
@@ -220,7 +197,7 @@ impl Highlighter for SolidityHelper {
         prompt: &'p str,
         _default: bool,
     ) -> Cow<'b, str> {
-        if !yansi::is_enabled() {
+        if !self.do_paint() {
             return Cow::Borrowed(prompt)
         }
 
@@ -241,14 +218,7 @@ impl Highlighter for SolidityHelper {
         if let Some(i) = out.find(PROMPT_ARROW) {
             let style =
                 if self.errored { Color::Red.foreground() } else { Color::Green.foreground() };
-
-            let mut arrow = String::with_capacity(MAX_ANSI_LEN + 4);
-
-            let _ = style.fmt_prefix(&mut arrow);
-            arrow.push(PROMPT_ARROW);
-            let _ = style.fmt_suffix(&mut arrow);
-
-            out.replace_range(i..=i + 2, &arrow);
+            out.replace_range(i..=i + 2, &Self::paint_unchecked_owned(PROMPT_ARROW_STR, style));
         }
 
         Cow::Owned(out)
@@ -257,7 +227,7 @@ impl Highlighter for SolidityHelper {
 
 impl Validator for SolidityHelper {
     fn validate(&self, ctx: &mut ValidationContext<'_>) -> rustyline::Result<ValidationResult> {
-        Ok(Self::validate_closed(ctx.input()))
+        Ok(self.validate_closed(ctx.input()))
     }
 }
 
@@ -271,44 +241,32 @@ impl Hinter for SolidityHelper {
 
 impl Helper for SolidityHelper {}
 
-/// Trait that assigns a color to a Token kind
-pub trait TokenStyle {
-    /// Returns the style with which the token should be decorated with.
-    fn style(&self) -> Style;
-}
+#[allow(non_upper_case_globals)]
+#[deny(unreachable_patterns)]
+fn token_style(token: &Token) -> Style {
+    use solar_parse::{
+        interface::kw::*,
+        token::{TokenKind::*, TokenLitKind::*},
+    };
 
-/// [TokenStyle] implementation for [Token]
-impl TokenStyle for Token<'_> {
-    fn style(&self) -> Style {
-        use Token::*;
-        match self {
-            StringLiteral(_, _) => Color::Green.foreground(),
+    match token.kind {
+        Literal(Str | HexStr | UnicodeStr, _) => Color::Green.foreground(),
+        Literal(..) => Color::Yellow.foreground(),
 
-            AddressLiteral(_) |
-            HexLiteral(_) |
-            Number(_, _) |
-            RationalNumber(_, _, _) |
-            HexNumber(_) |
-            True |
-            False => Color::Yellow.foreground(),
-
+        Ident(
             Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
             Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
-            Modifier | Immutable | Unchecked => Color::Cyan.foreground(),
+            Modifier | Immutable | Unchecked,
+        ) => Color::Cyan.foreground(),
 
-            Contract | Library | Interface | Function | Pragma | Import | Struct | Event |
-            Enum | Type | Constructor | As | Is | Using | New | Delete | Do | Continue |
-            Break | Throw | Emit | Return | Returns | Revert | For | While | If | Else | Try |
-            Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow | Arrow => {
-                Color::Magenta.foreground()
-            }
+        Ident(s) if s.is_elementary_type() => Color::Blue.foreground(),
+        Ident(Mapping) => Color::Blue.foreground(),
 
-            Uint(_) | Int(_) | Bytes(_) | Byte | DynamicBytes | Bool | Address | String |
-            Mapping => Color::Blue.foreground(),
+        Ident(s) if s.is_used_keyword() || s.is_yul_keyword() => Color::Magenta.foreground(),
+        Arrow | FatArrow => Color::Magenta.foreground(),
 
-            Identifier(_) => Style::default(),
+        Comment(..) => Color::Primary.dim(),
 
-            _ => Style::default(),
-        }
+        _ => Color::Primary.foreground(),
     }
 }

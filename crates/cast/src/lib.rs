@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
+
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use alloy_consensus::TxEnvelope;
@@ -21,7 +22,7 @@ use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -454,6 +455,8 @@ where
                     _ => "avalanche",
                 }
             }
+            "0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee" => "ink",
+            "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834" => "ink-sepolia",
             _ => "unknown",
         })
     }
@@ -571,14 +574,33 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let implementation = cast.implementation(addr, None).await?;
+    /// let implementation = cast.implementation(addr, false, None).await?;
     /// println!("{}", implementation);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn implementation(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        let slot =
-            B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
+    pub async fn implementation(
+        &self,
+        who: Address,
+        is_beacon: bool,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let slot = match is_beacon {
+            true => {
+                // Use the beacon slot : bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
+                B256::from_str(
+                    "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50",
+                )?
+            }
+            false => {
+                // Use the implementation slot :
+                // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
+                B256::from_str(
+                    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+                )?
+            }
+        };
+
         let value = self
             .provider
             .get_storage_at(who, slot.into())
@@ -731,9 +753,9 @@ where
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         Ok(if raw {
-            format!("0x{}", hex::encode(TxEnvelope::try_from(tx.inner)?.encoded_2718()))
+            format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
         } else if let Some(field) = field {
-            get_pretty_tx_attr(&tx, field.as_str())
+            get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
         } else if shell::is_json() {
             // to_value first to sort json object keys
@@ -995,7 +1017,7 @@ where
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number  > to_block {
+                        if block.number  > to_block {
                             break;
                         }
                     }
@@ -1916,7 +1938,9 @@ impl SimpleCast {
     ///     Cast::etherscan_source(
     ///         NamedChain::Mainnet.into(),
     ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///         "<etherscan_api_key>".to_string()
+    ///         Some("<etherscan_api_key>".to_string()),
+    ///         None,
+    ///         None
     ///     )
     ///     .await
     ///     .unwrap()
@@ -1928,9 +1952,11 @@ impl SimpleCast {
     pub async fn etherscan_source(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<String> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         Ok(metadata.source_code())
     }
@@ -1948,8 +1974,10 @@ impl SimpleCast {
     /// Cast::expand_etherscan_source_to_directory(
     ///     NamedChain::Mainnet.into(),
     ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///     "<etherscan_api_key>".to_string(),
+    ///     Some("<etherscan_api_key>".to_string()),
     ///     PathBuf::from("output_dir"),
+    ///     None,
+    ///     None,
     /// )
     /// .await?;
     /// # Ok(())
@@ -1958,10 +1986,12 @@ impl SimpleCast {
     pub async fn expand_etherscan_source_to_directory(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_directory: PathBuf,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> eyre::Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
@@ -1973,10 +2003,12 @@ impl SimpleCast {
     pub async fn etherscan_source_flatten(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_path: Option<PathBuf>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
             eyre::bail!("Empty contract source code")
@@ -2017,7 +2049,7 @@ impl SimpleCast {
     pub fn disassemble(code: &[u8]) -> Result<String> {
         let mut output = String::new();
 
-        for step in decode_instructions(code) {
+        for step in decode_instructions(code)? {
             write!(output, "{:08x}: ", step.pc)?;
 
             if let Some(op) = step.op {
@@ -2103,13 +2135,28 @@ impl SimpleCast {
     /// ```
     pub fn extract_functions(bytecode: &str) -> Result<Vec<(String, String, &str)>> {
         let code = hex::decode(strip_0x(bytecode))?;
-        Ok(evmole::function_selectors(&code, 0)
+        let info = evmole::contract_info(
+            evmole::ContractInfoArgs::new(&code)
+                .with_selectors()
+                .with_arguments()
+                .with_state_mutability(),
+        );
+        Ok(info
+            .functions
+            .expect("functions extraction was requested")
             .into_iter()
-            .map(|s| {
+            .map(|f| {
                 (
-                    hex::encode_prefixed(s),
-                    evmole::function_arguments(&code, &s, 0),
-                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
+                    hex::encode_prefixed(f.selector),
+                    f.arguments
+                        .expect("arguments extraction was requested")
+                        .into_iter()
+                        .map(|t| t.sol_type_name().to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                    f.state_mutability
+                        .expect("state_mutability extraction was requested")
+                        .as_json_str(),
                 )
             })
             .collect())
@@ -2153,6 +2200,33 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+fn explorer_client(
+    chain: Chain,
+    api_key: Option<String>,
+    api_url: Option<String>,
+    explorer_url: Option<String>,
+) -> Result<Client> {
+    let mut builder = Client::builder().with_chain_id(chain);
+
+    let deduced = chain.etherscan_urls();
+
+    let explorer_url = explorer_url
+        .or(deduced.map(|d| d.1.to_string()))
+        .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
+    builder = builder.with_url(explorer_url)?;
+
+    let api_url = api_url
+        .or(deduced.map(|d| d.0.to_string()))
+        .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
+    builder = builder.with_api_url(api_url)?;
+
+    if let Some(api_key) = api_key {
+        builder = builder.with_api_key(api_key);
+    }
+
+    builder.build().map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -2289,5 +2363,24 @@ mod tests {
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
         )
+    }
+
+    #[test]
+    fn disassemble_incomplete_sequence() {
+        let incomplete = &hex!("60"); // PUSH1
+        let disassembled = Cast::disassemble(incomplete);
+        assert!(disassembled.is_err());
+
+        let complete = &hex!("6000"); // PUSH1 0x00
+        let disassembled = Cast::disassemble(complete);
+        assert!(disassembled.is_ok());
+
+        let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
+        let disassembled = Cast::disassemble(incomplete);
+        assert!(disassembled.is_err());
+
+        let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
+        let disassembled = Cast::disassemble(complete);
+        assert!(disassembled.is_ok());
     }
 }

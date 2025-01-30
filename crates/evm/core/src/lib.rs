@@ -5,6 +5,8 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+use crate::constants::DEFAULT_CREATE2_DEPLOYER;
+use alloy_primitives::Address;
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
 use revm::{inspectors::NoOpInspector, interpreter::CreateInputs, EvmContext, Inspector};
@@ -48,11 +50,18 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
     }
 
     /// Simulates `console.log` invocation.
-    fn console_log(&mut self, _input: String) {}
+    fn console_log(&mut self, msg: &str) {
+        let _ = msg;
+    }
 
-    /// Returns `true` if the current network is Alphanet.
-    fn is_alphanet(&self) -> bool {
+    /// Returns `true` if the current network is Odyssey.
+    fn is_odyssey(&self) -> bool {
         false
+    }
+
+    /// Returns the CREATE2 deployer address.
+    fn create2_deployer(&self) -> Address {
+        DEFAULT_CREATE2_DEPLOYER
     }
 }
 
