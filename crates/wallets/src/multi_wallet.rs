@@ -249,7 +249,10 @@ impl MultiWalletOpts {
             signers.extend(mnemonics);
         }
         if self.interactives > 0 {
-            pending.extend(std::iter::repeat_n(PendingSigner::Interactive, self.interactives as usize));
+            pending.extend(std::iter::repeat_n(
+                PendingSigner::Interactive,
+                self.interactives as usize,
+            ));
         }
 
         Ok(MultiWallet::new(pending, signers))

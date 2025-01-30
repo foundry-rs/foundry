@@ -207,7 +207,7 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
 
     lockfile_init.read().unwrap();
 
-    let deps = lockfile_init.iter().map(|(path, dep_id)| (path, dep_id)).collect::<Vec<_>>();
+    let deps = lockfile_init.iter().collect::<Vec<_>>();
     assert_eq!(deps.len(), 2);
     assert_eq!(
         deps[0],
@@ -242,7 +242,7 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
 
     lockfile_update.read().unwrap();
 
-    let deps = lockfile_update.iter().map(|(path, dep_id)| (path, dep_id)).collect::<Vec<_>>();
+    let deps = lockfile_update.iter().collect::<Vec<_>>();
 
     assert_eq!(deps.len(), 2);
     assert_eq!(
