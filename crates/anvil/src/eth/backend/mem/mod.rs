@@ -529,37 +529,15 @@ impl Backend {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    // Set the fork block number
-                    let mut node_config = self.node_config.write().await;
-                    node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
-
-                    let mut env = self.env.read().clone();
-                    let (forked_db, client_fork_config) =
-                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
-
-                    *self.db.write().await = Box::new(forked_db);
-                    let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-                    *self.fork.write() = Some(fork);
-                    *self.env.write() = env;
+                    self.reset_block_number(fork_url, fork_block_number).await?;
                 } else {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
-                        if let Some(fork_url) = maybe_fork_url {
-                            // Set the fork block number
-                            let mut node_config = self.node_config.write().await;
-                            node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
-
-                            let mut env = self.env.read().clone();
-                            let (forked_db, client_fork_config) = node_config
-                                .setup_fork_db_config(fork_url, &mut env, &self.fees)
-                                .await?;
-
-                            *self.db.write().await = Box::new(forked_db);
-                            let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-                            *self.fork.write() = Some(fork);
-                            *self.env.write() = env;
+                        if let Some(fork_url) =
+                            { self.node_config.read().await.eth_rpc_url.clone() }
+                        {
+                            self.reset_block_number(fork_url, fork_block_number).await?;
                         }
                     }
 
@@ -611,6 +589,26 @@ impl Backend {
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
+    }
+
+    async fn reset_block_number(
+        &self,
+        fork_url: String,
+        fork_block_number: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut node_config = self.node_config.write().await;
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+
+        let mut env = self.env.read().clone();
+        let (forked_db, client_fork_config) =
+            node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
+
+        *self.db.write().await = Box::new(forked_db);
+        let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+        *self.fork.write() = Some(fork);
+        *self.env.write() = env;
+
+        Ok(())
     }
 
     /// Returns the `TimeManager` responsible for timestamps
