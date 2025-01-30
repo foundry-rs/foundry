@@ -2631,6 +2631,27 @@ impl Backend {
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
         common_block: Block,
     ) -> Result<(), BlockchainError> {
+        self.rollback(common_block).await?;
+        // Create the new reorged chain, filling the blocks with transactions if supplied
+        for i in 0..depth {
+            let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
+            let outcome = self.do_mine_block(to_be_mined).await;
+            node_info!(
+                "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
+                outcome.block_number,
+                outcome.included.len(),
+                outcome.invalid.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Rollback the chain to a common height.
+    ///
+    /// The state of the chain is rewound using `rewind` to the common block, including the db,
+    /// storage, and env.
+    pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
             let mut state = self.states.write();
@@ -2661,31 +2682,14 @@ impl Backend {
 
             // Set environment back to common block
             let mut env = self.env.write();
-            env.block = BlockEnv {
-                number: U256::from(common_block.header.number),
-                timestamp: U256::from(common_block.header.timestamp),
-                gas_limit: U256::from(common_block.header.gas_limit),
-                difficulty: common_block.header.difficulty,
-                prevrandao: Some(common_block.header.mix_hash),
-                coinbase: env.block.coinbase,
-                basefee: env.block.basefee,
-                ..env.block.clone()
-            };
+            env.block.number = U256::from(common_block.header.number);
+            env.block.timestamp = U256::from(common_block.header.timestamp);
+            env.block.gas_limit = U256::from(common_block.header.gas_limit);
+            env.block.difficulty = common_block.header.difficulty;
+            env.block.prevrandao = Some(common_block.header.mix_hash);
+
             self.time.reset(env.block.timestamp.to::<u64>());
         }
-
-        // Create the new reorged chain, filling the blocks with transactions if supplied
-        for i in 0..depth {
-            let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await;
-            node_info!(
-                "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
-                outcome.block_number,
-                outcome.included.len(),
-                outcome.invalid.len()
-            );
-        }
-
         Ok(())
     }
 }
