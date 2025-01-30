@@ -152,7 +152,7 @@ impl CoverageReporter for LcovReporter {
                     }
                     // Statements are not in the LCOV format.
                     // We don't add them in order to avoid doubling line hits.
-                    CoverageItemKind::Statement { .. } => {}
+                    CoverageItemKind::Statement => {}
                 }
             }
 

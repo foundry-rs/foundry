@@ -897,8 +897,7 @@ async fn can_stream_pending_transactions() {
         TransactionRequest::default().from(accounts[0]).to(accounts[0]).value(U256::from(1e18));
 
     let mut sending = futures::future::join_all(
-        std::iter::repeat(tx.clone())
-            .take(num_txs)
+        std::iter::repeat_n(tx.clone(), num_txs)
             .enumerate()
             .map(|(nonce, tx)| tx.nonce(nonce as u64))
             .map(|tx| async {

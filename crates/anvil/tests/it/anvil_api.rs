@@ -284,7 +284,7 @@ async fn can_mine_manually() {
 
     let start_num = provider.get_block_number().await.unwrap();
 
-    for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
+    for (idx, _) in std::iter::repeat_n((), 10).enumerate() {
         api.evm_mine(None).await.unwrap();
         let num = provider.get_block_number().await.unwrap();
         assert_eq!(num, start_num + idx as u64 + 1);
