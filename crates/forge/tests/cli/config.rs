@@ -1417,12 +1417,11 @@ contract GasSnapshotCheckTest is DSTest {{
 
     function testSnapshotGasSectionExternal() public {{
         vm.startSnapshotGas("testAssertGasExternal");
-        flare.run({});
+        flare.run({n});
         vm.stopSnapshotGas();
     }}
 }}
-        "#,
-            n
+        "#
         )
     };
 
