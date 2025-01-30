@@ -138,15 +138,8 @@ impl ExtTester {
         self
     }
 
-    /// Runs the test.
-    pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            let _ = sh_eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
-        let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
+    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
+        let (prj, test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Wipe the default structure.
         prj.wipe();
@@ -178,7 +171,10 @@ impl ExtTester {
             }
         }
 
-        // Run installation command.
+        (prj, test_cmd)
+    }
+
+    pub fn run_install_commands(&self, root: &str) {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
@@ -195,6 +191,20 @@ impl ExtTester {
                 }
             }
         }
+    }
+
+    /// Runs the test.
+    pub fn run(&self) {
+        // Skip fork tests if the RPC url is not set.
+        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
+            let _ = sh_eprintln!("ETH_RPC_URL is not set; skipping");
+            return;
+        }
+
+        let (prj, mut test_cmd) = self.setup_forge_prj();
+
+        // Run installation command.
+        self.run_install_commands(prj.root().to_str().unwrap());
 
         // Run the tests.
         test_cmd.arg("test");

@@ -1,10 +1,12 @@
 //! forge install and update tests
 
-use forge::{DepIdentifier, Lockfile};
-use foundry_cli::utils::Submodules;
+use forge::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
+use foundry_cli::utils::{Git, Submodules};
 use foundry_compilers::artifacts::Remapping;
 use foundry_config::Config;
-use foundry_test_utils::util::{pretty_err, read_string, TestCommand, FORGE_STD_REVISION};
+use foundry_test_utils::util::{
+    pretty_err, read_string, ExtTester, TestCommand, FORGE_STD_REVISION,
+};
 use semver::Version;
 use std::{
     fs,
@@ -38,7 +40,7 @@ Compiler run successful!
 "#]]);
 
     // assert lockfile
-    let forge_std = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 
     // Expect compilation to be skipped as no files have changed
@@ -74,7 +76,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 "#]]);
 
     // assert lockfile
-    let forge_std = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 });
 
@@ -122,10 +124,10 @@ Removing 'forge-std' in [..], (url: [..], tag: None)
     };
 
     install(&mut cmd);
-    let forge_std = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
     remove(&mut cmd, "forge-std");
-    let forge_std = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std"));
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std"));
     assert!(forge_std.is_none());
 
     // install again and remove via relative path
@@ -177,13 +179,13 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     };
 
     install(&mut cmd);
-    let forge_std_lock = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    let forge_std_lock = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std_lock, DepIdentifier::Tag { .. }));
     fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
 
     // install again with tag
     install(&mut cmd);
-    let forge_std_lock = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    let forge_std_lock = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std_lock, DepIdentifier::Tag { .. }));
 });
 
@@ -207,7 +209,7 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
     let dep = prj.paths().libraries[0].join("openzeppelin-contracts");
     assert!(dep.exists());
 
-    let oz_lock = lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    let oz_lock = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
     assert!(matches!(oz_lock, DepIdentifier::Tag { .. }));
 
     // the latest release at the time this test was written
@@ -232,8 +234,8 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
 
     let out = cmd.git_submodule_status();
     let status = String::from_utf8_lossy(&out.stdout);
-    let oz_init = lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
-    let solady_init = lockfile_get(&prj.root(), &PathBuf::from("lib/solady")).unwrap();
+    let oz_init = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    let solady_init = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
     assert_eq!(oz_init.name(), "v5.1.0");
     assert_eq!(solady_init.rev(), "513f581");
     let submodules_init: Submodules = status.parse().unwrap();
@@ -245,9 +247,8 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
     let submodules_update: Submodules = status.parse().unwrap();
     assert_eq!(submodules_init, submodules_update);
 
-    let oz_update =
-        lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
-    let solady_update = lockfile_get(&prj.root(), &PathBuf::from("lib/solady")).unwrap();
+    let oz_update = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    let solady_update = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
     assert_eq!(oz_init, oz_update);
     assert_eq!(solady_init, solady_update);
 });
@@ -268,9 +269,9 @@ forgetest!(can_override_tag_in_update, |prj, cmd| {
     let submodules_init: Submodules = status.parse().unwrap();
 
     let oz_init_lock =
-        lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+        lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
     assert_eq!(oz_init_lock.name(), "v5.0.2");
-    let solady_init_lock = lockfile_get(&prj.root(), &PathBuf::from("lib/solady")).unwrap();
+    let solady_init_lock = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
     assert_eq!(solady_init_lock.rev(), "513f581");
 
     // Update oz to a different release tag
@@ -287,8 +288,8 @@ forgetest!(can_override_tag_in_update, |prj, cmd| {
     assert_eq!(submodules_init.0[1], submodules_update.0[1]);
 
     let oz_update_lock =
-        lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
-    let solady_update_lock = lockfile_get(&prj.root(), &PathBuf::from("lib/solady")).unwrap();
+        lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    let solady_update_lock = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
 
     assert_ne!(oz_init_lock, oz_update_lock);
     assert_eq!(oz_update_lock.name(), "v5.1.0");
@@ -308,7 +309,7 @@ forgetest!(should_not_update_tagged_deps, |prj, cmd| {
     let status = String::from_utf8_lossy(&out.stdout);
     let submodules_init: Submodules = status.parse().unwrap();
 
-    let oz_init = lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    let oz_init = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
 
     cmd.forge_fuse().arg("update").assert_success();
 
@@ -318,8 +319,7 @@ forgetest!(should_not_update_tagged_deps, |prj, cmd| {
 
     assert_eq!(submodules_init, submodules_update);
 
-    let oz_update =
-        lockfile_get(&prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    let oz_update = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
 
     assert_eq!(oz_init, oz_update);
     // Check that halmos-cheatcodes dep is not added to oz deps
@@ -448,3 +448,55 @@ Compiler run successful!
 "#]]);
     }
 );
+
+#[tokio::test]
+async fn uni_v4_core_sync_foundry_lock() {
+    let (prj, mut cmd) =
+        ExtTester::new("Uniswap", "v4-core", "e50237c43811bd9b526eff40f26772152a42daba")
+            .setup_forge_prj();
+
+    assert!(!prj.root().join(FOUNDRY_LOCK).exists());
+
+    let git = Git::new(prj.root());
+
+    let submodules = git.submodules().unwrap();
+
+    let submod_forge_std =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/forge-std")).unwrap();
+    let submod_oz = submodules
+        .into_iter()
+        .find(|s| s.path() == &PathBuf::from("lib/openzeppelin-contracts"))
+        .unwrap();
+    let submod_solmate =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/solmate")).unwrap();
+
+    cmd.arg("install").assert_success();
+
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
+    assert_eq!(forge_std.rev(), submod_forge_std.rev());
+    let solmate = lockfile_get(prj.root(), &PathBuf::from("lib/solmate")).unwrap();
+    assert!(matches!(solmate, DepIdentifier::Rev { .. }));
+    assert_eq!(solmate.rev(), submod_solmate.rev());
+    let oz = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    assert!(matches!(oz, DepIdentifier::Tag { .. }));
+    assert_eq!(oz.rev(), submod_oz.rev());
+    assert_eq!(oz.name(), "v5.0.2");
+
+    // Commit the lockfile
+    git.add(&PathBuf::from(FOUNDRY_LOCK)).unwrap();
+    git.commit("Foundry lock").unwrap();
+
+    // Try update. Nothing should get updated everything is pinned tag/rev.
+    cmd.forge_fuse().arg("update").assert_success();
+
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
+    assert_eq!(forge_std.rev(), submod_forge_std.rev());
+    let solmate = lockfile_get(prj.root(), &PathBuf::from("lib/solmate")).unwrap();
+    assert!(matches!(solmate, DepIdentifier::Rev { .. }));
+    assert_eq!(solmate.rev(), submod_solmate.rev());
+    let oz = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
+    assert!(matches!(oz, DepIdentifier::Tag { .. }));
+    assert_eq!(oz.rev(), submod_oz.rev());
+}
