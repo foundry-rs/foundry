@@ -38,13 +38,6 @@ pub struct ReorgOptions {
     pub tx_block_pairs: Vec<(TransactionData, u64)>,
 }
 
-/// Represents the options used in `anvil_rollback`
-#[derive(Debug, Clone, Deserialize)]
-pub struct RollbackOptions {
-    // The depth of the rollback
-    pub depth: u64,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum TransactionData {

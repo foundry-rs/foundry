@@ -28,7 +28,7 @@ use anvil_core::{
         wallet::{Capabilities, DelegationCapability, WalletCapabilities},
         EthRequest,
     },
-    types::{ReorgOptions, RollbackOptions, TransactionData},
+    types::{ReorgOptions, TransactionData},
 };
 use foundry_evm::revm::primitives::SpecId;
 use std::{
@@ -810,18 +810,31 @@ async fn test_rollback() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await; // block height 1
-    api.mine_one().await; // block height 2
+    // Mine 5 blocks
+    for _ in 0..5 {
+        api.mine_one().await;
+    }
 
-    let original_block0_hash =
-        provider.get_block(1.into(), false.into()).await.unwrap().unwrap().header.hash;
-    api.anvil_rollback(RollbackOptions { depth: 1 }).await.unwrap();
-    // assert the chain rolled back to block height 1, and the block hash is kept the same
-    let height = provider.get_block_number().await.unwrap();
-    assert_eq!(height, 1);
-    let new_block1_hash =
-        provider.get_block(1.into(), false.into()).await.unwrap().unwrap().header.hash;
-    assert_eq!(original_block0_hash, new_block1_hash);
+    // Get block 4 for later comparison
+    let block4 = provider.get_block(4.into(), false.into()).await.unwrap().unwrap();
+
+    // Rollback with None should rollback 1 block
+    api.anvil_rollback(None).await.unwrap();
+
+    // Assert we're at block 4 and the block contents are kept the same
+    let head = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    assert_eq!(head, block4);
+
+    // Get block 1 for comparison
+    let block1 = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+
+    // Rollback to block 1
+    let depth = 3; // from block 4 to block 1
+    api.anvil_rollback(Some(depth)).await.unwrap();
+
+    // Assert we're at block 1 and the block contents are kept the same
+    let head = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    assert_eq!(head, block1);
 }
 
 // === wallet endpoints === //

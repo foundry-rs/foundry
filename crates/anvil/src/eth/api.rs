@@ -72,7 +72,7 @@ use anvil_core::{
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
-    types::{ReorgOptions, RollbackOptions, TransactionData, Work},
+    types::{ReorgOptions, TransactionData, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -456,9 +456,7 @@ impl EthApi {
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
-            EthRequest::Rollback(rollback_options) => {
-                self.anvil_rollback(rollback_options).await.to_rpc_result()
-            }
+            EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
             EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
             EthRequest::WalletSendTransaction(tx) => {
                 self.wallet_send_transaction(*tx).await.to_rpc_result()
@@ -2080,9 +2078,9 @@ impl EthApi {
     /// chain height, i.e. can't rollback past the genesis block.
     ///
     /// Handler for RPC call: `anvil_rollback`
-    pub async fn anvil_rollback(&self, options: RollbackOptions) -> Result<()> {
+    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
         node_info!("anvil_rollback");
-        let depth = options.depth;
+        let depth = depth.unwrap_or(1);
 
         // Check reorg depth doesn't exceed current chain height
         let current_height = self.backend.best_number();

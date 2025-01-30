@@ -2631,49 +2631,7 @@ impl Backend {
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
         common_block: Block,
     ) -> Result<(), BlockchainError> {
-        // Get the database at the common block
-        let common_state = {
-            let mut state = self.states.write();
-            let state_db = state
-                .get(&common_block.header.hash_slow())
-                .ok_or(BlockchainError::DataUnavailable)?;
-            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            db_full.clone()
-        };
-
-        {
-            // Set state to common state
-            self.db.write().await.clear();
-            for (address, acc) in common_state {
-                for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
-                }
-                self.db.write().await.insert_account(address, acc.info);
-            }
-        }
-
-        {
-            // Unwind the storage back to the common ancestor
-            self.blockchain
-                .storage
-                .write()
-                .unwind_to(common_block.header.number, common_block.header.hash_slow());
-
-            // Set environment back to common block
-            let mut env = self.env.write();
-            env.block = BlockEnv {
-                number: U256::from(common_block.header.number),
-                timestamp: U256::from(common_block.header.timestamp),
-                gas_limit: U256::from(common_block.header.gas_limit),
-                difficulty: common_block.header.difficulty,
-                prevrandao: Some(common_block.header.mix_hash),
-                coinbase: env.block.coinbase,
-                basefee: env.block.basefee,
-                ..env.block.clone()
-            };
-            self.time.reset(env.block.timestamp.to::<u64>());
-        }
-
+        self.rollback(common_block).await?;
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
@@ -2724,19 +2682,14 @@ impl Backend {
 
             // Set environment back to common block
             let mut env = self.env.write();
-            env.block = BlockEnv {
-                number: U256::from(common_block.header.number),
-                timestamp: U256::from(common_block.header.timestamp),
-                gas_limit: U256::from(common_block.header.gas_limit),
-                difficulty: common_block.header.difficulty,
-                prevrandao: Some(common_block.header.mix_hash),
-                coinbase: env.block.coinbase,
-                basefee: env.block.basefee,
-                ..env.block.clone()
-            };
+            env.block.number = U256::from(common_block.header.number);
+            env.block.timestamp = U256::from(common_block.header.timestamp);
+            env.block.gas_limit = U256::from(common_block.header.gas_limit);
+            env.block.difficulty = common_block.header.difficulty;
+            env.block.prevrandao = Some(common_block.header.mix_hash);
+
             self.time.reset(env.block.timestamp.to::<u64>());
         }
-
         Ok(())
     }
 }
