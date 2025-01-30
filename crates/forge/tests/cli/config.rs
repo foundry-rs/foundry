@@ -1426,7 +1426,7 @@ contract GasSnapshotCheckTest is DSTest {{
         )
     };
 
-    // Assert that gas_snapshot_check is disabled by default
+    // Assert that gas_snapshot_check is disabled by default.
     prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1)).unwrap();
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -1436,7 +1436,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // Enable gas_snapshot_check
+    // Enable gas_snapshot_check.
     let config = Config { gas_snapshot_check: true, ..Default::default() };
     prj.write_config(config);
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
@@ -1446,7 +1446,7 @@ gas_snapshot_check = true
 
 "#]]);
 
-    // Replace the test contract with a new one that will fail the gas snapshot check
+    // Replace the test contract with a new one that will fail the gas snapshot check.
     prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2)).unwrap();
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
@@ -1457,7 +1457,7 @@ Error: Snapshots differ from previous run
 ...
 "#]]);
 
-    // Disable gas_snapshot_check, assert that running the test will pass
+    // Disable gas_snapshot_check, assert that running the test will pass.
     let config = Config { gas_snapshot_check: false, ..Default::default() };
     prj.write_config(config);
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
@@ -1469,7 +1469,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 
     // Re-enable gas_snapshot_check
-    // Assert that the new value has been stored from the previous run and re-run the test
+    // Assert that the new value has been stored from the previous run and re-run the test.
     let config = Config { gas_snapshot_check: true, ..Default::default() };
     prj.write_config(config);
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
@@ -1480,7 +1480,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 
-    // Replace the test contract with a new one that will fail the gas_snapshot_check
+    // Replace the test contract with a new one that will fail the gas_snapshot_check.
     prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3)).unwrap();
     cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
 ...
@@ -1491,7 +1491,7 @@ Error: Snapshots differ from previous run
 ...
 "#]]);
 
-    // Test that `--gas-snapshot-check=false` flag can be used to disable the gas_snapshot_check
+    // Test that `--gas-snapshot-check=false` flag can be used to disable the gas_snapshot_check.
     cmd.forge_fuse().args(["test", "--gas-snapshot-check=false"]).assert_success().stdout_eq(str![
         [r#"
 ...
@@ -1502,9 +1502,9 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]
     ]);
 
-    // Disable gas_snapshot_check in the config file
-    // Enable using `FORGE_SNAPSHOT_CHECK` environment variable
-    // Assert that this will override the config file value
+    // Disable gas_snapshot_check in the config file.
+    // Enable using `FORGE_SNAPSHOT_CHECK` environment variable.
+    // Assert that this will override the config file value.
     let config = Config { gas_snapshot_check: false, ..Default::default() };
     prj.write_config(config);
     prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4)).unwrap();
@@ -1520,7 +1520,7 @@ Error: Snapshots differ from previous run
 "#]]);
 
     // Assert that `--gas-snapshot-check=true` flag can be used to enable the gas_snapshot_check
-    // even when `FORGE_SNAPSHOT_CHECK` is set to false in the environment variable
+    // even when `FORGE_SNAPSHOT_CHECK` is set to false in the environment variable.
     cmd.forge_fuse();
     cmd.env("FORGE_SNAPSHOT_CHECK", "false");
     cmd.args(["test", "--gas-snapshot-check=true"]).assert_failure().stderr_eq(str![[r#"
@@ -1531,8 +1531,6 @@ Error: Snapshots differ from previous run
 Error: Snapshots differ from previous run
 ...
 "#]]);
-
-    //
 
     // Finally assert that `--gas-snapshot-check=false` flag can be used to disable the
     // gas_snapshot_check even when `FORGE_SNAPSHOT_CHECK` is set to true
