@@ -301,7 +301,7 @@ impl UIfmt for OtherFields {
             let val = EthValue::from(value.clone()).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);
-            s.extend(std::iter::repeat(' ').take(offset + 1));
+            s.extend(std::iter::repeat_n(' ', offset + 1));
             s.push_str(&val);
             s.push('\n');
         }

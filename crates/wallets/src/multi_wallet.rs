@@ -9,7 +9,7 @@ use derive_builder::Builder;
 use eyre::Result;
 use foundry_config::Config;
 use serde::Serialize;
-use std::{iter::repeat, path::PathBuf};
+use std::path::PathBuf;
 
 /// Container for multiple wallets.
 #[derive(Debug, Default)]
@@ -249,7 +249,7 @@ impl MultiWalletOpts {
             signers.extend(mnemonics);
         }
         if self.interactives > 0 {
-            pending.extend(repeat(PendingSigner::Interactive).take(self.interactives as usize));
+            pending.extend(std::iter::repeat_n(PendingSigner::Interactive, self.interactives as usize));
         }
 
         Ok(MultiWallet::new(pending, signers))
