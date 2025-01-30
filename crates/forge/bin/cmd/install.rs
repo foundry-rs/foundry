@@ -117,8 +117,6 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
-        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
-
         let mut lockfile = Lockfile::new(&config.root);
         if !no_git {
             lockfile = lockfile.with_git(&git);
@@ -204,7 +202,7 @@ impl DependencyInstallOpts {
                 }
 
                 if !lockfile.is_empty() {
-                    fs::write_json_file(&foundry_lock_path, &lockfile)?;
+                    lockfile.write()?;
                 }
 
                 // commit the installation

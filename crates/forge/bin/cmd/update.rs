@@ -1,12 +1,11 @@
 use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
+use forge::{DepIdentifier, Lockfile};
 use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
-use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use std::path::PathBuf;
 
@@ -41,7 +40,6 @@ impl UpdateArgs {
         // Mapping of relative path of lib to its tag type
         // e.g "lib/forge-std" -> DepIdentifier::Tag { name: "v0.1.0", rev: "1234567" }
         let git = Git::new(&root);
-        let foundry_lock_path = root.join(FOUNDRY_LOCK);
 
         let mut foundry_lock = Lockfile::new(&config.root).with_git(&git);
         let _out_of_sync_deps = foundry_lock.sync()?;
@@ -101,7 +99,7 @@ impl UpdateArgs {
         if prev_len != foundry_lock.len() ||
             foundry_lock.iter().any(|(_, dep_id)| dep_id.overridden())
         {
-            fs::write_json_file(&foundry_lock_path, &foundry_lock)?;
+            foundry_lock.write()?;
         }
 
         Ok(())

@@ -1,11 +1,10 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge::{Lockfile, FOUNDRY_LOCK};
+use forge::Lockfile;
 use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
-use foundry_common::fs;
 use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
 
@@ -36,7 +35,6 @@ impl RemoveArgs {
         let git_modules = root.join(".git/modules");
 
         let git = Git::new(&root);
-        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
         let _synced = lockfile.sync()?;
 
@@ -50,7 +48,7 @@ impl RemoveArgs {
             std::fs::remove_dir_all(git_modules.join(path))?;
         }
 
-        fs::write_json_file(&foundry_lock_path, &lockfile)?;
+        lockfile.write()?;
 
         Ok(())
     }
