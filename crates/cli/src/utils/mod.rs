@@ -384,6 +384,13 @@ impl<'a> Git<'a> {
         self.cmd().arg("init").exec().map(drop)
     }
 
+    pub fn current_rev_branch(self, at: &Path) -> Result<(String, String)> {
+        let rev = self.cmd_at(at).args(["rev-parse", "HEAD"]).get_stdout_lossy()?;
+        let branch =
+            self.cmd_at(at).args(["rev-parse", "--abbrev-ref", "HEAD"]).get_stdout_lossy()?;
+        Ok((rev, branch))
+    }
+
     #[allow(clippy::should_implement_trait)] // this is not std::ops::Add clippy
     pub fn add<I, S>(self, paths: I) -> Result<()>
     where
