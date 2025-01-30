@@ -512,13 +512,19 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
         self.cmd().arg("tag").get_stdout_lossy()
     }
 
-    /// Returns the latest tag for a given commit.
+    /// Returns the tag the commit first appeared in.
+    ///
+    /// E.g Take rev = `abc1234`. This commit can be found in multiple releases (tags).
+    /// Consider releases: `v0.1.0`, `v0.2.0`, `v0.3.0` in chronological order, `rev` first appeared
+    /// in `v0.2.0`.
+    ///
+    /// Hence, `tag_for_commit("abc1234")` will return `v0.2.0`.
     pub fn tag_for_commit(self, rev: &str, at: &Path) -> Result<Option<String>> {
         self.cmd_at(at)
             .args(["tag", "--contains"])
             .arg(rev)
             .get_stdout_lossy()
-            .map(|stdout| stdout.lines().last().map(str::to_string))
+            .map(|stdout| stdout.lines().next().map(str::to_string))
     }
 
     pub fn has_missing_dependencies<I, S>(self, paths: I) -> Result<bool>

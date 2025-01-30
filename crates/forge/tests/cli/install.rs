@@ -556,3 +556,42 @@ async fn oz_contracts_sync_foundry_lock() {
     assert!(matches!(halmos, DepIdentifier::Rev { .. }));
     assert_eq!(halmos.rev(), submod_halmos.rev());
 }
+
+#[tokio::test]
+async fn correctly_sync_dep_with_multiple_version() {
+    let (prj, mut cmd) = ExtTester::new(
+        "yash-atreya",
+        "sync-lockfile-multi-version-dep",
+        "1ca47e73a168e54f8f7761862dbd0c603856c5c8",
+    )
+    .setup_forge_prj();
+
+    assert!(!prj.root().join(FOUNDRY_LOCK).exists());
+
+    let git = Git::new(prj.root());
+
+    let submodules = git.submodules().unwrap();
+    let submod_forge_std =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/forge-std")).unwrap();
+    let submod_solady =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/solady")).unwrap();
+    let submod_solday_v_245 =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/solady-v0.0.245")).unwrap();
+
+    cmd.arg("install").assert_success();
+
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
+    assert_eq!(forge_std.rev(), submod_forge_std.rev());
+    assert_eq!(forge_std.name(), "v1.9.5");
+
+    let solady = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
+    assert!(matches!(solady, DepIdentifier::Tag { .. }));
+    assert_eq!(solady.rev(), submod_solady.rev());
+    assert_eq!(solady.name(), "v0.1.1");
+
+    let solday_v_245 = lockfile_get(prj.root(), &PathBuf::from("lib/solady-v0.0.245")).unwrap();
+    assert!(matches!(solday_v_245, DepIdentifier::Tag { .. }));
+    assert_eq!(solday_v_245.rev(), submod_solday_v_245.rev());
+    assert_eq!(solday_v_245.name(), "v0.0.245");
+}
