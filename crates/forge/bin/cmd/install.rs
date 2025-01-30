@@ -175,7 +175,9 @@ impl DependencyInstallOpts {
                 if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
                     dep_id = Some(DepIdentifier::resolve_type(&git, &path, tag_or_branch)?);
-                    if git.has_branch(tag_or_branch, &path)? {
+                    if git.has_branch(tag_or_branch, &path)? &&
+                        dep_id.as_ref().is_some_and(|id| id.is_branch())
+                    {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
                             .args(["submodule", "set-branch", "-b", tag_or_branch])

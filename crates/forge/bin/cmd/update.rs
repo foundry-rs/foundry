@@ -1,13 +1,14 @@
 use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::{DepIdentifier, Lockfile};
+use forge::{DepIdentifier, DepMap, Lockfile};
 use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
 use foundry_config::{impl_figment_convert_basic, Config};
 use std::path::PathBuf;
+use yansi::Paint;
 
 /// CLI arguments for `forge update`.
 #[derive(Clone, Debug, Parser)]
@@ -46,7 +47,7 @@ impl UpdateArgs {
         let prev_len = foundry_lock.len();
 
         // update the submodules' tags if any overrides are present
-
+        let mut prev_dep_ids: DepMap = HashMap::default();
         if dep_overrides.is_empty() {
             // running `forge update`, update all deps
             foundry_lock.iter_mut().for_each(|(_path, dep_id)| {
@@ -61,7 +62,8 @@ impl UpdateArgs {
                     .strip_prefix(&root)
                     .wrap_err("Dependency path is not relative to the repository root")?;
                 if let Ok(dep_id) = DepIdentifier::resolve_type(&git, dep_path, override_tag) {
-                    foundry_lock.override_dep(rel_path, dep_id)?
+                    let prev = foundry_lock.override_dep(rel_path, dep_id)?;
+                    prev_dep_ids.insert(rel_path.to_owned(), prev);
                 } else {
                     sh_warn!(
                         "Could not r#override submodule at {} with tag {}, try using forge install",
@@ -91,6 +93,52 @@ impl UpdateArgs {
             }
         }
 
+        // FIX: Branches should get updated to their latest commit on `forge update`.
+        // i.e if previously submodule was tracking branch `main` at rev `1234567` and now the
+        // remote `main` branch is at `7654321`, then submodule should also be updated to `7654321`.
+        // This tracking is automatically handled by git, but we need to update the lockfile entry
+        // to reflect the latest commit.
+        if dep_overrides.is_empty() {
+            let branch_overrides = foundry_lock
+                .iter_mut()
+                .filter_map(|(path, dep_id)| {
+                    if dep_id.is_branch() && dep_id.overridden() {
+                        return Some((path, dep_id))
+                    }
+                    None
+                })
+                .collect::<Vec<_>>();
+
+            for (path, dep_id) in branch_overrides {
+                let (curr_rev, curr_branch) = git.current_rev_branch(&root.join(path))?;
+                let name = dep_id.name();
+                // This can occur when the submodule is manually checked out to a different branch.
+                if curr_branch != name {
+                    let warn_msg = format!(
+                        r#"Lockfile sync warning
+                        Lockfile is tracking branch {name} for submodule at {path:?}, but the submodule is currently on {curr_branch}.
+                        Checking out branch {name} for submodule at {path:?}."#,
+                    );
+                    let _ = sh_warn!("{}", warn_msg);
+                    git.checkout_at(name, &root.join(path)).wrap_err(format!(
+                        "Could not checkout branch {name} for submodule at {}",
+                        path.display()
+                    ))?;
+                }
+
+                // Update the lockfile entry to reflect the latest commit
+                let prev = std::mem::replace(
+                    dep_id,
+                    DepIdentifier::Branch {
+                        name: name.to_string(),
+                        rev: curr_rev,
+                        r#override: true,
+                    },
+                );
+                prev_dep_ids.insert(path.to_owned(), prev);
+            }
+        }
+
         // checkout the submodules at the correct tags
         for (path, dep_id) in foundry_lock.iter() {
             git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
@@ -100,6 +148,17 @@ impl UpdateArgs {
             foundry_lock.iter().any(|(_, dep_id)| dep_id.overridden())
         {
             foundry_lock.write()?;
+        }
+
+        // Print updates from => to
+        for (path, prev) in prev_dep_ids {
+            let curr = foundry_lock.get(&path).unwrap();
+            sh_println!(
+                "Updated dep at '{}', (from: {prev}, to: {curr})",
+                path.display().green(),
+                prev = prev,
+                curr = curr.yellow()
+            )?;
         }
 
         Ok(())
@@ -128,6 +187,10 @@ pub fn dependencies_paths(
 ) -> Result<(PathBuf, Vec<PathBuf>, HashMap<PathBuf, String>)> {
     let git_root = Git::root_of(&config.root)?;
     let libs = config.install_lib_dir();
+
+    if deps.is_empty() {
+        return Ok((git_root, Vec::new(), HashMap::default()));
+    }
 
     let mut paths = Vec::with_capacity(deps.len());
     let mut overrides = HashMap::with_capacity_and_hasher(deps.len(), Default::default());

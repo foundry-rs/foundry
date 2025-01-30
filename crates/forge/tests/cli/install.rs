@@ -190,7 +190,7 @@ forgetest!(can_install_latest_release_tag, |prj, cmd| {
     assert!(current >= version);
 });
 
-forgetest!(can_update_and_retain_tag_revs, |_prj, cmd| {
+forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
     cmd.git_init();
 
     // Installs oz at release tag
@@ -203,6 +203,31 @@ forgetest!(can_update_and_retain_tag_revs, |_prj, cmd| {
 
     let out = cmd.git_submodule_status();
     let status = String::from_utf8_lossy(&out.stdout);
+    let mut lockfile_init = Lockfile::new(prj.root());
+
+    lockfile_init.read().unwrap();
+
+    let deps = lockfile_init.iter().map(|(path, dep_id)| (path, dep_id)).collect::<Vec<_>>();
+    assert_eq!(deps.len(), 2);
+    assert_eq!(
+        deps[0],
+        (
+            &PathBuf::from("lib/openzeppelin-contracts"),
+            &DepIdentifier::Tag {
+                name: "v5.1.0".to_string(),
+                rev: "69c8def5f222ff96f2b5beff05dfba996368aa79".to_string(),
+                r#override: false
+            }
+        )
+    );
+
+    assert_eq!(
+        deps[1],
+        (
+            &PathBuf::from("lib/solady"),
+            &DepIdentifier::Rev { rev: "513f581".to_string(), r#override: false }
+        )
+    );
 
     let submodules_init: Submodules = status.parse().unwrap();
 
@@ -210,10 +235,34 @@ forgetest!(can_update_and_retain_tag_revs, |_prj, cmd| {
 
     let out = cmd.git_submodule_status();
     let status = String::from_utf8_lossy(&out.stdout);
-
     let submodules_update: Submodules = status.parse().unwrap();
-
     assert_eq!(submodules_init, submodules_update);
+
+    let mut lockfile_update = Lockfile::new(prj.root());
+
+    lockfile_update.read().unwrap();
+
+    let deps = lockfile_update.iter().map(|(path, dep_id)| (path, dep_id)).collect::<Vec<_>>();
+
+    assert_eq!(deps.len(), 2);
+    assert_eq!(
+        deps[1],
+        (
+            &PathBuf::from("lib/openzeppelin-contracts"),
+            &DepIdentifier::Tag {
+                name: "v5.1.0".to_string(),
+                rev: "69c8def5f222ff96f2b5beff05dfba996368aa79".to_string(),
+                r#override: false
+            }
+        )
+    );
+    assert_eq!(
+        deps[0],
+        (
+            &PathBuf::from("lib/solady"),
+            &DepIdentifier::Rev { rev: "513f581".to_string(), r#override: false }
+        )
+    );
 });
 
 forgetest!(can_override_tag_in_update, |_prj, cmd| {

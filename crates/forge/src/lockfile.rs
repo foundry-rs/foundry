@@ -172,19 +172,25 @@ impl<'a> Lockfile<'a> {
 
     /// Override a dependency in the lockfile.
     ///
+    /// Returns the overridden/previous [`DepIdentifier`].
     /// This is used in `forge update` to decide whether a dep's tag/branch/rev should be updated.
     ///
     /// Throws an error if the dependency is not found in the lockfile.
-    pub fn override_dep(&mut self, dep: &Path, mut new_dep_id: DepIdentifier) -> Result<()> {
-        self.deps
+    pub fn override_dep(
+        &mut self,
+        dep: &Path,
+        mut new_dep_id: DepIdentifier,
+    ) -> Result<DepIdentifier> {
+        let prev = self
+            .deps
             .get_mut(dep)
             .map(|d| {
                 new_dep_id.mark_overide();
-                *d = new_dep_id;
+                std::mem::replace(d, new_dep_id)
             })
             .ok_or_eyre(format!("Dependency not found in lockfile: {}", dep.display()))?;
 
-        Ok(())
+        Ok(prev)
     }
 
     /// Returns the num of dependencies in the lockfile.
@@ -280,6 +286,17 @@ impl DepIdentifier {
         }
     }
 
+    /// Get the name of the dependency.
+    ///
+    /// In case of a Rev, this will return the commit hash.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Branch { name, .. } => name,
+            Self::Tag { name, .. } => name,
+            Self::Rev { rev, .. } => rev,
+        }
+    }
+
     /// Get the name/rev to checkout at.
     pub fn checkout_id(&self) -> &str {
         match self {
@@ -289,7 +306,7 @@ impl DepIdentifier {
         }
     }
 
-    /// Marks as dependency as overridden.
+    /// Marks as dependency as overriden.
     pub fn mark_overide(&mut self) {
         match self {
             Self::Branch { r#override, .. } => *r#override = true,
@@ -298,13 +315,18 @@ impl DepIdentifier {
         }
     }
 
-    /// Returns whether the dependency has been overridden.
+    /// Returns whether the dependency has been overriden.
     pub fn overridden(&self) -> bool {
         match self {
             Self::Branch { r#override, .. } => *r#override,
             Self::Tag { r#override, .. } => *r#override,
             Self::Rev { r#override, .. } => *r#override,
         }
+    }
+
+    /// Returns whether the dependency is a branch.
+    pub fn is_branch(&self) -> bool {
+        matches!(self, Self::Branch { .. })
     }
 }
 
