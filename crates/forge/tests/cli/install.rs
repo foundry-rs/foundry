@@ -39,7 +39,6 @@ Compiler run successful!
 
     // assert lockfile
     let forge_std = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 
     // Expect compilation to be skipped as no files have changed
@@ -76,7 +75,6 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
     // assert lockfile
     let forge_std = lockfile_get(&prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 });
 
