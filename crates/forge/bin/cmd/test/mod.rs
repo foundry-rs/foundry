@@ -118,6 +118,10 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
+    /// Check gas snapshots against previous runs.
+    #[arg(long, env = "FORGE_SNAPSHOT_CHECK")]
+    gas_snapshot_check: bool,
+
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
@@ -664,7 +668,7 @@ impl TestArgs {
             if !gas_snapshots.is_empty() {
                 // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
                 // Exiting early with code 1 if differences are found.
-                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                if self.gas_snapshot_check || config.gas_snapshot_check {
                     let differences_found = gas_snapshots.clone().into_iter().fold(
                         false,
                         |mut found, (group, snapshots)| {
