@@ -1134,6 +1134,7 @@ exclude = []
   "cache": true,
   "cache_path": "cache",
   "snapshots": "snapshots",
+  "gas_snapshot_check": false,
   "broadcast": "broadcast",
   "allow_paths": [],
   "include_paths": [],
