@@ -1771,10 +1771,11 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(calldata))
     }
 
-    /// Prints the slot number for the specified mapping type and input data.
+    /// Returns the slot number for a given mapping key and slot.
     ///
-    /// For value types `v`, slot number of `v` is `keccak256(concat(h(v), p))` where `h` is the
-    /// padding function for `v`'s type, and `p` is slot number of the mapping.
+    /// Given `mapping(k => v) m`, for a key `k` the slot number of its associated `v` is
+    /// `keccak256(concat(h(k), p))`, where `h` is the padding function for `k`'s type, and `p`
+    /// is slot number of the mapping `m`.
     ///
     /// See [the Solidity documentation](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays)
     /// for more details.
@@ -1801,12 +1802,12 @@ impl SimpleCast {
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+    pub fn index(key_type: &str, key: &str, slot_number: &str) -> Result<String> {
         let mut hasher = Keccak256::new();
 
-        let v_ty = DynSolType::parse(from_type).wrap_err("Could not parse type")?;
-        let v = v_ty.coerce_str(from_value).wrap_err("Could not parse value")?;
-        match v_ty {
+        let k_ty = DynSolType::parse(key_type).wrap_err("Could not parse type")?;
+        let k = k_ty.coerce_str(key).wrap_err("Could not parse value")?;
+        match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
             DynSolType::Bool |
@@ -1814,16 +1815,16 @@ impl SimpleCast {
             DynSolType::Uint(_) |
             DynSolType::FixedBytes(_) |
             DynSolType::Address |
-            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+            DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
-            DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
+            DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
             DynSolType::Array(..) |
             DynSolType::FixedArray(..) |
             DynSolType::Tuple(..) |
             DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
+                eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }
 
