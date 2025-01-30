@@ -677,14 +677,7 @@ impl TestArgs {
                 // and the environment variable, disabling the check if `false` is passed.
                 //
                 // Exiting early with code 1 if differences are found.
-                let should_check_for_differences =
-                    if let Some(gas_snapshot_check) = self.gas_snapshot_check {
-                        gas_snapshot_check
-                    } else {
-                        config.gas_snapshot_check
-                    };
-
-                if should_check_for_differences {
+                if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
                     let differences_found = gas_snapshots.clone().into_iter().fold(
                         false,
                         |mut found, (group, snapshots)| {
