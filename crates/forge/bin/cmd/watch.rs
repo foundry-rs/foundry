@@ -73,7 +73,7 @@ impl WatchArgs {
     /// otherwise the path the closure returns will be used.
     pub fn watchexec_config<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
-        default_paths: impl FnOnce() -> PS,
+        default_paths: impl FnOnce() -> Result<PS>,
     ) -> Result<watchexec::Config> {
         self.watchexec_config_generic(default_paths, None)
     }
@@ -84,7 +84,7 @@ impl WatchArgs {
     /// otherwise the path the closure returns will be used.
     pub fn watchexec_config_with_override<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
-        default_paths: impl FnOnce() -> PS,
+        default_paths: impl FnOnce() -> Result<PS>,
         spawn_hook: impl Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static,
     ) -> Result<watchexec::Config> {
         self.watchexec_config_generic(default_paths, Some(Arc::new(spawn_hook)))
@@ -92,13 +92,13 @@ impl WatchArgs {
 
     fn watchexec_config_generic<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
-        default_paths: impl FnOnce() -> PS,
+        default_paths: impl FnOnce() -> Result<PS>,
         spawn_hook: Option<SpawnHook>,
     ) -> Result<watchexec::Config> {
         let mut paths = self.watch.as_deref().unwrap_or_default();
         let storage: Vec<_>;
         if paths.is_empty() {
-            storage = default_paths().into_iter().map(Into::into).filter(|p| p.exists()).collect();
+            storage = default_paths()?.into_iter().map(Into::into).filter(|p| p.exists()).collect();
             paths = &storage;
         }
         self.watchexec_config_inner(paths, spawn_hook)
@@ -262,7 +262,7 @@ pub async fn watch_gas_snapshot(args: GasSnapshotArgs) -> Result<()> {
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// test`
 pub async fn watch_test(args: TestArgs) -> Result<()> {
-    let config: Config = Config::from(&args.build);
+    let config: Config = args.build.load_config()?;
     let filter = args.filter(&config);
     // Marker to check whether to override the command.
     let no_reconfigure = filter.args().test_pattern.is_some() ||
@@ -273,7 +273,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let last_test_files = Mutex::new(HashSet::<String>::default());
     let project_root = config.root.to_string_lossy().into_owned();
     let config = args.watch.watchexec_config_with_override(
-        || [&config.test, &config.src],
+        || Ok([&config.test, &config.src]),
         move |events, command| {
             let mut changed_sol_test_files: HashSet<_> = events
                 .iter()
@@ -314,27 +314,24 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
             }
         },
     )?;
-    run(config).await?;
-
-    Ok(())
+    run(config).await
 }
 
 pub async fn watch_coverage(args: CoverageArgs) -> Result<()> {
-    let config = args.load_config();
-    let config = args.watch().watchexec_config(|| [config.test, config.src])?;
-
-    run(config).await?;
-
-    Ok(())
+    let config = args.watch().watchexec_config(|| {
+        let config = args.load_config()?;
+        Ok([config.test, config.src])
+    })?;
+    run(config).await
 }
 
 /// Executes a [`Watchexec`] that listens for changes in the project's sources directory
 pub async fn watch_doc(args: DocArgs) -> Result<()> {
-    let src_path = args.config()?.src;
-    let config = args.watch.watchexec_config(|| [src_path])?;
-    run(config).await?;
-
-    Ok(())
+    let config = args.watch.watchexec_config(|| {
+        let config = args.config()?;
+        Ok([config.src])
+    })?;
+    run(config).await
 }
 
 /// Converts a list of arguments to a `watchexec::Command`.

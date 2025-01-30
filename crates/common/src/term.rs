@@ -165,7 +165,11 @@ impl Reporter for SpinnerReporter {
                 dirty_files
                     .iter()
                     .map(|path| {
-                        let trimmed_path = path.strip_prefix(&project_root).unwrap_or(path);
+                        let trimmed_path = if let Ok(project_root) = &project_root {
+                            path.strip_prefix(project_root).unwrap_or(path)
+                        } else {
+                            path
+                        };
                         format!("- {}", trimmed_path.display())
                     })
                     .sorted()

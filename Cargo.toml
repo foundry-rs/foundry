@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 # Remember to update clippy.toml as well
 rust-version = "1.83"
@@ -173,8 +173,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.9.0", default-features = false }
-foundry-compilers = { version = "0.12.9", default-features = false }
+foundry-block-explorers = { version = "0.11.0", default-features = false }
+foundry-compilers = { version = "0.13.0", default-features = false }
 foundry-fork-db = "0.10.0"
 solang-parser = "=0.3.3"
 solar-ast = { version = "=0.1.1", default-features = false }
@@ -182,7 +182,7 @@ solar-parse = { version = "=0.1.1", default-features = false }
 solar-interface = { version = "=0.1.1", default-features = false }
 
 ## revm
-revm = { version = "19.0.0", default-features = false }
+revm = { version = "19.4.0", default-features = false }
 revm-primitives = { version = "15.1.0", default-features = false }
 revm-inspectors = { version = "0.14.1", features = ["serde"] }
 
@@ -217,6 +217,7 @@ alloy-json-abi = "0.8.18"
 alloy-primitives = { version = "0.8.18", features = [
     "getrandom",
     "rand",
+    "map-fxhash",
     "map-foldhash",
 ] }
 alloy-sol-macro-expander = "0.8.18"
@@ -253,7 +254,6 @@ auto_impl = "1"
 bytes = "1.8"
 walkdir = "2"
 prettyplease = "0.2"
-ahash = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
@@ -262,6 +262,7 @@ chrono = { version = "0.4", default-features = false, features = [
 axum = "0.7"
 color-eyre = "0.6"
 comfy-table = "7"
+dirs = "6"
 dunce = "1"
 evm-disassembler = "0.5"
 evmole = "0.6"
@@ -270,7 +271,7 @@ figment = "0.10"
 futures = "0.3"
 hyper = "1.5"
 indexmap = "2.6"
-itertools = "0.13"
+itertools = "0.14"
 jsonpath_lib = "0.3"
 k256 = "0.13"
 mesc = "0.3"
@@ -291,8 +292,8 @@ tempfile = "3.13"
 tikv-jemallocator = "0.6"
 tokio = "1"
 toml = "0.8"
-tower = "0.4"
-tower-http = "0.5"
+tower = "0.5"
+tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"

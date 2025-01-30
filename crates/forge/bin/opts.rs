@@ -9,22 +9,15 @@ use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use foundry_cli::opts::GlobalArgs;
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::path::PathBuf;
-
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
 
 /// Build, test, fuzz, debug and deploy Solidity contracts.
 #[derive(Parser)]
 #[command(
     name = "forge",
-    version = VERSION_MESSAGE,
+    version = SHORT_VERSION,
+    long_version = LONG_VERSION,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
     next_display_order = None,
 )]

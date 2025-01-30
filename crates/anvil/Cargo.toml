@@ -18,13 +18,6 @@ name = "anvil"
 path = "src/anvil.rs"
 required-features = ["cli"]
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # foundry internal
 anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
