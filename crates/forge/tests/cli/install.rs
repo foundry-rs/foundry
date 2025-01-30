@@ -500,3 +500,59 @@ async fn uni_v4_core_sync_foundry_lock() {
     assert!(matches!(oz, DepIdentifier::Tag { .. }));
     assert_eq!(oz.rev(), submod_oz.rev());
 }
+
+#[tokio::test]
+async fn oz_contracts_sync_foundry_lock() {
+    let (prj, mut cmd) = ExtTester::new(
+        "OpenZeppelin",
+        "openzeppelin-contracts",
+        "840c974028316f3c8172c1b8e5ed67ad95e255ca",
+    )
+    .setup_forge_prj();
+
+    assert!(!prj.root().join(FOUNDRY_LOCK).exists());
+
+    let git = Git::new(prj.root());
+
+    let submodules = git.submodules().unwrap();
+
+    let submod_forge_std =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/forge-std")).unwrap();
+    let submod_erc4626_tests =
+        submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/erc4626-tests")).unwrap();
+    let submod_halmos = submodules
+        .into_iter()
+        .find(|s| s.path() == &PathBuf::from("lib/halmos-cheatcodes"))
+        .unwrap();
+
+    cmd.arg("install").assert_success();
+
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
+    assert_eq!(forge_std.rev(), submod_forge_std.rev());
+    assert_eq!(forge_std.name(), "v1.9.4");
+    let erc4626_tests = lockfile_get(prj.root(), &PathBuf::from("lib/erc4626-tests")).unwrap();
+    assert!(matches!(erc4626_tests, DepIdentifier::Rev { .. }));
+    assert_eq!(erc4626_tests.rev(), submod_erc4626_tests.rev());
+    let halmos = lockfile_get(prj.root(), &PathBuf::from("lib/halmos-cheatcodes")).unwrap();
+    assert!(matches!(halmos, DepIdentifier::Rev { .. }));
+    assert_eq!(halmos.rev(), submod_halmos.rev());
+
+    // Commit the lockfile
+    git.add(&PathBuf::from(FOUNDRY_LOCK)).unwrap();
+    git.commit("Foundry lock").unwrap();
+
+    // Try update. Nothing should get updated everything is pinned tag/rev.
+    cmd.forge_fuse().arg("update").assert_success();
+
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
+    assert_eq!(forge_std.rev(), submod_forge_std.rev());
+    assert_eq!(forge_std.name(), "v1.9.4");
+    let erc4626_tests = lockfile_get(prj.root(), &PathBuf::from("lib/erc4626-tests")).unwrap();
+    assert!(matches!(erc4626_tests, DepIdentifier::Rev { .. }));
+    assert_eq!(erc4626_tests.rev(), submod_erc4626_tests.rev());
+    let halmos = lockfile_get(prj.root(), &PathBuf::from("lib/halmos-cheatcodes")).unwrap();
+    assert!(matches!(halmos, DepIdentifier::Rev { .. }));
+    assert_eq!(halmos.rev(), submod_halmos.rev());
+}
