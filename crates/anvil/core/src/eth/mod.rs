@@ -321,7 +321,7 @@ pub enum EthRequest {
     TraceBlock(BlockNumber),
 
     // Return filtered traces over blocks
-    #[cfg_attr(feature = "serde", serde(rename = "trace_filter",))]
+    #[cfg_attr(feature = "serde", serde(rename = "trace_filter", with = "sequence"))]
     TraceFilter(TraceFilter),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
