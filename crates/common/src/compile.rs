@@ -558,6 +558,7 @@ pub enum PathOrContractInfo {
 }
 
 impl PathOrContractInfo {
+    /// Returns the path to the contract file if provided.
     pub fn path(&self) -> Option<PathBuf> {
         match self {
             Self::Path(path) => Some(path.to_path_buf()),
@@ -565,6 +566,7 @@ impl PathOrContractInfo {
         }
     }
 
+    /// Returns the contract name if provided.
     pub fn name(&self) -> Option<&str> {
         match self {
             Self::Path(_) => None,
@@ -587,9 +589,9 @@ impl FromStr for PathOrContractInfo {
 impl std::fmt::Debug for PathOrContractInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Path(path) => write!(f, "ContractPath: {:?}", path.display()),
+            Self::Path(path) => write!(f, "Path({})", path.display()),
             Self::ContractInfo(info) => {
-                write!(f, "{}", info.name)
+                write!(f, "ContractInfo({})", info)
             }
         }
     }
