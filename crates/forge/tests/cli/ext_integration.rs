@@ -11,19 +11,6 @@ fn forge_std() {
         .run();
 }
 
-// <https://github.com/transmissions11/solmate>
-// #[test]
-// fn solmate() {
-//     let mut tester =
-//         ExtTester::new("transmissions11", "solmate", "c93f7716c9909175d45f6ef80a34a650e2d24e56");
-
-//     if cfg!(feature = "isolate-by-default") {
-//         tester = tester.args(["--nmc", "ReentrancyGuardTest"]);
-//     }
-
-//     tester.run();
-// }
-
 // <https://github.com/PaulRBerg/prb-math>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
