@@ -237,17 +237,14 @@ impl RuntimeTransport {
             }
 
             // SAFETY: We just checked that the inner transport exists.
-            match inner.as_ref().expect("must've been initialized") {
-                InnerTransport::Http(http) => {
-                    let mut http = http;
+            match inner.clone().expect("must've been initialized") {
+                InnerTransport::Http(mut http) => {
                     http.call(req)
                 }
-                InnerTransport::Ws(ws) => {
-                    let mut ws = ws;
+                InnerTransport::Ws(mut ws) => {
                     ws.call(req)
                 }
-                InnerTransport::Ipc(ipc) => {
-                    let mut ipc = ipc;
+                InnerTransport::Ipc(mut ipc) => {
                     ipc.call(req)
                 }
             }
