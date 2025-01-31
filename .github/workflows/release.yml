@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "stable"
+      - "rc"
       - "v*.*.*"
   schedule:
     - cron: "0 0 * * *"
