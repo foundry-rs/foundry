@@ -778,7 +778,7 @@ pub enum EthRequest {
     Reorg(ReorgOptions),
 
     /// Rollback the chain
-    #[cfg_attr(feature = "serde", serde(rename = "anvil_rollback",))]
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_rollback", with = "sequence"))]
     Rollback(Option<u64>),
 
     /// Wallet
