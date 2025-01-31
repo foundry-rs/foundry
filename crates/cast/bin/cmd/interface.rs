@@ -6,8 +6,7 @@ use foundry_block_explorers::Client;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    fs, shell,
-    utils::{find_target_artifact, find_target_name, find_target_path},
+    find_target_artifact, find_target_name, find_target_path, fs, shell,
 };
 use foundry_config::load_config;
 use itertools::Itertools;

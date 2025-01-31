@@ -7,9 +7,9 @@ use forge::revm::primitives::Eof;
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
+    find_target_artifact, find_target_path,
     fmt::pretty_eof,
     shell,
-    utils::{find_target_artifact, find_target_path},
 };
 use foundry_compilers::artifacts::{
     output_selection::{

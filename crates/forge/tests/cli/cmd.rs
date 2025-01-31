@@ -3301,6 +3301,12 @@ const CUSTOM_COUNTER: &str = r#"
     }
 }
     "#;
+
+const ANOTHER_COUNTER: &str = r#"
+    contract AnotherCounter is Counter {
+        constructor(uint256 _number) Counter(_number) {}
+    }
+"#;
 forgetest!(inspect_custom_counter_abi, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
@@ -3380,6 +3386,26 @@ forgetest!(inspect_path_only_identifier, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
     cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
+    let source = format!("{}\n{}", CUSTOM_COUNTER, ANOTHER_COUNTER);
+    prj.add_source("Counter.sol", &source).unwrap();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>[..]"#]]);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
 
 ╭-------------------------------+----------╮
 | Error                         | Selector |
