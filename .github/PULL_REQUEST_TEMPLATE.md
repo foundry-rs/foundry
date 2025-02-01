@@ -3,7 +3,14 @@ Thank you for your Pull Request. Please provide a description above and review
 the requirements below.
 
 Bug fixes and new features should include tests.
+
+Contributors guide: https://github.com/foundry-rs/foundry/blob/master/CONTRIBUTING.md
+
+The contributors guide includes instructions for running rustfmt and building the
+documentation.
 -->
+
+<!-- ** Please select "Allow edits from maintainers" in the PR Options ** -->
 
 ## Motivation
 
@@ -19,3 +26,9 @@ thought of as being the motivation for your change.
 Summarize the solution and provide any necessary context needed to understand
 the code change.
 -->
+
+## PR Checklist
+
+- [ ] Added Tests
+- [ ] Added Documentation
+- [ ] Breaking changes

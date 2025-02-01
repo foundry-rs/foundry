@@ -439,9 +439,13 @@ where
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
-            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon",
-            "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
-                "polygon-mumbai"
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
+            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
+                "polygon-pos-amoy-testnet"
+            }
+            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
+            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
+                "polygon-zkevm-cardona-testnet"
             }
             "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
             "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
@@ -1771,10 +1775,11 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(calldata))
     }
 
-    /// Prints the slot number for the specified mapping type and input data.
+    /// Returns the slot number for a given mapping key and slot.
     ///
-    /// For value types `v`, slot number of `v` is `keccak256(concat(h(v), p))` where `h` is the
-    /// padding function for `v`'s type, and `p` is slot number of the mapping.
+    /// Given `mapping(k => v) m`, for a key `k` the slot number of its associated `v` is
+    /// `keccak256(concat(h(k), p))`, where `h` is the padding function for `k`'s type, and `p`
+    /// is slot number of the mapping `m`.
     ///
     /// See [the Solidity documentation](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays)
     /// for more details.
@@ -1801,12 +1806,12 @@ impl SimpleCast {
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+    pub fn index(key_type: &str, key: &str, slot_number: &str) -> Result<String> {
         let mut hasher = Keccak256::new();
 
-        let v_ty = DynSolType::parse(from_type).wrap_err("Could not parse type")?;
-        let v = v_ty.coerce_str(from_value).wrap_err("Could not parse value")?;
-        match v_ty {
+        let k_ty = DynSolType::parse(key_type).wrap_err("Could not parse type")?;
+        let k = k_ty.coerce_str(key).wrap_err("Could not parse value")?;
+        match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
             DynSolType::Bool |
@@ -1814,16 +1819,16 @@ impl SimpleCast {
             DynSolType::Uint(_) |
             DynSolType::FixedBytes(_) |
             DynSolType::Address |
-            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+            DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
-            DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
+            DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
             DynSolType::Array(..) |
             DynSolType::FixedArray(..) |
             DynSolType::Tuple(..) |
             DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
+                eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }
 

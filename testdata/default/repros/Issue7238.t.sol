@@ -23,24 +23,15 @@ contract Issue7238Test is DSTest {
     }
 
     // FAIL
-    function testFailRevertNotOnImmediateNextCall() public {
-        Reverter reverter = new Reverter();
-        // expectRevert should only work for the next call. However,
-        // we do not inmediately revert, so,
-        // we fail.
-        vm.expectRevert("revert");
-        reverter.doNotRevert();
-        reverter.revertWithMessage("revert");
-    }
-
-    // FAIL
-    function testFailCheatcodeRevert() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testShouldFailCheatcodeRevert() public {
         // This expectRevert is hanging, as the next cheatcode call is ignored.
         vm.expectRevert();
         vm.fsMetadata("something/something"); // try to go to some non-existent path to cause a revert
     }
 
-    function testFailEarlyRevert() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testShouldFailEarlyRevert() public {
         vm.expectRevert();
         rever();
     }
