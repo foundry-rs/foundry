@@ -723,8 +723,7 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(can_clean_config, |prj, cmd| {
-    let config = Config { out: "custom-out".into(), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.out = "custom-out".into());
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -742,12 +741,10 @@ Compiler run successful!
 
 // checks that `clean` removes fuzz and invariant cache dirs
 forgetest_init!(can_clean_test_cache, |prj, cmd| {
-    let config = Config {
-        fuzz: FuzzConfig::new("cache/fuzz".into()),
-        invariant: InvariantConfig::new("cache/invariant".into()),
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz = FuzzConfig::new("cache/fuzz".into());
+        config.invariant = InvariantConfig::new("cache/invariant".into());
+    });
     // default test contract is written in custom out directory
     let fuzz_cache_dir = prj.root().join("cache/fuzz");
     let _ = fs::create_dir(fuzz_cache_dir.clone());
@@ -1016,10 +1013,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
     // Ignoring path and setting empty error_codes as default would set would set some error codes
-    prj.write_config(Config {
-        ignored_file_paths: vec![Path::new("src").to_path_buf()],
-        ignored_error_codes: vec![],
-        ..Default::default()
+    prj.update_config(|config| {
+        config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
+        config.ignored_error_codes = vec![];
     });
 
     prj.add_raw_source(
@@ -1042,7 +1038,7 @@ Compiler run successful!
 
     // Reconfigure without ignored paths or error codes and check for warnings
     // need to reset empty error codes as default would set some error codes
-    prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
+    prj.update_config(|config| config.ignored_error_codes = vec![]);
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1058,11 +1054,9 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 
 // test that `forge build` does not print `(with warnings)` if there aren't any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
-    let config = Config {
-        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
+    });
     prj.add_raw_source(
         "A",
         r"
@@ -1082,8 +1076,9 @@ Compiler run successful!
 "#]]);
 
     // don't ignore errors
-    let config = Config { ignored_error_codes: vec![], ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+    });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1100,8 +1095,10 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
 // handles ignored error codes as an exception
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
-    let config = Config { ignored_error_codes: vec![], deny_warnings: false, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.deny_warnings = false;
+    });
     prj.add_raw_source(
         "A",
         r"
@@ -1126,8 +1123,10 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 
     // warning fails to compile
-    let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.deny_warnings = true;
+    });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
@@ -1138,12 +1137,10 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 
     // ignores error code and compiles
-    let config = Config {
-        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
-        deny_warnings: true,
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
+        config.deny_warnings = true;
+    });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1446,8 +1443,8 @@ Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5
         cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
 
         // add explicit remappings for test file
-        let config = Config {
-            remappings: vec![
+        prj.update_config(|config| {
+            config.remappings = vec![
                 Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
                 // explicit remapping for sub-dependendy seems necessary for some reason
                 Remapping::from_str(
@@ -1455,10 +1452,8 @@ Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5
                 )
                 .unwrap()
                 .into(),
-            ],
-            ..Default::default()
-        };
-        prj.write_config(config);
+            ];
+        });
 
         // create test file that uses the top-level dependency; if the sub-dependency is updated,
         // compilation will fail
@@ -1572,11 +1567,10 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for all
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec!["*".to_string()]),
-        gas_reports_ignore: (vec![]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec!["*".to_string()];
+        config.gas_reports_ignore = vec![];
     });
 
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -1683,115 +1677,9 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .is_json(),
     );
 
-    prj.write_config(Config { optimizer: Some(true), gas_reports: (vec![]), ..Default::default() });
-    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
-...
-╭----------------------------------------+-----------------+-------+--------+-------+---------╮
-| src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
-+=============================================================================================+
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                        |                 |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
-╰----------------------------------------+-----------------+-------+--------+-------+---------╯
-
-╭------------------------------------------+-----------------+--------+--------+--------+---------╮
-| src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
-+=================================================================================================+
-| Deployment Cost                          | Deployment Size |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                          |                 |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| Function Name                            | Min             | Avg    | Median | Max    | # Calls |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
-╰------------------------------------------+-----------------+--------+--------+--------+---------╯
-
-╭----------------------------------------+-----------------+-------+--------+-------+---------╮
-| src/Contracts.sol:ContractTwo Contract |                 |       |        |       |         |
-+=============================================================================================+
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                        |                 |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
-╰----------------------------------------+-----------------+-------+--------+-------+---------╯
-
-
-Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
-
-"#]]);
-    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
-        str![[r#"
-[
-  {
-    "contract": "src/Contracts.sol:ContractOne",
-    "deployment": {
-      "gas": 101532,
-      "size": 241
-    },
-    "functions": {
-      "foo()": {
-        "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
-      }
-    }
-  },
-  {
-    "contract": "src/Contracts.sol:ContractThree",
-    "deployment": {
-      "gas": 101748,
-      "size": 242
-    },
-    "functions": {
-      "baz()": {
-        "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
-      }
-    }
-  },
-  {
-    "contract": "src/Contracts.sol:ContractTwo",
-    "deployment": {
-      "gas": 101520,
-      "size": 241
-    },
-    "functions": {
-      "bar()": {
-        "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
-      }
-    }
-  }
-]
-"#]]
-        .is_json(),
-    );
-
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec!["*".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec![];
     });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -1897,14 +1785,118 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .is_json(),
     );
 
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec![
-            "ContractOne".to_string(),
-            "ContractTwo".to_string(),
-            "ContractThree".to_string(),
-        ]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec!["*".to_string()];
+    });
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+╭----------------------------------------+-----------------+-------+--------+-------+---------╮
+| src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
++=============================================================================================+
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| 101532                                 | 241             |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+|                                        |                 |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+╰----------------------------------------+-----------------+-------+--------+-------+---------╯
+
+╭------------------------------------------+-----------------+--------+--------+--------+---------╮
+| src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
++=================================================================================================+
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| 101748                                   | 242             |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+|                                          |                 |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| Function Name                            | Min             | Avg    | Median | Max    | # Calls |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+╰------------------------------------------+-----------------+--------+--------+--------+---------╯
+
+╭----------------------------------------+-----------------+-------+--------+-------+---------╮
+| src/Contracts.sol:ContractTwo Contract |                 |       |        |       |         |
++=============================================================================================+
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| 101520                                 | 241             |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+|                                        |                 |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+╰----------------------------------------+-----------------+-------+--------+-------+---------╯
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 101532,
+      "size": 241
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45370,
+        "mean": 45370,
+        "median": 45370,
+        "max": 45370
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 101748,
+      "size": 242
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 259210,
+        "mean": 259210,
+        "median": 259210,
+        "max": 259210
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 101520,
+      "size": 241
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 64832,
+        "mean": 64832,
+        "median": 64832,
+        "max": 64832
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
+
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports =
+            vec!["ContractOne".to_string(), "ContractTwo".to_string(), "ContractThree".to_string()];
     });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2016,10 +2008,9 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for One
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: vec!["ContractOne".to_string()],
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec!["ContractOne".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2067,10 +2058,9 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 
     // report for Two
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: vec!["ContractTwo".to_string()],
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec!["ContractTwo".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2118,10 +2108,9 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 
     // report for Three
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: vec!["ContractThree".to_string()],
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec!["ContractThree".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2174,11 +2163,10 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // ignore ContractOne
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec!["*".to_string()]),
-        gas_reports_ignore: (vec!["ContractOne".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec!["*".to_string()];
+        config.gas_reports_ignore = vec!["ContractOne".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2257,11 +2245,10 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
     // ignore ContractTwo
     cmd.forge_fuse();
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec![]),
-        gas_reports_ignore: (vec!["ContractTwo".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports = vec![];
+        config.gas_reports_ignore = vec!["ContractTwo".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2344,15 +2331,11 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     // preferable than not getting one you expect. A warning is printed to stderr
     // indicating the "double listing".
     cmd.forge_fuse();
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec![
-            "ContractOne".to_string(),
-            "ContractTwo".to_string(),
-            "ContractThree".to_string(),
-        ]),
-        gas_reports_ignore: (vec!["ContractThree".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports =
+            vec!["ContractOne".to_string(), "ContractTwo".to_string(), "ContractThree".to_string()];
+        config.gas_reports_ignore = vec!["ContractThree".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test")
@@ -2479,7 +2462,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 });
 
 forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -2598,7 +2581,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9115>
 forgetest_init!(gas_report_with_fallback, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "DelegateProxyTest.sol",
         r#"
@@ -2742,7 +2725,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "NestedDeployTest.sol",
         r#"
@@ -2887,14 +2870,13 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
-    let remapping = prj.paths().libraries[0].join("myDependency");
-    let config = Config {
-        remappings: vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
-            .unwrap()
-            .into()],
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        let remapping = prj.paths().libraries[0].join("myDependency");
+        config.remappings =
+            vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
+                .unwrap()
+                .into()];
+    });
 
     prj.add_lib(
         "myDependency/src/interfaces/IConfig.sol",
@@ -3181,7 +3163,7 @@ Error: No source files found in specified build paths.
 
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
@@ -3405,11 +3387,10 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports_include_tests: true,
-        fuzz: FuzzConfig { runs: 1, ..Default::default() },
-        ..Default::default()
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.gas_reports_include_tests = true;
+        config.fuzz = FuzzConfig { runs: 1, ..Default::default() };
     });
 
     cmd.args(["test", "--mt", "test_Increment", "--gas-report"]).assert_success().stdout_eq(str![
@@ -3522,11 +3503,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 forgetest_async!(gas_report_fuzz_invariant, |prj, cmd| {
     // speed up test by running with depth of 15
-    let config = Config {
-        invariant: { InvariantConfig { depth: 15, ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| config.invariant.depth = 15);
 
     prj.insert_ds_test();
     prj.add_source(

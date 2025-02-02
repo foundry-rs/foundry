@@ -2,7 +2,6 @@
 
 use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
-use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -16,17 +15,15 @@ forgetest!(can_set_filter_values, |prj, cmd| {
     let glob = globset::Glob::from_str("foo/bar/baz*").unwrap();
 
     // explicitly set patterns
-    let config = Config {
-        test_pattern: Some(patt.clone().into()),
-        test_pattern_inverse: None,
-        contract_pattern: Some(patt.clone().into()),
-        contract_pattern_inverse: None,
-        path_pattern: Some(glob.clone()),
-        path_pattern_inverse: None,
-        coverage_pattern_inverse: None,
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.test_pattern = Some(patt.clone().into());
+        config.test_pattern_inverse = None;
+        config.contract_pattern = Some(patt.clone().into());
+        config.contract_pattern_inverse = None;
+        config.path_pattern = Some(glob.clone());
+        config.path_pattern_inverse = None;
+        config.coverage_pattern_inverse = None;
+    });
 
     let config = cmd.config();
 
@@ -325,8 +322,8 @@ forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
 
     // explicitly set the test folder
-    let config = Config { test: "nested/forge-tests".into(), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.test = "nested/forge-tests".into());
+
     let config = cmd.config();
     assert_eq!(config.test, PathBuf::from("nested/forge-tests"));
 
@@ -414,8 +411,9 @@ contract ContractTest is DSTest {
     .unwrap();
 
     // pin version
-    let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
+    });
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -431,8 +429,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     // pin version
-    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
 
     cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -591,7 +590,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+    });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -755,11 +756,10 @@ forgetest_init!(should_not_shrink_fuzz_failure, |prj, cmd| {
     prj.wipe_contracts();
 
     // deterministic test so we always have 54 runs until test fails with overflow
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 256, seed: Some(U256::from(100)), ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 256;
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     prj.add_test(
         "CounterFuzz.t.sol",
@@ -962,7 +962,7 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1047,11 +1047,10 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 3, show_logs: true, ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+        config.fuzz.show_logs = true;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1093,9 +1092,9 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config =
-        Config { fuzz: { FuzzConfig { runs: 3, ..Default::default() } }, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1138,11 +1137,10 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 3, show_logs: false, ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+        config.fuzz.show_logs = false;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1179,9 +1177,9 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config =
-        Config { fuzz: { FuzzConfig { runs: 3, ..Default::default() } }, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1420,7 +1418,7 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1506,7 +1504,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1585,7 +1583,7 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
@@ -1891,11 +1889,10 @@ forgetest_init!(test_assume_no_revert, |prj, cmd| {
     prj.insert_vm();
     prj.clear();
 
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 100, seed: Some(U256::from(100)), ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 100;
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     prj.add_source(
         "Counter.t.sol",
@@ -2334,7 +2331,7 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2453,11 +2450,10 @@ contract Dummy {
 });
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 60, seed: Some(U256::from(100)), ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 60;
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     prj.add_source(
         "AssumeNoRevertTest.t.sol",
@@ -2648,7 +2644,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2897,7 +2893,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
 
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
@@ -2958,7 +2954,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 // Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
 // verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
 forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "DebugTraceRecordingTest.t.sol",
         r#"

@@ -4,7 +4,6 @@ use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
-use foundry_config::Config;
 use foundry_test_utils::{
     rpc::{self, next_http_rpc_endpoint},
     snapbox::IntoData,
@@ -1926,7 +1925,7 @@ forgetest_async!(adheres_to_json_flag, |prj, cmd| {
     }
 
     foundry_test_utils::util::initialize(prj.root());
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_script(
         "Foo",
         r#"

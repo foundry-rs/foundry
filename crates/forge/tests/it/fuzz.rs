@@ -7,7 +7,6 @@ use forge::{
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
 };
-use foundry_config::Config;
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
@@ -163,7 +162,7 @@ async fn test_persist_fuzz_failure() {
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "FuzzerDict.sol",
         r#"
