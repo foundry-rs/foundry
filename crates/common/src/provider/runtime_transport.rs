@@ -145,8 +145,8 @@ impl RuntimeTransport {
         }
     }
 
-    /// Connects to an HTTP [alloy_transport_http::Http] transport.
-    async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+    /// Creates a new reqwest client from this transport.
+    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .tls_built_in_root_certs(self.url.scheme() == "https");
@@ -186,9 +186,12 @@ impl RuntimeTransport {
 
         client_builder = client_builder.default_headers(headers);
 
-        let client =
-            client_builder.build().map_err(RuntimeTransportError::HttpConstructionError)?;
+        Ok(client_builder.build()?)
+    }
 
+    /// Connects to an HTTP [alloy_transport_http::Http] transport.
+    async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+        let client = self.reqwest_client()?;
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
 
