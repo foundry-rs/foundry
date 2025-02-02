@@ -186,7 +186,7 @@ impl RuntimeTransport {
 
         client_builder = client_builder.default_headers(headers);
 
-        Ok(client_builder.build().map_err(RuntimeTransportError::HttpConstructionError)?)
+        Ok(client_builder.build()?)
     }
 
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
