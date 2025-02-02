@@ -117,7 +117,6 @@ async fn test_persist_fuzz_failure() {
         () => { run_fail!(|config| {}) };
         (|$config:ident| $e:expr) => {{
             let mut runner = TEST_DATA_DEFAULT.runner_with(|$config| {
-                $config.optimizer = Some(true);
                 $config.fuzz.runs = 1000;
                 $e
             });

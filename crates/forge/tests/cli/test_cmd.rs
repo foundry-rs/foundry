@@ -590,7 +590,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -621,12 +620,12 @@ Compiler run successful!
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL: PoolNotInitialized()] testErr() ([GAS])
 Traces:
-  [253] CustomTypesTest::testErr()
+  [247] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
 
 [PASS] testEvent() ([GAS])
 Traces:
-  [1267] CustomTypesTest::testEvent()
+  [1524] CustomTypesTest::testEvent()
     ├─ emit MyEvent(a: 100)
     └─ ← [Stop]
 
@@ -960,7 +959,6 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -999,7 +997,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [9383] PrecompileLabelsTest::testPrecompileLabels()
+  [14048] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
@@ -1263,14 +1261,14 @@ Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [231452] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
-    ├─ [22630] SimpleContract::increment()
+    ├─ [43694] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
-    ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
-    │   ├─ [247] SimpleContract::_setNum(100)
+    ├─ [49360] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    │   ├─ [5047] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
@@ -1321,10 +1319,10 @@ contract SimpleContractTest is Test {
 ...
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [370554] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [463642] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 1737 bytes of code
-    ├─ [2511] SimpleContract::setStr("new value")
-    │   ├─ [1588] SimpleContract::_setStr("new value")
+    ├─ [28891] SimpleContract::setStr("new value")
+    │   ├─ [6388] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -1416,7 +1414,6 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1454,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3194)
-[PASS] testWeirdGas1() (gas: 3032)
-[PASS] testWeirdGas2() (gas: 3139)
-[PASS] testWithAssembly() (gas: 3075)
+[PASS] testNormalGas() (gas: 3153)
+[PASS] testWeirdGas1() (gas: 2991)
+[PASS] testWeirdGas2() (gas: 3218)
+[PASS] testWithAssembly() (gas: 3034)
 ...
 "#]]);
 });
@@ -1502,7 +1499,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1543,9 +1539,22 @@ contract ATest is Test {
     cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Logs:
-  Gas cost: 34367
-...
-[PASS] test_GasMeter() (gas: 37407)
+  Gas cost: 50068
+
+Traces:
+  [2303684] ATest::test_GasLeft()
+    ├─ [0] console::log("Gas cost:", 50068 [5.006e4]) [staticcall]
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+[PASS] test_GasMeter() (gas: 53102)
+Traces:
+  [53102] ATest::test_GasMeter()
+    ├─ [0] VM::pauseGasMetering()
+    │   └─ ← [Return]
+    ├─ [0] VM::resumeGasMetering()
+    │   └─ ← [Return]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1581,7 +1590,6 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
@@ -1631,33 +1639,33 @@ contract PauseTracingTest is DSTest {
     cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [7282] PauseTracingTest::setUp()
+  [7757] PauseTracingTest::setUp()
     ├─ emit DummyEvent(i: 1)
     ├─ [0] VM::pauseTracing() [staticcall]
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [282512] PauseTracingTest::test()
+  [558945] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
-    ├─ [18327] TraceGenerator::generate()
-    │   ├─ [1278] TraceGenerator::call(0)
+    ├─ [48460] TraceGenerator::generate()
+    │   ├─ [1589] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop]
-    │   ├─ [1278] TraceGenerator::call(1)
+    │   ├─ [1589] TraceGenerator::call(1)
     │   │   ├─ emit DummyEvent(i: 1)
     │   │   └─ ← [Stop]
-    │   ├─ [1278] TraceGenerator::call(2)
+    │   ├─ [1589] TraceGenerator::call(2)
     │   │   ├─ emit DummyEvent(i: 2)
     │   │   └─ ← [Stop]
     │   ├─ [0] VM::pauseTracing() [staticcall]
     │   │   └─ ← [Return]
     │   ├─ [0] VM::resumeTracing() [staticcall]
     │   │   └─ ← [Return]
-    │   ├─ [1278] TraceGenerator::call(8)
+    │   ├─ [1589] TraceGenerator::call(8)
     │   │   ├─ emit DummyEvent(i: 8)
     │   │   └─ ← [Stop]
-    │   ├─ [1278] TraceGenerator::call(9)
+    │   ├─ [1589] TraceGenerator::call(9)
     │   │   ├─ emit DummyEvent(i: 9)
     │   │   └─ ← [Stop]
     │   └─ ← [Stop]
@@ -2329,7 +2337,6 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2390,7 +2397,7 @@ Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 Traces:
   [..] MetadataTraceTest::test_proxy_trace()
     ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 236 bytes of code
+    │   └─ ← [Return] 481 bytes of code
     ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
@@ -2415,7 +2422,7 @@ Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 Traces:
   [..] MetadataTraceTest::test_proxy_trace()
     ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 182 bytes of code
+    │   └─ ← [Return] 427 bytes of code
     ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 8 bytes of code
     └─ ← [Stop]
@@ -2590,7 +2597,7 @@ contract ReverterTest is Test {
         _vm.assumeNoRevert();
         reverter.twoPossibleReverts(2);
     }
-    
+
     function testAssumeThenExpectCountZeroFails(uint256 x) public {
         _vm.assumeNoRevert(
             Vm.PotentialRevert({
@@ -2642,7 +2649,6 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2718,7 +2724,6 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
         import {console} from "../src/console.sol";
 
         contract GetBroadcastTest is DSTest {
-
             Vm constant vm = Vm(HEVM_ADDRESS);
 
             function test_getLatestBroacast() external {
@@ -2781,9 +2786,9 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 address deployedAddress = vm.getDeployment(
                     "Counter",
                     31337
-                );   
+                );
 
-                assertEq(deployedAddress, address(0x78280279172ED4C0E65BCE5Ee9DFdcd828f837DB));
+                assertEq(deployedAddress, address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F));
             }
 
             function test_getDeployments() public {
@@ -2793,10 +2798,9 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 );
 
                 assertEq(deployments.length, 2);
-                assertEq(deployments[0], address(0x78280279172ED4C0E65BCE5Ee9DFdcd828f837DB)); // Create2 address - latest deployment
+                assertEq(deployments[0], address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F)); // Create2 address - latest deployment
                 assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
-            
 }
     "#;
 
@@ -2891,31 +2895,27 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
-
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [87464] CounterTest::setUp()
-    ├─ [47297] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 236 bytes of code
-    ├─ [2387] Counter::setNumber(0)
+  [218902] CounterTest::setUp()
+    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [31293] CounterTest::test_Increment()
-    ├─ [22337] Counter::increment()
+  [52915] CounterTest::test_Increment()
+    ├─ [43482] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [281] Counter::number() [staticcall]
+    ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
     │   └─ ← [Return]
-    ├─  storage changes:
-    │   @ 0: 0 → 1
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -2952,7 +2952,6 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 // Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
 // verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
 forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_test(
         "DebugTraceRecordingTest.t.sol",
         r#"

@@ -260,10 +260,8 @@ async fn test_invariant_inner_contract() {
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
-        config.fuzz.seed = Some(U256::from(119u32));
-        config.optimizer = Some(true);
-    });
+    let mut runner =
+        TEST_DATA_DEFAULT.runner_with(|config| config.fuzz.seed = Some(U256::from(119u32)));
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
@@ -774,9 +772,9 @@ contract AssumeTest is Test {
 // <https://github.com/foundry-rs/foundry/issues/9054>
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
     prj.update_config(|config| {
-        config.optimizer = Some(true);
         config.invariant.fail_on_revert = true;
         config.invariant.max_assume_rejects = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
     });
 
     // Add initial test that breaks invariant.
@@ -817,7 +815,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 0, calls: 0, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 1, calls: 500, reverts: 0)
 ...
 "#]]);
 });

@@ -495,7 +495,7 @@ forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
 
 // test `optimizer_runs` set to 200 by default if optimizer enabled
 forgetest!(optimizer_runs_default, |prj, cmd| {
-    // explicitly set optimizer runs
+    // explicitly set optimizer
     prj.update_config(|config| config.optimizer = Some(true));
 
     let config = cmd.config();

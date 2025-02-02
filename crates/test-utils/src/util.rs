@@ -259,17 +259,20 @@ pub fn initialize(target: &Path) {
             println!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
-            prj.update_config(|config| {
-                config.solc = Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap()));
+            prj.write_config(Config {
+                solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
+                ..Default::default()
             });
-            // checkout forge-std
-            assert!(Command::new("git")
+
+            // Checkout forge-std.
+            let output = Command::new("git")
                 .current_dir(prj.root().join("lib/forge-std"))
                 .args(["checkout", FORGE_STD_REVISION])
                 .output()
-                .expect("failed to checkout forge-std")
-                .status
-                .success());
+                .expect("failed to checkout forge-std");
+            assert!(output.status.success(), "{output:#?}");
+
+            // Build the project.
             cmd.forge_fuse().arg("build").assert_success();
 
             // Remove the existing template, if any.

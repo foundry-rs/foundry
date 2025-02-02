@@ -83,7 +83,7 @@ config = [
     ),
     Case(
         name="integration",
-        filter="kind(test) & !test(/issue|forge_std|ext_integration/)",
+        filter="kind(test) & !test(/\\b(issue|forge_std|ext_integration)/)",
         n_partitions=3,
         pr_cross_platform=True,
     ),

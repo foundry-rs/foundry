@@ -71,7 +71,6 @@ contract Dummy {
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(false));
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -148,7 +147,6 @@ Compiler run successful!
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     prj.update_config(|config| {
-        config.optimizer = Some(true);
         config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27)));
     });
 
@@ -158,7 +156,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ╭----------+------------------+-------------------+--------------------+---------------------╮
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +============================================================================================+
-| Counter  | 236              | 263               | 24,340             | 48,889              |
+| Counter  | 481              | 509               | 24,095             | 48,643              |
 ╰----------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -168,10 +166,10 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
         str![[r#"
 {
   "Counter": {
-    "runtime_size": 236,
-    "init_size": 263,
-    "runtime_margin": 24340,
-    "init_margin": 48889
+    "runtime_size": 481,
+    "init_size": 509,
+    "runtime_margin": 24095,
+    "init_margin": 48643
   }
 }
 "#]]
