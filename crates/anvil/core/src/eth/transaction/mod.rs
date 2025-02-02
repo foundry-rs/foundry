@@ -1011,11 +1011,13 @@ impl Decodable for TypedTransaction {
     }
 }
 
-impl Encodable2718 for TypedTransaction {
-    fn type_flag(&self) -> Option<u8> {
-        self.r#type()
+impl Typed2718 for TypedTransaction {
+    fn ty(&self) -> u8 {
+        self.r#type().unwrap_or(0)
     }
+}
 
+impl Encodable2718 for TypedTransaction {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
@@ -1379,18 +1381,20 @@ impl Decodable for TypedReceipt {
     }
 }
 
-impl Encodable2718 for TypedReceipt {
-    fn type_flag(&self) -> Option<u8> {
+impl Typed2718 for TypedReceipt {
+    fn ty(&self) -> u8 {
         match self {
-            Self::Legacy(_) => None,
-            Self::EIP2930(_) => Some(1),
-            Self::EIP1559(_) => Some(2),
-            Self::EIP4844(_) => Some(3),
-            Self::EIP7702(_) => Some(4),
-            Self::Deposit(_) => Some(0x7E),
+            Self::Legacy(_) => alloy_consensus::constants::LEGACY_TX_TYPE_ID,
+            Self::EIP2930(_) => alloy_consensus::constants::EIP2930_TX_TYPE_ID,
+            Self::EIP1559(_) => alloy_consensus::constants::EIP1559_TX_TYPE_ID,
+            Self::EIP4844(_) => alloy_consensus::constants::EIP4844_TX_TYPE_ID,
+            Self::EIP7702(_) => alloy_consensus::constants::EIP7702_TX_TYPE_ID,
+            Self::Deposit(_) => DEPOSIT_TX_TYPE_ID,
         }
     }
+}
 
+impl Encodable2718 for TypedReceipt {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),

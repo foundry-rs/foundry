@@ -26,7 +26,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
-use alloy_transport::{Transport, TransportError};
+use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{

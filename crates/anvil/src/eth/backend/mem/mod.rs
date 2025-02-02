@@ -756,12 +756,12 @@ impl Backend {
     }
 
     /// Returns the block gas limit
-    pub fn gas_limit(&self) -> u128 {
-        self.env.read().block.gas_limit.to()
+    pub fn gas_limit(&self) -> u64 {
+        self.env.read().block.gas_limit.saturating_to()
     }
 
     /// Sets the block gas limit
-    pub fn set_gas_limit(&self, gas_limit: u128) {
+    pub fn set_gas_limit(&self, gas_limit: u64) {
         self.env.write().block.gas_limit = U256::from(gas_limit);
     }
 
@@ -1567,20 +1567,8 @@ impl Backend {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        let from = request.from.unwrap_or_default();
-        let to = if let Some(TxKind::Call(to)) = request.to {
-            to
-        } else {
-            let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
-            from.create(nonce)
-        };
-
-        let mut inspector = AccessListInspector::new(
-            request.access_list.clone().unwrap_or_default(),
-            from,
-            to,
-            self.precompiles(),
-        );
+        let mut inspector =
+            AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -2418,7 +2406,6 @@ impl Backend {
             to: info.to,
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used,
-            authorization_list: None,
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
