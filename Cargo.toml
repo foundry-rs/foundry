@@ -226,7 +226,7 @@ alloy-trie = "0.7.0"
 
 ## op-alloy
 op-alloy-rpc-types = "0.10.0"
-maili-consensus = "0.1.6"
+maili-consensus = "0.1.7"
 
 ## cli
 anstream = "0.6"

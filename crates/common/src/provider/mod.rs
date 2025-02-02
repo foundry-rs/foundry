@@ -11,10 +11,7 @@ use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{
-    layers::{RetryBackoffLayer},
-    utils::guess_local_url,
-};
+use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
 use reqwest::Url;

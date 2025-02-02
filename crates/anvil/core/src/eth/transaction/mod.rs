@@ -1456,7 +1456,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                 blob_gas_price,
                 blob_gas_used,
                 inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
-                authorization_list,
             },
         other,
     } = receipt;
@@ -1473,7 +1472,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         to,
         blob_gas_price,
         blob_gas_used,
-        authorization_list,
         inner: match r#type {
             0x00 => TypedReceipt::Legacy(receipt_with_bloom),
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),

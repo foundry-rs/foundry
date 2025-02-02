@@ -62,7 +62,7 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<N: Network, P: Provider< N>>(
+    pub async fn resolve<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
     ) -> Result<Address, EnsError> {
@@ -116,7 +116,7 @@ pub trait ProviderEnsExt<N: Network, P: Provider<N>> {
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance< &P, N>, EnsError>;
+    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError>;
 
     /// Performs a forward lookup of an ENS name to an address.
     async fn resolve_name(&self, name: &str) -> Result<Address, EnsError> {
@@ -154,7 +154,7 @@ where
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<&P, N>, EnsError> {
+    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError> {
         let registry = EnsRegistry::new(ENS_ADDRESS, self);
         let address = registry.resolver(node).call().await.map_err(EnsError::Resolver)?._0;
         if address == Address::ZERO {

@@ -34,7 +34,7 @@ impl TransactionReceiptWithRevertReason {
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason< P: Provider<AnyNetwork>>(
+    pub async fn update_revert_reason<P: Provider<AnyNetwork>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -42,7 +42,7 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason< P: Provider<AnyNetwork>>(
+    async fn fetch_revert_reason<P: Provider<AnyNetwork>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
