@@ -1,4 +1,5 @@
 [profile.default]
+default-filter = "!test(/issue|forge_std|ext_integration/)"
 retries = { backoff = "exponential", count = 2, delay = "3s", jitter = true }
 slow-timeout = { period = "1m", terminate-after = 3 }
 
