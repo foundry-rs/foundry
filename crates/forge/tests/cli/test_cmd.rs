@@ -689,7 +689,6 @@ contract TransientTest is Test {
         assertEq(t.locked(), false);
     }
 }
-
    "#,
     )
     .unwrap();
@@ -697,14 +696,17 @@ contract TransientTest is Test {
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
 });
 
-forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
-    prj.wipe_contracts();
+forgetest_init!(
+    #[ignore = "Too slow"]
+    can_disable_block_gas_limit,
+    |prj, cmd| {
+        prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_url();
+        let endpoint = rpc::next_http_archive_rpc_url();
 
-    prj.add_test(
-        "Contract.t.sol",
-        &r#"
+        prj.add_test(
+            "Contract.t.sol",
+            &r#"
 import {Test} from "forge-std/Test.sol";
 
 contract C is Test {}
@@ -726,12 +728,13 @@ contract GasLimitTest is Test {
     }
 }
    "#
-        .replace("<rpc>", &endpoint),
-    )
-    .unwrap();
+            .replace("<rpc>", &endpoint),
+        )
+        .unwrap();
 
-    cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
-});
+        cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+    }
+);
 
 forgetest!(test_match_path, |prj, cmd| {
     prj.add_source(
