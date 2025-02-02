@@ -3520,6 +3520,50 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         );
 });
 
+forgetest_async!(gas_report_fuzz_invariant, |prj, cmd| {
+    // speed up test by running with depth of 15
+    let config = Config {
+        invariant: { InvariantConfig { depth: 15, ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.insert_ds_test();
+    prj.add_source(
+        "Contracts.sol",
+        r#"
+import "./test.sol";
+
+contract Foo {
+    function foo() public {}
+}
+
+contract Bar {
+    function bar() public {}
+}
+
+contract FooBarTest is DSTest {
+    Foo public targetContract;
+
+    function setUp() public {
+        targetContract = new Foo();
+    }
+
+    function invariant_dummy() public {
+        assertTrue(true);
+    }
+
+    function testFuzz_bar(uint256 _val) public {
+        (new Bar()).bar();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--gas-report"]).assert_success();
+});
+
 // <https://github.com/foundry-rs/foundry/issues/5847>
 forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     prj.clear();
