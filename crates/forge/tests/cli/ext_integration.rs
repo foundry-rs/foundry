@@ -59,12 +59,9 @@ fn sablier_v2_core() {
 }
 
 // <https://github.com/Vectorized/solady>
-// Fails on windows because "/*Transient*" does not skip transient contracts
-// (should be "*/*Transient*").
 #[test]
-#[cfg_attr(windows, ignore = "Windows cannot skip transient pattern")]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "de9aee59648862bb98affd578248d1e75c7073ad").run();
+    ExtTester::new("Vectorized", "solady", "66162801e022c268a2a0f621ac5eb0df4986f6eb").run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>
@@ -72,8 +69,7 @@ fn solady() {
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 #[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "df226f4a45e86c8f8c3ff1f9fa3443d260002050")
-        .args(["--nmc", "ERC4626VaultTest"])
+    ExtTester::new("pcaversaccio", "snekmate", "1eac6befe43711e571b17ea53fd12f70e5ef707b")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
