@@ -2675,7 +2675,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-| 104475                                              | 263             |      |        |      |         |
+| 104463                                              | 263             |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -2721,7 +2721,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 104475,
+      "gas": 104463,
       "size": 263
     },
     "functions": {
@@ -2812,7 +2812,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-| 251985                                    | 739             |     |        |     |         |
+| 251997                                    | 739             |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -2867,7 +2867,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 251985,
+      "gas": 251997,
       "size": 739
     },
     "functions": {
@@ -2899,7 +2899,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.add_lib(
         "myDependency/src/interfaces/IConfig.sol",
         r"
-    
+
     interface IConfig {}
    ",
     )
@@ -3544,9 +3544,11 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("bind").assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-Generating bindings for 11 contracts
-Bindings have been generated to [..]"#]]);
+Generating bindings for 1 contracts
+Bindings have been generated to [..]"#
+    ]]);
 });
