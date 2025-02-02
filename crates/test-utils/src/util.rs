@@ -498,13 +498,12 @@ impl TestProject {
     }
 
     fn _update_config(&self, f: Box<dyn FnOnce(&mut Config) + '_>) {
-        // let mut config = self
-        //     .config()
-        //     .exists()
-        //     .then_some(())
-        //     .and_then(|()| Config::load_with_root(self.root()).ok())
-        //     .unwrap_or_default();
-        let mut config = Config::default();
+        let mut config = self
+            .config()
+            .exists()
+            .then_some(())
+            .and_then(|()| Config::load_with_root(self.root()).ok())
+            .unwrap_or_default();
         f(&mut config);
         self.write_config(config);
     }
