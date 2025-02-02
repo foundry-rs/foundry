@@ -966,6 +966,7 @@ contract CounterTest {
 
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
+    prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 [profile.default]
 src = "src"

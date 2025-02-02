@@ -7,10 +7,7 @@ use super::CreateFork;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{map::HashMap, U256};
 use alloy_provider::network::BlockResponse;
-use alloy_transport::layers::RetryBackoffService;
-use foundry_common::provider::{
-    runtime_transport::RuntimeTransport, ProviderBuilder, RetryProvider,
-};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
 use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
 use futures::{
@@ -184,7 +181,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<RetryBackoffService<RuntimeTransport>, Arc<RetryProvider>>;
+type Handler = BackendHandler<Arc<RetryProvider>>;
 
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;

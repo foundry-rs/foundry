@@ -142,7 +142,7 @@ impl ExtTester {
     pub fn run(&self) {
         // Skip fork tests if the RPC url is not set.
         if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            let _ = sh_eprintln!("ETH_RPC_URL is not set; skipping");
+            eprintln!("ETH_RPC_URL is not set; skipping");
             return;
         }
 
@@ -160,7 +160,7 @@ impl ExtTester {
         if self.rev.is_empty() {
             let mut git = Command::new("git");
             git.current_dir(root).args(["log", "-n", "1"]);
-            let _ = sh_println!("$ {git:?}");
+            println!("$ {git:?}");
             let output = git.output().unwrap();
             if !output.status.success() {
                 panic!("git log failed: {output:?}");
@@ -171,7 +171,7 @@ impl ExtTester {
         } else {
             let mut git = Command::new("git");
             git.current_dir(root).args(["checkout", self.rev]);
-            let _ = sh_println!("$ {git:?}");
+            println!("$ {git:?}");
             let status = git.status().unwrap();
             if !status.success() {
                 panic!("git checkout failed: {status}");
@@ -182,16 +182,16 @@ impl ExtTester {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
-            let _ = sh_println!("cd {root}; {install_cmd:?}");
+            println!("cd {root}; {install_cmd:?}");
             match install_cmd.status() {
                 Ok(s) => {
-                    let _ = sh_println!("\n\n{install_cmd:?}: {s}");
+                    println!("\n\n{install_cmd:?}: {s}");
                     if s.success() {
                         break;
                     }
                 }
                 Err(e) => {
-                    let _ = sh_eprintln!("\n\n{install_cmd:?}: {e}");
+                    eprintln!("\n\n{install_cmd:?}: {e}");
                 }
             }
         }
@@ -259,6 +259,10 @@ pub fn initialize(target: &Path) {
             println!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
+            prj.write_config(Config {
+                solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
+                ..Default::default()
+            });
             // checkout forge-std
             assert!(Command::new("git")
                 .current_dir(prj.root().join("lib/forge-std"))
@@ -267,7 +271,7 @@ pub fn initialize(target: &Path) {
                 .expect("failed to checkout forge-std")
                 .status
                 .success());
-            cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+            cmd.forge_fuse().arg("build").assert_success();
 
             // Remove the existing template, if any.
             let _ = fs::remove_dir_all(tpath);
@@ -296,12 +300,12 @@ pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
     cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
-    let _ = sh_println!("{cmd:?}");
+    println!("{cmd:?}");
     let status = cmd.status().unwrap();
     if !status.success() {
         panic!("git clone failed: {status}");
     }
-    let _ = sh_println!();
+    println!();
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -960,7 +964,7 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        let _ = sh_println!("executing {:?}", self.cmd);
+        println!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {

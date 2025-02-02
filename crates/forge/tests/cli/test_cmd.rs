@@ -580,7 +580,7 @@ Traces:
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
     │   └─ ← [Return] "Tether USD"
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -629,7 +629,7 @@ Traces:
 Traces:
   [1267] CustomTypesTest::testEvent()
     ├─ emit MyEvent(a: 100)
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -1000,36 +1000,36 @@ Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 Traces:
   [9383] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(SHA-256: [0x0000000000000000000000000000000000000002], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(RIPEMD-160: [0x0000000000000000000000000000000000000003], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(Identity: [0x0000000000000000000000000000000000000004], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ModExp: [0x0000000000000000000000000000000000000005], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECAdd: [0x0000000000000000000000000000000000000006], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECMul: [0x0000000000000000000000000000000000000007], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECPairing: [0x0000000000000000000000000000000000000008], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(Blake2F: [0x0000000000000000000000000000000000000009], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(PointEvaluation: [0x000000000000000000000000000000000000000A], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
-    └─ ← [Stop] 
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1269,14 +1269,14 @@ Traces:
     ├─ [22630] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [247] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1327,8 +1327,8 @@ Traces:
     ├─ [2511] SimpleContract::setStr("new value")
     │   ├─ [1588] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1635,34 +1635,34 @@ Traces:
   [7282] PauseTracingTest::setUp()
     ├─ emit DummyEvent(i: 1)
     ├─ [0] VM::pauseTracing() [staticcall]
-    │   └─ ← [Return] 
-    └─ ← [Stop] 
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
   [282512] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [18327] TraceGenerator::generate()
     │   ├─ [1278] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
-    │   │   └─ ← [Stop] 
+    │   │   └─ ← [Stop]
     │   ├─ [1278] TraceGenerator::call(1)
     │   │   ├─ emit DummyEvent(i: 1)
-    │   │   └─ ← [Stop] 
+    │   │   └─ ← [Stop]
     │   ├─ [1278] TraceGenerator::call(2)
     │   │   ├─ emit DummyEvent(i: 2)
-    │   │   └─ ← [Stop] 
+    │   │   └─ ← [Stop]
     │   ├─ [0] VM::pauseTracing() [staticcall]
-    │   │   └─ ← [Return] 
+    │   │   └─ ← [Return]
     │   ├─ [0] VM::resumeTracing() [staticcall]
-    │   │   └─ ← [Return] 
+    │   │   └─ ← [Return]
     │   ├─ [1278] TraceGenerator::call(8)
     │   │   ├─ emit DummyEvent(i: 8)
-    │   │   └─ ← [Stop] 
+    │   │   └─ ← [Stop]
     │   ├─ [1278] TraceGenerator::call(9)
     │   │   ├─ emit DummyEvent(i: 9)
-    │   │   └─ ← [Stop] 
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   │   └─ ← [Stop]
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -2395,7 +2395,7 @@ Traces:
     │   └─ ← [Return] 236 bytes of code
     ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 62 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2420,7 +2420,7 @@ Traces:
     │   └─ ← [Return] 182 bytes of code
     ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 8 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2905,21 +2905,21 @@ Traces:
     ├─ [47297] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 236 bytes of code
     ├─ [2387] Counter::setNumber(0)
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
   [31293] CounterTest::test_Increment()
     ├─ [22337] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [281] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─  storage changes:
     │   @ 0: 0 → 1
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2984,7 +2984,7 @@ Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
   [..] DebugTraceRecordingTest::test_start_stop_recording()
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 

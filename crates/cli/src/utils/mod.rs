@@ -1,7 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
@@ -101,8 +100,7 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.chain(chain);
     }
 
-    let jwt = config.get_rpc_jwt_secret()?;
-    if let Some(jwt) = jwt {
+    if let Some(jwt) = config.get_rpc_jwt_secret()? {
         builder = builder.jwt(jwt.as_ref());
     }
 
@@ -117,10 +115,9 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     Ok(builder)
 }
 
-pub async fn get_chain<P, T>(chain: Option<Chain>, provider: P) -> Result<Chain>
+pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
+    P: Provider<AnyNetwork>,
 {
     match chain {
         Some(chain) => Ok(chain),

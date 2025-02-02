@@ -19,7 +19,6 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -39,7 +38,6 @@ use std::{
     borrow::Cow,
     fmt::Write,
     io,
-    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -70,16 +68,11 @@ sol! {
     }
 }
 
-pub struct Cast<P, T> {
+pub struct Cast<P> {
     provider: P,
-    transport: PhantomData<T>,
 }
 
-impl<T, P> Cast<P, T>
-where
-    T: Transport + Clone,
-    P: Provider<T, AnyNetwork>,
-{
+impl<P: Provider<AnyNetwork>> Cast<P> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -96,7 +89,7 @@ where
     /// # }
     /// ```
     pub fn new(provider: P) -> Self {
-        Self { provider, transport: PhantomData }
+        Self { provider }
     }
 
     /// Makes a read-only call to the specified address
@@ -281,7 +274,7 @@ where
     pub async fn send(
         &self,
         tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -307,7 +300,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -849,7 +842,7 @@ where
     /// ```
     pub async fn rpc<V>(&self, method: &str, params: V) -> Result<String>
     where
-        V: alloy_json_rpc::RpcParam,
+        V: alloy_json_rpc::RpcSend,
     {
         let res = self
             .provider
