@@ -1,4 +1,4 @@
-use crate::utils::generate_large_contract;
+use crate::utils::generate_large_init_contract;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
 
@@ -71,18 +71,18 @@ contract Dummy {
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
-    prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
+    prj.update_config(|config| config.optimizer = Some(false));
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-╭--------------+------------------+-------------------+--------------------+---------------------╮
-| Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
-+================================================================================================+
-| HugeContract | 194              | 49,344            | 24,382             | -192                |
-╰--------------+------------------+-------------------+--------------------+---------------------╯
+╭---------------+------------------+-------------------+--------------------+---------------------╮
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++=================================================================================================+
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
+╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
 "#]]);
@@ -90,34 +90,32 @@ Compiler run successful!
     cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
         str![[r#"
 {
-   "HugeContract":{
-      "runtime_size":194,
-      "init_size":49344,
-      "runtime_margin":24382,
-      "init_margin":-192
-   }
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 24514,
+    "init_margin": -973
+  }
 }
 "#]]
         .is_json(),
     );
-});
 
-forgetest!(initcode_size_limit_can_be_ignored, |prj, cmd| {
-    prj.update_config(|config| config.optimizer = Some(true));
-    prj.add_source("LargeContract", generate_large_contract(5450).as_str()).unwrap();
-    cmd.args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
+    // Ignore EIP-3860
 
-╭--------------+------------------+-------------------+--------------------+---------------------╮
-| Contract     | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
-+================================================================================================+
-| HugeContract | 194              | 49,344            | 24,382             | -192                |
-╰--------------+------------------+-------------------+--------------------+---------------------╯
+    cmd.forge_fuse().args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(
+        str![[r#"
+No files changed, compilation skipped
+
+╭---------------+------------------+-------------------+--------------------+---------------------╮
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++=================================================================================================+
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
+╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
-"#]]);
+"#]],
+    );
 
     cmd.forge_fuse()
         .args(["build", "--sizes", "--ignore-eip-3860", "--json"])
@@ -125,13 +123,13 @@ Compiler run successful!
         .stdout_eq(
             str![[r#"
 {
-  "HugeContract": {
-    "runtime_size": 194,
-    "init_size": 49344,
-    "runtime_margin": 24382,
-    "init_margin": -192
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 24514,
+    "init_margin": -973
   }
-} 
+}
 "#]]
             .is_json(),
         );

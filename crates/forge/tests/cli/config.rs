@@ -1310,7 +1310,10 @@ optimizer_runs = 200
 "#]]);
 
     // Optimizer runs set to 0: optimizer should be disabled, runs set to 0.
-    prj.update_config(|config| config.optimizer_runs = Some(0));
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.optimizer_runs = Some(0);
+    });
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = false
@@ -1320,7 +1323,10 @@ optimizer_runs = 0
 "#]]);
 
     // Optimizer runs set to 500: optimizer should be enabled, runs set to 500.
-    prj.update_config(|config| config.optimizer_runs = Some(500));
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.optimizer_runs = Some(500);
+    });
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = true

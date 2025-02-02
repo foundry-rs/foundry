@@ -112,6 +112,7 @@ alloy-primitives.opt-level = 3
 alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
+foldhash.opt-level = 3
 keccak.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
