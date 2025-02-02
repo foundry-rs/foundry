@@ -455,10 +455,7 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
 "#]]);
 
     // disable yul optimizer explicitly
-    prj.update_config(|config| {
-        config.optimizer_details =
-            Some(OptimizerDetails { yul: Some(false), ..Default::default() });
-    });
+    prj.update_config(|config| config.optimizer_details.get_or_insert_default().yul = Some(false));
     cmd.assert_success();
 });
 

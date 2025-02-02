@@ -590,9 +590,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
-    prj.update_config(|config| {
-        config.optimizer = Some(true);
-    });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.wipe_contracts();
 
     prj.add_test(

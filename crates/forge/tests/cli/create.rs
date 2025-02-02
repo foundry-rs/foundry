@@ -139,9 +139,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
-    prj.update_config(|c| {
-        c.bytecode_hash = BytecodeHash::None;
-    });
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     // Dry-run without the `--broadcast` flag
     cmd.forge_fuse().args([
@@ -292,9 +290,7 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     let dev = handle.dev_accounts().next().unwrap();
 
     // explicitly byte code hash for consistent checks
-    prj.update_config(|c| {
-        c.bytecode_hash = BytecodeHash::None;
-    });
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     cmd.forge_fuse().args([
         "create",
@@ -336,9 +332,7 @@ forgetest_async!(can_create_with_constructor_args, |prj, cmd| {
     let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
-    prj.update_config(|c| {
-        c.bytecode_hash = BytecodeHash::None;
-    });
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     prj.add_source(
         "ConstructorContract",
@@ -426,9 +420,7 @@ forgetest_async!(can_create_and_call, |prj, cmd| {
     let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
-    prj.update_config(|c| {
-        c.bytecode_hash = BytecodeHash::None;
-    });
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     prj.add_source(
         "UniswapV2Swap",

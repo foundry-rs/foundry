@@ -3,7 +3,6 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_config::InvariantConfig;
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
@@ -776,8 +775,8 @@ contract AssumeTest is Test {
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
     prj.update_config(|config| {
         config.optimizer = Some(true);
-        config.invariant =
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() };
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
     });
 
     // Add initial test that breaks invariant.
