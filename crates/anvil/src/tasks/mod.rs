@@ -89,7 +89,6 @@ impl TaskManager {
     pub fn spawn_block_poll_listener<P, F, Fut>(&self, provider: P, task_factory: F)
     where
         P: Provider<AnyNetwork> + 'static,
-
         F: Fn(B256) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
@@ -145,7 +144,6 @@ impl TaskManager {
     pub fn spawn_block_subscription<P, F, Fut>(&self, provider: P, task_factory: F)
     where
         P: Provider<AnyNetwork> + 'static,
-
         F: Fn(alloy_rpc_types::Header<AnyHeader>) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
