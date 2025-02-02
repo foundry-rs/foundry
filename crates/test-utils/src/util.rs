@@ -504,6 +504,7 @@ impl TestProject {
             .then_some(())
             .and_then(|()| Config::load_with_root(self.root()).ok())
             .unwrap_or_default();
+        config.remappings.clear();
         f(&mut config);
         self.write_config(config);
     }
