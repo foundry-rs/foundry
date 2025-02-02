@@ -1261,14 +1261,14 @@ Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [231452] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
-    ├─ [43694] SimpleContract::increment()
+    ├─ [22630] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
-    ├─ [49360] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
-    │   ├─ [5047] SimpleContract::_setNum(100)
+    ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    │   ├─ [247] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
@@ -1319,10 +1319,10 @@ contract SimpleContractTest is Test {
 ...
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [463642] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [370554] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 1737 bytes of code
-    ├─ [28891] SimpleContract::setStr("new value")
-    │   ├─ [6388] SimpleContract::_setStr("new value")
+    ├─ [2511] SimpleContract::setStr("new value")
+    │   ├─ [1588] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -1645,10 +1645,10 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [558945] PauseTracingTest::test()
+  [449649] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
-    ├─ [48460] TraceGenerator::generate()
+    ├─ [22896] TraceGenerator::generate()
     │   ├─ [1589] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop]
@@ -2900,15 +2900,15 @@ forgetest_init!(should_show_state_changes, |prj, cmd| {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [218902] CounterTest::setUp()
-    ├─ [156813] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [137242] CounterTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [23784] Counter::setNumber(0)
+    ├─ [2592] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [52915] CounterTest::test_Increment()
-    ├─ [43482] Counter::increment()
+  [31851] CounterTest::test_Increment()
+    ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
@@ -2916,6 +2916,8 @@ Traces:
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
     │   └─ ← [Return]
+    ├─  storage changes:
+    │   @ 0: 0 → 1
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

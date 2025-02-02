@@ -1,4 +1,4 @@
-<svg width="852px" height="506px" xmlns="http://www.w3.org/2000/svg">
+<svg width="852px" height="542px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
     .bg { background: #000000 }
@@ -29,13 +29,13 @@
 </tspan>
     <tspan x="10px" y="100px"><tspan>Traces:</tspan>
 </tspan>
-    <tspan x="10px" y="118px"><tspan>  [218902] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
+    <tspan x="10px" y="118px"><tspan>  [137242] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">setUp</tspan><tspan>()</tspan>
 </tspan>
-    <tspan x="10px" y="136px"><tspan>    ├─ [156813] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
+    <tspan x="10px" y="136px"><tspan>    ├─ [96345] </tspan><tspan class="fg-yellow">→ new</tspan><tspan> Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f</tspan>
 </tspan>
     <tspan x="10px" y="154px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 481 bytes of code</tspan>
 </tspan>
-    <tspan x="10px" y="172px"><tspan>    ├─ [23784] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">setNumber</tspan><tspan>(0)</tspan>
+    <tspan x="10px" y="172px"><tspan>    ├─ [2592] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">setNumber</tspan><tspan>(0)</tspan>
 </tspan>
     <tspan x="10px" y="190px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
@@ -43,9 +43,9 @@
 </tspan>
     <tspan x="10px" y="226px">
 </tspan>
-    <tspan x="10px" y="244px"><tspan>  [52915] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
+    <tspan x="10px" y="244px"><tspan>  [31851] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
 </tspan>
-    <tspan x="10px" y="262px"><tspan>    ├─ [43482] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
+    <tspan x="10px" y="262px"><tspan>    ├─ [22418] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
 </tspan>
     <tspan x="10px" y="280px"><tspan>    │   ├─  storage changes:</tspan>
 </tspan>
@@ -61,17 +61,21 @@
 </tspan>
     <tspan x="10px" y="388px"><tspan>    │   └─ </tspan><tspan class="fg-blue">← [Return]</tspan>
 </tspan>
-    <tspan x="10px" y="406px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="406px"><tspan>    ├─  storage changes:</tspan>
 </tspan>
-    <tspan x="10px" y="424px">
+    <tspan x="10px" y="424px"><tspan>    │   @ 0: 0 → 1</tspan>
 </tspan>
-    <tspan x="10px" y="442px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
+    <tspan x="10px" y="442px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
     <tspan x="10px" y="460px">
 </tspan>
-    <tspan x="10px" y="478px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
+    <tspan x="10px" y="478px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
 </tspan>
     <tspan x="10px" y="496px">
+</tspan>
+    <tspan x="10px" y="514px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
+</tspan>
+    <tspan x="10px" y="532px">
 </tspan>
   </text>
 
