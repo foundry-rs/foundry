@@ -228,7 +228,7 @@ import {Test} from "forge-std/Test.sol";
 contract InlineMaxRejectsTest is Test {
     /// forge-config: default.fuzz.max-test-rejects = 1
     function test_fuzz_bound(uint256 a) public {
-        vm.assume(a == 0);
+        vm.assume(false);
     }
 }
    "#,
