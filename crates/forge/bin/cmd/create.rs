@@ -33,7 +33,7 @@ use foundry_config::{
     merge_impl_figment_convert, Config,
 };
 use serde_json::json;
-use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
+use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -506,7 +506,6 @@ impl<P, C> From<Deployer<P>> for ContractDeploymentTx<P, C> {
 pub struct Deployer<P> {
     /// The deployer's transaction, exposed for overriding the defaults
     pub tx: WithOtherFields<TransactionRequest>,
-    abi: JsonAbi,
     client: P,
     confs: usize,
     timeout: u64,
@@ -526,6 +525,7 @@ impl<P: Provider<AnyNetwork>> Deployer<P> {
             .send_transaction(self.tx)
             .await?
             .with_required_confirmations(self.confs as u64)
+            .with_timeout(Some(Duration::from_secs(self.timeout)))
             .get_receipt()
             .await?;
 
@@ -611,13 +611,7 @@ impl<P: Provider<AnyNetwork> + Clone> DeploymentTxFactory<P> {
         // create the tx object. Since we're deploying a contract, `to` is `None`
         let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()));
 
-        Ok(Deployer {
-            client: self.client.clone(),
-            abi: self.abi,
-            tx,
-            confs: 1,
-            timeout: self.timeout,
-        })
+        Ok(Deployer { client: self.client.clone(), tx, confs: 1, timeout: self.timeout })
     }
 }
 

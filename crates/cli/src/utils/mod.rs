@@ -100,8 +100,7 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.chain(chain);
     }
 
-    let jwt = config.get_rpc_jwt_secret()?;
-    if let Some(jwt) = jwt {
+    if let Some(jwt) = config.get_rpc_jwt_secret()? {
         builder = builder.jwt(jwt.as_ref());
     }
 
