@@ -1450,7 +1450,6 @@ transactionIndex     16
 type                 2
 blobGasPrice         
 blobGasUsed          
-authorizationList    
 to                   0x4200000000000000000000000000000000000000
 l1BaseFeeScalar      5227
 l1BlobBaseFee        111685752

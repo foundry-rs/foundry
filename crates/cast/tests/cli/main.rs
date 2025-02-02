@@ -842,7 +842,6 @@ transactionIndex     116
 type                 0
 blobGasPrice         
 blobGasUsed          
-authorizationList    
 to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
@@ -876,7 +875,6 @@ transactionIndex     173
 type                 2
 blobGasPrice         
 blobGasUsed          
-authorizationList    
 to                   0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
 revertReason         Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
 
@@ -1934,7 +1932,7 @@ Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
     │   @ 0: 0 → 111
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 Transaction successfully executed.
@@ -2024,7 +2022,7 @@ contract CounterInExternalLibScript is Script {
 Traces:
   [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
     ├─ [..] 0x52F3e85EC3F0f9D0a2200D646482fcD134D5adc9::updateCounterInExternalLib(0, 100) [delegatecall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     └─ ← [Return] 62 bytes of code
 
 

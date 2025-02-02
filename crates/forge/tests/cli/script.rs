@@ -229,12 +229,12 @@ Compiler run successful!
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 415 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -247,7 +247,7 @@ Simulated On-chain Traces:
     └─ ← [Return] 415 bytes of code
 
   [..] GasWaster::wasteGas(200000 [2e5])
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 ==========================
@@ -335,12 +335,12 @@ Warning (2018): Function state mutability can be restricted to view
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 415 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -353,7 +353,7 @@ Simulated On-chain Traces:
     └─ ← [Return] 415 bytes of code
 
   [..] GasWaster::wasteGas(200000 [2e5])
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 ==========================
@@ -519,10 +519,10 @@ Compiler run successful!
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 718 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -599,58 +599,58 @@ Compiler run successful!
 Traces:
   [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -2372,14 +2372,14 @@ Compiler run successful!
 Traces:
   [..] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     │   └─ ← [Return] 175 bytes of code
     ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     │   ├─ [..] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -2534,13 +2534,13 @@ Compiler run successful!
 Traces:
   [..] DryRunTest::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   └─ ← [Return] 567 bytes of code
     ├─ [..] Called::run(123, 456)
     │   ├─ emit log_string(val: "script ran")
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -2557,7 +2557,7 @@ Simulated On-chain Traces:
 
   [46595] Called::run(123, 456)
     ├─ emit log_string(val: "script ran")
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 ==========================
