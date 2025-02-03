@@ -1,4 +1,5 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_dyn_abi::ErrorExt;
 use alloy_json_abi::Function;
 use alloy_network::{
     AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
@@ -8,14 +9,17 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
+use alloy_transport::TransportError;
+use cast::traces::identifier::SignaturesIdentifier;
 use eyre::Result;
 use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, fmt::format_tokens};
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
+use serde_json::value::RawValue;
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -350,10 +354,34 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         }
 
         if self.tx.gas.is_none() {
-            self.tx.gas = Some(self.provider.estimate_gas(&self.tx).await?);
+            self.estimate_gas().await?;
         }
 
         Ok((self.tx, self.state.func))
+    }
+
+    /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
+    async fn estimate_gas(&mut self) -> Result<()> {
+        match self.provider.estimate_gas(&self.tx).await {
+            Ok(estimated) => {
+                self.tx.gas = Some(estimated);
+                Ok(())
+            }
+            Err(err) => {
+                if let TransportError::ErrorResp(ref payload) = err {
+                    // If execution reverted with code 3 during provider gas estimation then try
+                    // to decode custom errors and append it to the error message.
+                    if payload.code == 3 {
+                        if let Some(data) = &payload.data {
+                            if let Ok(Some(decoded_error)) = decode_execution_revert(data).await {
+                                eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                            }
+                        }
+                    }
+                }
+                eyre::bail!("Failed to estimate gas: {}", err)
+            }
+        }
     }
 
     /// Parses the passed --auth value and sets the authorization list on the transaction.
@@ -400,4 +428,33 @@ where
 
         Ok(self)
     }
+}
+
+/// Helper function that tries to decode custom error name and inputs from error payload data.
+async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
+    if let Some(err_data) = data.to_string().replace("\"", "").strip_prefix("0x") {
+        let selector = err_data.get(..8).unwrap_or_default();
+        if let Some(known_error) = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
+            .write()
+            .await
+            .identify_error(&hex::decode(selector)?)
+            .await
+        {
+            let mut decoded_error = known_error.name.clone();
+            if !known_error.inputs.is_empty() {
+                decoded_error.push('(');
+                let error = known_error.decode_error(&hex::decode(err_data)?)?;
+                let mut tokens = format_tokens(&error.body).peekable();
+                while let Some(token) = &tokens.next() {
+                    decoded_error.push_str(token);
+                    if tokens.peek().is_some() {
+                        decoded_error.push_str(", ");
+                    }
+                }
+                decoded_error.push(')');
+            }
+            return Ok(Some(decoded_error))
+        }
+    }
+    Ok(None)
 }

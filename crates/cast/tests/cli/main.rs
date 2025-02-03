@@ -1971,3 +1971,74 @@ contract WETH9 {
     uint8  public decimals = 18;
 ..."#]]);
 });
+
+// tests cast send gas estimate execution failure message contains decoded custom error
+// <https://github.com/foundry-rs/foundry/issues/9789>
+forgetest_async!(cast_send_estimate_gas_error, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "SimpleStorage",
+        r#"
+contract SimpleStorage {
+    uint256 private storedValue;
+    error AddressInsufficientBalance(address account, uint256 newValue);
+    function setValue(uint256 _newValue) public {
+        if (_newValue > 100) {
+            revert AddressInsufficientBalance(msg.sender, _newValue);
+        }
+        storedValue = _newValue;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_script(
+        "SimpleStorageScript",
+        r#"
+import "forge-std/Script.sol";
+import {SimpleStorage} from "../src/SimpleStorage.sol";
+contract SimpleStorageScript is Script {
+    function run() public {
+        vm.startBroadcast();
+        new SimpleStorage();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "SimpleStorageScript",
+    ])
+    .assert_success();
+
+    // Cache project selectors.
+    cmd.forge_fuse().set_current_dir(prj.root());
+    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+
+    // Assert cast send can decode custom error on estimate gas execution failure.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setValue(uint256)",
+            "1000",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure().stderr_eq(str![[r#"
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8": AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
+
+"#]]);
+});
