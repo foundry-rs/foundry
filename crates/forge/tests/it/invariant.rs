@@ -3,7 +3,6 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_config::{Config, InvariantConfig};
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
@@ -261,10 +260,8 @@ async fn test_invariant_inner_contract() {
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
-        config.fuzz.seed = Some(U256::from(119u32));
-        config.optimizer = Some(true);
-    });
+    let mut runner =
+        TEST_DATA_DEFAULT.runner_with(|config| config.fuzz.seed = Some(U256::from(119u32)));
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
@@ -708,13 +705,10 @@ async fn test_no_reverts_in_counterexample() {
 
 // Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
 forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
-    let config = Config {
-        invariant: {
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
-        },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
+    });
 
     // Add initial test that breaks invariant.
     prj.add_test(
@@ -777,14 +771,11 @@ contract AssumeTest is Test {
 // Test too many inputs rejected for `assumePrecompile`/`assumeForgeAddress`.
 // <https://github.com/foundry-rs/foundry/issues/9054>
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
-    let config = Config {
-        optimizer: Some(true),
-        invariant: {
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
-        },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
 
     // Add initial test that breaks invariant.
     prj.add_test(
@@ -824,7 +815,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 0, calls: 0, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 1, calls: 500, reverts: 0)
 ...
 "#]]);
 });
@@ -1001,10 +992,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 forgetest_init!(invariant_selectors_weight, |prj, cmd| {
-    prj.write_config(Config {
-        optimizer: Some(true),
-        invariant: { InvariantConfig { runs: 1, depth: 10, ..Default::default() } },
-        ..Default::default()
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
     });
     prj.add_source(
         "InvariantHandlers.sol",

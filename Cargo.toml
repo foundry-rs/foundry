@@ -90,19 +90,29 @@ codegen-units = 1
 
 # Speed up tests and dev build.
 [profile.dev.package]
-# Solc and artifacts
+# Solc and artifacts.
+foundry-compilers-artifacts-solc.opt-level = 3
+foundry-compilers-core.opt-level = 3
 foundry-compilers.opt-level = 3
+serde_json.opt-level = 3
+serde.opt-level = 3
+
 solang-parser.opt-level = 3
 lalrpop-util.opt-level = 3
-serde_json.opt-level = 3
 
-# EVM
+solar-ast.opt-level = 3
+solar-data-structures.opt-level = 3
+solar-interface.opt-level = 3
+solar-parse.opt-level = 3
+
+# EVM.
 alloy-dyn-abi.opt-level = 3
 alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
 alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
+foldhash.opt-level = 3
 keccak.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
@@ -114,15 +124,21 @@ sha3.opt-level = 3
 tiny-keccak.opt-level = 3
 bitvec.opt-level = 3
 
-# fuzzing
+# Fuzzing.
 proptest.opt-level = 3
 foundry-evm-fuzz.opt-level = 3
 
-# forking
+# Forking.
 axum.opt-level = 3
 
-# keystores
+# Keystores.
 scrypt.opt-level = 3
+
+# Misc.
+rayon.opt-level = 3
+regex.opt-level = 3
+regex-syntax.opt-level = 3
+regex-automata.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]

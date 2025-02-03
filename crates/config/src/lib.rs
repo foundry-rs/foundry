@@ -944,7 +944,7 @@ impl Config {
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
-    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+    pub fn ephemeral_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(false, true)
     }
 
@@ -1015,7 +1015,9 @@ impl Config {
         Ok(map)
     }
 
-    /// Creates a [Project] with the given `cached` and `no_artifacts` flags
+    /// Creates a [`Project`] with the given `cached` and `no_artifacts` flags.
+    ///
+    /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();

@@ -105,7 +105,7 @@ lint: ## Run all linters.
 ## Testing
 
 test-foundry:
-	cargo nextest run -E 'kind(test) & !test(/issue|forge_std|ext_integration/)'
+	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
 
 test-doc:
 	cargo test --doc --workspace
