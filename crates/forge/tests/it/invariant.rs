@@ -266,7 +266,7 @@ async fn test_invariant_shrink() {
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             assert!(sequence.len() <= 3);
 
             if sequence.len() == 2 {
@@ -314,7 +314,7 @@ async fn check_shrink_sequence(test_pattern: &str, expected_len: usize) {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             assert_eq!(sequence.len(), expected_len);
         }
     };
@@ -346,7 +346,7 @@ async fn test_shrink_big_sequence() {
 
     let initial_sequence = match initial_counterexample {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => sequence,
+        CounterExample::Sequence(_, sequence) => sequence,
     };
     // ensure shrinks to same sequence of 77
     assert_eq!(initial_sequence.len(), 77);
@@ -379,7 +379,7 @@ async fn test_shrink_big_sequence() {
         .unwrap()
     {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => sequence,
+        CounterExample::Sequence(_, sequence) => sequence,
     };
     // ensure shrinks to same sequence of 77
     assert_eq!(new_sequence.len(), 77);
@@ -407,7 +407,7 @@ async fn test_shrink_fail_on_revert() {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             // ensure shrinks to sequence of 10
             assert_eq!(sequence.len(), 10);
         }
@@ -696,7 +696,7 @@ async fn test_no_reverts_in_counterexample() {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             // ensure original counterexample len is 10 (even without shrinking)
             assert_eq!(sequence.len(), 10);
         }
@@ -1063,4 +1063,40 @@ contract InvariantSelectorsWeightTest is Test {
     .unwrap();
 
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
+});
+
+// Tests original and new counterexample lengths are displayed on failure.
+forgetest_init!(invariant_sequence_len, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+
+    prj.add_test(
+        "InvariantSequenceLenTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract InvariantSequenceLenTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_increment() public {
+        require(counter.number() / 2 < 100000000000000000000000000000000, "invariant increment failure");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: revert: invariant increment failure]
+	[Sequence] (original: 4, shrunk: 1)
+...
+"#]]);
 });
