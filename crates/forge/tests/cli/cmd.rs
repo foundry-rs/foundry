@@ -584,6 +584,31 @@ Error: git fetch exited with code 128
 "#]]);
 });
 
+// checks that `forge init --template [template] work with --no-commit
+forgetest!(can_init_template_with_no_commit, |prj, cmd| {
+    prj.wipe();
+    cmd.args(["init", "--template", "foundry-rs/forge-template", "--no-commit"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
+
+"#]]);
+
+    // show the latest commit message was not changed
+    let output = Command::new("git")
+        .args(["log", "-1", "--pretty=%s"]) // Get the latest commit message
+        .output()
+        .expect("Failed to execute git command");
+
+    let commit_message = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !commit_message.starts_with("chore: init from foundry-rs/forge-template"),
+        "Commit message should not start with 'chore: init from foundry-rs/forge-template'"
+    );
+});
+
 // checks that clone works
 forgetest!(can_clone, |prj, cmd| {
     prj.wipe();
