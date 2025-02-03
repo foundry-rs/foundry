@@ -263,14 +263,16 @@ pub fn initialize(target: &Path) {
                 solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
                 ..Default::default()
             });
-            // checkout forge-std
-            assert!(Command::new("git")
+
+            // Checkout forge-std.
+            let output = Command::new("git")
                 .current_dir(prj.root().join("lib/forge-std"))
                 .args(["checkout", FORGE_STD_REVISION])
                 .output()
-                .expect("failed to checkout forge-std")
-                .status
-                .success());
+                .expect("failed to checkout forge-std");
+            assert!(output.status.success(), "{output:#?}");
+
+            // Build the project.
             cmd.forge_fuse().arg("build").assert_success();
 
             // Remove the existing template, if any.
@@ -493,7 +495,25 @@ impl TestProject {
         let _ = fs::remove_dir_all(self.artifacts());
     }
 
+    /// Updates the project's config with the given function.
+    pub fn update_config(&self, f: impl FnOnce(&mut Config)) {
+        self._update_config(Box::new(f));
+    }
+
+    fn _update_config(&self, f: Box<dyn FnOnce(&mut Config) + '_>) {
+        let mut config = self
+            .config()
+            .exists()
+            .then_some(())
+            .and_then(|()| Config::load_with_root(self.root()).ok())
+            .unwrap_or_default();
+        config.remappings.clear();
+        f(&mut config);
+        self.write_config(config);
+    }
+
     /// Writes the given config as toml to `foundry.toml`.
+    #[doc(hidden)] // Prefer `update_config`.
     pub fn write_config(&self, config: Config) {
         let file = self.config();
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
@@ -666,7 +686,7 @@ impl TestProject {
         let forge = forge.canonicalize().unwrap_or_else(|_| forge.clone());
         let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
-        // disable color output for comparisons
+        // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
@@ -851,9 +871,8 @@ impl TestCommand {
     pub fn config(&mut self) -> Config {
         self.cmd.args(["config", "--json"]);
         let output = self.assert().success().get_output().stdout_lossy();
-        let config = serde_json::from_str(output.as_ref()).unwrap();
         self.forge_fuse();
-        config
+        serde_json::from_str(output.as_ref()).unwrap()
     }
 
     /// Runs `git init` inside the project's dir
