@@ -123,14 +123,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 alloy-signer-local.workspace = true
 
 [features]
-default = ["rustls", "jemalloc"]
-rustls = [
-    "foundry-cli/rustls",
-    "foundry-wallets/rustls",
-    "reqwest/rustls-tls",
-    "reqwest/rustls-tls-native-roots",
-]
-openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
+default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms"]

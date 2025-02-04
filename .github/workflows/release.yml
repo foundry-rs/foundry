@@ -14,7 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   PROFILE: maxperf
-  STABLE_VERSION: 'v0.3.0'
+  STABLE_VERSION: "v0.3.0"
 
 jobs:
   prepare:
@@ -148,7 +148,7 @@ jobs:
         run: |
           set -eo pipefail
           flags=(--target $TARGET --profile $PROFILE --bins 
-            --no-default-features --features rustls,aws-kms,cli,asm-keccak)
+            --no-default-features --features aws-kms,cli,asm-keccak)
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -278,7 +278,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [ prepare, release-docker, release, cleanup ]
+    needs: [prepare, release-docker, release, cleanup]
     if: failure()
     steps:
       - uses: actions/checkout@v4
