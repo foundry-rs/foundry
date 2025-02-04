@@ -28,7 +28,7 @@ pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
     /// accounts.
     Address(Address),
-    /// A refersnce to a signer.
+    /// A reference to a signer.
     Signer(&'a WalletSigner),
     /// An owned signer.
     OwnedSigner(WalletSigner),
@@ -370,7 +370,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
                 Ok(())
             }
             Err(err) => {
-                if let TransportError::ErrorResp(ref payload) = err {
+                if let TransportError::ErrorResp(payload) = &err {
                     // If execution reverted with code 3 during provider gas estimation then try
                     // to decode custom errors and append it to the error message.
                     if payload.code == 3 {
