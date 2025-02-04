@@ -292,7 +292,10 @@ proptest = "1"
 rand = "0.8"
 rayon = "1"
 regex = { version = "1", default-features = false }
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "rustls-tls-native-roots",
+] }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
