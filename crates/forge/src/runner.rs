@@ -31,7 +31,7 @@ use foundry_evm::{
     traces::{load_contracts, TraceKind, TraceMode},
 };
 use proptest::test_runner::{
-    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
+    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestError, TestRng, TestRunner,
 };
 use rayon::prelude::*;
 use std::{borrow::Cow, cmp::min, collections::BTreeMap, sync::Arc, time::Instant};
@@ -686,7 +686,16 @@ impl<'a> FunctionRunner<'a> {
                                 ) {
                                     error!(%err, "Failed to record call sequence");
                                 }
-                                counterexample = Some(CounterExample::Sequence(call_sequence))
+
+                                let original_seq_len =
+                                    if let TestError::Fail(_, calls) = &case_data.test_error {
+                                        calls.len()
+                                    } else {
+                                        call_sequence.len()
+                                    };
+
+                                counterexample =
+                                    Some(CounterExample::Sequence(original_seq_len, call_sequence))
                             }
                         }
                         Err(err) => {

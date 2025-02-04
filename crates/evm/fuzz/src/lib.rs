@@ -35,8 +35,8 @@ pub use inspector::Fuzzer;
 pub enum CounterExample {
     /// Call used as a counter example for fuzz tests.
     Single(BaseCounterExample),
-    /// Sequence of calls used as a counter example for invariant tests.
-    Sequence(Vec<BaseCounterExample>),
+    /// Original sequence size and sequence of calls used as a counter example for invariant tests.
+    Sequence(usize, Vec<BaseCounterExample>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
