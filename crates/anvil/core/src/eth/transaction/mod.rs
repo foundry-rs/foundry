@@ -579,7 +579,7 @@ pub enum TypedTransaction {
 /// over the type.
 ///
 /// This function is purely for convenience and specific use cases, e.g. RLP encoded transactions
-/// decode to TypedTransactions where the API over TypedTransctions is quite strict.
+/// decode to TypedTransactions where the API over TypedTransactions is quite strict.
 impl TryFrom<TypedTransaction> for TransactionRequest {
     type Error = ConversionError;
 
