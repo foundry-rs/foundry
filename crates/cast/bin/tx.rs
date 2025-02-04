@@ -434,10 +434,8 @@ where
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.
 async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
-    if let Some(err_data) =
-        serde_json::from_str::<String>(data.get()).unwrap_or_default().strip_prefix("0x")
-    {
-        let selector = err_data.get(..8).unwrap_or_default();
+    if let Some(err_data) = serde_json::from_str::<String>(data.get())?.strip_prefix("0x") {
+        let selector = err_data.get(..8).unwrap();
         if let Some(known_error) = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
             .write()
             .await
@@ -447,7 +445,7 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
             let mut decoded_error = known_error.name.clone();
             if !known_error.inputs.is_empty() {
                 if let Ok(error) = known_error.decode_error(&hex::decode(err_data)?) {
-                    write!(decoded_error, "({})", format_tokens(&error.body).format(", ")).unwrap();
+                    write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
                 }
             }
             return Ok(Some(decoded_error))
