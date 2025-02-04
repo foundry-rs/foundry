@@ -19,7 +19,9 @@ use foundry_cli::{
 use foundry_common::{ens::NameOrAddress, fmt::format_tokens};
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
+use itertools::Itertools;
 use serde_json::value::RawValue;
+use std::fmt::Write;
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -432,7 +434,9 @@ where
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.
 async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
-    if let Some(err_data) = data.to_string().replace("\"", "").strip_prefix("0x") {
+    if let Some(err_data) =
+        serde_json::from_str::<String>(data.get()).unwrap_or_default().strip_prefix("0x")
+    {
         let selector = err_data.get(..8).unwrap_or_default();
         if let Some(known_error) = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
             .write()
@@ -442,16 +446,9 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         {
             let mut decoded_error = known_error.name.clone();
             if !known_error.inputs.is_empty() {
-                decoded_error.push('(');
-                let error = known_error.decode_error(&hex::decode(err_data)?)?;
-                let mut tokens = format_tokens(&error.body).peekable();
-                while let Some(token) = &tokens.next() {
-                    decoded_error.push_str(token);
-                    if tokens.peek().is_some() {
-                        decoded_error.push_str(", ");
-                    }
+                if let Ok(error) = known_error.decode_error(&hex::decode(err_data)?) {
+                    write!(decoded_error, "({})", format_tokens(&error.body).format(", ")).unwrap();
                 }
-                decoded_error.push(')');
             }
             return Ok(Some(decoded_error))
         }
