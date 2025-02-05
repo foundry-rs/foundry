@@ -149,6 +149,7 @@ impl ForgeTestProfile {
             ),
             show_metrics: false,
             timeout: None,
+            show_solidity: false,
         };
 
         config.sanitized()

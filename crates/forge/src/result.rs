@@ -455,7 +455,7 @@ impl fmt::Display for TestResult {
                                     .as_str(),
                                 );
                                 for ex in sequence {
-                                    writeln!(s, "\t\t{ex}").unwrap();
+                                    writeln!(s, "{ex}").unwrap();
                                 }
                             }
                         }

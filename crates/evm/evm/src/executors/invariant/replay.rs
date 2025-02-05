@@ -32,6 +32,7 @@ pub fn replay_run(
     coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
+    show_solidity: bool,
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
@@ -64,6 +65,7 @@ pub fn replay_run(
             &tx.call_details.calldata,
             &ided_contracts,
             call_result.traces,
+            show_solidity,
         ));
     }
 
@@ -110,6 +112,7 @@ pub fn replay_error(
     coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
+    show_solidity: bool,
 ) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
@@ -137,6 +140,7 @@ pub fn replay_error(
                 coverage,
                 deprecated_cheatcodes,
                 &calls,
+                show_solidity,
             )
         }
     }

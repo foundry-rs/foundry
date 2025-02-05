@@ -1090,6 +1090,7 @@ max_assume_rejects = 65536
 gas_report_samples = 256
 failure_persist_dir = "cache/invariant"
 show_metrics = false
+show_solidity = false
 
 [labels]
 
@@ -1193,7 +1194,8 @@ exclude = []
     "gas_report_samples": 256,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": false,
-    "timeout": null
+    "timeout": null,
+    "show_solidity": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
