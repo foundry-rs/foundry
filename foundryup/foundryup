@@ -163,7 +163,7 @@ main() {
       tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.tar.gz"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
-      ensure tar tf $tmp 1> /dev/null
+      ensure tar tf "$tmp" > /dev/null 2>&1
       ensure mkdir -p $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG
       ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf $tmp
       rm -f "$tmp"
