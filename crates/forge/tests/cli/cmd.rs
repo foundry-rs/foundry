@@ -3,7 +3,8 @@
 use crate::constants::*;
 use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
-    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    filter::GlobMatcher, parse_with_profile, BasicConfig, Chain, CompilationRestrictions, Config,
+    FuzzConfig, InvariantConfig, SettingsOverrides, SolidityErrorCode,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
@@ -11,6 +12,7 @@ use foundry_test_utils::{
     snapbox::IntoData,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
+use globset::Glob;
 use semver::Version;
 use std::{
     fs,
@@ -3397,6 +3399,67 @@ forgetest!(inspect_path_only_identifier, |prj, cmd| {
 
 
 "#]]);
+});
+
+forgetest!(inspect_path_with_compiler_add_compiler_profiles, |prj, cmd| {
+    let config = Config {
+        optimizer: Some(true),
+        additional_compiler_profiles: vec![SettingsOverrides {
+            name: "another".to_string(),
+            optimizer_runs: Some(10),
+            evm_version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            optimizer: Some(true),
+        }],
+        compilation_restrictions: vec![CompilationRestrictions {
+            paths: GlobMatcher::new(Glob::new("src/Another.sol").unwrap()),
+            optimizer_runs: Some(10),
+            evm_version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_evm_version: None,
+            max_evm_version: None,
+            max_optimizer_runs: None,
+            min_optimizer_runs: None,
+            version: None,
+        }],
+        ..Default::default()
+    };
+
+    prj.write_config(config);
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+        contract Counter {
+            uint256 public number;
+
+            error NumberIsZero();
+
+            function setNumber(uint256 newNumber) public {
+                number = newNumber;
+            }
+
+            function increment() public {
+                number++;
+            }
+        }
+    "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Another.sol",
+        r#"
+        import "./Counter.sol";
+        contract Another is Counter {}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["b"]).assert_success();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#""#]]);
 });
 
 forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {

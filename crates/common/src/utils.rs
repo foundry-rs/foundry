@@ -71,12 +71,32 @@ pub fn find_target_artifact(
             .artifact_ids()
             .filter(|(id, _artifact)| id.source == target_path)
             .collect::<Vec<_>>();
-        if possible_targets.len() > 1 {
-            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
-        } else if possible_targets.is_empty() {
-            eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
+
+        if possible_targets.len() == 1 {
+            return Ok(possible_targets[0].1.clone());
         }
 
-        Ok(possible_targets[0].1.clone())
+        if possible_targets.windows(2).all(|w| w[0].0.path != w[1].0.path) {
+            // Likely due to addition compiler profiles
+            // First, try to find the one with default profile, it not, return the first one
+            let default_target = possible_targets.iter().find_map(|(id, artifact)| {
+                if id.profile == "default" {
+                    return Some(artifact)
+                }
+                None
+            });
+
+            if let Some(artifact) = default_target {
+                return Ok((*artifact).clone());
+            }
+
+            return Ok(possible_targets[0].1.clone());
+        }
+
+        if possible_targets.len() > 1 {
+            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
+        } else {
+            eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
+        }
     }
 }
