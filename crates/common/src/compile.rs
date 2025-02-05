@@ -591,7 +591,7 @@ impl std::fmt::Debug for PathOrContractInfo {
         match self {
             Self::Path(path) => write!(f, "Path({})", path.display()),
             Self::ContractInfo(info) => {
-                write!(f, "ContractInfo({})", info)
+                write!(f, "ContractInfo({info})")
             }
         }
     }
