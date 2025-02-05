@@ -581,20 +581,24 @@ impl<'a> FunctionRunner<'a> {
 
         let failure_dir = invariant_config.clone().failure_dir(self.cr.name);
         let failure_file = failure_dir.join(&invariant_contract.invariant_function.name);
+        let show_solidity = invariant_config.clone().show_solidity;
 
         // Try to replay recorded failure if any.
-        if let Ok(call_sequence) =
+        if let Ok(mut call_sequence) =
             foundry_common::fs::read_json_file::<Vec<BaseCounterExample>>(failure_file.as_path())
         {
             // Create calls from failed sequence and check if invariant still broken.
             let txes = call_sequence
-                .iter()
-                .map(|seq| BasicTxDetails {
-                    sender: seq.sender.unwrap_or_default(),
-                    call_details: CallDetails {
-                        target: seq.addr.unwrap_or_default(),
-                        calldata: seq.calldata.clone(),
-                    },
+                .iter_mut()
+                .map(|seq| {
+                    seq.show_solidity = show_solidity;
+                    BasicTxDetails {
+                        sender: seq.sender.unwrap_or_default(),
+                        call_details: CallDetails {
+                            target: seq.addr.unwrap_or_default(),
+                            calldata: seq.calldata.clone(),
+                        },
+                    }
                 })
                 .collect::<Vec<BasicTxDetails>>();
             if let Ok((success, replayed_entirely)) = check_sequence(
@@ -624,6 +628,7 @@ impl<'a> FunctionRunner<'a> {
                         &mut self.result.coverage,
                         &mut self.result.deprecated_cheatcodes,
                         &txes,
+                        show_solidity,
                     );
                     self.result.invariant_replay_fail(
                         replayed_entirely,
@@ -674,6 +679,7 @@ impl<'a> FunctionRunner<'a> {
                         &mut self.result.coverage,
                         &mut self.result.deprecated_cheatcodes,
                         progress.as_ref(),
+                        show_solidity,
                     ) {
                         Ok(call_sequence) => {
                             if !call_sequence.is_empty() {
@@ -719,6 +725,7 @@ impl<'a> FunctionRunner<'a> {
                     &mut self.result.coverage,
                     &mut self.result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
+                    show_solidity,
                 ) {
                     error!(%err, "Failed to replay last invariant run");
                 }
