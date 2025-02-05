@@ -1,5 +1,6 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
+use foundry_common::sh_eprintln;
 use foundry_compilers::{
     artifacts::Contract,
     cache::CompilerCache,
@@ -153,7 +154,7 @@ impl ExtTester {
         if self.rev.is_empty() {
             let mut git = Command::new("git");
             git.current_dir(root).args(["log", "-n", "1"]);
-            let _ = sh_println!("$ {git:?}");
+            println!("$ {git:?}");
             let output = git.output().unwrap();
             if !output.status.success() {
                 panic!("git log failed: {output:?}");
@@ -164,7 +165,7 @@ impl ExtTester {
         } else {
             let mut git = Command::new("git");
             git.current_dir(root).args(["checkout", self.rev]);
-            let _ = sh_println!("$ {git:?}");
+            println!("$ {git:?}");
             let status = git.status().unwrap();
             if !status.success() {
                 panic!("git checkout failed: {status}");
@@ -178,16 +179,16 @@ impl ExtTester {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
-            let _ = sh_println!("cd {root}; {install_cmd:?}");
+            println!("cd {root}; {install_cmd:?}");
             match install_cmd.status() {
                 Ok(s) => {
-                    let _ = sh_println!("\n\n{install_cmd:?}: {s}");
+                    println!("\n\n{install_cmd:?}: {s}");
                     if s.success() {
                         break;
                     }
                 }
                 Err(e) => {
-                    let _ = sh_eprintln!("\n\n{install_cmd:?}: {e}");
+                    eprintln!("\n\n{install_cmd:?}: {e}");
                 }
             }
         }
@@ -269,15 +270,21 @@ pub fn initialize(target: &Path) {
             println!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
-            // checkout forge-std
-            assert!(Command::new("git")
+            prj.write_config(Config {
+                solc: Some(foundry_config::SolcReq::Version(SOLC_VERSION.parse().unwrap())),
+                ..Default::default()
+            });
+
+            // Checkout forge-std.
+            let output = Command::new("git")
                 .current_dir(prj.root().join("lib/forge-std"))
                 .args(["checkout", FORGE_STD_REVISION])
                 .output()
-                .expect("failed to checkout forge-std")
-                .status
-                .success());
-            cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
+                .expect("failed to checkout forge-std");
+            assert!(output.status.success(), "{output:#?}");
+
+            // Build the project.
+            cmd.forge_fuse().arg("build").assert_success();
 
             // Remove the existing template, if any.
             let _ = fs::remove_dir_all(tpath);
@@ -306,12 +313,12 @@ pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
     cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
-    let _ = sh_println!("{cmd:?}");
+    println!("{cmd:?}");
     let status = cmd.status().unwrap();
     if !status.success() {
         panic!("git clone failed: {status}");
     }
-    let _ = sh_println!();
+    println!();
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -499,7 +506,25 @@ impl TestProject {
         let _ = fs::remove_dir_all(self.artifacts());
     }
 
+    /// Updates the project's config with the given function.
+    pub fn update_config(&self, f: impl FnOnce(&mut Config)) {
+        self._update_config(Box::new(f));
+    }
+
+    fn _update_config(&self, f: Box<dyn FnOnce(&mut Config) + '_>) {
+        let mut config = self
+            .config()
+            .exists()
+            .then_some(())
+            .and_then(|()| Config::load_with_root(self.root()).ok())
+            .unwrap_or_default();
+        config.remappings.clear();
+        f(&mut config);
+        self.write_config(config);
+    }
+
     /// Writes the given config as toml to `foundry.toml`.
+    #[doc(hidden)] // Prefer `update_config`.
     pub fn write_config(&self, config: Config) {
         let file = self.config();
         pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
@@ -672,7 +697,7 @@ impl TestProject {
         let forge = forge.canonicalize().unwrap_or_else(|_| forge.clone());
         let mut cmd = Command::new(forge);
         cmd.current_dir(self.inner.root());
-        // disable color output for comparisons
+        // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
@@ -857,9 +882,8 @@ impl TestCommand {
     pub fn config(&mut self) -> Config {
         self.cmd.args(["config", "--json"]);
         let output = self.assert().success().get_output().stdout_lossy();
-        let config = serde_json::from_str(output.as_ref()).unwrap();
         self.forge_fuse();
-        config
+        serde_json::from_str(output.as_ref()).unwrap()
     }
 
     /// Runs `git init` inside the project's dir
@@ -978,7 +1002,7 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        let _ = sh_println!("executing {:?}", self.cmd);
+        println!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {

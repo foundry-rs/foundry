@@ -3,15 +3,13 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactionsKind};
-use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
-
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
-pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
+pub async fn environment<N: Network, P: Provider<N>>(
     provider: &P,
     memory_limit: u64,
     gas_price: Option<u128>,

@@ -19,7 +19,6 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -39,7 +38,6 @@ use std::{
     borrow::Cow,
     fmt::Write,
     io,
-    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -70,16 +68,11 @@ sol! {
     }
 }
 
-pub struct Cast<P, T> {
+pub struct Cast<P> {
     provider: P,
-    transport: PhantomData<T>,
 }
 
-impl<T, P> Cast<P, T>
-where
-    T: Transport + Clone,
-    P: Provider<T, AnyNetwork>,
-{
+impl<P: Provider<AnyNetwork>> Cast<P> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -96,7 +89,7 @@ where
     /// # }
     /// ```
     pub fn new(provider: P) -> Self {
-        Self { provider, transport: PhantomData }
+        Self { provider }
     }
 
     /// Makes a read-only call to the specified address
@@ -281,7 +274,7 @@ where
     pub async fn send(
         &self,
         tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -307,7 +300,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -439,9 +432,13 @@ where
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
-            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon",
-            "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
-                "polygon-mumbai"
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
+            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
+                "polygon-pos-amoy-testnet"
+            }
+            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
+            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
+                "polygon-zkevm-cardona-testnet"
             }
             "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
             "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
@@ -845,7 +842,7 @@ where
     /// ```
     pub async fn rpc<V>(&self, method: &str, params: V) -> Result<String>
     where
-        V: alloy_json_rpc::RpcParam,
+        V: alloy_json_rpc::RpcSend,
     {
         let res = self
             .provider

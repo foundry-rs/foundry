@@ -3,7 +3,6 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_config::{Config, InvariantConfig};
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
@@ -261,15 +260,13 @@ async fn test_invariant_inner_contract() {
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
-        config.fuzz.seed = Some(U256::from(119u32));
-        config.optimizer = Some(true);
-    });
+    let mut runner =
+        TEST_DATA_DEFAULT.runner_with(|config| config.fuzz.seed = Some(U256::from(119u32)));
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             assert!(sequence.len() <= 3);
 
             if sequence.len() == 2 {
@@ -317,7 +314,7 @@ async fn check_shrink_sequence(test_pattern: &str, expected_len: usize) {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             assert_eq!(sequence.len(), expected_len);
         }
     };
@@ -349,7 +346,7 @@ async fn test_shrink_big_sequence() {
 
     let initial_sequence = match initial_counterexample {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => sequence,
+        CounterExample::Sequence(_, sequence) => sequence,
     };
     // ensure shrinks to same sequence of 77
     assert_eq!(initial_sequence.len(), 77);
@@ -382,7 +379,7 @@ async fn test_shrink_big_sequence() {
         .unwrap()
     {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => sequence,
+        CounterExample::Sequence(_, sequence) => sequence,
     };
     // ensure shrinks to same sequence of 77
     assert_eq!(new_sequence.len(), 77);
@@ -410,7 +407,7 @@ async fn test_shrink_fail_on_revert() {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             // ensure shrinks to sequence of 10
             assert_eq!(sequence.len(), 10);
         }
@@ -699,7 +696,7 @@ async fn test_no_reverts_in_counterexample() {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             // ensure original counterexample len is 10 (even without shrinking)
             assert_eq!(sequence.len(), 10);
         }
@@ -708,13 +705,10 @@ async fn test_no_reverts_in_counterexample() {
 
 // Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
 forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
-    let config = Config {
-        invariant: {
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
-        },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
+    });
 
     // Add initial test that breaks invariant.
     prj.add_test(
@@ -777,14 +771,11 @@ contract AssumeTest is Test {
 // Test too many inputs rejected for `assumePrecompile`/`assumeForgeAddress`.
 // <https://github.com/foundry-rs/foundry/issues/9054>
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
-    let config = Config {
-        optimizer: Some(true),
-        invariant: {
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
-        },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
 
     // Add initial test that breaks invariant.
     prj.add_test(
@@ -824,7 +815,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 0, calls: 0, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 1, calls: 500, reverts: 0)
 ...
 "#]]);
 });
@@ -1001,10 +992,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 forgetest_init!(invariant_selectors_weight, |prj, cmd| {
-    prj.write_config(Config {
-        optimizer: Some(true),
-        invariant: { InvariantConfig { runs: 1, depth: 10, ..Default::default() } },
-        ..Default::default()
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
     });
     prj.add_source(
         "InvariantHandlers.sol",
@@ -1073,4 +1063,40 @@ contract InvariantSelectorsWeightTest is Test {
     .unwrap();
 
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
+});
+
+// Tests original and new counterexample lengths are displayed on failure.
+forgetest_init!(invariant_sequence_len, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+
+    prj.add_test(
+        "InvariantSequenceLenTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract InvariantSequenceLenTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_increment() public {
+        require(counter.number() / 2 < 100000000000000000000000000000000, "invariant increment failure");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: revert: invariant increment failure]
+	[Sequence] (original: 4, shrunk: 1)
+...
+"#]]);
 });

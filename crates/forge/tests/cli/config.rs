@@ -40,6 +40,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         cache: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
+        gas_snapshot_check: false,
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
@@ -363,8 +364,9 @@ contract Greeter {}
     )
     .unwrap();
 
-    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -427,7 +429,7 @@ Compiler run successful!
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "foo.sol",
         r"
@@ -453,11 +455,7 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
 "#]]);
 
     // disable yul optimizer explicitly
-    let config = Config {
-        optimizer_details: Some(OptimizerDetails { yul: Some(false), ..Default::default() }),
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| config.optimizer_details.get_or_insert_default().yul = Some(false));
     cmd.assert_success();
 });
 
@@ -477,8 +475,7 @@ forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
 // test that optimizer runs works
 forgetest!(can_set_optimizer_runs, |prj, cmd| {
     // explicitly set optimizer runs
-    let config = Config { optimizer_runs: Some(1337), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.optimizer_runs = Some(1337));
 
     let config = cmd.config();
     assert_eq!(config.optimizer_runs, Some(1337));
@@ -490,9 +487,7 @@ forgetest!(can_set_optimizer_runs, |prj, cmd| {
 // <https://github.com/foundry-rs/foundry/issues/9665>
 forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
     // explicitly set optimizer runs
-    let config = Config { optimizer_runs: Some(1337), ..Default::default() };
-    assert!(config.optimizer.is_none());
-    prj.write_config(config);
+    prj.update_config(|config| config.optimizer_runs = Some(1337));
 
     let config = cmd.config();
     assert!(config.optimizer.unwrap());
@@ -500,9 +495,8 @@ forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
 
 // test `optimizer_runs` set to 200 by default if optimizer enabled
 forgetest!(optimizer_runs_default, |prj, cmd| {
-    // explicitly set optimizer runs
-    let config = Config { optimizer: Some(true), ..Default::default() };
-    prj.write_config(config);
+    // explicitly set optimizer
+    prj.update_config(|config| config.optimizer = Some(true));
 
     let config = cmd.config();
     assert_eq!(config.optimizer_runs, Some(200));
@@ -511,8 +505,7 @@ forgetest!(optimizer_runs_default, |prj, cmd| {
 // test that gas_price can be set
 forgetest!(can_set_gas_price, |prj, cmd| {
     // explicitly set gas_price
-    let config = Config { gas_price: Some(1337), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.gas_price = Some(1337));
 
     let config = cmd.config();
     assert_eq!(config.gas_price, Some(1337));
@@ -698,8 +691,7 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     cmd.git_init();
 
     // explicitly set gas_price
-    let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
-    prj.write_config(init);
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
     cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
         [r#"
@@ -759,12 +751,10 @@ Please use [profile.default] instead or run `forge config --fix`.
 
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
     // explicitly set remapping and libraries
-    let config = Config {
-        remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
-        auto_detect_remappings: false,
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()];
+        config.auto_detect_remappings = false;
+    });
 
     let config = cmd.config();
 
@@ -784,14 +774,13 @@ forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
 
 forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
     // explicitly set fs permissions
-    let custom_permissions = FsPermissions::new(vec![
-        PathPermission::read("./read"),
-        PathPermission::write("./write"),
-        PathPermission::read_write("./write/contracts"),
-    ]);
-
-    let config = Config { fs_permissions: custom_permissions, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fs_permissions = FsPermissions::new(vec![
+            PathPermission::read("./read"),
+            PathPermission::write("./write"),
+            PathPermission::read_write("./write/contracts"),
+        ]);
+    });
 
     let config = cmd.config();
 
@@ -831,10 +820,10 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     .unwrap();
 
     // write config, give read access to links/ symlink to packages/files/
-    let permissions =
-        FsPermissions::new(vec![PathPermission::read(Path::new("./links/config.json"))]);
-    let config = Config { fs_permissions: permissions, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fs_permissions =
+            FsPermissions::new(vec![PathPermission::read(Path::new("./links/config.json"))]);
+    });
 
     let config = cmd.config();
     let mut fs_permissions = config.fs_permissions;
@@ -934,14 +923,11 @@ contract MyScript is BaseScript {
 // For `src=src/contracts` config, remapping should be `src/contracts/ = src/contracts/`.
 // For `src=src` config, remapping should be `src/ = src/`.
 // <https://github.com/foundry-rs/foundry/issues/9454>
-forgetest!(test_project_remappings, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
-    let config = Config {
-        src: "src/contracts".into(),
-        remappings: vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()],
-        ..Default::default()
-    };
-    prj.write_config(config);
+forgetest_init!(test_project_remappings, |prj, cmd| {
+    prj.update_config(|config| {
+        config.src = "src/contracts".into();
+        config.remappings = vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()];
+    });
 
     // Add Counter.sol in `src/contracts` project dir.
     let src_dir = &prj.root().join("src/contracts");
@@ -965,6 +951,7 @@ contract CounterTest {
 
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
+    prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 [profile.default]
 src = "src"
@@ -978,6 +965,7 @@ libraries = []
 cache = true
 cache_path = "cache"
 snapshots = "snapshots"
+gas_snapshot_check = false
 broadcast = "broadcast"
 allow_paths = []
 include_paths = []
@@ -1132,6 +1120,7 @@ exclude = []
   "cache": true,
   "cache_path": "cache",
   "snapshots": "snapshots",
+  "gas_snapshot_check": false,
   "broadcast": "broadcast",
   "allow_paths": [],
   "include_paths": [],
@@ -1311,8 +1300,7 @@ optimizer_runs = 200
 "#]]);
 
     // Optimizer set to true: optimizer runs set to default value of 200.
-    let config = Config { optimizer: Some(true), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.optimizer = Some(true));
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = true
@@ -1322,8 +1310,10 @@ optimizer_runs = 200
 "#]]);
 
     // Optimizer runs set to 0: optimizer should be disabled, runs set to 0.
-    let config = Config { optimizer_runs: Some(0), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.optimizer_runs = Some(0);
+    });
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = false
@@ -1333,8 +1323,10 @@ optimizer_runs = 0
 "#]]);
 
     // Optimizer runs set to 500: optimizer should be enabled, runs set to 500.
-    let config = Config { optimizer_runs: Some(500), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.optimizer_runs = Some(500);
+    });
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = true
@@ -1344,8 +1336,10 @@ optimizer_runs = 500
 "#]]);
 
     // Optimizer disabled and runs set to 500: optimizer should be disabled, runs set to 500.
-    let config = Config { optimizer: Some(false), optimizer_runs: Some(500), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.optimizer = Some(false);
+        config.optimizer_runs = Some(500);
+    });
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = false
@@ -1355,13 +1349,187 @@ optimizer_runs = 500
 "#]]);
 
     // Optimizer enabled and runs set to 0: optimizer should be enabled, runs set to 0.
-    let config = Config { optimizer: Some(true), optimizer_runs: Some(0), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(0);
+    });
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
 ...
 optimizer = true
 optimizer_runs = 0
 ...
 
+"#]]);
+});
+
+forgetest_init!(test_gas_snapshot_check_config, |prj, cmd| {
+    // Default settings: gas_snapshot_check disabled.
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+gas_snapshot_check = false
+...
+
+"#]]);
+
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "Flare.sol",
+        r#"
+contract Flare {
+    bytes32[] public data;
+
+    function run(uint256 n_) public {
+        for (uint256 i = 0; i < n_; i++) {
+            data.push(keccak256(abi.encodePacked(i)));
+        }
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    let test_contract = |n: u32| {
+        format!(
+            r#"
+import "./test.sol";
+import "./Flare.sol";
+
+interface Vm {{
+    function startSnapshotGas(string memory name) external;
+    function stopSnapshotGas() external returns (uint256);
+}}
+
+contract GasSnapshotCheckTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    Flare public flare;
+
+    function setUp() public {{
+        flare = new Flare();
+    }}
+
+    function testSnapshotGasSectionExternal() public {{
+        vm.startSnapshotGas("testAssertGasExternal");
+        flare.run({n});
+        vm.stopSnapshotGas();
+    }}
+}}
+        "#
+        )
+    };
+
+    // Assert that gas_snapshot_check is disabled by default.
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1)).unwrap();
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Enable gas_snapshot_check.
+    prj.update_config(|config| config.gas_snapshot_check = true);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+gas_snapshot_check = true
+...
+
+"#]]);
+
+    // Replace the test contract with a new one that will fail the gas snapshot check.
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2)).unwrap();
+    cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Disable gas_snapshot_check, assert that running the test will pass.
+    prj.update_config(|config| config.gas_snapshot_check = false);
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Re-enable gas_snapshot_check
+    // Assert that the new value has been stored from the previous run and re-run the test.
+    prj.update_config(|config| config.gas_snapshot_check = true);
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Replace the test contract with a new one that will fail the gas_snapshot_check.
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3)).unwrap();
+    cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Test that `--gas-snapshot-check=false` flag can be used to disable the gas_snapshot_check.
+    cmd.forge_fuse().args(["test", "--gas-snapshot-check=false"]).assert_success().stdout_eq(str![
+        [r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]
+    ]);
+
+    // Disable gas_snapshot_check in the config file.
+    // Enable using `FORGE_SNAPSHOT_CHECK` environment variable.
+    // Assert that this will override the config file value.
+    prj.update_config(|config| config.gas_snapshot_check = false);
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4)).unwrap();
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_CHECK", "true");
+    cmd.args(["test"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Assert that `--gas-snapshot-check=true` flag can be used to enable the gas_snapshot_check
+    // even when `FORGE_SNAPSHOT_CHECK` is set to false in the environment variable.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_CHECK", "false");
+    cmd.args(["test", "--gas-snapshot-check=true"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Finally assert that `--gas-snapshot-check=false` flag can be used to disable the
+    // gas_snapshot_check even when `FORGE_SNAPSHOT_CHECK` is set to true
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_CHECK", "true");
+    cmd.args(["test", "--gas-snapshot-check=false"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
 "#]]);
 });

@@ -1903,10 +1903,10 @@ impl EthApi {
                 TransactionOrder::Fees => "fees".to_string(),
             },
             environment: NodeEnvironment {
-                base_fee: U256::from(self.backend.base_fee()),
+                base_fee: self.backend.base_fee() as u128,
                 chain_id: self.backend.chain_id().to::<u64>(),
-                gas_limit: U256::from(self.backend.gas_limit()),
-                gas_price: U256::from(self.gas_price()),
+                gas_limit: self.backend.gas_limit(),
+                gas_price: self.gas_price(),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -2865,7 +2865,7 @@ impl EthApi {
         let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
-        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit() as u64);
+        let gas_limit = request.gas.unwrap_or_else(|| self.backend.gas_limit());
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {
