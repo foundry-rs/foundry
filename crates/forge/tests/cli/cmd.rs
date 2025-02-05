@@ -3400,7 +3400,7 @@ forgetest!(inspect_path_only_identifier, |prj, cmd| {
 });
 
 forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
-    let source = format!("{}\n{}", CUSTOM_COUNTER, ANOTHER_COUNTER);
+    let source = format!("{CUSTOM_COUNTER}\n{ANOTHER_COUNTER}");
     prj.add_source("Counter.sol", &source).unwrap();
 
     cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>[..]"#]]);

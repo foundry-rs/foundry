@@ -45,23 +45,6 @@ pub fn erc7201(id: &str) -> B256 {
     keccak256(x.to_be_bytes::<32>()) & B256::from(!U256::from(0xff))
 }
 
-/// Returns the contract name given the artifact path.
-pub fn find_target_name(output: &ProjectCompileOutput, target_path: &Path) -> Result<String> {
-    let names = output
-        .artifact_ids()
-        .filter(|(id, _)| id.source == target_path)
-        .map(|(id, _)| id.name)
-        .collect::<Vec<_>>();
-
-    if names.len() > 1 {
-        eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
-    } else if names.is_empty() {
-        eyre::bail!("Could not find contract name linked to source `{target_path:?}` in the compiled artifacts");
-    }
-
-    Ok(names[0].clone())
-}
-
 /// Returns the canonicalized target path for the given identifier.
 pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> Result<PathBuf> {
     match identifier {
