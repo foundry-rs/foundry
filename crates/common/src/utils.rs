@@ -76,27 +76,34 @@ pub fn find_matching_contract_artifact(
             return Ok(possible_targets[0].1.clone());
         }
 
-        if possible_targets.windows(2).all(|w| w[0].0.path != w[1].0.path) {
-            // Likely due to addition compiler profiles
-            // First, try to find the one with default profile, it not, return the first one
-            let default_target = possible_targets.iter().find_map(|(id, artifact)| {
-                if id.profile == "default" {
-                    return Some(artifact)
-                }
-                None
-            });
-
-            if let Some(artifact) = default_target {
-                return Ok((*artifact).clone());
-            }
-
-            return Ok(possible_targets[0].1.clone());
-        }
-
-        if possible_targets.len() > 1 {
-            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
-        } else {
+        if possible_targets.is_empty() {
             eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
         }
+
+        // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
+        // addtional compiler profiles), it means that there are multiple contracts in the
+        // same file.
+        let contract_name = possible_targets.first().unwrap().0.clone().name;
+        if !contract_name.contains(".") &&
+            possible_targets.iter().any(|(id, _)| id.name != contract_name)
+        {
+            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
+        }
+
+        // Otherwise, we're dealing with additional compiler profiles wherein `id.source` is the
+        // same but `id.path` is different.
+        // First, try to find the one with default profile, it not, return the first one
+        let default_target = possible_targets.iter().find_map(|(id, artifact)| {
+            if id.profile == "default" {
+                return Some(artifact)
+            }
+            None
+        });
+
+        if let Some(artifact) = default_target {
+            return Ok((*artifact).clone());
+        }
+
+        Ok(possible_targets[0].1.clone())
     }
 }
