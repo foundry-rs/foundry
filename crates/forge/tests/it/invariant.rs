@@ -1107,7 +1107,8 @@ contract InvariantSequenceLenTest is Test {
         config.fuzz.seed = Some(U256::from(100u32));
         config.invariant.shrink_run_limit = 0;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
@@ -1121,7 +1122,8 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
-"#]]);
+"#]],
+    );
 
     // Check solidity sequence output on same failure.
     cmd.forge_fuse().arg("clean").assert_success();
@@ -1130,7 +1132,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
         config.invariant.shrink_run_limit = 0;
         config.invariant.show_solidity = true;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
@@ -1148,7 +1151,8 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
-"#]]);
+"#]],
+    );
 
     // Persisted failures should be able to switch output.
     prj.update_config(|config| {
@@ -1156,7 +1160,8 @@ Encountered a total of 1 failing tests, 0 tests succeeded
         config.invariant.shrink_run_limit = 0;
         config.invariant.show_solidity = false;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
@@ -1170,5 +1175,6 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
-"#]]);
+"#]],
+    );
 });
