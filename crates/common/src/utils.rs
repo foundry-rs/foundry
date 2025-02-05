@@ -57,7 +57,7 @@ pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> R
 }
 
 /// Returns the target artifact given the path and name.
-pub fn find_target_artifact(
+pub fn find_matching_contract_artifact(
     output: &mut ProjectCompileOutput,
     target_path: &Path,
     target_name: Option<&str>,

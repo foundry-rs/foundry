@@ -7,7 +7,7 @@ use forge::revm::primitives::Eof;
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_target_artifact, find_target_path,
+    find_matching_contract_artifact, find_target_path,
     fmt::pretty_eof,
     shell,
 };
@@ -70,7 +70,7 @@ impl InspectArgs {
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
-        let artifact = find_target_artifact(&mut output, &target_path, contract.name())?;
+        let artifact = find_matching_contract_artifact(&mut output, &target_path, contract.name())?;
 
         // Match on ContractArtifactFields and pretty-print
         match field {
