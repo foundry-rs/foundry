@@ -1104,7 +1104,6 @@ contract InvariantSequenceLenTest is Test {
     // Check regular sequence output. Shrink disabled to show several lines.
     cmd.forge_fuse().arg("clean").assert_success();
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(100u32));
         config.invariant.shrink_run_limit = 0;
     });
     cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
@@ -1128,8 +1127,6 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     // Check solidity sequence output on same failure.
     cmd.forge_fuse().arg("clean").assert_success();
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(100u32));
-        config.invariant.shrink_run_limit = 0;
         config.invariant.show_solidity = true;
     });
     cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
@@ -1156,8 +1153,6 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
     // Persisted failures should be able to switch output.
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(100u32));
-        config.invariant.shrink_run_limit = 0;
         config.invariant.show_solidity = false;
     });
     cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
