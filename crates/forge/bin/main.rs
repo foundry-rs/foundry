@@ -34,6 +34,11 @@ fn run() -> Result<()> {
     utils::subscriber();
     utils::enable_paint();
 
+    if let Some(to) = utils::should_redirect_to()? {
+        utils::redirect_execution(to)?;
+        return Ok(())
+    }
+
     let args = Forge::parse();
     args.global.init()?;
     init_execution_context(&args.cmd);
