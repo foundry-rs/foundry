@@ -43,8 +43,7 @@ impl UpdateArgs {
         let git = Git::new(&root);
 
         let mut foundry_lock = Lockfile::new(&config.root).with_git(&git);
-        let _out_of_sync_deps = foundry_lock.sync()?;
-        let prev_len = foundry_lock.len();
+        let out_of_sync_deps = foundry_lock.sync()?;
 
         // update the submodules' tags if any overrides are present
         let mut prev_dep_ids: DepMap = HashMap::default();
@@ -79,10 +78,12 @@ impl UpdateArgs {
         if self.recursive {
             // update submodules recursively
             let update_paths = self.update_dep_paths(&foundry_lock);
+            trace!(?update_paths, "updating deps at");
             git.submodule_update(self.force, true, false, true, update_paths)?;
         } else {
             let update_paths = self.update_dep_paths(&foundry_lock);
             let is_empty = update_paths.is_empty();
+            trace!(?update_paths, "updating deps at");
             // update submodules
             git.submodule_update(self.force, true, false, false, update_paths)?;
 
@@ -93,7 +94,7 @@ impl UpdateArgs {
             }
         }
 
-        // FIX: Branches should get updated to their latest commit on `forge update`.
+        // Branches should get updated to their latest commit on `forge update`.
         // i.e if previously submodule was tracking branch `main` at rev `1234567` and now the
         // remote `main` branch is at `7654321`, then submodule should also be updated to `7654321`.
         // This tracking is automatically handled by git, but we need to update the lockfile entry
@@ -144,7 +145,7 @@ impl UpdateArgs {
             git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
         }
 
-        if prev_len != foundry_lock.len() ||
+        if out_of_sync_deps.is_some_and(|o| !o.is_empty()) ||
             foundry_lock.iter().any(|(_, dep_id)| dep_id.overridden())
         {
             foundry_lock.write()?;

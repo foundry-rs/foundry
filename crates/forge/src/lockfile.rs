@@ -24,7 +24,7 @@ pub struct Lockfile<'a> {
     /// This is optional to handle no-git scencarios.
     #[serde(skip)]
     git: Option<&'a Git<'a>>,
-    /// Absolute path to the project root. This may not be the git root. e.g monorepo setups.
+    /// Absolute path to the lockfile.
     #[serde(skip)]
     lockfile_path: PathBuf,
 }
@@ -68,9 +68,6 @@ impl<'a> Lockfile<'a> {
 
             if submodules.is_empty() {
                 trace!("No submodules found. Skipping sync.");
-                if !self.lockfile_path.exists() && !self.deps.is_empty() {
-                    self.write()?;
-                }
                 return Ok(None);
             }
 
@@ -112,11 +109,6 @@ impl<'a> Lockfile<'a> {
                         out_of_sync.insert(rel_path.to_path_buf(), dep_id);
                     }
                 }
-            }
-
-            // Write the updated lockfile
-            if !out_of_sync.is_empty() || !self.lockfile_path.exists() {
-                self.write()?;
             }
 
             return Ok(if out_of_sync.is_empty() { None } else { Some(out_of_sync) });
@@ -211,6 +203,10 @@ impl<'a> Lockfile<'a> {
     /// Returns an mutable iterator over the lockfile.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PathBuf, &mut DepIdentifier)> {
         self.deps.iter_mut()
+    }
+
+    pub fn exists(&self) -> bool {
+        self.lockfile_path.exists()
     }
 }
 

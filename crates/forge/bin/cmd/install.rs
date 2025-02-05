@@ -142,7 +142,7 @@ impl DependencyInstallOpts {
             }
         }
 
-        let _out_of_sync_deps = lockfile.sync()?;
+        let out_of_sync_deps = lockfile.sync()?;
 
         fs::create_dir_all(&libs)?;
 
@@ -171,6 +171,7 @@ impl DependencyInstallOpts {
                 }
                 installed_tag = installer.install_as_submodule(&dep, &path)?;
 
+                let mut new_insertion = false;
                 // Pin branch to submodule if branch is used
                 if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
@@ -195,6 +196,7 @@ impl DependencyInstallOpts {
 
                     trace!(?dep_id, ?tag_or_branch, "resolved dep id");
                     if let Some(dep_id) = &dep_id {
+                        new_insertion = true;
                         lockfile.insert(rel_path.to_path_buf(), dep_id.clone());
                     }
                     // update .gitmodules which is at the root of the repo,
@@ -203,7 +205,10 @@ impl DependencyInstallOpts {
                     git.root(&root).add(Some(".gitmodules"))?;
                 }
 
-                if !lockfile.is_empty() {
+                if new_insertion ||
+                    out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty()) ||
+                    !lockfile.exists()
+                {
                     lockfile.write()?;
                 }
 
