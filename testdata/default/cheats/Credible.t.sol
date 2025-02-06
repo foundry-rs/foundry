@@ -34,7 +34,6 @@ contract CredibleTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     address assertionAdopter;
-    bytes[] assertions;
 
     address constant caller = address(0xdead);
 
@@ -60,18 +59,14 @@ contract CredibleTest is DSTest {
 
         emit log_address(assertionAdopter);
 
-        assertions.push(abi.encodePacked(type(MockAssertion).creationCode, abi.encode(assertionAdopter)));
+        bytes memory assertion = abi.encodePacked(type(MockAssertion).creationCode, abi.encode(assertionAdopter));
 
-        (bool success, uint256 total_assertion_gas, uint256 total_assertions_ran) = vm.assertionEx(abi.encode(transaction), assertionAdopter, assertions);
-        assertTrue(success);
+        vm.assertionEx(abi.encode(transaction), assertionAdopter, assertion, "MockAssertion");
         assertTrue(MockContract(assertionAdopter).value() == 1);
 
         MockContract(assertionAdopter).increment();
         assertTrue(MockContract(assertionAdopter).value() == 2);
 
-        (success, total_assertion_gas, total_assertions_ran) = vm.assertionEx(abi.encode(transaction), assertionAdopter, assertions);
-        assertTrue(success);
-        assertTrue(total_assertion_gas == 234094);
-        assertTrue(total_assertions_ran == 1);
+        vm.assertionEx(abi.encode(transaction), assertionAdopter, assertion, "MockAssertion");
     }
 }
