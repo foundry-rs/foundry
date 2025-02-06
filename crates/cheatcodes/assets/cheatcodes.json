@@ -3164,16 +3164,16 @@
       "func": {
         "id": "assertionEx",
         "description": "Gets the address for a given private key.",
-        "declaration": "function assertionEx(bytes calldata tx, address assertionAdopter, bytes[] assertions) external returns (bool success);",
+        "declaration": "function assertionEx(bytes calldata tx, address assertionAdopter, bytes calldata assertionContract, string calldata assertionContractLabel) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "assertionEx(bytes,address,bytes[])",
-        "selector": "0x07e99d9d",
+        "signature": "assertionEx(bytes,address,bytes,string)",
+        "selector": "0x6a401fc5",
         "selectorBytes": [
-          7,
-          233,
-          157,
-          157
+          106,
+          64,
+          31,
+          197
         ]
       },
       "group": "credible",
