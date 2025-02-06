@@ -81,7 +81,7 @@ pub fn find_matching_contract_artifact(
         }
 
         // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
-        // addtional compiler profiles), it means that there are multiple contracts in the
+        // additional compiler profiles), it means that there are multiple contracts in the
         // same file.
         let contract_name = possible_targets.first().unwrap().0.clone().name;
         if !contract_name.contains(".") &&
