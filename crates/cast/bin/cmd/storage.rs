@@ -3,7 +3,6 @@ use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
@@ -229,7 +228,7 @@ struct StorageReport {
     values: Vec<B256>,
 }
 
-async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     provider: P,
     address: Address,
     block: Option<BlockId>,
@@ -246,7 +245,7 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     }
 }
 
-async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn fetch_storage_slots<P: Provider<AnyNetwork>>(
     provider: P,
     address: Address,
     block: Option<BlockId>,

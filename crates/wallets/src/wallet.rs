@@ -148,12 +148,10 @@ impl From<RawWalletOpts> for WalletOpts {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
+    use super::*;
     use alloy_signer::Signer;
     use std::{path::Path, str::FromStr};
-
-    use super::*;
 
     #[tokio::test]
     async fn find_keystore() {

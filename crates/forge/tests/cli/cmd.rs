@@ -584,6 +584,31 @@ Error: git fetch exited with code 128
 "#]]);
 });
 
+// checks that `forge init --template [template] work with --no-commit
+forgetest!(can_init_template_with_no_commit, |prj, cmd| {
+    prj.wipe();
+    cmd.args(["init", "--template", "foundry-rs/forge-template", "--no-commit"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
+
+"#]]);
+
+    // show the latest commit message was not changed
+    let output = Command::new("git")
+        .args(["log", "-1", "--pretty=%s"]) // Get the latest commit message
+        .output()
+        .expect("Failed to execute git command");
+
+    let commit_message = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !commit_message.starts_with("chore: init from foundry-rs/forge-template"),
+        "Commit message should not start with 'chore: init from foundry-rs/forge-template'"
+    );
+});
+
 // checks that clone works
 forgetest!(can_clone, |prj, cmd| {
     prj.wipe();
@@ -723,8 +748,7 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(can_clean_config, |prj, cmd| {
-    let config = Config { out: "custom-out".into(), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.out = "custom-out".into());
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -742,12 +766,10 @@ Compiler run successful!
 
 // checks that `clean` removes fuzz and invariant cache dirs
 forgetest_init!(can_clean_test_cache, |prj, cmd| {
-    let config = Config {
-        fuzz: FuzzConfig::new("cache/fuzz".into()),
-        invariant: InvariantConfig::new("cache/invariant".into()),
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz = FuzzConfig::new("cache/fuzz".into());
+        config.invariant = InvariantConfig::new("cache/invariant".into());
+    });
     // default test contract is written in custom out directory
     let fuzz_cache_dir = prj.root().join("cache/fuzz");
     let _ = fs::create_dir(fuzz_cache_dir.clone());
@@ -1016,10 +1038,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
     // Ignoring path and setting empty error_codes as default would set would set some error codes
-    prj.write_config(Config {
-        ignored_file_paths: vec![Path::new("src").to_path_buf()],
-        ignored_error_codes: vec![],
-        ..Default::default()
+    prj.update_config(|config| {
+        config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
+        config.ignored_error_codes = vec![];
     });
 
     prj.add_raw_source(
@@ -1041,8 +1062,7 @@ Compiler run successful!
 "#]]);
 
     // Reconfigure without ignored paths or error codes and check for warnings
-    // need to reset empty error codes as default would set some error codes
-    prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
+    prj.update_config(|config| config.ignored_file_paths = vec![]);
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1058,11 +1078,9 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 
 // test that `forge build` does not print `(with warnings)` if there aren't any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
-    let config = Config {
-        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
+    });
     prj.add_raw_source(
         "A",
         r"
@@ -1082,8 +1100,9 @@ Compiler run successful!
 "#]]);
 
     // don't ignore errors
-    let config = Config { ignored_error_codes: vec![], ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+    });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1100,8 +1119,10 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
 // handles ignored error codes as an exception
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
-    let config = Config { ignored_error_codes: vec![], deny_warnings: false, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.deny_warnings = false;
+    });
     prj.add_raw_source(
         "A",
         r"
@@ -1126,8 +1147,10 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 
     // warning fails to compile
-    let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.deny_warnings = true;
+    });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
 Error: Compiler run failed:
@@ -1138,12 +1161,10 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 
     // ignores error code and compiles
-    let config = Config {
-        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
-        deny_warnings: true,
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
+        config.deny_warnings = true;
+    });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1446,8 +1467,8 @@ Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5
         cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
 
         // add explicit remappings for test file
-        let config = Config {
-            remappings: vec![
+        prj.update_config(|config| {
+            config.remappings = vec![
                 Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
                 // explicit remapping for sub-dependendy seems necessary for some reason
                 Remapping::from_str(
@@ -1455,10 +1476,8 @@ Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5
                 )
                 .unwrap()
                 .into(),
-            ],
-            ..Default::default()
-        };
-        prj.write_config(config);
+            ];
+        });
 
         // create test file that uses the top-level dependency; if the sub-dependency is updated,
         // compilation will fail
@@ -1572,11 +1591,9 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for all
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec!["*".to_string()]),
-        gas_reports_ignore: (vec![]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.gas_reports = vec!["*".to_string()];
+        config.gas_reports_ignore = vec![];
     });
 
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -1586,13 +1603,13 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭------------------------------------------+-----------------+--------+--------+--------+---------╮
@@ -1600,13 +1617,13 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -1614,13 +1631,13 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -1633,48 +1650,48 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 101532,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "foo()": {
         "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 101520,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "bar()": {
         "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
       }
     }
   }
@@ -1683,7 +1700,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .is_json(),
     );
 
-    prj.write_config(Config { optimizer: Some(true), gas_reports: (vec![]), ..Default::default() });
+    prj.update_config(|config| config.gas_reports = vec![]);
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -1691,13 +1708,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭------------------------------------------+-----------------+--------+--------+--------+---------╮
@@ -1705,13 +1722,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -1719,13 +1736,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -1738,48 +1755,48 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 101532,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "foo()": {
         "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 101520,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "bar()": {
         "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
       }
     }
   }
@@ -1788,10 +1805,114 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         .is_json(),
     );
 
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec!["*".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| config.gas_reports = vec!["*".to_string()]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+...
+╭----------------------------------------+-----------------+-------+--------+-------+---------╮
+| src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
++=============================================================================================+
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| 133027                                 | 394             |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+|                                        |                 |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
+╰----------------------------------------+-----------------+-------+--------+-------+---------╯
+
+╭------------------------------------------+-----------------+--------+--------+--------+---------╮
+| src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
++=================================================================================================+
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| 133243                                   | 395             |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+|                                          |                 |        |        |        |         |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| Function Name                            | Min             | Avg    | Median | Max    | # Calls |
+|------------------------------------------+-----------------+--------+--------+--------+---------|
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
+╰------------------------------------------+-----------------+--------+--------+--------+---------╯
+
+╭----------------------------------------+-----------------+-------+--------+-------+---------╮
+| src/Contracts.sol:ContractTwo Contract |                 |       |        |       |         |
++=============================================================================================+
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| 133027                                 | 394             |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+|                                        |                 |       |        |       |         |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------+-----------------+-------+--------+-------+---------|
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
+╰----------------------------------------+-----------------+-------+--------+-------+---------╯
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "contract": "src/Contracts.sol:ContractOne",
+    "deployment": {
+      "gas": 133027,
+      "size": 394
+    },
+    "functions": {
+      "foo()": {
+        "calls": 1,
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractThree",
+    "deployment": {
+      "gas": 133243,
+      "size": 395
+    },
+    "functions": {
+      "baz()": {
+        "calls": 1,
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
+      }
+    }
+  },
+  {
+    "contract": "src/Contracts.sol:ContractTwo",
+    "deployment": {
+      "gas": 133027,
+      "size": 394
+    },
+    "functions": {
+      "bar()": {
+        "calls": 1,
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
+      }
+    }
+  }
+]
+"#]]
+        .is_json(),
+    );
+
+    prj.update_config(|config| {
+        config.gas_reports =
+            vec!["ContractOne".to_string(), "ContractTwo".to_string(), "ContractThree".to_string()];
     });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -1800,13 +1921,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭------------------------------------------+-----------------+--------+--------+--------+---------╮
@@ -1814,13 +1935,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -1828,13 +1949,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -1847,161 +1968,48 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 101532,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "foo()": {
         "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 101520,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "bar()": {
         "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
-      }
-    }
-  }
-]
-"#]]
-        .is_json(),
-    );
-
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec![
-            "ContractOne".to_string(),
-            "ContractTwo".to_string(),
-            "ContractThree".to_string(),
-        ]),
-        ..Default::default()
-    });
-    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
-...
-╭----------------------------------------+-----------------+-------+--------+-------+---------╮
-| src/Contracts.sol:ContractOne Contract |                 |       |        |       |         |
-+=============================================================================================+
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                        |                 |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
-╰----------------------------------------+-----------------+-------+--------+-------+---------╯
-
-╭------------------------------------------+-----------------+--------+--------+--------+---------╮
-| src/Contracts.sol:ContractThree Contract |                 |        |        |        |         |
-+=================================================================================================+
-| Deployment Cost                          | Deployment Size |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                          |                 |        |        |        |         |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| Function Name                            | Min             | Avg    | Median | Max    | # Calls |
-|------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
-╰------------------------------------------+-----------------+--------+--------+--------+---------╯
-
-╭----------------------------------------+-----------------+-------+--------+-------+---------╮
-| src/Contracts.sol:ContractTwo Contract |                 |       |        |       |         |
-+=============================================================================================+
-| Deployment Cost                        | Deployment Size |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                        |                 |       |        |       |         |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| Function Name                          | Min             | Avg   | Median | Max   | # Calls |
-|----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
-╰----------------------------------------+-----------------+-------+--------+-------+---------╯
-
-
-Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
-
-"#]]);
-    cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
-        str![[r#"
-[
-  {
-    "contract": "src/Contracts.sol:ContractOne",
-    "deployment": {
-      "gas": 101532,
-      "size": 241
-    },
-    "functions": {
-      "foo()": {
-        "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
-      }
-    }
-  },
-  {
-    "contract": "src/Contracts.sol:ContractThree",
-    "deployment": {
-      "gas": 101748,
-      "size": 242
-    },
-    "functions": {
-      "baz()": {
-        "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
-      }
-    }
-  },
-  {
-    "contract": "src/Contracts.sol:ContractTwo",
-    "deployment": {
-      "gas": 101520,
-      "size": 241
-    },
-    "functions": {
-      "bar()": {
-        "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
       }
     }
   }
@@ -2016,11 +2024,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // report for One
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: vec!["ContractOne".to_string()],
-        ..Default::default()
-    });
+    prj.update_config(|config| config.gas_reports = vec!["ContractOne".to_string()]);
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2029,13 +2033,13 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -2048,16 +2052,16 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 101532,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "foo()": {
         "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
       }
     }
   }
@@ -2067,11 +2071,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 
     // report for Two
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: vec!["ContractTwo".to_string()],
-        ..Default::default()
-    });
+    prj.update_config(|config| config.gas_reports = vec!["ContractTwo".to_string()]);
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2080,13 +2080,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -2099,16 +2099,16 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 101520,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "bar()": {
         "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
       }
     }
   }
@@ -2118,11 +2118,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 
     // report for Three
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: vec!["ContractThree".to_string()],
-        ..Default::default()
-    });
+    prj.update_config(|config| config.gas_reports = vec!["ContractThree".to_string()]);
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
 ...
@@ -2131,13 +2127,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 
@@ -2150,16 +2146,16 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   }
@@ -2174,11 +2170,9 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS).unwrap();
 
     // ignore ContractOne
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec!["*".to_string()]),
-        gas_reports_ignore: (vec!["ContractOne".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.gas_reports = vec!["*".to_string()];
+        config.gas_reports_ignore = vec!["ContractOne".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2188,13 +2182,13 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -2202,13 +2196,13 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -2221,32 +2215,32 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 101520,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "bar()": {
         "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
       }
     }
   }
@@ -2257,11 +2251,9 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
     // ignore ContractTwo
     cmd.forge_fuse();
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec![]),
-        gas_reports_ignore: (vec!["ContractTwo".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.gas_reports = vec![];
+        config.gas_reports_ignore = vec!["ContractTwo".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -2271,13 +2263,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭------------------------------------------+-----------------+--------+--------+--------+---------╮
@@ -2285,13 +2277,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 
@@ -2304,32 +2296,32 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 101532,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "foo()": {
         "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   }
@@ -2344,15 +2336,10 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     // preferable than not getting one you expect. A warning is printed to stderr
     // indicating the "double listing".
     cmd.forge_fuse();
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports: (vec![
-            "ContractOne".to_string(),
-            "ContractTwo".to_string(),
-            "ContractThree".to_string(),
-        ]),
-        gas_reports_ignore: (vec!["ContractThree".to_string()]),
-        ..Default::default()
+    prj.update_config(|config| {
+        config.gas_reports =
+            vec!["ContractOne".to_string(), "ContractTwo".to_string(), "ContractThree".to_string()];
+        config.gas_reports_ignore = vec!["ContractThree".to_string()];
     });
     cmd.forge_fuse();
     cmd.arg("test")
@@ -2365,13 +2352,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101532                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| foo                                    | 45370           | 45370 | 45370  | 45370 | 1       |
+| foo                                    | 45656           | 45656 | 45656  | 45656 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭------------------------------------------+-----------------+--------+--------+--------+---------╮
@@ -2379,13 +2366,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| 101748                                   | 242             |        |        |        |         |
+| 133243                                   | 395             |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                            | Min             | Avg    | Median | Max    | # Calls |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-| baz                                      | 259210          | 259210 | 259210 | 259210 | 1       |
+| baz                                      | 287711          | 287711 | 287711 | 287711 | 1       |
 ╰------------------------------------------+-----------------+--------+--------+--------+---------╯
 
 ╭----------------------------------------+-----------------+-------+--------+-------+---------╮
@@ -2393,13 +2380,13 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| 101520                                 | 241             |       |        |       |         |
+| 133027                                 | 394             |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                          | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-| bar                                    | 64832           | 64832 | 64832  | 64832 | 1       |
+| bar                                    | 67683           | 67683 | 67683  | 67683 | 1       |
 ╰----------------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -2422,48 +2409,48 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 101532,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "foo()": {
         "calls": 1,
-        "min": 45370,
-        "mean": 45370,
-        "median": 45370,
-        "max": 45370
+        "min": 45656,
+        "mean": 45656,
+        "median": 45656,
+        "max": 45656
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 101748,
-      "size": 242
+      "gas": 133243,
+      "size": 395
     },
     "functions": {
       "baz()": {
         "calls": 1,
-        "min": 259210,
-        "mean": 259210,
-        "median": 259210,
-        "max": 259210
+        "min": 287711,
+        "mean": 287711,
+        "median": 287711,
+        "max": 287711
       }
     }
   },
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 101520,
-      "size": 241
+      "gas": 133027,
+      "size": 394
     },
     "functions": {
       "bar()": {
         "calls": 1,
-        "min": 64832,
-        "mean": 64832,
-        "median": 64832,
-        "max": 64832
+        "min": 67683,
+        "mean": 67683,
+        "median": 67683,
+        "max": 67683
       }
     }
   }
@@ -2479,7 +2466,6 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 });
 
 forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -2531,19 +2517,19 @@ contract CounterTest is DSTest {
 +=======================================================================================+
 | Deployment Cost                  | Deployment Size |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| 99711                            | 240             |       |        |       |         |
+| 172107                           | 578             |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 |                                  |                 |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                    | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| a                                | 2259            | 2259  | 2259   | 2259  | 1       |
+| a                                | 2402            | 2402  | 2402   | 2402  | 1       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| b                                | 2304            | 2304  | 2304   | 2304  | 1       |
+| b                                | 2447            | 2447  | 2447   | 2447  | 1       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| setNumber(int256)                | 23646           | 33602 | 33602  | 43558 | 2       |
+| setNumber(int256)                | 23851           | 33807 | 33807  | 43763 | 2       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| setNumber(uint256)               | 23601           | 33557 | 33557  | 43513 | 2       |
+| setNumber(uint256)               | 23806           | 33762 | 33762  | 43718 | 2       |
 ╰----------------------------------+-----------------+-------+--------+-------+---------╯
 
 
@@ -2556,37 +2542,37 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "src/Counter.sol:Counter",
     "deployment": {
-      "gas": 99711,
-      "size": 240
+      "gas": 172107,
+      "size": 578
     },
     "functions": {
       "a()": {
         "calls": 1,
-        "min": 2259,
-        "mean": 2259,
-        "median": 2259,
-        "max": 2259
+        "min": 2402,
+        "mean": 2402,
+        "median": 2402,
+        "max": 2402
       },
       "b()": {
         "calls": 1,
-        "min": 2304,
-        "mean": 2304,
-        "median": 2304,
-        "max": 2304
+        "min": 2447,
+        "mean": 2447,
+        "median": 2447,
+        "max": 2447
       },
       "setNumber(int256)": {
         "calls": 2,
-        "min": 23646,
-        "mean": 33602,
-        "median": 33602,
-        "max": 43558
+        "min": 23851,
+        "mean": 33807,
+        "median": 33807,
+        "max": 43763
       },
       "setNumber(uint256)": {
         "calls": 2,
-        "min": 23601,
-        "mean": 33557,
-        "median": 33557,
-        "max": 43513
+        "min": 23806,
+        "mean": 33762,
+        "median": 33762,
+        "max": 43718
       }
     }
   }
@@ -2598,7 +2584,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9115>
 forgetest_init!(gas_report_with_fallback, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_test(
         "DelegateProxyTest.sol",
         r#"
@@ -2659,15 +2644,15 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                   | Deployment Size |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 107054                                            | 300             |       |        |       |         |
+| 117171                                            | 471             |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                   |                 |       |        |       |         |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                                     | Min             | Avg   | Median | Max   | # Calls |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| deposit                                           | 21159           | 21159 | 21159  | 21159 | 1       |
+| deposit                                           | 21185           | 21185 | 21185  | 21185 | 1       |
 |---------------------------------------------------+-----------------+-------+--------+-------+---------|
-| fallback                                          | 29384           | 29384 | 29384  | 29384 | 1       |
+| fallback                                          | 29758           | 29758 | 29758  | 29758 | 1       |
 ╰---------------------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭-----------------------------------------------------+-----------------+------+--------+------+---------╮
@@ -2675,13 +2660,13 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-| 104475                                              | 263             |      |        |      |         |
+| 153531                                              | 494             |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 | Function Name                                       | Min             | Avg  | Median | Max  | # Calls |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-| deposit                                             | 3316            | 3316 | 3316   | 3316 | 1       |
+| deposit                                             | 3661            | 3661 | 3661   | 3661 | 1       |
 ╰-----------------------------------------------------+-----------------+------+--------+------+---------╯
 
 
@@ -2698,39 +2683,39 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:DelegateProxy",
     "deployment": {
-      "gas": 107054,
-      "size": 300
+      "gas": 117171,
+      "size": 471
     },
     "functions": {
       "deposit()": {
         "calls": 1,
-        "min": 21159,
-        "mean": 21159,
-        "median": 21159,
-        "max": 21159
+        "min": 21185,
+        "mean": 21185,
+        "median": 21185,
+        "max": 21185
       },
       "fallback()": {
         "calls": 1,
-        "min": 29384,
-        "mean": 29384,
-        "median": 29384,
-        "max": 29384
+        "min": 29758,
+        "mean": 29758,
+        "median": 29758,
+        "max": 29758
       }
     }
   },
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 104475,
-      "size": 263
+      "gas": 153531,
+      "size": 494
     },
     "functions": {
       "deposit(uint256)": {
         "calls": 1,
-        "min": 3316,
-        "mean": 3316,
-        "median": 3316,
-        "max": 3316
+        "min": 3661,
+        "mean": 3661,
+        "median": 3661,
+        "max": 3661
       }
     }
   }
@@ -2742,7 +2727,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_test(
         "NestedDeployTest.sol",
         r#"
@@ -2784,13 +2768,13 @@ contract NestedDeploy is Test {
 +======================================================================================================+
 | Deployment Cost                                 | Deployment Size |       |        |       |         |
 |-------------------------------------------------+-----------------+-------+--------+-------+---------|
-| 0                                               | 124             |       |        |       |         |
+| 0                                               | 132             |       |        |       |         |
 |-------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                 |                 |       |        |       |         |
 |-------------------------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                                   | Min             | Avg   | Median | Max   | # Calls |
 |-------------------------------------------------+-----------------+-------+--------+-------+---------|
-| w                                               | 21161           | 21161 | 21161  | 21161 | 1       |
+| w                                               | 21185           | 21185 | 21185  | 21185 | 1       |
 ╰-------------------------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭------------------------------------------+-----------------+-----+--------+-----+---------╮
@@ -2798,13 +2782,13 @@ contract NestedDeploy is Test {
 +===========================================================================================+
 | Deployment Cost                          | Deployment Size |     |        |     |         |
 |------------------------------------------+-----------------+-----+--------+-----+---------|
-| 0                                        | 477             |     |        |     |         |
+| 0                                        | 731             |     |        |     |         |
 |------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                          |                 |     |        |     |         |
 |------------------------------------------+-----------------+-----+--------+-----+---------|
 | Function Name                            | Min             | Avg | Median | Max | # Calls |
 |------------------------------------------+-----------------+-----+--------+-----+---------|
-| child                                    | 323             | 323 | 323    | 323 | 1       |
+| child                                    | 681             | 681 | 681    | 681 | 1       |
 ╰------------------------------------------+-----------------+-----+--------+-----+---------╯
 
 ╭-------------------------------------------+-----------------+-----+--------+-----+---------╮
@@ -2812,13 +2796,13 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-| 251985                                    | 739             |     |        |     |         |
+| 328961                                    | 1163            |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 | Function Name                             | Min             | Avg | Median | Max | # Calls |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-| child                                     | 181             | 181 | 181    | 181 | 1       |
+| child                                     | 525             | 525 | 525    | 525 | 1       |
 ╰-------------------------------------------+-----------------+-----+--------+-----+---------╯
 
 
@@ -2836,15 +2820,15 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     "contract": "test/NestedDeployTest.sol:AnotherChild",
     "deployment": {
       "gas": 0,
-      "size": 124
+      "size": 132
     },
     "functions": {
       "w()": {
         "calls": 1,
-        "min": 21161,
-        "mean": 21161,
-        "median": 21161,
-        "max": 21161
+        "min": 21185,
+        "mean": 21185,
+        "median": 21185,
+        "max": 21185
       }
     }
   },
@@ -2852,31 +2836,31 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     "contract": "test/NestedDeployTest.sol:Child",
     "deployment": {
       "gas": 0,
-      "size": 477
+      "size": 731
     },
     "functions": {
       "child()": {
         "calls": 1,
-        "min": 323,
-        "mean": 323,
-        "median": 323,
-        "max": 323
+        "min": 681,
+        "mean": 681,
+        "median": 681,
+        "max": 681
       }
     }
   },
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 251985,
-      "size": 739
+      "gas": 328961,
+      "size": 1163
     },
     "functions": {
       "child()": {
         "calls": 1,
-        "min": 181,
-        "mean": 181,
-        "median": 181,
-        "max": 181
+        "min": 525,
+        "mean": 525,
+        "median": 525,
+        "max": 525
       }
     }
   }
@@ -2887,19 +2871,18 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
-    let remapping = prj.paths().libraries[0].join("myDependency");
-    let config = Config {
-        remappings: vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
-            .unwrap()
-            .into()],
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        let remapping = prj.paths().libraries[0].join("myDependency");
+        config.remappings =
+            vec![Remapping::from_str(&format!("myDependency/={}", remapping.display()))
+                .unwrap()
+                .into()];
+    });
 
     prj.add_lib(
         "myDependency/src/interfaces/IConfig.sol",
         r"
-    
+
     interface IConfig {}
    ",
     )
@@ -3181,7 +3164,6 @@ Error: No source files found in specified build paths.
 
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
@@ -3189,7 +3171,7 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
 ╭----------+------------------+-------------------+--------------------+---------------------╮
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +============================================================================================+
-| Counter  | 236              | 263               | 24,340             | 48,889              |
+| Counter  | 481              | 509               | 24,095             | 48,643              |
 ╰----------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -3199,10 +3181,10 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
         str![[r#"
 {
   "Counter": {
-    "runtime_size": 236,
-    "init_size": 263,
-    "runtime_margin": 24340,
-    "init_margin": 48889
+    "runtime_size": 481,
+    "init_size": 509,
+    "runtime_margin": 24095,
+    "init_margin": 48643
   }
 }
 "#]]
@@ -3405,32 +3387,31 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
-    prj.write_config(Config {
-        optimizer: Some(true),
-        gas_reports_include_tests: true,
-        fuzz: FuzzConfig { runs: 1, ..Default::default() },
-        ..Default::default()
+    prj.update_config(|config| {
+        config.gas_reports_include_tests = true;
+        config.fuzz.runs = 1;
     });
 
-    cmd.args(["test", "--mt", "test_Increment", "--gas-report"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.args(["test", "--match-test", "test_Increment", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 ╭----------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
 +=======================================================================================+
 | Deployment Cost                  | Deployment Size |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| 104475                           | 263             |       |        |       |         |
+| 156813                           | 509             |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 |                                  |                 |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 | Function Name                    | Min             | Avg   | Median | Max   | # Calls |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| increment                        | 43401           | 43401 | 43401  | 43401 | 1       |
+| increment                        | 43482           | 43482 | 43482  | 43482 | 1       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| number                           | 281             | 281   | 281    | 281   | 1       |
+| number                           | 424             | 424   | 424    | 424   | 1       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| setNumber                        | 23579           | 23579 | 23579  | 23579 | 1       |
+| setNumber                        | 23784           | 23784 | 23784  | 23784 | 1       |
 ╰----------------------------------+-----------------+-------+--------+-------+---------╯
 
 ╭-----------------------------------------+-----------------+--------+--------+--------+---------╮
@@ -3438,22 +3419,21 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 +================================================================================================+
 | Deployment Cost                         | Deployment Size |        |        |        |         |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| 938190                                  | 4522            |        |        |        |         |
+| 1545498                                 | 7578            |        |        |        |         |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 |                                         |                 |        |        |        |         |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                           | Min             | Avg    | Median | Max    | # Calls |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| setUp                                   | 165834          | 165834 | 165834 | 165834 | 1       |
+| setUp                                   | 218902          | 218902 | 218902 | 218902 | 1       |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| test_Increment                          | 52357           | 52357  | 52357  | 52357  | 1       |
+| test_Increment                          | 52915           | 52915  | 52915  | 52915  | 1       |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
 
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
-"#]
-    ]);
+"#]]);
 
     cmd.forge_fuse()
         .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
@@ -3464,53 +3444,53 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "src/Counter.sol:Counter",
     "deployment": {
-      "gas": 104475,
-      "size": 263
+      "gas": 156813,
+      "size": 509
     },
     "functions": {
       "increment()": {
         "calls": 1,
-        "min": 43401,
-        "mean": 43401,
-        "median": 43401,
-        "max": 43401
+        "min": 43482,
+        "mean": 43482,
+        "median": 43482,
+        "max": 43482
       },
       "number()": {
         "calls": 1,
-        "min": 281,
-        "mean": 281,
-        "median": 281,
-        "max": 281
+        "min": 424,
+        "mean": 424,
+        "median": 424,
+        "max": 424
       },
       "setNumber(uint256)": {
         "calls": 1,
-        "min": 23579,
-        "mean": 23579,
-        "median": 23579,
-        "max": 23579
+        "min": 23784,
+        "mean": 23784,
+        "median": 23784,
+        "max": 23784
       }
     }
   },
   {
     "contract": "test/Counter.t.sol:CounterTest",
     "deployment": {
-      "gas": 938190,
-      "size": 4522
+      "gas": 1545498,
+      "size": 7578
     },
     "functions": {
       "setUp()": {
         "calls": 1,
-        "min": 165834,
-        "mean": 165834,
-        "median": 165834,
-        "max": 165834
+        "min": 218902,
+        "mean": 218902,
+        "median": 218902,
+        "max": 218902
       },
       "test_Increment()": {
         "calls": 1,
-        "min": 52357,
-        "mean": 52357,
-        "median": 52357,
-        "max": 52357
+        "min": 52915,
+        "mean": 52915,
+        "median": 52915,
+        "max": 52915
       }
     }
   }
@@ -3518,6 +3498,46 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
+});
+
+forgetest_async!(gas_report_fuzz_invariant, |prj, cmd| {
+    // speed up test by running with depth of 15
+    prj.update_config(|config| config.invariant.depth = 15);
+
+    prj.insert_ds_test();
+    prj.add_source(
+        "Contracts.sol",
+        r#"
+import "./test.sol";
+
+contract Foo {
+    function foo() public {}
+}
+
+contract Bar {
+    function bar() public {}
+}
+
+contract FooBarTest is DSTest {
+    Foo public targetContract;
+
+    function setUp() public {
+        targetContract = new Foo();
+    }
+
+    function invariant_dummy() public {
+        assertTrue(true);
+    }
+
+    function testFuzz_bar(uint256 _val) public {
+        (new Bar()).bar();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--gas-report"]).assert_success();
 });
 
 // <https://github.com/foundry-rs/foundry/issues/5847>
@@ -3544,9 +3564,11 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("bind").assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-Generating bindings for 11 contracts
-Bindings have been generated to [..]"#]]);
+Generating bindings for 1 contracts
+Bindings have been generated to [..]"#
+    ]]);
 });

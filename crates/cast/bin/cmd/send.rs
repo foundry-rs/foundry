@@ -4,7 +4,6 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
-use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
@@ -178,7 +177,7 @@ impl SendTxArgs {
     }
 }
 
-async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn cast_send<P: Provider<AnyNetwork>>(
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,

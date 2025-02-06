@@ -25,7 +25,7 @@ pub struct Eip712Args {
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
-        let mut project = config.create_project(false, true)?;
+        let mut project = config.ephemeral_project()?;
         let target_path = dunce::canonicalize(self.target_path)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::ast_output_selection();

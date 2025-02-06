@@ -6,7 +6,6 @@ use self::EnsResolver::EnsResolverInstance;
 use alloy_primitives::{address, Address, Keccak256, B256};
 use alloy_provider::{Network, Provider};
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
 use async_trait::async_trait;
 use std::{borrow::Cow, str::FromStr};
 
@@ -63,7 +62,7 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<N: Network, T: Transport + Clone, P: Provider<T, N>>(
+    pub async fn resolve<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
     ) -> Result<Address, EnsError> {
@@ -111,13 +110,13 @@ impl FromStr for NameOrAddress {
 
 /// Extension trait for ENS contract calls.
 #[async_trait]
-pub trait ProviderEnsExt<T: Transport + Clone, N: Network, P: Provider<T, N>> {
+pub trait ProviderEnsExt<N: Network, P: Provider<N>> {
     /// Returns the resolver for the specified node. The `&str` is only used for error messages.
     async fn get_resolver(
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<T, &P, N>, EnsError>;
+    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError>;
 
     /// Performs a forward lookup of an ENS name to an address.
     async fn resolve_name(&self, name: &str) -> Result<Address, EnsError> {
@@ -146,17 +145,16 @@ pub trait ProviderEnsExt<T: Transport + Clone, N: Network, P: Provider<T, N>> {
 }
 
 #[async_trait]
-impl<T, N, P> ProviderEnsExt<T, N, P> for P
+impl<N, P> ProviderEnsExt<N, P> for P
 where
-    P: Provider<T, N>,
+    P: Provider<N>,
     N: Network,
-    T: Transport + Clone,
 {
     async fn get_resolver(
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<T, &P, N>, EnsError> {
+    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError> {
         let registry = EnsRegistry::new(ENS_ADDRESS, self);
         let address = registry.resolver(node).call().await.map_err(EnsError::Resolver)?._0;
         if address == Address::ZERO {
