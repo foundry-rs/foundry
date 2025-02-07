@@ -122,7 +122,7 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_SNAPSHOT_CHECK")]
     gas_snapshot_check: Option<bool>,
 
-    /// Emit gas snapshots to disk.
+    /// Enable/disable recording of gas snapshot results.
     #[arg(long, env = "FORGE_SNAPSHOT_EMIT")]
     gas_snapshot_emit: Option<bool>,
 
