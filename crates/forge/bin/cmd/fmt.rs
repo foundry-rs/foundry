@@ -48,7 +48,7 @@ pub struct FmtArgs {
 impl_figment_convert_basic!(FmtArgs);
 
 impl FmtArgs {
-    pub async fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
 
         // Expand ignore globs and canonicalize from the get go
