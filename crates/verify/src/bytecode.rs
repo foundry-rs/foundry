@@ -121,7 +121,7 @@ impl VerifyBytecodeArgs {
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
         // Setup
-        let config = self.load_config_emit_warnings();
+        let config = self.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         // If chain is not set, we try to get it from the RPC.

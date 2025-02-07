@@ -275,7 +275,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return, clippy::disallowed_macros)]
+#[allow(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use alloy_primitives::address;

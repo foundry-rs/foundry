@@ -26,7 +26,7 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
-use alloy_transport::{Transport, TransportError};
+use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
@@ -57,6 +57,8 @@ use std::{
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
+pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
+
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
 /// Default chain id of the node
@@ -69,15 +71,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
-/// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
-pub const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
 
 const BANNER: &str = r"
                              _   _
@@ -1180,6 +1173,8 @@ latest block number: {latest_block}"
         };
 
         let gas_limit = self.fork_gas_limit(&block);
+        self.gas_limit = Some(gas_limit);
+
         env.block = BlockEnv {
             number: U256::from(fork_block_number),
             timestamp: U256::from(block.header.timestamp),
@@ -1517,7 +1512,7 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
-async fn find_latest_fork_block<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     provider: P,
 ) -> Result<u64, TransportError> {
     let mut num = provider.get_block_number().await?;

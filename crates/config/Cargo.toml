@@ -23,7 +23,7 @@ revm-primitives.workspace = true
 
 solar-parse.workspace = true
 
-dirs-next = "2"
+dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 figment = { workspace = true, features = ["toml", "env"] }
@@ -55,6 +55,4 @@ figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
 
 [features]
-default = ["rustls"]
-rustls = ["reqwest/rustls-tls-native-roots"]
 isolate-by-default = []

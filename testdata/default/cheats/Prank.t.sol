@@ -193,10 +193,12 @@ contract PrankTest is DSTest {
         vm.stopPrank();
     }
 
-    function testFailPrankDelegateCallToEOA() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfPrankDelegateCalltoEOA() public {
         uint256 privateKey = uint256(keccak256(abi.encodePacked("alice")));
         address alice = vm.addr(privateKey);
         ImplementationTest impl = new ImplementationTest();
+        vm.expectRevert("vm.prank: cannot `prank` delegate call from an EOA");
         vm.prank(alice, true);
         // Should fail when EOA pranked with delegatecall.
         address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
@@ -336,16 +338,19 @@ contract PrankTest is DSTest {
         );
     }
 
-    function testFailOverwriteUnusedPrank(address sender, address origin) public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfOverwriteUnusedPrank(address sender, address origin) public {
         // Set the prank, but not use it
         address oldOrigin = tx.origin;
         Victim victim = new Victim();
         vm.startPrank(sender, origin);
         // try to overwrite the prank. This should fail.
+        vm.expectRevert("vm.startPrank: cannot overwrite a prank until it is applied at least once");
         vm.startPrank(address(this), origin);
     }
 
-    function testFailOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
         // Set the prank, but not use it
         address oldOrigin = tx.origin;
         Victim victim = new Victim();
@@ -355,6 +360,7 @@ contract PrankTest is DSTest {
         );
         vm.startPrank(address(this), origin);
         // try to overwrite the prank. This should fail.
+        vm.expectRevert("vm.startPrank: cannot overwrite a prank until it is applied at least once");
         vm.startPrank(sender, origin);
     }
 

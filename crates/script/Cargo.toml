@@ -53,7 +53,6 @@ alloy-chains.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
-alloy-transport.workspace = true
 alloy-consensus.workspace = true
 
 [dev-dependencies]

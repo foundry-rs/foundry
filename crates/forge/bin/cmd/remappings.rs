@@ -21,7 +21,7 @@ impl_figment_convert_basic!(RemappingArgs);
 
 impl RemappingArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
 
         if self.pretty {
             let mut groups = BTreeMap::<_, Vec<_>>::new();

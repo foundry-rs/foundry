@@ -3,7 +3,6 @@ use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
@@ -12,6 +11,7 @@ use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
+    utils::LoadConfig,
 };
 use foundry_common::{
     abi::find_source,
@@ -85,7 +85,7 @@ impl figment::Provider for StorageArgs {
 
 impl StorageArgs {
     pub async fn run(self) -> Result<()> {
-        let config = Config::from(&self);
+        let config = self.load_config()?;
 
         let Self { address, slot, block, build, .. } = self;
         let provider = utils::get_provider(&config)?;
@@ -228,7 +228,7 @@ struct StorageReport {
     values: Vec<B256>,
 }
 
-async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     provider: P,
     address: Address,
     block: Option<BlockId>,
@@ -245,7 +245,7 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     }
 }
 
-async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn fetch_storage_slots<P: Provider<AnyNetwork>>(
     provider: P,
     address: Address,
     block: Option<BlockId>,
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
         std::env::set_var("ETHERSCAN_API_KEY", "FXY");
-        let config = Config::from(&args);
+        let config = args.load_config().unwrap();
         std::env::remove_var("ETHERSCAN_API_KEY");
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
 

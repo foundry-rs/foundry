@@ -1,4 +1,4 @@
-use foundry_common::fs;
+use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
     snapbox::{Data, IntoData},
     TestCommand, TestProject,
@@ -1685,6 +1685,66 @@ contract AContract {
 ╰-------------------+-------------+--------------+---------------+-------------╯
 
 "#]]);
+});
+
+forgetest!(no_artifacts_written, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+
+    // no artifacts are to be written
+    let files = files_with_ext(prj.artifacts(), "json").collect::<Vec<_>>();
+
+    assert!(files.is_empty());
 });
 
 #[track_caller]

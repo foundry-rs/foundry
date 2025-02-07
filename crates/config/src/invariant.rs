@@ -32,6 +32,8 @@ pub struct InvariantConfig {
     pub show_metrics: bool,
     /// Optional timeout (in seconds) for each invariant test.
     pub timeout: Option<u32>,
+    /// Display counterexample as solidity calls.
+    pub show_solidity: bool,
 }
 
 impl Default for InvariantConfig {
@@ -48,6 +50,7 @@ impl Default for InvariantConfig {
             failure_persist_dir: None,
             show_metrics: false,
             timeout: None,
+            show_solidity: false,
         }
     }
 }
@@ -67,6 +70,7 @@ impl InvariantConfig {
             failure_persist_dir: Some(cache_dir),
             show_metrics: false,
             timeout: None,
+            show_solidity: false,
         }
     }
 
@@ -75,6 +79,6 @@ impl InvariantConfig {
         self.failure_persist_dir
             .unwrap()
             .join("failures")
-            .join(contract_name.split(':').last().unwrap())
+            .join(contract_name.split(':').next_back().unwrap())
     }
 }

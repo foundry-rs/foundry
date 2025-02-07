@@ -33,7 +33,6 @@ alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
-alloy-transport.workspace = true
 foundry-fork-db.workspace = true
 
 revm = { workspace = true, features = [

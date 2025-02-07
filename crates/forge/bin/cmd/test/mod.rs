@@ -56,7 +56,7 @@ mod summary;
 pub use filter::FilterArgs;
 use forge::{result::TestKind, traces::render_trace_arena_inner};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::{print_invariant_metrics, TestSummaryReport};
+use summary::{format_invariant_metrics_table, TestSummaryReport};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -117,6 +117,10 @@ pub struct TestArgs {
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
+
+    /// Check gas snapshots against previous runs.
+    #[arg(long, env = "FORGE_SNAPSHOT_CHECK")]
+    gas_snapshot_check: Option<bool>,
 
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
@@ -268,7 +272,7 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -282,7 +286,7 @@ impl TestArgs {
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Set up the project.
@@ -300,17 +304,6 @@ impl TestArgs {
 
         // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
-
-        // Remove the snapshots directory if it exists.
-        // This is to ensure that we don't have any stale snapshots.
-        // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
-        // required for comparison.
-        if std::env::var_os("FORGE_SNAPSHOT_CHECK").is_none() {
-            let snapshot_dir = project_root.join(&config.snapshots);
-            if snapshot_dir.exists() {
-                let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
-            }
-        }
 
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
@@ -369,7 +362,7 @@ impl TestArgs {
             let mut fst = folded_stack_trace::build(arena);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
-            let contract = suite_name.split(':').last().unwrap();
+            let contract = suite_name.split(':').next_back().unwrap();
             let test_name = test_name.trim_end_matches("()");
             let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
             let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
@@ -580,7 +573,9 @@ impl TestArgs {
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind {
-                        print_invariant_metrics(metrics);
+                        if !metrics.is_empty() {
+                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                        }
                     }
 
                     // We only display logs at level 2 and above
@@ -671,9 +666,18 @@ impl TestArgs {
 
             // Write gas snapshots to disk if any were collected.
             if !gas_snapshots.is_empty() {
-                // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+                // By default `gas_snapshot_check` is set to `false` in the config.
+                //
+                // The user can either:
+                // - Set `FORGE_SNAPSHOT_CHECK=true` in the environment.
+                // - Pass `--gas-snapshot-check=true` as a CLI argument.
+                // - Set `gas_snapshot_check = true` in the config.
+                //
+                // If the user passes `--gas-snapshot-check=<bool>` then it will override the config
+                // and the environment variable, disabling the check if `false` is passed.
+                //
                 // Exiting early with code 1 if differences are found.
-                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
                     let differences_found = gas_snapshots.clone().into_iter().fold(
                         false,
                         |mut found, (group, snapshots)| {
@@ -814,8 +818,8 @@ impl TestArgs {
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.watch.watchexec_config(|| {
-            let config = Config::from(self);
-            [config.src, config.test]
+            let config = self.load_config()?;
+            Ok([config.src, config.test])
         })
     }
 }
@@ -948,8 +952,7 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::{Chain, InvariantConfig};
-    use foundry_test_utils::forgetest_async;
+    use foundry_config::Chain;
 
     #[test]
     fn watch_parse() {
@@ -983,67 +986,4 @@ mod tests {
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
     }
-
-    forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
-        // speed up test by running with depth of 15
-        let config = Config {
-            invariant: { InvariantConfig { depth: 15, ..Default::default() } },
-            ..Default::default()
-        };
-        prj.write_config(config);
-
-        prj.insert_ds_test();
-        prj.add_source(
-            "Contracts.sol",
-            r#"
-//SPDX-license-identifier: MIT
-
-import "./test.sol";
-
-contract Foo {
-    function foo() public {}
-}
-
-contract Bar {
-    function bar() public {}
-}
-
-
-contract FooBarTest is DSTest {
-    Foo public targetContract;
-
-    function setUp() public {
-        targetContract = new Foo();
-    }
-
-    function invariant_dummy() public {
-        assertTrue(true);
-    }
-
-    function testFuzz_bar(uint256 _val) public {
-        (new Bar()).bar();
-    }
-}
-        "#,
-        )
-        .unwrap();
-
-        let args = TestArgs::parse_from([
-            "foundry-cli",
-            "--gas-report",
-            "--root",
-            &prj.root().to_string_lossy(),
-        ]);
-        let outcome = args.run().await.unwrap();
-        let gas_report = outcome.gas_report.as_ref().unwrap();
-
-        assert_eq!(gas_report.contracts.len(), 3, "{}", outcome.summary(Default::default()));
-        let call_cnts = gas_report
-            .contracts
-            .values()
-            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
-            .collect::<Vec<_>>();
-        // assert that all functions were called at least 100 times
-        assert!(call_cnts.iter().all(|c| *c > 100));
-    });
 }

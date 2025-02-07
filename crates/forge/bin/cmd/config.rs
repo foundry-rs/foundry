@@ -36,7 +36,8 @@ impl ConfigArgs {
         }
 
         let config = self
-            .try_load_config_unsanitized_emit_warnings()?
+            .load_config_unsanitized()?
+            .normalized_optimizer_settings()
             // we explicitly normalize the version, so mimic the behavior when invoking solc
             .normalized_evm_version();
 

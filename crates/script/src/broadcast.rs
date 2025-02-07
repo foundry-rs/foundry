@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use alloy_consensus::TxEnvelope;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
     map::{AddressHashMap, AddressHashSet},
@@ -14,7 +14,6 @@ use alloy_primitives::{
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -28,15 +27,11 @@ use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::{cmp::Ordering, sync::Arc};
 
-pub async fn estimate_gas<P, T>(
+pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
     provider: &P,
     estimate_multiplier: u64,
-) -> Result<()>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+) -> Result<()> {
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
@@ -49,10 +44,16 @@ where
     Ok(())
 }
 
-pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
+pub async fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block_number: Option<u64>,
+) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller).await?)
+
+    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
+    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
 }
 
 pub async fn send_transaction(

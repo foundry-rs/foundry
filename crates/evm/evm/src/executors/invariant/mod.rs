@@ -348,7 +348,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if self.config.fail_on_revert && invariant_test.reverts() > 0 {
-                return Err(TestCaseError::fail("Revert occurred."))
+                return Err(TestCaseError::fail("call reverted"))
             }
 
             while current_run.depth < self.config.depth {
@@ -362,7 +362,7 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 let tx = current_run.inputs.last().ok_or_else(|| {
-                    TestCaseError::fail("No input generated to call fuzzed target.")
+                    TestCaseError::fail("no input generated to called fuzz target")
                 })?;
 
                 // Execute call from the randomly generated sequence without committing state.
@@ -375,9 +375,7 @@ impl<'a> InvariantExecutor<'a> {
                         tx.call_details.calldata.clone(),
                         U256::ZERO,
                     )
-                    .map_err(|e| {
-                        TestCaseError::fail(format!("Could not make raw evm call: {e}"))
-                    })?;
+                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
@@ -394,13 +392,21 @@ impl<'a> InvariantExecutor<'a> {
                         invariant_test.set_error(InvariantFuzzError::MaxAssumeRejects(
                             self.config.max_assume_rejects,
                         ));
-                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
+                        return Err(TestCaseError::fail(
+                            "reached maximum number of `vm.assume` rejects",
+                        ));
                     }
                 } else {
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
 
                     // Collect data for fuzzing from the state changeset.
+                    // This step updates the state dictionary and therefore invalidates the
+                    // ValueTree in use by the current run. This manifestsitself in proptest
+                    // observing a different input case than what it was called with, and creates
+                    // inconsistencies whenever proptest tries to use the input case after test
+                    // execution.
+                    // See <https://github.com/foundry-rs/foundry/issues/9764>.
                     let mut state_changeset = call_result.state_changeset.clone();
                     if !call_result.reverted {
                         collect_data(
@@ -446,7 +452,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
-                        return Err(TestCaseError::fail("Test cannot continue."))
+                        return Err(TestCaseError::fail("test cannot continue"))
                     }
 
                     invariant_test.set_last_call_results(result.call_result);
@@ -767,8 +773,7 @@ impl<'a> InvariantExecutor<'a> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, contract)) =
-                    self.project_contracts.find_by_name_or_identifier(identifier)?
+                if let Some(abi) = self.project_contracts.find_abi_by_name_or_identifier(identifier)
                 {
                     combined
                         // Check if there's an entry for the given key in the 'combined' map.
@@ -776,12 +781,10 @@ impl<'a> InvariantExecutor<'a> {
                         // If the entry exists, extends its ABI with the function list.
                         .and_modify(|entry| {
                             // Extend the ABI's function list with the new functions.
-                            entry.abi.functions.extend(contract.abi.functions.clone());
+                            entry.abi.functions.extend(abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| {
-                            TargetedContract::new(identifier.to_string(), contract.abi.clone())
-                        });
+                        .or_insert_with(|| TargetedContract::new(identifier.to_string(), abi));
                 }
             }
         }

@@ -10,7 +10,6 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
 use eyre::Result;
 use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
@@ -35,7 +34,7 @@ impl TransactionReceiptWithRevertReason {
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+    pub async fn update_revert_reason<P: Provider<AnyNetwork>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -43,7 +42,7 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+    async fn fetch_revert_reason<P: Provider<AnyNetwork>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
@@ -94,6 +93,45 @@ revertReason         {}",
             )
         } else {
             self.receipt.pretty()
+        }
+    }
+}
+
+impl UIfmt for TransactionMaybeSigned {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Signed { tx, .. } => tx.pretty(),
+            Self::Unsigned(tx) => format!(
+                "
+accessList           {}
+chainId              {}
+gasLimit             {}
+gasPrice             {}
+input                {}
+maxFeePerBlobGas     {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+to                   {}
+type                 {}
+value                {}",
+                tx.access_list
+                    .as_ref()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                tx.chain_id.pretty(),
+                tx.gas_limit().unwrap_or_default(),
+                tx.gas_price.pretty(),
+                tx.input.input.pretty(),
+                tx.max_fee_per_blob_gas.pretty(),
+                tx.max_fee_per_gas.pretty(),
+                tx.max_priority_fee_per_gas.pretty(),
+                tx.nonce.pretty(),
+                tx.to.as_ref().map(|a| a.to()).unwrap_or_default().pretty(),
+                tx.transaction_type.unwrap_or_default(),
+                tx.value.pretty(),
+            ),
         }
     }
 }
