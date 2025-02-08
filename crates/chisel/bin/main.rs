@@ -114,6 +114,11 @@ fn run() -> eyre::Result<()> {
     utils::subscriber();
     utils::load_dotenv();
 
+    if let Some(to) = utils::should_redirect_to()? {
+        utils::redirect_execution(to)?;
+        return Ok(())
+    }
+
     let args = Chisel::parse();
     args.global.init()?;
     main_args(args)

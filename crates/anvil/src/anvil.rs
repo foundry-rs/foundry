@@ -51,6 +51,11 @@ fn run() -> Result<()> {
     utils::load_dotenv();
     utils::enable_paint();
 
+    if let Some(to) = utils::should_redirect_to()? {
+        utils::redirect_execution(to)?;
+        return Ok(())
+    }
+
     let mut args = Anvil::parse();
     args.global.init()?;
     args.node.evm.resolve_rpc_alias();
