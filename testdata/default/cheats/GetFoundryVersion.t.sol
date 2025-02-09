@@ -42,4 +42,28 @@ contract GetFoundryVersionTest is DSTest {
         // Validate build profile (e.g., "debug" or "release")
         require(bytes(buildType).length > 0, "Build type is empty");
     }
+
+    function testFoundryVersionCmp() public {
+        // Should return -1 if current version is less than argument
+        assertEq(vm.foundryVersionCmp("99.0.0-dev+b3d0002118.1737037945.debug"), -1);
+
+        // Should return 0 if versions are equal
+        string memory currentVersion = vm.getFoundryVersion();
+        assertEq(vm.foundryVersionCmp(currentVersion), 0);
+
+        // Should return 1 if current version is greater than argument
+        assertEq(vm.foundryVersionCmp("0.0.1-dev+b3d0002118.1737037945.debug"), 1);
+    }
+
+    function testFoundryVersionAtLeast() public {
+        // Should return false for future versions
+        assertEq(vm.foundryVersionAtLeast("99.0.0-dev+b3d0002118.1737037945.debug"), false);
+
+        // Should return true for current version
+        string memory currentVersion = vm.getFoundryVersion();
+        assertTrue(vm.foundryVersionAtLeast(currentVersion));
+
+        // Should return true for past versions
+        assertTrue(vm.foundryVersionAtLeast("0.2.0"));
+    }
 }
