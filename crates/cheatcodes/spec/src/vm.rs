@@ -1678,12 +1678,12 @@ interface Vm {
     ) external pure;
 
     /// Returns true if the current Foundry version is at least the given version.
-    /// Version string can be in the format `<cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>`.
+    /// Version string can be in the format `major.minor.patch`.
     #[cheatcode(group = Testing, safety = Safe)]
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
 
     /// Compares the current Foundry version with the given version string.
-    /// Version string can be in the format `<cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>`.
+    /// Version string can be in the format `major.minor.patch`.
     /// Returns:
     /// -1 if current version is less than the given version
     /// 0 if current version equals the given version

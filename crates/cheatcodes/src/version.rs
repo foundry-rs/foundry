@@ -8,14 +8,19 @@ impl Cheatcode for foundryVersionCmpCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { version } = self;
 
+        if version.contains("+") || version.contains("-") {
+            return Err(fmt_err!("Version must be in only major.minor.patch format"));
+        }
+
         let parsed_version = Version::parse(version)
             .map_err(|e| fmt_err!("Invalid semver format '{}': {}", version, e))?;
+        let current_semver = Version::parse(SEMVER_VERSION)
+            .map_err(|_| fmt_err!("Invalid current version format"))?;
 
-        let current_version = Version::parse(SEMVER_VERSION)
-            .map_err(|e| fmt_err!("Invalid current version: {}", e))?;
-        // Compare the current Foundry version (SEMVER_VERSION) against the parsed version.
+        let current_version =
+            Version::new(current_semver.major, current_semver.minor, current_semver.patch);
         // Note: returns -1 if current < provided, 0 if equal, 1 if current > provided.
-        let cmp_result = match current_version.cmp_precedence(&parsed_version) {
+        let cmp_result = match current_version.cmp(&parsed_version) {
             Ordering::Less => -1i32,
             Ordering::Equal => 0i32,
             Ordering::Greater => 1i32,
@@ -28,13 +33,19 @@ impl Cheatcode for foundryVersionAtLeastCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { version } = self;
 
-        let parsed_version = Version::parse(version)
-            .map_err(|e| fmt_err!("Invalid semver format '{}': {}", version, e))?;
+        if version.contains("+") || version.contains("-") {
+            return Err(fmt_err!("Version must be in only major.minor.patch format"));
+        }
 
-        let current_version = Version::parse(SEMVER_VERSION)
-            .map_err(|e| fmt_err!("Invalid current version: {}", e))?;
+        let parsed_version =
+            Version::parse(version).map_err(|_| fmt_err!("Invalid version format"))?;
+        let current_semver = Version::parse(SEMVER_VERSION)
+            .map_err(|_| fmt_err!("Invalid current version format"))?;
 
-        let at_least = current_version.cmp_precedence(&parsed_version) != Ordering::Less;
+        let current_version =
+            Version::new(current_semver.major, current_semver.minor, current_semver.patch);
+
+        let at_least = current_version.cmp(&parsed_version) != Ordering::Less;
         Ok(at_least.abi_encode())
     }
 }
