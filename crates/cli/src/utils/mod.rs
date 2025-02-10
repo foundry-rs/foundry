@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, U256};
 use alloy_provider::{network::AnyNetwork, Provider};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
@@ -38,6 +38,8 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
+
+const SUBMODULE_BRANCH_REGEX: &str = r#"\[submodule "([^"]+)"\][\s\S]*?branch = ([^\s]+)"#;
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -524,6 +526,30 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
             .map(|stdout| stdout.lines().next().map(str::to_string))
     }
 
+    /// Returns a list of tuples of submodule paths and their respective branches.
+    ///
+    /// This function reads the `.gitmodules` file and returns the paths of all submodules that have
+    /// a branch.
+    ///
+    /// `at` is the dir in which the `.gitmodules` file is located.
+    pub fn read_submodules_with_branch(self, at: &Path) -> Result<HashMap<PathBuf, String>> {
+        // Read the .gitmodules file
+        let gitmodules = foundry_common::fs::read_to_string(at.join(".gitmodules"))?;
+        let re = regex::Regex::new(SUBMODULE_BRANCH_REGEX)?;
+
+        let paths = re
+            .captures_iter(&gitmodules)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        Ok(paths)
+    }
+
     pub fn has_missing_dependencies<I, S>(self, paths: I) -> Result<bool>
     where
         I: IntoIterator<Item = S>,
@@ -788,5 +814,65 @@ mod tests {
 
         assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
         assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
+    }
+
+    #[test]
+    fn test_read_gitmodules_regex() {
+        // Regex to read and return the paths of all submodules that have a branch
+        let re = regex::Regex::new(SUBMODULE_BRANCH_REGEX).unwrap();
+
+        let gitmodules = r#"
+        [submodule "lib/solady"]
+        path = lib/solady
+        url = ""
+        branch = v0.1.0
+        [submodule "lib/openzeppelin-contracts"]
+        path = lib/openzeppelin-contracts
+        url = ""
+        branch = v4.8.0-791-g8829465a
+        [submodule "lib/forge-std"]
+        path = lib/forge-std
+        url = ""
+"#;
+
+        let paths = re
+            .captures_iter(gitmodules)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(paths.get(Path::new("lib/solady")).unwrap(), "v0.1.0");
+        assert_eq!(
+            paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
+            "v4.8.0-791-g8829465a"
+        );
+
+        let no_branch_gitmodules = r#"
+        [submodule "lib/solady"]
+        path = lib/solady
+        url = ""
+        [submodule "lib/openzeppelin-contracts"]
+        path = lib/openzeppelin-contracts
+        url = ""
+        [submodule "lib/forge-std"]
+        path = lib/forge-std
+        url = ""
+"#;
+
+        let paths = re
+            .captures_iter(no_branch_gitmodules)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert!(paths.is_empty());
     }
 }

@@ -71,6 +71,7 @@ impl<'a> Lockfile<'a> {
                 return Ok(None);
             }
 
+            let modules_with_branch = git.read_submodules_with_branch(git.root)?;
             let mut out_of_sync: DepMap = HashMap::default();
             for sub in &submodules {
                 let rel_path = sub.path();
@@ -85,6 +86,21 @@ impl<'a> Lockfile<'a> {
                         }
                     }
                     Entry::Vacant(e) => {
+                        // Check if there is branch specified for the submodule at rel_path in
+                        // .gitmodules
+                        let maybe_branch = modules_with_branch.get(rel_path).map(|b| b.to_string());
+                        if let Some(branch) = maybe_branch {
+                            let dep_id = DepIdentifier::Branch {
+                                name: branch,
+                                rev: rev.to_string(),
+                                r#override: false,
+                            };
+                            e.insert(dep_id.clone());
+                            out_of_sync.insert(rel_path.to_path_buf(), dep_id);
+
+                            continue;
+                        }
+
                         // Find out if rev has a tag associated with it.
                         let maybe_tag =
                             git.tag_for_commit(rev, &git.root.join(rel_path)).or_else(|err| {

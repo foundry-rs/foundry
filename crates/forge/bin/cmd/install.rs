@@ -122,6 +122,8 @@ impl DependencyInstallOpts {
             lockfile = lockfile.with_git(&git);
         }
 
+        let out_of_sync_deps = lockfile.sync()?;
+
         if dependencies.is_empty() && !no_git {
             // Use the root of the git repository to look for submodules.
             let root = Git::root_of(git.root)?;
@@ -131,6 +133,7 @@ impl DependencyInstallOpts {
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
+                    lockfile.write()?;
                 }
 
                 Err(err) => {
@@ -141,8 +144,6 @@ impl DependencyInstallOpts {
                 }
             }
         }
-
-        let out_of_sync_deps = lockfile.sync()?;
 
         fs::create_dir_all(&libs)?;
 

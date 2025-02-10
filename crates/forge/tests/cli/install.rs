@@ -365,7 +365,7 @@ forgetest!(
 
         assert!(matches!(
             lock.get(&PathBuf::from("lib/forge-std")).unwrap(),
-            &DepIdentifier::Rev { .. }
+            &DepIdentifier::Branch { .. }
         ));
         assert!(matches!(
             lock.get(&PathBuf::from("lib/solady")).unwrap(),
@@ -528,9 +528,9 @@ async fn oz_contracts_sync_foundry_lock() {
     cmd.arg("install").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
+    assert!(matches!(forge_std, DepIdentifier::Branch { .. }));
     assert_eq!(forge_std.rev(), submod_forge_std.rev());
-    assert_eq!(forge_std.name(), "v1.9.4");
+    assert_eq!(forge_std.name(), "v1");
     let erc4626_tests = lockfile_get(prj.root(), &PathBuf::from("lib/erc4626-tests")).unwrap();
     assert!(matches!(erc4626_tests, DepIdentifier::Rev { .. }));
     assert_eq!(erc4626_tests.rev(), submod_erc4626_tests.rev());
@@ -542,13 +542,14 @@ async fn oz_contracts_sync_foundry_lock() {
     git.add(&PathBuf::from(FOUNDRY_LOCK)).unwrap();
     git.commit("Foundry lock").unwrap();
 
-    // Try update. Nothing should get updated everything is pinned tag/rev.
+    // Try update. forge-std should get updated, rest should remain the same.
     cmd.forge_fuse().arg("update").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
-    assert_eq!(forge_std.rev(), submod_forge_std.rev());
-    assert_eq!(forge_std.name(), "v1.9.4");
+    assert!(matches!(forge_std, DepIdentifier::Branch { .. }));
+    // assert_eq!(forge_std.rev(), submod_forge_std.rev());  // This can fail, as forge-std will get
+    // updated to the latest commit on master.
+    assert_eq!(forge_std.name(), "v1"); // But it stays locked on the same master
     let erc4626_tests = lockfile_get(prj.root(), &PathBuf::from("lib/erc4626-tests")).unwrap();
     assert!(matches!(erc4626_tests, DepIdentifier::Rev { .. }));
     assert_eq!(erc4626_tests.rev(), submod_erc4626_tests.rev());
