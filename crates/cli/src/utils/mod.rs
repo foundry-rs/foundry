@@ -39,7 +39,7 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
 
-const SUBMODULE_BRANCH_REGEX: &str = r#"\[submodule "([^"]+)"\][\s\S]*?branch = ([^\s]+)"#;
+const SUBMODULE_BRANCH_REGEX: &str = r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#;
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -627,6 +627,16 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
             .map(drop)
     }
 
+    /// If the status is prefix with `-`, the submodule is not initialized.
+    ///
+    /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
+    pub fn submodules_unintialized(self) -> Result<bool> {
+        self.cmd()
+            .args(["submodule", "status"])
+            .get_stdout_lossy()
+            .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+    }
+
     pub fn submodule_init(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
@@ -862,7 +872,6 @@ mod tests {
         path = lib/forge-std
         url = ""
 "#;
-
         let paths = re
             .captures_iter(no_branch_gitmodules)
             .map(|cap| {
@@ -874,5 +883,34 @@ mod tests {
             .collect::<HashMap<_, _>>();
 
         assert!(paths.is_empty());
+
+        let branch_in_between = r#"
+        [submodule "lib/solady"]
+        path = lib/solady
+        url = ""
+        [submodule "lib/openzeppelin-contracts"]
+        path = lib/openzeppelin-contracts
+        url = ""
+        branch = v4.8.0-791-g8829465a
+        [submodule "lib/forge-std"]
+        path = lib/forge-std
+        url = ""
+        "#;
+
+        let paths = re
+            .captures_iter(branch_in_between)
+            .map(|cap| {
+                (
+                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
+                    String::from(cap.get(2).unwrap().as_str()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
+            "v4.8.0-791-g8829465a"
+        );
     }
 }
