@@ -200,6 +200,10 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// where the gas snapshots are stored
     pub snapshots: PathBuf,
+    /// whether to check for differences against previously stored gas snapshots
+    pub gas_snapshot_check: bool,
+    /// whether to emit gas snapshots to disk
+    pub gas_snapshot_emit: bool,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -942,7 +946,7 @@ impl Config {
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
-    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+    pub fn ephemeral_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(false, true)
     }
 
@@ -1013,7 +1017,9 @@ impl Config {
         Ok(map)
     }
 
-    /// Creates a [Project] with the given `cached` and `no_artifacts` flags
+    /// Creates a [`Project`] with the given `cached` and `no_artifacts` flags.
+    ///
+    /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
@@ -1838,7 +1844,7 @@ impl Config {
 
     /// Returns the path to foundry's config dir: `~/.foundry/`.
     pub fn foundry_dir() -> Option<PathBuf> {
-        dirs_next::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
+        dirs::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
     }
 
     /// Returns the path to foundry's cache dir: `~/.foundry/cache`.
@@ -1891,7 +1897,7 @@ impl Config {
     /// | macOS    | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
     /// | Windows  | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry           |
     pub fn data_dir() -> eyre::Result<PathBuf> {
-        let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
+        let path = dirs::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
         Ok(path)
     }
@@ -2316,6 +2322,8 @@ impl Default for Config {
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
+            gas_snapshot_check: false,
+            gas_snapshot_emit: true,
             allow_paths: vec![],
             include_paths: vec![],
             force: false,

@@ -137,18 +137,17 @@ impl CoverageArgs {
 
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
-        // Set up the project
-        let mut project = config.create_project(false, true)?;
+        let mut project = config.ephemeral_project()?;
 
         if self.ir_minimum {
             // print warning message
-            sh_warn!("{}", concat!(
-                "`--ir-minimum` enables viaIR with minimum optimization, \
-                 which can result in inaccurate source mappings.\n",
-                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is production ready since Solidity 0.8.13 and above.\n",
-                "See more: https://github.com/foundry-rs/foundry/issues/3357",
-            ))?;
+            sh_warn!(
+                "`--ir-minimum` enables `viaIR` with minimum optimization, \
+                 which can result in inaccurate source mappings.\n\
+                 Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
+                 Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
+                 See more: https://github.com/foundry-rs/foundry/issues/3357"
+            )?;
 
             // Enable viaIR with minimum optimization: https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of Solidity: https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
@@ -162,18 +161,17 @@ impl CoverageArgs {
             project.settings.solc.settings.sanitize(&version, SolcLanguage::Solidity);
             project.settings.solc.evm_version = evm_version;
         } else {
+            sh_warn!(
+                "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
+                 If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
+                 enables `viaIR` with minimum optimization resolving most of the errors"
+            )?;
+
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;
             project.settings.solc.optimizer.details = None;
             project.settings.solc.via_ir = None;
         }
-
-        let mut warning =
-            "optimizer settings have been disabled for accurate coverage reports".to_string();
-        if !self.ir_minimum {
-            warning += ", if you encounter \"stack too deep\" errors, consider using `--ir-minimum` which enables viaIR with minimum optimization resolving most of the errors";
-        }
-        sh_warn!("{warning}")?;
 
         let output = ProjectCompiler::default()
             .compile(&project)?

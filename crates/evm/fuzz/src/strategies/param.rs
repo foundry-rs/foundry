@@ -2,6 +2,7 @@ use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
 use proptest::prelude::*;
+use rand::{rngs::StdRng, SeedableRng};
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
@@ -132,14 +133,26 @@ pub fn fuzz_param_from_state(
         DynSolType::Address => {
             let deployed_libs = state.deployed_libs.clone();
             value()
-                .prop_filter_map("filter address fuzzed from state", move |value| {
-                    let fuzzed_addr = Address::from_word(value);
-                    // Do not use addresses of deployed libraries as fuzz input.
-                    // See <https://github.com/foundry-rs/foundry/issues/8639>.
+                .prop_map(move |value| {
+                    let mut fuzzed_addr = Address::from_word(value);
                     if !deployed_libs.contains(&fuzzed_addr) {
-                        Some(DynSolValue::Address(fuzzed_addr))
+                        DynSolValue::Address(fuzzed_addr)
                     } else {
-                        None
+                        let mut rng = StdRng::seed_from_u64(0x1337); // use deterministic rng
+
+                        // Do not use addresses of deployed libraries as fuzz input, instead return
+                        // a deterministically random address. We cannot filter out this value (via
+                        // `prop_filter_map`) as proptest can invoke this closure after test
+                        // execution, and returning a `None` will cause it to panic.
+                        // See <https://github.com/foundry-rs/foundry/issues/9764> and <https://github.com/foundry-rs/foundry/issues/8639>.
+                        loop {
+                            fuzzed_addr.randomize_with(&mut rng);
+                            if !deployed_libs.contains(&fuzzed_addr) {
+                                break;
+                            }
+                        }
+
+                        DynSolValue::Address(fuzzed_addr)
                     }
                 })
                 .boxed()

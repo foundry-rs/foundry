@@ -1687,11 +1687,6 @@ contract AContract {
 "#]]);
 });
 
-#[track_caller]
-fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
-    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
-}
-
 forgetest!(no_artifacts_written, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -1751,3 +1746,8 @@ contract AContractTest is DSTest {
 
     assert!(files.is_empty());
 });
+
+#[track_caller]
+fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+}
