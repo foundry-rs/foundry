@@ -582,7 +582,11 @@ impl FromStr for PathOrContractInfo {
         if let Ok(contract) = CompilerContractInfo::from_str(s) {
             return Ok(Self::ContractInfo(contract));
         }
-        Ok(Self::Path(PathBuf::from(s)))
+        let path = PathBuf::from(s);
+        if path.extension().map_or(false, |ext| ext == "sol") {
+            return Ok(Self::Path(path));
+        }
+        Err(eyre::eyre!("Invalid contract identifier, file is not *.sol: {}", s))
     }
 }
 
