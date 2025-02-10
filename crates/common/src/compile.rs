@@ -583,10 +583,10 @@ impl FromStr for PathOrContractInfo {
             return Ok(Self::ContractInfo(contract));
         }
         let path = PathBuf::from(s);
-        if path.extension().map_or(false, |ext| ext == "sol") {
+        if path.extension().map_or(false, |ext| ext == "sol" || ext == "vy") {
             return Ok(Self::Path(path));
         }
-        Err(eyre::eyre!("Invalid contract identifier, file is not *.sol: {}", s))
+        Err(eyre::eyre!("Invalid contract identifier, file is not *.sol or *.vy: {}", s))
     }
 }
 
