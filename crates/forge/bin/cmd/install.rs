@@ -125,8 +125,7 @@ impl DependencyInstallOpts {
             // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
             // looking for commits/tags in submodules
             if git.submodules_unintialized()? {
-                let _ =
-                    sh_println!("Submodules uninitialized at {}, initializing...", libs.display());
+                trace!(lib = %libs.display(), "submodules uninitialized");
                 git.submodule_update(false, false, false, true, Some(&libs))?;
             }
         }
