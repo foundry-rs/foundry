@@ -2725,6 +2725,105 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         );
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9858>
+forgetest_init!(gas_report_fallback_with_calldata, |prj, cmd| {
+    prj.add_test(
+        "FallbackWithCalldataTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterWithFallback {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+
+    fallback() external {
+        number++;
+    }
+}
+
+contract CounterWithFallbackTest is Test {
+    CounterWithFallback public counter;
+
+    function setUp() public {
+        counter = new CounterWithFallback();
+    }
+
+    function test_fallback_with_calldata() public {
+        (bool success,) = address(counter).call("hello");
+        require(success);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_fallback_with_calldata", "-vvvv", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FallbackWithCalldataTest.sol:CounterWithFallbackTest
+[PASS] test_fallback_with_calldata() ([GAS])
+Traces:
+  [48777] CounterWithFallbackTest::test_fallback_with_calldata()
+    ├─ [43461] CounterWithFallback::fallback(0x68656c6c6f)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+╭----------------------------------------------------------------+-----------------+-------+--------+-------+---------╮
+| test/FallbackWithCalldataTest.sol:CounterWithFallback Contract |                 |       |        |       |         |
++=====================================================================================================================+
+| Deployment Cost                                                | Deployment Size |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| 132471                                                         | 396             |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+|                                                                |                 |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                                                  | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| fallback                                                       | 43461           | 43461 | 43461  | 43461 | 1       |
+╰----------------------------------------------------------------+-----------------+-------+--------+-------+---------╯
+
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fallback_with_calldata", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
+    "deployment": {
+      "gas": 132471,
+      "size": 396
+    },
+    "functions": {
+      "fallback()": {
+        "calls": 1,
+        "min": 43461,
+        "mean": 43461,
+        "median": 43461,
+        "max": 43461
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
+});
+
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
     prj.add_test(
