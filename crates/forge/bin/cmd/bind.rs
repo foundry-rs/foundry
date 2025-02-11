@@ -83,15 +83,15 @@ pub struct BindArgs {
     #[arg(long, hide = true)]
     alloy: bool,
 
-    /// Specify the Alloy version on Crates.
+    /// Specify the `alloy` version on Crates.
     #[arg(long)]
     alloy_version: Option<String>,
 
-    /// Specify the Alloy revision on GitHub.
+    /// Specify the `alloy` revision on GitHub.
     #[arg(long, conflicts_with = "alloy_version")]
     alloy_rev: Option<String>,
 
-    /// Generate bindings for the `ethers` library, instead of `alloy` (removed).
+    /// Generate bindings for the `ethers` library (removed), instead of `alloy`.
     #[arg(long, hide = true)]
     ethers: bool,
 
