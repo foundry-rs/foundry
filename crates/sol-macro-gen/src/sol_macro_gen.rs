@@ -127,7 +127,7 @@ edition = "2021"
 [dependencies]
 "#
         );
-        
+
         let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
 
@@ -327,7 +327,7 @@ edition = "2021"
 
     /// Returns the `alloy` dependency string for the Cargo.toml file.
     /// If `alloy_version` is provided, it will use that version from crates.io.
-    /// If `alloy_rev` is provided, it will use that revision from the `alloy-rs/alloy` GitHub repository.
+    /// If `alloy_rev` is provided, it will use that revision from the GitHub repository.
     fn get_alloy_dep(alloy_version: Option<String>, alloy_rev: Option<String>) -> String {
         if let Some(alloy_version) = alloy_version {
             format!(
