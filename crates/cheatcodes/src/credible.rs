@@ -120,6 +120,12 @@ impl Cheatcode for assertionExCall {
                 validate_result
             })
             .map_err(|e| format!("Assertion Executor Error: {:#?}", e))?;
+        // if transaction execution reverted, bail
+        if !tx_validation.result_and_state.result.is_success() {
+            let decoded_error = decode_revert_error(&tx_validation.result_and_state.result);
+            bail!("Transaction Execution Reverted: {}", decoded_error.reason());
+        }
+        // else get information about the assertion execution
         let assertion_contract = tx_validation.assertions_executions.first().unwrap();
         let total_assertion_gas = tx_validation.total_assertions_gas();
         let total_assertions_ran = tx_validation.total_assertion_funcs_ran();
@@ -142,13 +148,7 @@ impl Cheatcode for assertionExCall {
         executor.console_log(ccx, assertion_gas_message);
 
         if !tx_validation.is_valid() {
-            if !tx_validation.result_and_state.result.is_success() {
-                let decoded_error = decode_revert_error(&tx_validation.result_and_state.result);
-                bail!("Transaction Execution Reverted: {}", decoded_error.reason());
-            }
-
             let mut error_msg = format!("\n  {assertionContractLabel} Assertions Failed:\n");
-
             // Collect failed assertions
             let reverted_assertions: HashMap<_, _> = assertion_contract
                 .assertion_fns_results
