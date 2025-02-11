@@ -366,7 +366,12 @@ impl CallTraceDecoder {
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
                     label,
-                    call_data: None,
+                    call_data: self.fallback_contracts.get(&trace.address).map(|_| {
+                        DecodedCallData {
+                            signature: "fallback()".to_string(),
+                            args: vec![cdata.to_string()],
+                        }
+                    }),
                     return_data: self.default_return_data(trace),
                 };
             };
@@ -376,7 +381,7 @@ impl CallTraceDecoder {
             let mut call_data = self.decode_function_input(trace, func);
             if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
                 if !fallback_functions.contains(&func.signature()) {
-                    call_data.signature = "fallback()".into();
+                    call_data.signature = "fallback()".to_string();
                 }
             }
 
@@ -388,7 +393,8 @@ impl CallTraceDecoder {
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
             let signature =
-                if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
+                if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }
+                    .to_string();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
             DecodedCallTrace {
                 label,
