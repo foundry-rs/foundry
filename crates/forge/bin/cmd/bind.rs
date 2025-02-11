@@ -87,6 +87,10 @@ pub struct BindArgs {
     #[arg(long)]
     alloy_version: Option<String>,
 
+    /// Specify the alloy revision.
+    #[arg(long, conflicts_with = "alloy_version")]
+    alloy_rev: Option<String>,
+
     /// Generate bindings for the `ethers` library, instead of `alloy` (removed).
     #[arg(long, hide = true)]
     ethers: bool,
@@ -207,6 +211,7 @@ impl BindArgs {
             !self.skip_cargo_toml,
             self.module,
             self.alloy_version.clone(),
+            self.alloy_rev.clone(),
         )?;
         sh_println!("OK.")?;
         Ok(())
@@ -225,6 +230,7 @@ impl BindArgs {
                 bindings_root,
                 self.single_file,
                 self.alloy_version.clone(),
+                self.alloy_rev.clone(),
             )?;
         } else {
             trace!(single_file = self.single_file, "generating module");
