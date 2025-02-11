@@ -36,7 +36,7 @@ impl RemoveArgs {
 
         let git = Git::new(&root);
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-        let _synced = lockfile.sync()?;
+        let _synced = lockfile.sync(config.install_lib_dir())?;
 
         // remove all the dependencies by invoking `git rm` only once with all the paths
         git.rm(self.force, &paths)?;

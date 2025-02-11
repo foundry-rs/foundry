@@ -43,7 +43,7 @@ impl UpdateArgs {
         let git = Git::new(&root);
 
         let mut foundry_lock = Lockfile::new(&config.root).with_git(&git);
-        let out_of_sync_deps = foundry_lock.sync()?;
+        let out_of_sync_deps = foundry_lock.sync(config.install_lib_dir())?;
 
         // update the submodules' tags if any overrides are present
         let mut prev_dep_ids: DepMap = HashMap::default();

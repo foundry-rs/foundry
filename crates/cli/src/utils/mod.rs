@@ -7,6 +7,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config};
+use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
@@ -529,10 +530,15 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
     /// Returns a list of tuples of submodule paths and their respective branches.
     ///
     /// This function reads the `.gitmodules` file and returns the paths of all submodules that have
-    /// a branch.
+    /// a branch. The paths are relative to the Git::root_of(git.root) and not lib/ directory.
     ///
-    /// `at` is the dir in which the `.gitmodules` file is located.
-    pub fn read_submodules_with_branch(self, at: &Path) -> Result<HashMap<PathBuf, String>> {
+    /// `at` is the dir in which the `.gitmodules` file is located, this is the git root.
+    /// `lib` is name of the directory where the submodules are located.
+    pub fn read_submodules_with_branch(
+        self,
+        at: &Path,
+        lib: &OsStr,
+    ) -> Result<HashMap<PathBuf, String>> {
         // Read the .gitmodules file
         let gitmodules = foundry_common::fs::read_to_string(at.join(".gitmodules"))?;
         let re = regex::Regex::new(SUBMODULE_BRANCH_REGEX)?;
@@ -540,10 +546,24 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
         let paths = re
             .captures_iter(&gitmodules)
             .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
+                let path_str = cap.get(1).unwrap().as_str();
+                let path = PathBuf::from_str(path_str).unwrap();
+                trace!(path = %path.display(), "unstripped path");
+
+                // Keep only the components that come after the lib directory.
+                // This needs to be done because the lockfile uses paths relative foundry project
+                // root whereas .gitmodules use paths relative to the git root which may not be the
+                // project root. e.g monorepo.
+                // Hence, if path is lib/solady, then `lib/solady` is kept. if path is
+                // packages/contract-bedrock/lib/solady, then `lib/solady` is kept.
+                let lib_pos = path.components().find_position(|c| c.as_os_str() == lib);
+                let path = path
+                    .components()
+                    .skip(lib_pos.map(|(i, _)| i).unwrap_or(0))
+                    .collect::<PathBuf>();
+
+                let branch = cap.get(2).unwrap().as_str().to_string();
+                (path, branch)
             })
             .collect::<HashMap<_, _>>();
 

@@ -53,7 +53,7 @@ impl<'a> Lockfile<'a> {
     /// This method writes the lockfile to project root if:
     /// - The lockfile does not exist.
     /// - The lockfile is out of sync with the git submodules.
-    pub fn sync(&mut self) -> Result<Option<DepMap>> {
+    pub fn sync(&mut self, lib: &Path) -> Result<Option<DepMap>> {
         match self.read() {
             Ok(_) => {}
             Err(e) => {
@@ -71,7 +71,9 @@ impl<'a> Lockfile<'a> {
                 return Ok(None);
             }
 
-            let modules_with_branch = git.read_submodules_with_branch(git.root)?;
+            let modules_with_branch = git
+                .read_submodules_with_branch(&Git::root_of(git.root)?, lib.file_name().unwrap())?;
+
             let mut out_of_sync: DepMap = HashMap::default();
             for sub in &submodules {
                 let rel_path = sub.path();
@@ -89,6 +91,8 @@ impl<'a> Lockfile<'a> {
                         // Check if there is branch specified for the submodule at rel_path in
                         // .gitmodules
                         let maybe_branch = modules_with_branch.get(rel_path).map(|b| b.to_string());
+
+                        trace!(?maybe_branch, submodule = ?rel_path, "submodule branch");
                         if let Some(branch) = maybe_branch {
                             let dep_id = DepIdentifier::Branch {
                                 name: branch,
@@ -97,7 +101,6 @@ impl<'a> Lockfile<'a> {
                             };
                             e.insert(dep_id.clone());
                             out_of_sync.insert(rel_path.to_path_buf(), dep_id);
-
                             continue;
                         }
 

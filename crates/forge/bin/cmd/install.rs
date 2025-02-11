@@ -120,9 +120,18 @@ impl DependencyInstallOpts {
         let mut lockfile = Lockfile::new(&config.root);
         if !no_git {
             lockfile = lockfile.with_git(&git);
+
+            // Check if submodules are uninitialized, if so, we need to fetch all submodules
+            // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
+            // looking for commits/tags in submodules
+            if git.submodules_unintialized()? {
+                let _ =
+                    sh_println!("Submodules uninitialized at {}, initializing...", libs.display());
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+            }
         }
 
-        let out_of_sync_deps = lockfile.sync()?;
+        let out_of_sync_deps = lockfile.sync(config.install_lib_dir())?;
 
         if dependencies.is_empty() && !no_git {
             // Use the root of the git repository to look for submodules.
