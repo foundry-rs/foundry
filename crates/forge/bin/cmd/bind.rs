@@ -163,6 +163,11 @@ impl BindArgs {
                     return None;
                 }
 
+                // Ignore the `target` directory in case the user has built the project.
+                if path.iter().any(|comp| comp == "target") {
+                    return None;
+                }
+
                 // We don't want `.metadata.json` files.
                 let stem = path.file_stem()?.to_str()?;
                 if stem.ends_with(".metadata") {

@@ -323,7 +323,9 @@ edition = "2021"
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = if let Some(alloy_version) = alloy_version {
-            format!(r#"alloy = {{ version = "{alloy_version}", features = ["sol-types", "contract"] }}"#,)
+            format!(
+                r#"alloy = {{ version = "{alloy_version}", features = ["sol-types", "contract"] }}"#,
+            )
         } else if let Some(alloy_rev) = alloy_rev {
             format!(
                 r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
