@@ -8,7 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{
     optimism::DepositTransaction, TypedTransaction, TypedTransactionRequest,
 };
-use maili_consensus::TxDeposit;
+use op_alloy_consensus::TxDeposit;
 
 /// A transaction signer
 #[async_trait::async_trait]

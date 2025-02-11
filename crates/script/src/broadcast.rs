@@ -14,7 +14,6 @@ use alloy_primitives::{
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -28,15 +27,11 @@ use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::{cmp::Ordering, sync::Arc};
 
-pub async fn estimate_gas<P, T>(
+pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
     provider: &P,
     estimate_multiplier: u64,
-) -> Result<()>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+) -> Result<()> {
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;

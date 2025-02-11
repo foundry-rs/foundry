@@ -1,16 +1,24 @@
 //! Commonly used contract types and functions.
 
+use crate::compile::PathOrContractInfo;
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{hex, Address, Bytes, Selector, B256};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_compilers::{
     artifacts::{
         BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
-        ContractBytecodeSome, Offsets,
+        ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
     },
-    ArtifactId,
+    utils::canonicalized,
+    ArtifactId, Project, ProjectCompileOutput,
 };
-use std::{collections::BTreeMap, ops::Deref, str::FromStr, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    ops::Deref,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 /// Libraries' runtime code always starts with the following instruction:
 /// `PUSH20 0x0000000000000000000000000000000000000000`
@@ -268,6 +276,17 @@ impl ContractsByArtifact {
             .map(|(_, contract)| contract.abi.clone())
     }
 
+    /// Finds abi by name or source path
+    ///
+    /// Returns the abi and the contract name.
+    pub fn find_abi_by_name_or_src_path(&self, name_or_path: &str) -> Option<(JsonAbi, String)> {
+        self.iter()
+            .find(|(artifact, _)| {
+                artifact.name == name_or_path || artifact.source == PathBuf::from(name_or_path)
+            })
+            .map(|(_, contract)| (contract.abi.clone(), contract.name.clone()))
+    }
+
     /// Flattens the contracts into functions, events and errors.
     pub fn flatten(&self) -> (BTreeMap<Selector, Function>, BTreeMap<B256, Event>, JsonAbi) {
         let mut funcs = BTreeMap::new();
@@ -285,6 +304,21 @@ impl ContractsByArtifact {
             }
         }
         (funcs, events, errors_abi)
+    }
+}
+
+impl From<ProjectCompileOutput> for ContractsByArtifact {
+    fn from(value: ProjectCompileOutput) -> Self {
+        Self::new(value.into_artifacts().map(|(id, ar)| {
+            (
+                id,
+                CompactContractBytecode {
+                    abi: ar.abi,
+                    bytecode: ar.bytecode,
+                    deployed_bytecode: ar.deployed_bytecode,
+                },
+            )
+        }))
     }
 }
 
@@ -399,6 +433,61 @@ pub fn compact_to_contract(contract: CompactContractBytecode) -> Result<Contract
     })
 }
 
+/// Returns the canonicalized target path for the given identifier.
+pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> Result<PathBuf> {
+    match identifier {
+        PathOrContractInfo::Path(path) => Ok(canonicalized(project.root().join(path))),
+        PathOrContractInfo::ContractInfo(info) => {
+            let path = project.find_contract_path(&info.name)?;
+            Ok(path)
+        }
+    }
+}
+
+/// Returns the target artifact given the path and name.
+pub fn find_matching_contract_artifact(
+    output: &mut ProjectCompileOutput,
+    target_path: &Path,
+    target_name: Option<&str>,
+) -> eyre::Result<ConfigurableContractArtifact> {
+    if let Some(name) = target_name {
+        output
+            .remove(target_path, name)
+            .ok_or_eyre(format!("Could not find artifact `{name}` in the compiled artifacts"))
+    } else {
+        let possible_targets = output
+            .artifact_ids()
+            .filter(|(id, _artifact)| id.source == target_path)
+            .collect::<Vec<_>>();
+
+        if possible_targets.is_empty() {
+            eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
+        }
+
+        let (target_id, target_artifact) = possible_targets[0].clone();
+        if possible_targets.len() == 1 {
+            return Ok(target_artifact.clone());
+        }
+
+        // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
+        // additional compiler profiles), it means that there are multiple contracts in the
+        // same file.
+        if !target_id.name.contains(".") &&
+            possible_targets.iter().any(|(id, _)| id.name != target_id.name)
+        {
+            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
+        }
+
+        // Otherwise, we're dealing with additional compiler profiles wherein `id.source` is the
+        // same but `id.path` is different.
+        let artifact = possible_targets
+            .iter()
+            .find_map(|(id, artifact)| if id.profile == "default" { Some(*artifact) } else { None })
+            .unwrap_or(target_artifact);
+
+        Ok(artifact.clone())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

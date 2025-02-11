@@ -96,7 +96,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use maili_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
@@ -849,12 +849,12 @@ impl Backend {
     }
 
     /// Returns the block gas limit
-    pub fn gas_limit(&self) -> u128 {
-        self.env.read().block.gas_limit.to()
+    pub fn gas_limit(&self) -> u64 {
+        self.env.read().block.gas_limit.saturating_to()
     }
 
     /// Sets the block gas limit
-    pub fn set_gas_limit(&self, gas_limit: u128) {
+    pub fn set_gas_limit(&self, gas_limit: u64) {
         self.env.write().block.gas_limit = U256::from(gas_limit);
     }
 
@@ -1660,20 +1660,8 @@ impl Backend {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        let from = request.from.unwrap_or_default();
-        let to = if let Some(TxKind::Call(to)) = request.to {
-            to
-        } else {
-            let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
-            from.create(nonce)
-        };
-
-        let mut inspector = AccessListInspector::new(
-            request.access_list.clone().unwrap_or_default(),
-            from,
-            to,
-            self.precompiles(),
-        );
+        let mut inspector =
+            AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -2511,7 +2499,6 @@ impl Backend {
             to: info.to,
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used,
-            authorization_list: None,
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
@@ -2724,6 +2711,27 @@ impl Backend {
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
         common_block: Block,
     ) -> Result<(), BlockchainError> {
+        self.rollback(common_block).await?;
+        // Create the new reorged chain, filling the blocks with transactions if supplied
+        for i in 0..depth {
+            let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
+            let outcome = self.do_mine_block(to_be_mined).await;
+            node_info!(
+                "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
+                outcome.block_number,
+                outcome.included.len(),
+                outcome.invalid.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Rollback the chain to a common height.
+    ///
+    /// The state of the chain is rewound using `rewind` to the common block, including the db,
+    /// storage, and env.
+    pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
             let mut state = self.states.write();
@@ -2754,31 +2762,14 @@ impl Backend {
 
             // Set environment back to common block
             let mut env = self.env.write();
-            env.block = BlockEnv {
-                number: U256::from(common_block.header.number),
-                timestamp: U256::from(common_block.header.timestamp),
-                gas_limit: U256::from(common_block.header.gas_limit),
-                difficulty: common_block.header.difficulty,
-                prevrandao: Some(common_block.header.mix_hash),
-                coinbase: env.block.coinbase,
-                basefee: env.block.basefee,
-                ..env.block.clone()
-            };
+            env.block.number = U256::from(common_block.header.number);
+            env.block.timestamp = U256::from(common_block.header.timestamp);
+            env.block.gas_limit = U256::from(common_block.header.gas_limit);
+            env.block.difficulty = common_block.header.difficulty;
+            env.block.prevrandao = Some(common_block.header.mix_hash);
+
             self.time.reset(env.block.timestamp.to::<u64>());
         }
-
-        // Create the new reorged chain, filling the blocks with transactions if supplied
-        for i in 0..depth {
-            let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await;
-            node_info!(
-                "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
-                outcome.block_number,
-                outcome.included.len(),
-                outcome.invalid.len()
-            );
-        }
-
         Ok(())
     }
 }

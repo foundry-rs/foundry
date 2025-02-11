@@ -108,6 +108,7 @@ impl MultiSolMacroGen {
         bindings_path: &Path,
         single_file: bool,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         self.generate_bindings()?;
 
@@ -127,13 +128,7 @@ edition = "2021"
 "#
         );
 
-        let alloy_dep = if let Some(alloy_version) = alloy_version {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_version}", features = ["sol-types", "contract"] }}"#
-            )
-        } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
-        };
+        let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
@@ -235,9 +230,10 @@ edition = "2021"
         check_cargo_toml: bool,
         is_mod: bool,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         if check_cargo_toml {
-            self.check_cargo_toml(name, version, crate_path, alloy_version)?;
+            self.check_cargo_toml(name, version, crate_path, alloy_version, alloy_rev)?;
         }
 
         let mut super_contents = String::new();
@@ -304,6 +300,7 @@ edition = "2021"
         version: &str,
         crate_path: &Path,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         eyre::ensure!(crate_path.is_dir(), "Crate path must be a directory");
 
@@ -315,13 +312,7 @@ edition = "2021"
 
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
-        let alloy_dep_check = if let Some(version) = alloy_version {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{version}", features = ["sol-types", "contract"] }}"#,
-            )
-        } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
-        };
+        let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
         let toml_consistent = cargo_toml_contents.contains(&name_check) &&
             cargo_toml_contents.contains(&version_check) &&
             cargo_toml_contents.contains(&alloy_dep_check);
@@ -332,6 +323,23 @@ edition = "2021"
         );
 
         Ok(())
+    }
+
+    /// Returns the `alloy` dependency string for the Cargo.toml file.
+    /// If `alloy_version` is provided, it will use that version from crates.io.
+    /// If `alloy_rev` is provided, it will use that revision from the GitHub repository.
+    fn get_alloy_dep(alloy_version: Option<String>, alloy_rev: Option<String>) -> String {
+        if let Some(alloy_version) = alloy_version {
+            format!(
+                r#"alloy = {{ version = "{alloy_version}", features = ["sol-types", "contract"] }}"#,
+            )
+        } else if let Some(alloy_rev) = alloy_rev {
+            format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
+            )
+        } else {
+            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+        }
     }
 }
 
