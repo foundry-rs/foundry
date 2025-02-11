@@ -83,11 +83,11 @@ pub struct BindArgs {
     #[arg(long, hide = true)]
     alloy: bool,
 
-    /// Specify the alloy version.
+    /// Specify the Alloy version on Crates.
     #[arg(long)]
     alloy_version: Option<String>,
 
-    /// Specify the alloy revision.
+    /// Specify the Alloy revision on GitHub.
     #[arg(long, conflicts_with = "alloy_version")]
     alloy_rev: Option<String>,
 
