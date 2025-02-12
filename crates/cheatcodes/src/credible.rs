@@ -123,15 +123,17 @@ impl Cheatcode for assertionExCall {
         // if transaction execution reverted, bail
         if !tx_validation.result_and_state.result.is_success() {
             let decoded_error = decode_revert_error(&tx_validation.result_and_state.result);
-            bail!("Transaction Execution Reverted: {}", decoded_error.reason());
+            executor.console_log(ccx, format!("Transaction reverted: {}", decoded_error.reason()));
+            bail!("Transaction Reverted");
         }
         // else get information about the assertion execution
         let assertion_contract = tx_validation.assertions_executions.first().unwrap();
         let total_assertion_gas = tx_validation.total_assertions_gas();
         let total_assertions_ran = tx_validation.total_assertion_funcs_ran();
+        let tx_gas_used = tx_validation.result_and_state.result.gas_used();
         let mut assertion_gas_message = format!(
-            "Assertion Functions gas cost\n  Total gas cost: {}\n  Total assertions ran: {}\n",
-            total_assertion_gas, total_assertions_ran
+            "Transaction gas cost: {}\n  Total Assertion gas cost: {}\n  Total assertions ran: {}\n  Assertion Functions gas cost\n  ",
+            tx_gas_used, total_assertion_gas, total_assertions_ran
         );
 
         // Format individual assertion function results
