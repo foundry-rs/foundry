@@ -64,6 +64,7 @@ docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker im
 
 .PHONY: docker-build-prepare
 docker-build-prepare: ## Prepare the Docker build environment.
+	docker run --privileged --rm tonistiigi/binfmt --uninstall qemu-*
 	docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64
 	@if ! docker buildx inspect cross-builder &> /dev/null; then \
 		echo "Creating a new buildx builder instance"; \
