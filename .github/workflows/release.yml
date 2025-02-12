@@ -99,7 +99,7 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: macos-12-large
+          - runner: macos-latest-large
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
@@ -278,7 +278,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, cleanup]
+    needs: [ prepare, release-docker, release, cleanup ]
     if: failure()
     steps:
       - uses: actions/checkout@v4
