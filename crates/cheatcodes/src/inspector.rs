@@ -1663,7 +1663,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 let msg = format!(
                     "expected {} call by address {} for bytecode {} but not found",
                     expected_create.create_scheme,
-                    hex::encode_prefixed(&expected_create.deployer),
+                    hex::encode_prefixed(expected_create.deployer),
                     hex::encode_prefixed(&expected_create.bytecode),
                 );
                 outcome.result.result = InstructionResult::Revert;

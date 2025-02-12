@@ -123,19 +123,19 @@ pub enum CreateScheme {
 impl Display for CreateScheme {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
-            CreateScheme::Create => write!(f, "CREATE"),
-            CreateScheme::Create2 => write!(f, "CREATE2"),
+            Self::Create => write!(f, "CREATE"),
+            Self::Create2 => write!(f, "CREATE2"),
         }
     }
 }
 
 impl CreateScheme {
     pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
-        match (self, create_scheme) {
-            (CreateScheme::Create, revm::primitives::CreateScheme::Create) => true,
-            (CreateScheme::Create2, revm::primitives::CreateScheme::Create2 { .. }) => true,
-            _ => false,
-        }
+        matches!(
+            (self, create_scheme),
+            (CreateScheme::Create, revm::primitives::CreateScheme::Create) |
+                (CreateScheme::Create2, revm::primitives::CreateScheme::Create2 { .. })
+        )
     }
 }
 
