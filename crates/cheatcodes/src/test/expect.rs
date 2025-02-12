@@ -133,8 +133,8 @@ impl CreateScheme {
     pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
         matches!(
             (self, create_scheme),
-            (CreateScheme::Create, revm::primitives::CreateScheme::Create) |
-                (CreateScheme::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, revm::primitives::CreateScheme::Create) |
+                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
         )
     }
 }
