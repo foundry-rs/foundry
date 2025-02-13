@@ -3001,6 +3001,7 @@ forgetest_init!(colored_traces, |prj, cmd| {
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
 // <https://github.com/foundry-rs/foundry/issues/9864>
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
     prj.add_test(
         "SuppressTracesTest.t.sol",
