@@ -2895,13 +2895,12 @@ pub fn transaction_build(
             Ok(mut fields) => {
                 // Add zeroed signature fields for backwards compatibility
                 // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
-                fields
-                    .insert("v".to_string(), serde_json::to_value(format!("0x{:x}", 0u8)).unwrap());
+                fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
                 fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(
                     String::from("nonce"),
-                    serde_json::to_value(format!("0x{:x}", nonce)).unwrap(),
+                    serde_json::to_value(format!("0x{nonce}")).unwrap(),
                 );
 
                 let inner = UnknownTypedTransaction {
