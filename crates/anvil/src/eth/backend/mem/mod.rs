@@ -2866,7 +2866,7 @@ pub fn transaction_build(
 ) -> AnyRpcTransaction {
     if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
         let DepositTransaction {
-            nonce: _,
+            nonce,
             source_hash,
             from,
             kind,
@@ -2892,7 +2892,18 @@ pub fn transaction_build(
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
-            Ok(fields) => {
+            Ok(mut fields) => {
+                // Add zeroed signature fields for backwards compatibility
+                // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
+                fields
+                    .insert("v".to_string(), serde_json::to_value(format!("0x{:x}", 0u8)).unwrap());
+                fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+                fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
+                fields.insert(
+                    String::from("nonce"),
+                    serde_json::to_value(format!("0x{:x}", nonce)).unwrap(),
+                );
+
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
                     fields,
