@@ -3062,7 +3062,51 @@ Compiler run successful!
 // checks `forge inspect <contract> irOptimized works
 forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
     cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        {
+            /// @src 0:65:257  "contract Counter {..."
+            mstore(64, memoryguard(0x80))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "irOptimized", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+object "Counter_21" {
+    code {
+        {
+            mstore(64, memoryguard(0x80))
+            if callvalue()
+...
+"#]]);
+});
+
+// checks `forge inspect <contract> irOptimized works
+forgetest_init!(can_inspect_ir, |_prj, cmd| {
+    cmd.args(["inspect", TEMPLATE_CONTRACT, "ir"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        /// @src 0:65:257  "contract Counter {..."
+        mstore(64, memoryguard(128))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "ir", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+object "Counter_21" {
+    code {
+        mstore(64, memoryguard(128))
+        if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
+...
+"#]]);
 });
 
 // checks forge bind works correctly on the default project
