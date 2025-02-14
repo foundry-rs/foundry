@@ -460,7 +460,7 @@ and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag."
+ignore them in the `.gitignore` file."
             ))
         }
     }
