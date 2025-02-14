@@ -68,9 +68,15 @@ impl Inspector {
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`]
+    /// Configures the `Tracer` [`revm::Inspector`] with a log collector
     pub fn with_log_collector(mut self) -> Self {
         self.log_collector = Some(Default::default());
+        self
+    }
+
+    /// Configures the `Tracer` [`revm::Inspector`] with a trace printer
+    pub fn with_trace_printer(mut self) -> Self {
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 }

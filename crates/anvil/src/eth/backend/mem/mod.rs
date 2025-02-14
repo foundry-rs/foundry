@@ -1440,9 +1440,8 @@ impl Backend {
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
-
         if self.print_traces {
-            inspector = inspector.with_steps_tracing();
+            inspector = inspector.with_trace_printer();
         }
 
         inspector
