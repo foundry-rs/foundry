@@ -542,7 +542,7 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     };
 
     static YUL_COMMENTS: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
+        LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*?\*/)").unwrap());
 
     if strip_comments {
         sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
