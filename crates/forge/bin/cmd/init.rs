@@ -70,17 +70,15 @@ impl InitArgs {
             // collapsed. gitmodules will be initialized after the template is fetched
             git.fetch(true, &template, branch)?;
 
-            if commit {
-                // reset git history to the head of the template
-                // first get the commit hash that was fetched
-                let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
-                // format a commit message for the new repo
-                let commit_msg = format!("chore: init from {template} at {commit_hash}");
-                // get the hash of the FETCH_HEAD with the new commit message
-                let new_commit_hash = git.commit_tree("FETCH_HEAD^{tree}", Some(commit_msg))?;
-                // reset head of this repo to be the head of the template repo
-                git.reset(true, new_commit_hash)?;
-            }
+            // reset git history to the head of the template
+            // first get the commit hash that was fetched
+            let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
+            // format a commit message for the new repo
+            let commit_msg = format!("chore: init from {template} at {commit_hash}");
+            // get the hash of the FETCH_HEAD with the new commit message
+            let new_commit_hash = git.commit_tree("FETCH_HEAD^{tree}", Some(commit_msg))?;
+            // reset head of this repo to be the head of the template repo
+            git.reset(true, new_commit_hash)?;
 
             // if shallow, just initialize submodules
             if shallow {
