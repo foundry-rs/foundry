@@ -75,7 +75,7 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::{provider::ProviderBuilder, sh_warn};
+use foundry_common::provider::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,
@@ -468,7 +468,7 @@ impl EthApi {
         };
 
         if let ResponseResult::Error(err) = &response {
-            let _ = sh_warn!("RPC request failed: {request:?}, error: {err:?}");
+            node_info!("RPC request failed: {request:?}, error: {err:?}");
         }
 
         response

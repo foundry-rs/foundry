@@ -1,8 +1,7 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::revm::Database;
+use crate::{eth::macros::node_info, revm::Database};
 use alloy_primitives::{Address, Log};
-use foundry_common::sh_println;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
@@ -46,8 +45,8 @@ impl Inspector {
             .map(|arena| SparsedTraceArena { arena, ignored: Default::default() });
 
         if let Some(traces) = &traces {
-            let _ = sh_println!("\nTraces:");
-            let _ = sh_println!("{}", render_trace_arena_inner(traces, false, true));
+            node_info!("Traces:");
+            node_info!("{}", render_trace_arena_inner(traces, false, true));
         }
     }
 
