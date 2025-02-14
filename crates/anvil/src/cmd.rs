@@ -259,6 +259,7 @@ impl NodeArgs {
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
             .with_print_logs(!self.evm.disable_console_log)
+            .with_print_traces(self.evm.enable_trace_printing)
             .with_auto_impersonate(self.evm.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm.code_size_limit)
@@ -558,6 +559,10 @@ pub struct AnvilEvmArgs {
     /// Disable printing of `console.log` invocations to stdout.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
+
+    /// Enable printing of traces to stdout.
+    #[arg(long, visible_alias = "trace-printing")]
+    pub enable_trace_printing: bool,
 
     /// Enables automatic impersonation on startup. This allows any transaction sender to be
     /// simulated as different accounts, which is useful for testing contract behavior.

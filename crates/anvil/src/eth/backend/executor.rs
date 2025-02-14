@@ -345,6 +345,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                 }
             }
         };
+
+        inspector.print_traces();
         inspector.print_logs();
 
         let (exit_reason, gas_used, out, logs) = match exec_result {

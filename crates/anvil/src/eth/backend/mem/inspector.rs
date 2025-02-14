@@ -2,6 +2,7 @@
 
 use crate::revm::Database;
 use alloy_primitives::{Address, Log};
+use foundry_common::sh_println;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
@@ -13,7 +14,7 @@ use foundry_evm::{
         primitives::U256,
         EvmContext,
     },
-    traces::TracingInspectorConfig,
+    traces::{render_trace_arena_inner, SparsedTraceArena, TracingInspectorConfig},
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -31,6 +32,21 @@ impl Inspector {
     pub fn print_logs(&self) {
         if let Some(collector) = &self.log_collector {
             print_logs(&collector.logs);
+        }
+    }
+
+    /// Called after the inspecting the evm
+    /// This will log all traces
+    pub fn print_traces(&self) {
+        let traces = &self
+            .tracer
+            .clone()
+            .map(|tracer| tracer.into_traces())
+            .map(|arena| SparsedTraceArena { arena, ignored: Default::default() });
+
+        if let Some(traces) = &traces {
+            let _ = sh_println!("Traces:");
+            let _ = sh_println!("{}", render_trace_arena_inner(traces, true, true));
         }
     }
 
