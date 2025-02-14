@@ -268,13 +268,11 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     assert_eq!(expected, output);
 
     let install = |cmd: &mut TestCommand, dep: &str| {
-        cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
-            r#"
+        cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
     Installed solmate[..]
 
-"#
-        ]]);
+"#]]);
     };
 
     install(&mut cmd, "transmissions11/solmate");
@@ -694,13 +692,11 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     // explicitly set gas_price
     prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
-    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]
-    ]);
+"#]]);
 
     let config = cmd.forge_fuse().config();
     // `lib` was added automatically
@@ -708,10 +704,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse()
-        .args(["install", "dapphub/ds-test", "--no-commit"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
 Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag: None)
     Installed ds-test
 
@@ -726,13 +719,11 @@ Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag
 forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
-    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]
-    ]);
+"#]]);
 
     let faulty_toml = r"[default]
     src = 'src'
