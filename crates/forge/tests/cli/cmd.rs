@@ -587,7 +587,7 @@ Error: git fetch exited with code 128
 // checks that `forge init --template [template] work with --no-commit
 forgetest!(can_init_template_with_no_commit, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "foundry-rs/forge-template", "--no-commit"])
+    cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
