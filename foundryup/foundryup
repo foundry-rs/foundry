@@ -4,7 +4,7 @@ set -eo pipefail
 # NOTE: if you make modifications to this script, please increment the version number.
 # Major / minor: incremented for each stable release of Foundry.
 # Patch: incremented for each change between stable releases.
-FOUNDRYUP_INSTALLER_VERSION="1.0.0"
+FOUNDRYUP_INSTALLER_VERSION="1.0.1"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -151,7 +151,7 @@ main() {
     BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
-    ensure mkdir -p $FOUNDRY_VERSIONS_DIR
+    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
     # Download and extract the binaries archive
     say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
@@ -164,7 +164,7 @@ main() {
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
       ensure tar tf $tmp 1> /dev/null
-      ensure mkdir -p $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG
+      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf $tmp
       rm -f "$tmp"
     fi
@@ -224,7 +224,7 @@ main() {
     # Build the repo.
     ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
     # Create foundry custom version directory.
-    ensure mkdir -p $FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION
+    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
     for bin in "${BINS[@]}"; do
       for try_path in target/release/$bin target/release/$bin.exe; do
         if [ -f "$try_path" ]; then
@@ -324,7 +324,7 @@ use() {
 
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
-      cp $FOUNDRY_VERSION_DIR/$bin $bin_path
+      cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" -V)"
 

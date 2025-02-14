@@ -41,6 +41,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
+        gas_snapshot_emit: true,
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
@@ -966,6 +967,7 @@ cache = true
 cache_path = "cache"
 snapshots = "snapshots"
 gas_snapshot_check = false
+gas_snapshot_emit = true
 broadcast = "broadcast"
 allow_paths = []
 include_paths = []
@@ -990,8 +992,6 @@ ignored_warnings_from = []
 deny_warnings = false
 test_failures_file = "cache/test-failures"
 show_progress = false
-eof = false
-transaction_timeout = 120
 ffi = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
@@ -1020,16 +1020,18 @@ bytecode_hash = "ipfs"
 cbor_metadata = true
 sparse_mode = false
 build_info = false
-compilation_restrictions = []
-additional_compiler_profiles = []
-assertions_revert = true
 isolate = false
 disable_block_gas_limit = false
-odyssey = false
 unchecked_cheatcode_artifacts = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+assertions_revert = true
 legacy_assertions = false
+odyssey = false
+transaction_timeout = 120
+eof = false
+additional_compiler_profiles = []
+compilation_restrictions = []
 
 [[profile.default.fs_permissions]]
 access = "read"
@@ -1090,6 +1092,7 @@ max_assume_rejects = 65536
 gas_report_samples = 256
 failure_persist_dir = "cache/invariant"
 show_metrics = false
+show_solidity = false
 
 [labels]
 
@@ -1121,6 +1124,7 @@ exclude = []
   "cache_path": "cache",
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
+  "gas_snapshot_emit": true,
   "broadcast": "broadcast",
   "allow_paths": [],
   "include_paths": [],
@@ -1193,7 +1197,8 @@ exclude = []
     "gas_report_samples": 256,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": false,
-    "timeout": null
+    "timeout": null,
+    "show_solidity": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1532,4 +1537,106 @@ Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+});
+
+forgetest_init!(test_gas_snapshot_emit_config, |prj, cmd| {
+    // Default settings: gas_snapshot_emit enabled.
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+gas_snapshot_emit = true
+...
+"#]]);
+
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "GasSnapshotEmitTest.sol",
+        r#"
+import "./test.sol";
+
+interface Vm {
+    function startSnapshotGas(string memory name) external;
+    function stopSnapshotGas() external returns (uint256);
+}
+
+contract GasSnapshotEmitTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotGasSection() public {
+        vm.startSnapshotGas("testSection");
+        int n = 1;
+        vm.stopSnapshotGas();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert that gas_snapshot_emit is enabled by default.
+    cmd.forge_fuse().args(["test"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots.
+    cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Test that environment variable `FORGE_SNAPSHOT_EMIT` can be used to disable writing
+    // snapshots.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_EMIT", "false");
+    cmd.args(["test"]).assert_success();
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Test that `--gas-snapshot-emit=true` flag can be used to enable writing snapshots, even when
+    // `FORGE_SNAPSHOT_EMIT` is set to false.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_EMIT", "false");
+    cmd.args(["test", "--gas-snapshot-emit=true"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Disable gas_snapshot_emit in the config file.
+    prj.update_config(|config| config.gas_snapshot_emit = false);
+    cmd.forge_fuse().args(["config"]).assert_success();
+
+    // Test that snapshots are not emitted to disk, when disabled by config.
+    cmd.forge_fuse().args(["test"]).assert_success();
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Test that `--gas-snapshot-emit=true` flag can be used to enable writing snapshots, when
+    // disabled by config.
+    cmd.forge_fuse();
+    cmd.args(["test", "--gas-snapshot-emit=true"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Test that environment variable `FORGE_SNAPSHOT_EMIT` can be used to enable writing snapshots.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_EMIT", "true");
+    cmd.args(["test"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots,
+    // even when `FORGE_SNAPSHOT_EMIT` is set to true.
+    cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();
+
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
 });

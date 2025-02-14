@@ -2725,6 +2725,105 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         );
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9858>
+forgetest_init!(gas_report_fallback_with_calldata, |prj, cmd| {
+    prj.add_test(
+        "FallbackWithCalldataTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterWithFallback {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+
+    fallback() external {
+        number++;
+    }
+}
+
+contract CounterWithFallbackTest is Test {
+    CounterWithFallback public counter;
+
+    function setUp() public {
+        counter = new CounterWithFallback();
+    }
+
+    function test_fallback_with_calldata() public {
+        (bool success,) = address(counter).call("hello");
+        require(success);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_fallback_with_calldata", "-vvvv", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FallbackWithCalldataTest.sol:CounterWithFallbackTest
+[PASS] test_fallback_with_calldata() ([GAS])
+Traces:
+  [48777] CounterWithFallbackTest::test_fallback_with_calldata()
+    ├─ [43461] CounterWithFallback::fallback(0x68656c6c6f)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+╭----------------------------------------------------------------+-----------------+-------+--------+-------+---------╮
+| test/FallbackWithCalldataTest.sol:CounterWithFallback Contract |                 |       |        |       |         |
++=====================================================================================================================+
+| Deployment Cost                                                | Deployment Size |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| 132471                                                         | 396             |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+|                                                                |                 |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                                                  | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| fallback                                                       | 43461           | 43461 | 43461  | 43461 | 1       |
+╰----------------------------------------------------------------+-----------------+-------+--------+-------+---------╯
+
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fallback_with_calldata", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
+    "deployment": {
+      "gas": 132471,
+      "size": 396
+    },
+    "functions": {
+      "fallback()": {
+        "calls": 1,
+        "min": 43461,
+        "mean": 43461,
+        "median": 43461,
+        "max": 43461
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
+});
+
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
     prj.add_test(
@@ -2962,7 +3061,7 @@ Compiler run successful!
 "#]]);
 });
 
-// checks `forge inspect <contract> irOptimized works and does not strip comments
+// checks `forge inspect <contract> irOptimized works
 forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
     cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
     cmd.assert_success().stdout_eq(str![[r#"
@@ -2971,6 +3070,43 @@ object "Counter_21" {
     code {
         {
             /// @src 0:65:257  "contract Counter {..."
+            mstore(64, memoryguard(0x80))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "irOptimized", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+object "Counter_21" {
+    code {
+        {
+            mstore(64, memoryguard(0x80))
+            if callvalue()
+...
+"#]]);
+});
+
+// checks `forge inspect <contract> irOptimized works
+forgetest_init!(can_inspect_ir, |_prj, cmd| {
+    cmd.args(["inspect", TEMPLATE_CONTRACT, "ir"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        /// @src 0:65:257  "contract Counter {..."
+        mstore(64, memoryguard(128))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "ir", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+object "Counter_21" {
+    code {
+        mstore(64, memoryguard(128))
+        if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
 ...
 "#]]);
 });
@@ -3290,6 +3426,12 @@ const CUSTOM_COUNTER: &str = r#"
     }
 }
     "#;
+
+const ANOTHER_COUNTER: &str = r#"
+    contract AnotherCounter is Counter {
+        constructor(uint256 _number) Counter(_number) {}
+    }
+"#;
 forgetest!(inspect_custom_counter_abi, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
@@ -3352,6 +3494,43 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
     cmd.args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_path_only_identifier, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
+    let source = format!("{CUSTOM_COUNTER}\n{ANOTHER_COUNTER}");
+    prj.add_source("Counter.sol", &source).unwrap();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>[..]"#]]);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
 
 ╭-------------------------------+----------╮
 | Error                         | Selector |

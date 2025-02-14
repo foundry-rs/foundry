@@ -54,8 +54,4 @@ tracing-tracy = { version = "0.11", optional = true }
 tempfile.workspace = true
 
 [features]
-default = ["rustls"]
-rustls = ["foundry-wallets/rustls"]
-openssl = ["foundry-compilers/openssl"]
-
 tracy = ["dep:tracing-tracy"]

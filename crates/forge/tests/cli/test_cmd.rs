@@ -2998,3 +2998,142 @@ forgetest_init!(colored_traces, |prj, cmd| {
         .assert_success()
         .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
 });
+
+// Tests that traces for successful tests can be suppressed by using `-s` flag.
+// <https://github.com/foundry-rs/foundry/issues/9864>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
+    prj.add_test(
+        "SuppressTracesTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract SuppressTracesTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function test_increment_success() public {
+        console.log("test increment success");
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+
+    function test_increment_failure() public {
+        console.log("test increment failure");
+        counter.increment();
+        assertEq(counter.number(), 100);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    // Show traces and logs for failed test only.
+    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvv", "-s"]).assert_failure().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+Logs:
+  test increment failure
+
+Traces:
+  [137242] SuppressTracesTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [35178] SuppressTracesTest::test_increment_failure()
+    ├─ [0] console::log("test increment failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [22418] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 100) [staticcall]
+    │   └─ ← [Revert] assertion failed: 1 != 100
+    └─ ← [Revert] assertion failed: 1 != 100
+
+[PASS] test_increment_success() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+"#]],
+    );
+
+    // Show traces and logs for all tests.
+    cmd.forge_fuse()
+        .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+Logs:
+  test increment failure
+
+Traces:
+  [137242] SuppressTracesTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [35178] SuppressTracesTest::test_increment_failure()
+    ├─ [0] console::log("test increment failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [22418] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 100) [staticcall]
+    │   └─ ← [Revert] assertion failed: 1 != 100
+    └─ ← [Revert] assertion failed: 1 != 100
+
+[PASS] test_increment_success() ([GAS])
+Logs:
+  test increment success
+
+Traces:
+  [35229] SuppressTracesTest::test_increment_success()
+    ├─ [0] console::log("test increment success") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [22418] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 1) [staticcall]
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+"#]]);
+});
