@@ -46,7 +46,7 @@ impl Inspector {
             .map(|arena| SparsedTraceArena { arena, ignored: Default::default() });
 
         if let Some(traces) = &traces {
-            let _ = sh_println!("Traces:");
+            let _ = sh_println!("\nTraces:");
             let _ = sh_println!("{}", render_trace_arena_inner(traces, false, true));
         }
     }

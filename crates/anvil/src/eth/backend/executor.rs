@@ -307,7 +307,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // records all call and step traces
         let mut inspector = Inspector::default().with_tracing();
-        if self.enable_steps_tracing {
+        if self.enable_steps_tracing || self.print_traces {
             inspector = inspector.with_steps_tracing();
         }
         if self.print_logs {
