@@ -869,7 +869,7 @@ impl NodeConfig {
     /// Sets whether to print traces to stdout.
     #[must_use]
     pub fn with_print_traces(mut self, print_traces: bool) -> Self {
-        self.enable_tracing = print_traces;
+        self.print_traces = print_traces;
         self
     }
 

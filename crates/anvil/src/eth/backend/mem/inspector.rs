@@ -20,8 +20,9 @@ use foundry_evm::{
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
 pub struct Inspector {
+    /// Collects all traces
     pub tracer: Option<TracingInspector>,
-    /// collects all `console.sol` logs
+    /// Collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
 }
 
@@ -46,7 +47,7 @@ impl Inspector {
 
         if let Some(traces) = &traces {
             let _ = sh_println!("Traces:");
-            let _ = sh_println!("{}", render_trace_arena_inner(traces, true, true));
+            let _ = sh_println!("{}", render_trace_arena_inner(traces, false, true));
         }
     }
 

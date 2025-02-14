@@ -1057,7 +1057,10 @@ impl Backend {
 
         drop(evm);
         inspector.print_logs();
-        inspector.print_traces();
+
+        if self.print_traces {
+            inspector.print_traces();
+        }
 
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
     }
@@ -1099,6 +1102,7 @@ impl Backend {
             blob_gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
+            print_traces: self.print_traces,
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
         };
@@ -1182,6 +1186,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
+                    print_traces: self.print_traces,
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                 };
@@ -1466,7 +1471,11 @@ impl Backend {
         };
         drop(evm);
         inspector.print_logs();
-        inspector.print_traces();
+
+        if self.print_traces {
+            inspector.print_traces();
+        }
+
         Ok((exit_reason, out, gas_used as u128, state))
     }
 
