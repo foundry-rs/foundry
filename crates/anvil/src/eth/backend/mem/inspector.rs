@@ -1,6 +1,6 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::revm::Database;
+use crate::{eth::macros::node_info, revm::Database};
 use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
@@ -13,14 +13,15 @@ use foundry_evm::{
         primitives::U256,
         EvmContext,
     },
-    traces::TracingInspectorConfig,
+    traces::{render_trace_arena_inner, SparsedTraceArena, TracingInspectorConfig},
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
 pub struct Inspector {
+    /// Collects all traces
     pub tracer: Option<TracingInspector>,
-    /// collects all `console.sol` logs
+    /// Collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
 }
 
@@ -31,6 +32,21 @@ impl Inspector {
     pub fn print_logs(&self) {
         if let Some(collector) = &self.log_collector {
             print_logs(&collector.logs);
+        }
+    }
+
+    /// Called after the inspecting the evm
+    /// This will log all traces
+    pub fn print_traces(&self) {
+        let traces = &self
+            .tracer
+            .clone()
+            .map(|tracer| tracer.into_traces())
+            .map(|arena| SparsedTraceArena { arena, ignored: Default::default() });
+
+        if let Some(traces) = &traces {
+            node_info!("Traces:");
+            node_info!("{}", render_trace_arena_inner(traces, false, true));
         }
     }
 
@@ -51,9 +67,15 @@ impl Inspector {
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`]
+    /// Configures the `Tracer` [`revm::Inspector`] with a log collector
     pub fn with_log_collector(mut self) -> Self {
         self.log_collector = Some(Default::default());
+        self
+    }
+
+    /// Configures the `Tracer` [`revm::Inspector`] with a trace printer
+    pub fn with_trace_printer(mut self) -> Self {
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 }
