@@ -231,7 +231,6 @@ impl AsDoc for Document {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
                                 writer.write_section(comments, code)?;
 
-                                // Extraire les descriptions des variants
                                 let variants: Vec<_> = comments
                                 .include_tag(CommentTag::Variant)
                                 .iter()
@@ -297,7 +296,6 @@ impl AsDoc for Document {
                         writer.writeln_doc(&item.comments)?;
                         writer.write_code(&item.code)?;
 
-                        // Extraire les descriptions des variants
                         let variants: Vec<_> = item.comments
                             .include_tag(CommentTag::Variant)
                             .iter()
