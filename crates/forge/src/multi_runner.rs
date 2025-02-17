@@ -293,19 +293,22 @@ pub struct TestRunnerConfig {
 }
 
 impl TestRunnerConfig {
-    /// Reconfigures all fields using the given `config`.
+    /// Reconfigures all fields using the given `inline_config`.
     pub fn reconfigure_with(&mut self, inline_config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &inline_config));
 
-        // TODO: self.evm_opts
-        // TODO: self.env
-        self.isolation = inline_config.isolate;
         self.spec_id = inline_config.evm_spec_id();
         self.sender = inline_config.sender;
+        self.odyssey = inline_config.odyssey;
+        self.isolation = inline_config.isolate;
+
+        // Specific to Forge, not present in config.
+        // TODO: self.evm_opts
+        // TODO: self.env
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
-        self.odyssey = inline_config.odyssey;
+
         self.config = inline_config;
     }
 
