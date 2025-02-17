@@ -464,10 +464,16 @@ impl fmt::Display for TestResult {
                             CounterExample::Single(ex) => {
                                 write!(s, "; counterexample: {ex}]").unwrap();
                             }
-                            CounterExample::Sequence(sequence) => {
-                                s.push_str("]\n\t[Sequence]\n");
+                            CounterExample::Sequence(original, sequence) => {
+                                s.push_str(
+                                    format!(
+                                        "]\n\t[Sequence] (original: {original}, shrunk: {})\n",
+                                        sequence.len()
+                                    )
+                                    .as_str(),
+                                );
                                 for ex in sequence {
-                                    writeln!(s, "\t\t{ex}").unwrap();
+                                    writeln!(s, "{ex}").unwrap();
                                 }
                             }
                         }
@@ -612,7 +618,7 @@ impl TestResult {
         } else {
             Some(format!("{invariant_name} persisted failure revert"))
         };
-        self.counterexample = Some(CounterExample::Sequence(call_sequence));
+        self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 
     /// Returns the fail result for invariant test setup.

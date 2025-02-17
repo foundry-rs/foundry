@@ -15,6 +15,7 @@ use crate::{
             self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmitTracker,
             ExpectedRevert, ExpectedRevertKind,
         },
+        revert_handlers,
     },
     utils::IgnoredTraces,
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
@@ -54,6 +55,7 @@ use revm::{
 };
 use serde_json::Value;
 use std::{
+    cmp::max,
     collections::{BTreeMap, VecDeque},
     fs::File,
     io::BufReader,
@@ -122,8 +124,8 @@ pub trait CheatcodesExecutor {
         })
     }
 
-    fn console_log(&mut self, ccx: &mut CheatsCtxt, message: String) {
-        self.get_inspector(ccx.state).console_log(message);
+    fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
+        self.get_inspector(ccx.state).console_log(msg);
     }
 
     /// Returns a mutable reference to the tracing inspector if it is available.
@@ -760,16 +762,15 @@ where {
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                let handler_result = expect::handle_expect_revert(
+                return match revert_handlers::handle_expect_revert(
                     false,
                     true,
-                    &mut expected_revert,
+                    self.config.internal_expect_revert,
+                    &expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
-                );
-
-                return match handler_result {
+                ) {
                     Ok((address, retdata)) => {
                         expected_revert.actual_count += 1;
                         if expected_revert.actual_count < expected_revert.count {
@@ -1181,6 +1182,11 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         if self.gas_metering.paused {
             self.gas_metering.paused_frames.push(interpreter.gas);
         }
+
+        // `expectRevert`: track the max call depth during `expectRevert`
+        if let Some(expected) = &mut self.expected_revert {
+            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
+        }
     }
 
     #[inline]
@@ -1292,36 +1298,61 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             }
         }
 
-        // Handle assume not revert cheatcode.
-        if let Some(assume_no_revert) = &self.assume_no_revert {
-            if ecx.journaled_state.depth() == assume_no_revert.depth && !cheatcode_call {
-                // Discard run if we're at the same depth as cheatcode and call reverted.
+        // Handle assume no revert cheatcode.
+        if let Some(assume_no_revert) = &mut self.assume_no_revert {
+            // Record current reverter address before processing the expect revert if call reverted,
+            // expect revert is set with expected reverter address and no actual reverter set yet.
+            if outcome.result.is_revert() && assume_no_revert.reverted_by.is_none() {
+                assume_no_revert.reverted_by = Some(call.target_address);
+            }
+            // allow multiple cheatcode calls at the same depth
+            if ecx.journaled_state.depth() <= assume_no_revert.depth && !cheatcode_call {
+                // Discard run if we're at the same depth as cheatcode, call reverted, and no
+                // specific reason was supplied
                 if outcome.result.is_revert() {
-                    outcome.result.output = Error::from(MAGIC_ASSUME).abi_encode().into();
+                    let assume_no_revert = std::mem::take(&mut self.assume_no_revert).unwrap();
+                    return match revert_handlers::handle_assume_no_revert(
+                        &assume_no_revert,
+                        outcome.result.result,
+                        &outcome.result.output,
+                        &self.config.available_artifacts,
+                    ) {
+                        // if result is Ok, it was an anticipated revert; return an "assume" error
+                        // to reject this run
+                        Ok(_) => {
+                            outcome.result.output = Error::from(MAGIC_ASSUME).abi_encode().into();
+                            outcome
+                        }
+                        // if result is Error, it was an unanticipated revert; should revert
+                        // normally
+                        Err(error) => {
+                            trace!(expected=?assume_no_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
+                            outcome.result.result = InstructionResult::Revert;
+                            outcome.result.output = error.abi_encode().into();
+                            outcome
+                        }
+                    }
+                } else {
+                    // Call didn't revert, reset `assume_no_revert` state.
+                    self.assume_no_revert = None;
                     return outcome;
                 }
-                // Call didn't revert, reset `assume_no_revert` state.
-                self.assume_no_revert = None;
             }
         }
 
         // Handle expected reverts.
         if let Some(expected_revert) = &mut self.expected_revert {
-            // Record current reverter address before processing the expect revert if call reverted,
-            // expect revert is set with expected reverter address and no actual reverter set yet.
-            if outcome.result.is_revert() &&
-                expected_revert.reverter.is_some() &&
-                expected_revert.reverted_by.is_none()
-            {
-                expected_revert.reverted_by = Some(call.target_address);
-            } else if outcome.result.is_revert() &&
-                expected_revert.reverter.is_some() &&
-                expected_revert.reverted_by.is_some() &&
-                expected_revert.count > 1
-            {
-                // If we're expecting more than one revert, we need to reset the reverted_by address
-                // to latest reverter.
-                expected_revert.reverted_by = Some(call.target_address);
+            // Record current reverter address and call scheme before processing the expect revert
+            // if call reverted.
+            if outcome.result.is_revert() {
+                // Record current reverter address if expect revert is set with expected reverter
+                // address and no actual reverter was set yet or if we're expecting more than one
+                // revert.
+                if expected_revert.reverter.is_some() &&
+                    (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                {
+                    expected_revert.reverted_by = Some(call.target_address);
+                }
             }
 
             if ecx.journaled_state.depth() <= expected_revert.depth {
@@ -1335,20 +1366,16 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 };
 
                 if needs_processing {
-                    // Only `remove` the expected revert from state if `expected_revert.count` ==
-                    // `expected_revert.actual_count`
                     let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-
-                    let handler_result = expect::handle_expect_revert(
+                    return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        &mut expected_revert,
+                        self.config.internal_expect_revert,
+                        &expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
-                    );
-
-                    return match handler_result {
+                    ) {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;

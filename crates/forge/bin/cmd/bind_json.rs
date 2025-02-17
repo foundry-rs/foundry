@@ -65,8 +65,8 @@ impl BindJsonArgs {
     /// After that we'll still have enough information for bindings but compilation should succeed
     /// in most of the cases.
     fn preprocess(self) -> Result<PreprocessedState> {
-        let config = self.try_load_config_emit_warnings()?;
-        let project = config.create_project(false, true)?;
+        let config = self.load_config()?;
+        let project = config.ephemeral_project()?;
 
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
@@ -77,7 +77,7 @@ impl BindJsonArgs {
         let mut sources = graph
             // resolve graph into mapping language -> version -> sources
             .into_sources_by_version(&project)?
-            .0
+            .sources
             .into_iter()
             // we are only interested in Solidity sources
             .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))

@@ -1,5 +1,3 @@
-#![allow(clippy::needless_return)]
-
 mod abi;
 mod anvil;
 mod anvil_api;

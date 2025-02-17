@@ -49,7 +49,13 @@ fn run() -> Result<()> {
             }
         }
         ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),
-        ForgeSubcommand::Coverage(cmd) => utils::block_on(cmd.run()),
+        ForgeSubcommand::Coverage(cmd) => {
+            if cmd.is_watch() {
+                utils::block_on(watch::watch_coverage(cmd))
+            } else {
+                utils::block_on(cmd.run())
+            }
+        }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
             if cmd.is_watch() {
@@ -86,7 +92,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
-            let config = utils::load_config_with_root(root.as_deref());
+            let config = utils::load_config_with_root(root.as_deref())?;
             let project = config.project()?;
             config.cleanup(&project)?;
             Ok(())
@@ -98,7 +104,13 @@ fn run() -> Result<()> {
                 utils::block_on(cmd.run())
             }
         }
-        ForgeSubcommand::Fmt(cmd) => cmd.run(),
+        ForgeSubcommand::Fmt(cmd) => {
+            if cmd.is_watch() {
+                utils::block_on(watch::watch_fmt(cmd))
+            } else {
+                cmd.run()
+            }
+        }
         ForgeSubcommand::Config(cmd) => cmd.run(),
         ForgeSubcommand::Flatten(cmd) => cmd.run(),
         ForgeSubcommand::Inspect(cmd) => cmd.run(),

@@ -31,7 +31,7 @@ use foundry_evm::{
     traces::{load_contracts, TraceKind, TraceMode},
 };
 use proptest::test_runner::{
-    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
+    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestError, TestRng, TestRunner,
 };
 use rayon::prelude::*;
 use std::{borrow::Cow, cmp::min, collections::BTreeMap, sync::Arc, time::Instant};
@@ -366,6 +366,26 @@ impl<'a> ContractRunner<'a> {
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
         });
+
+        let test_fail_instances = functions
+            .iter()
+            .filter_map(|func| {
+                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
+                    .is_any_test_fail()
+                    .then_some(func.name.clone())
+            })
+            .collect::<Vec<_>>();
+
+        if !test_fail_instances.is_empty() {
+            let instances = format!(
+                "Found {} instances: {}",
+                test_fail_instances.len(),
+                test_fail_instances.join(", ")
+            );
+            let fail =  TestResult::fail("`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string());
+            return SuiteResult::new(start.elapsed(), [(instances, fail)].into(), warnings)
+        }
+
         let test_results = functions
             .par_iter()
             .map(|&func| {
@@ -402,23 +422,6 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let test_fail_deprecations = self
-            .contract
-            .abi
-            .functions()
-            .filter_map(|func| {
-                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
-                    .is_any_test_fail()
-                    .then_some(func.name.clone())
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        if !test_fail_deprecations.is_empty() {
-            warnings.push(format!(
-                "`testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): {test_fail_deprecations}.",
-            ));
-        }
         SuiteResult::new(duration, test_results, warnings)
     }
 }
@@ -490,8 +493,8 @@ impl<'a> FunctionRunner<'a> {
         }
 
         match kind {
-            TestFunctionKind::UnitTest { should_fail } => self.run_unit_test(func, should_fail),
-            TestFunctionKind::FuzzTest { should_fail } => self.run_fuzz_test(func, should_fail),
+            TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
+            TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
             }
@@ -507,7 +510,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the unit test call will be made on modified state).
     /// State modifications of before test txes and unit test function call are discarded after
     /// test ends, similar to `eth_call`.
-    fn run_unit_test(mut self, func: &Function, should_fail: bool) -> TestResult {
+    fn run_unit_test(mut self, func: &Function) -> TestResult {
         // Prepare unit test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -535,7 +538,7 @@ impl<'a> FunctionRunner<'a> {
         };
 
         let success =
-            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, should_fail);
+            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
         self.result
     }
@@ -578,20 +581,24 @@ impl<'a> FunctionRunner<'a> {
 
         let failure_dir = invariant_config.clone().failure_dir(self.cr.name);
         let failure_file = failure_dir.join(&invariant_contract.invariant_function.name);
+        let show_solidity = invariant_config.clone().show_solidity;
 
         // Try to replay recorded failure if any.
-        if let Ok(call_sequence) =
+        if let Ok(mut call_sequence) =
             foundry_common::fs::read_json_file::<Vec<BaseCounterExample>>(failure_file.as_path())
         {
             // Create calls from failed sequence and check if invariant still broken.
             let txes = call_sequence
-                .iter()
-                .map(|seq| BasicTxDetails {
-                    sender: seq.sender.unwrap_or_default(),
-                    call_details: CallDetails {
-                        target: seq.addr.unwrap_or_default(),
-                        calldata: seq.calldata.clone(),
-                    },
+                .iter_mut()
+                .map(|seq| {
+                    seq.show_solidity = show_solidity;
+                    BasicTxDetails {
+                        sender: seq.sender.unwrap_or_default(),
+                        call_details: CallDetails {
+                            target: seq.addr.unwrap_or_default(),
+                            calldata: seq.calldata.clone(),
+                        },
+                    }
                 })
                 .collect::<Vec<BasicTxDetails>>();
             if let Ok((success, replayed_entirely)) = check_sequence(
@@ -622,6 +629,7 @@ impl<'a> FunctionRunner<'a> {
                         &mut self.result.deprecated_cheatcodes,
                         &mut self.result.isolated_cheatcodes,
                         &txes,
+                        show_solidity,
                     );
                     self.result.invariant_replay_fail(
                         replayed_entirely,
@@ -673,6 +681,7 @@ impl<'a> FunctionRunner<'a> {
                         &mut self.result.deprecated_cheatcodes,
                         &mut self.result.isolated_cheatcodes,
                         progress.as_ref(),
+                        show_solidity,
                     ) {
                         Ok(call_sequence) => {
                             if !call_sequence.is_empty() {
@@ -685,7 +694,16 @@ impl<'a> FunctionRunner<'a> {
                                 ) {
                                     error!(%err, "Failed to record call sequence");
                                 }
-                                counterexample = Some(CounterExample::Sequence(call_sequence))
+
+                                let original_seq_len =
+                                    if let TestError::Fail(_, calls) = &case_data.test_error {
+                                        calls.len()
+                                    } else {
+                                        call_sequence.len()
+                                    };
+
+                                counterexample =
+                                    Some(CounterExample::Sequence(original_seq_len, call_sequence))
                             }
                         }
                         Err(err) => {
@@ -710,6 +728,7 @@ impl<'a> FunctionRunner<'a> {
                     &mut self.result.deprecated_cheatcodes,
                     &mut self.result.isolated_cheatcodes,
                     &invariant_result.last_run_inputs,
+                    show_solidity,
                 ) {
                     error!(%err, "Failed to replay last invariant run");
                 }
@@ -737,7 +756,7 @@ impl<'a> FunctionRunner<'a> {
     /// (therefore the fuzz test will use the modified state).
     /// State modifications of before test txes and fuzz test are discarded after test ends,
     /// similar to `eth_call`.
-    fn run_fuzz_test(mut self, func: &Function, should_fail: bool) -> TestResult {
+    fn run_fuzz_test(mut self, func: &Function) -> TestResult {
         // Prepare fuzz test execution.
         if self.prepare_test(func).is_err() {
             return self.result;
@@ -757,7 +776,6 @@ impl<'a> FunctionRunner<'a> {
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             self.address,
-            should_fail,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
         );

@@ -1,7 +1,6 @@
 //! Uncategorised utilities.
 
 use alloy_primitives::{keccak256, B256, U256};
-
 /// Block on a future using the current tokio runtime on the current thread.
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     block_on_handle(&tokio::runtime::Handle::current(), future)

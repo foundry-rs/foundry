@@ -27,7 +27,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 # Remember to update clippy.toml as well
 rust-version = "1.83"
@@ -90,19 +90,29 @@ codegen-units = 1
 
 # Speed up tests and dev build.
 [profile.dev.package]
-# Solc and artifacts
+# Solc and artifacts.
+foundry-compilers-artifacts-solc.opt-level = 3
+foundry-compilers-core.opt-level = 3
 foundry-compilers.opt-level = 3
+serde_json.opt-level = 3
+serde.opt-level = 3
+
 solang-parser.opt-level = 3
 lalrpop-util.opt-level = 3
-serde_json.opt-level = 3
 
-# EVM
+solar-ast.opt-level = 3
+solar-data-structures.opt-level = 3
+solar-interface.opt-level = 3
+solar-parse.opt-level = 3
+
+# EVM.
 alloy-dyn-abi.opt-level = 3
 alloy-json-abi.opt-level = 3
 alloy-primitives.opt-level = 3
 alloy-sol-type-parser.opt-level = 3
 alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
+foldhash.opt-level = 3
 keccak.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
@@ -114,15 +124,21 @@ sha3.opt-level = 3
 tiny-keccak.opt-level = 3
 bitvec.opt-level = 3
 
-# fuzzing
+# Fuzzing.
 proptest.opt-level = 3
 foundry-evm-fuzz.opt-level = 3
 
-# forking
+# Forking.
 axum.opt-level = 3
 
-# keystores
+# Keystores.
 scrypt.opt-level = 3
+
+# Misc.
+rayon.opt-level = 3
+regex.opt-level = 3
+regex-syntax.opt-level = 3
+regex-automata.opt-level = 3
 
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
@@ -170,41 +186,41 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.9.0", default-features = false }
-foundry-compilers = { version = "0.12.9", default-features = false }
-foundry-fork-db = "0.10.0"
+foundry-block-explorers = { version = "0.11.0", default-features = false }
+foundry-compilers = { version = "0.13.3", default-features = false }
+foundry-fork-db = "0.11.0"
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.1", default-features = false }
 
 ## revm
-revm = { version = "19.0.0", default-features = false }
+revm = { version = "19.4.0", default-features = false }
 revm-primitives = { version = "15.1.0", default-features = false }
-revm-inspectors = { version = "0.14.1", features = ["serde"] }
+revm-inspectors = { version = "0.15.0", features = ["serde"] }
 
 ## alloy
-alloy-consensus = { version = "0.9.0", default-features = false }
-alloy-contract = { version = "0.9.0", default-features = false }
-alloy-eips = { version = "0.9.0", default-features = false }
-alloy-genesis = { version = "0.9.0", default-features = false }
-alloy-json-rpc = { version = "0.9.0", default-features = false }
-alloy-network = { version = "0.9.0", default-features = false }
-alloy-provider = { version = "0.9.0", default-features = false }
-alloy-pubsub = { version = "0.9.0", default-features = false }
-alloy-rpc-client = { version = "0.9.0", default-features = false }
-alloy-rpc-types = { version = "0.9.0", default-features = true }
-alloy-serde = { version = "0.9.0", default-features = false }
-alloy-signer = { version = "0.9.0", default-features = false }
-alloy-signer-aws = { version = "0.9.0", default-features = false }
-alloy-signer-gcp = { version = "0.9.0", default-features = false }
-alloy-signer-ledger = { version = "0.9.0", default-features = false }
-alloy-signer-local = { version = "0.9.0", default-features = false }
-alloy-signer-trezor = { version = "0.9.0", default-features = false }
-alloy-transport = { version = "0.9.0", default-features = false }
-alloy-transport-http = { version = "0.9.0", default-features = false }
-alloy-transport-ipc = { version = "0.9.0", default-features = false }
-alloy-transport-ws = { version = "0.9.0", default-features = false }
-alloy-node-bindings = { version = "0.9.0", default-features = false }
-alloy-network-primitives = { version = "0.9.0", default-features = false }
+alloy-consensus = { version = "0.11.1", default-features = false }
+alloy-contract = { version = "0.11.1", default-features = false }
+alloy-eips = { version = "0.11.1", default-features = false }
+alloy-genesis = { version = "0.11.1", default-features = false }
+alloy-json-rpc = { version = "0.11.1", default-features = false }
+alloy-network = { version = "0.11.1", default-features = false }
+alloy-provider = { version = "0.11.1", default-features = false }
+alloy-pubsub = { version = "0.11.1", default-features = false }
+alloy-rpc-client = { version = "0.11.1", default-features = false }
+alloy-rpc-types = { version = "0.11.1", default-features = true }
+alloy-serde = { version = "0.11.1", default-features = false }
+alloy-signer = { version = "0.11.1", default-features = false }
+alloy-signer-aws = { version = "0.11.1", default-features = false }
+alloy-signer-gcp = { version = "0.11.1", default-features = false }
+alloy-signer-ledger = { version = "0.11.1", default-features = false }
+alloy-signer-local = { version = "0.11.1", default-features = false }
+alloy-signer-trezor = { version = "0.11.1", default-features = false }
+alloy-transport = { version = "0.11.1", default-features = false }
+alloy-transport-http = { version = "0.11.1", default-features = false }
+alloy-transport-ipc = { version = "0.11.1", default-features = false }
+alloy-transport-ws = { version = "0.11.1", default-features = false }
+alloy-node-bindings = { version = "0.11.1", default-features = false }
+alloy-network-primitives = { version = "0.11.1", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "0.8.18"
@@ -212,6 +228,7 @@ alloy-json-abi = "0.8.18"
 alloy-primitives = { version = "0.8.18", features = [
     "getrandom",
     "rand",
+    "map-fxhash",
     "map-foldhash",
 ] }
 alloy-sol-macro-expander = "0.8.18"
@@ -224,8 +241,8 @@ alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 
 ## op-alloy
-op-alloy-rpc-types = "0.9.0"
-op-alloy-consensus = "0.9.0"
+op-alloy-consensus = "0.10.0"
+op-alloy-rpc-types = "0.10.0"
 
 ## cli
 anstream = "0.6"
@@ -248,7 +265,6 @@ auto_impl = "1"
 bytes = "1.8"
 walkdir = "2"
 prettyplease = "0.2"
-ahash = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
@@ -257,6 +273,7 @@ chrono = { version = "0.4", default-features = false, features = [
 axum = "0.7"
 color-eyre = "0.6"
 comfy-table = "7"
+dirs = "6"
 dunce = "1"
 evm-disassembler = "0.5"
 evmole = "0.6"
@@ -265,7 +282,7 @@ figment = "0.10"
 futures = "0.3"
 hyper = "1.5"
 indexmap = "2.6"
-itertools = "0.13"
+itertools = "0.14"
 jsonpath_lib = "0.3"
 k256 = "0.13"
 mesc = "0.3"
@@ -275,7 +292,10 @@ proptest = "1"
 rand = "0.8"
 rayon = "1"
 regex = { version = "1", default-features = false }
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "rustls-tls-native-roots",
+] }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
@@ -286,8 +306,8 @@ tempfile = "3.13"
 tikv-jemallocator = "0.6"
 tokio = "1"
 toml = "0.8"
-tower = "0.4"
-tower-http = "0.5"
+tower = "0.5"
+tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"

@@ -16,6 +16,7 @@ mod create;
 mod debug;
 mod doc;
 mod eip712;
+mod failure_assertions;
 mod geiger;
 mod inline_config;
 mod multi_script;
@@ -26,5 +27,6 @@ mod svm;
 mod test_cmd;
 mod verify;
 mod verify_bytecode;
+mod version;
 
 mod ext_integration;

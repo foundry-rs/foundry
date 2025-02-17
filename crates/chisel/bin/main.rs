@@ -14,7 +14,11 @@ use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{evm::EvmArgs, fs};
+use foundry_common::{
+    evm::EvmArgs,
+    fs,
+    version::{LONG_VERSION, SHORT_VERSION},
+};
 use foundry_config::{
     figment::{
         value::{Dict, Map},
@@ -37,18 +41,9 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(Chisel, build, evm);
 
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
-
 /// Fast, utilitarian, and verbose Solidity REPL.
 #[derive(Debug, Parser)]
-#[command(name = "chisel", version = VERSION_MESSAGE)]
+#[command(name = "chisel", version = SHORT_VERSION, long_version = LONG_VERSION)]
 pub struct Chisel {
     /// Include the global arguments.
     #[command(flatten)]
@@ -124,7 +119,6 @@ fn run() -> eyre::Result<()> {
     main_args(args)
 }
 
-#[allow(clippy::needless_return)]
 #[tokio::main]
 async fn main_args(args: Chisel) -> eyre::Result<()> {
     // Keeps track of whether or not an interrupt was the last input

@@ -56,7 +56,7 @@ mod summary;
 pub use filter::FilterArgs;
 use forge::{result::TestKind, traces::render_trace_arena_inner};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::{print_invariant_metrics, TestSummaryReport};
+use summary::{format_invariant_metrics_table, TestSummaryReport};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -118,9 +118,21 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
+    /// Check gas snapshots against previous runs.
+    #[arg(long, env = "FORGE_SNAPSHOT_CHECK")]
+    gas_snapshot_check: Option<bool>,
+
+    /// Enable/disable recording of gas snapshot results.
+    #[arg(long, env = "FORGE_SNAPSHOT_EMIT")]
+    gas_snapshot_emit: Option<bool>,
+
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
+
+    /// Suppress successful test traces and show only traces for failures.
+    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Display options")]
+    suppress_successful_traces: bool,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -268,7 +280,7 @@ impl TestArgs {
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -282,7 +294,7 @@ impl TestArgs {
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Set up the project.
@@ -564,16 +576,20 @@ impl TestArgs {
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
+                let show_traces =
+                    !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
                     sh_println!("{}", result.short_result(name))?;
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind {
-                        print_invariant_metrics(metrics);
+                        if !metrics.is_empty() {
+                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                        }
                     }
 
                     // We only display logs at level 2 and above
-                    if verbosity >= 2 {
+                    if verbosity >= 2 && show_traces {
                         // We only decode logs from Hardhat and DS-style console events
                         let console_logs = decode_console_logs(&result.logs);
                         if !console_logs.is_empty() {
@@ -624,7 +640,7 @@ impl TestArgs {
                     }
                 }
 
-                if !silent && !decoded_traces.is_empty() {
+                if !silent && show_traces && !decoded_traces.is_empty() {
                     sh_println!("Traces:")?;
                     for trace in &decoded_traces {
                         sh_println!("{trace}")?;
@@ -660,9 +676,18 @@ impl TestArgs {
 
             // Write gas snapshots to disk if any were collected.
             if !gas_snapshots.is_empty() {
-                // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+                // By default `gas_snapshot_check` is set to `false` in the config.
+                //
+                // The user can either:
+                // - Set `FORGE_SNAPSHOT_CHECK=true` in the environment.
+                // - Pass `--gas-snapshot-check=true` as a CLI argument.
+                // - Set `gas_snapshot_check = true` in the config.
+                //
+                // If the user passes `--gas-snapshot-check=<bool>` then it will override the config
+                // and the environment variable, disabling the check if `false` is passed.
+                //
                 // Exiting early with code 1 if differences are found.
-                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
                     let differences_found = gas_snapshots.clone().into_iter().fold(
                         false,
                         |mut found, (group, snapshots)| {
@@ -717,39 +742,50 @@ impl TestArgs {
                     }
                 }
 
-                // Create `snapshots` directory if it doesn't exist.
-                fs::create_dir_all(&config.snapshots)?;
+                // By default `gas_snapshot_emit` is set to `true` in the config.
+                //
+                // The user can either:
+                // - Set `FORGE_SNAPSHOT_EMIT=false` in the environment.
+                // - Pass `--gas-snapshot-emit=false` as a CLI argument.
+                // - Set `gas_snapshot_emit = false` in the config.
+                //
+                // If the user passes `--gas-snapshot-emit=<bool>` then it will override the config
+                // and the environment variable, enabling the check if `true` is passed.
+                if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
+                    // Create `snapshots` directory if it doesn't exist.
+                    fs::create_dir_all(&config.snapshots)?;
 
-                // Write gas snapshots to disk per group.
-                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
-                    fs::read_json_file::<BTreeMap<String, String>>(
-                        &config.snapshots.join(format!("{group}.json")),
-                    )
-                    .map(|previous_snapshots| {
-                        let mut merged_snapshots = BTreeMap::new();
-
-                        for (k, v) in &previous_snapshots {
-                            merged_snapshots.insert(k.clone(), v.clone());
-                        }
-
-                        for (k, v) in &snapshots {
-                            merged_snapshots.insert(k.clone(), v.clone());
-                        }
-
-                        fs::write_pretty_json_file(
+                    // Write gas snapshots to disk per group.
+                    gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                        fs::read_json_file::<BTreeMap<String, String>>(
                             &config.snapshots.join(format!("{group}.json")),
-                            &merged_snapshots,
                         )
-                        .expect("Failed to write gas snapshots to disk");
-                    })
-                    .unwrap_or_else(|_| {
-                        fs::write_pretty_json_file(
-                            &config.snapshots.join(format!("{group}.json")),
-                            &snapshots,
-                        )
-                        .expect("Failed to write gas snapshots to disk");
+                        .map(|previous_snapshots| {
+                            let mut merged_snapshots = BTreeMap::new();
+
+                            for (k, v) in &previous_snapshots {
+                                merged_snapshots.insert(k.clone(), v.clone());
+                            }
+
+                            for (k, v) in &snapshots {
+                                merged_snapshots.insert(k.clone(), v.clone());
+                            }
+
+                            fs::write_pretty_json_file(
+                                &config.snapshots.join(format!("{group}.json")),
+                                &merged_snapshots,
+                            )
+                            .expect("Failed to write gas snapshots to disk");
+                        })
+                        .unwrap_or_else(|_| {
+                            fs::write_pretty_json_file(
+                                &config.snapshots.join(format!("{group}.json")),
+                                &snapshots,
+                            )
+                            .expect("Failed to write gas snapshots to disk");
+                        });
                     });
-                });
+                }
             }
 
             // Print suite summary.
@@ -825,8 +861,8 @@ impl TestArgs {
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.watch.watchexec_config(|| {
-            let config = Config::from(self);
-            [config.src, config.test]
+            let config = self.load_config()?;
+            Ok([config.src, config.test])
         })
     }
 }
@@ -959,8 +995,7 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::{Chain, InvariantConfig};
-    use foundry_test_utils::forgetest_async;
+    use foundry_config::Chain;
 
     #[test]
     fn watch_parse() {
@@ -994,67 +1029,4 @@ mod tests {
         test("--chain-id=1", Chain::mainnet());
         test("--chain-id=42", Chain::from_id(42));
     }
-
-    forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
-        // speed up test by running with depth of 15
-        let config = Config {
-            invariant: { InvariantConfig { depth: 15, ..Default::default() } },
-            ..Default::default()
-        };
-        prj.write_config(config);
-
-        prj.insert_ds_test();
-        prj.add_source(
-            "Contracts.sol",
-            r#"
-//SPDX-license-identifier: MIT
-
-import "./test.sol";
-
-contract Foo {
-    function foo() public {}
-}
-
-contract Bar {
-    function bar() public {}
-}
-
-
-contract FooBarTest is DSTest {
-    Foo public targetContract;
-
-    function setUp() public {
-        targetContract = new Foo();
-    }
-
-    function invariant_dummy() public {
-        assertTrue(true);
-    }
-
-    function testFuzz_bar(uint256 _val) public {
-        (new Bar()).bar();
-    }
-}
-        "#,
-        )
-        .unwrap();
-
-        let args = TestArgs::parse_from([
-            "foundry-cli",
-            "--gas-report",
-            "--root",
-            &prj.root().to_string_lossy(),
-        ]);
-        let outcome = args.run().await.unwrap();
-        let gas_report = outcome.gas_report.as_ref().unwrap();
-
-        assert_eq!(gas_report.contracts.len(), 3, "{}", outcome.summary(Default::default()));
-        let call_cnts = gas_report
-            .contracts
-            .values()
-            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
-            .collect::<Vec<_>>();
-        // assert that all functions were called at least 100 times
-        assert!(call_cnts.iter().all(|c| *c > 100));
-    });
 }

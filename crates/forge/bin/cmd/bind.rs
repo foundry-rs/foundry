@@ -83,11 +83,15 @@ pub struct BindArgs {
     #[arg(long, hide = true)]
     alloy: bool,
 
-    /// Specify the alloy version.
+    /// Specify the `alloy` version on Crates.
     #[arg(long)]
     alloy_version: Option<String>,
 
-    /// Generate bindings for the `ethers` library, instead of `alloy` (removed).
+    /// Specify the `alloy` revision on GitHub.
+    #[arg(long, conflicts_with = "alloy_version")]
+    alloy_rev: Option<String>,
+
+    /// Generate bindings for the `ethers` library (removed), instead of `alloy`.
     #[arg(long, hide = true)]
     ethers: bool,
 
@@ -106,7 +110,7 @@ impl BindArgs {
             let _ = ProjectCompiler::new().compile(&project)?;
         }
 
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let artifacts = config.out;
         let bindings_root = self.bindings.clone().unwrap_or_else(|| artifacts.join("bindings"));
 
@@ -159,6 +163,11 @@ impl BindArgs {
                     return None;
                 }
 
+                // Ignore the `target` directory in case the user has built the project.
+                if path.iter().any(|comp| comp == "target") {
+                    return None;
+                }
+
                 // We don't want `.metadata.json` files.
                 let stem = path.file_stem()?.to_str()?;
                 if stem.ends_with(".metadata") {
@@ -207,6 +216,7 @@ impl BindArgs {
             !self.skip_cargo_toml,
             self.module,
             self.alloy_version.clone(),
+            self.alloy_rev.clone(),
         )?;
         sh_println!("OK.")?;
         Ok(())
@@ -225,6 +235,7 @@ impl BindArgs {
                 bindings_root,
                 self.single_file,
                 self.alloy_version.clone(),
+                self.alloy_rev.clone(),
             )?;
         } else {
             trace!(single_file = self.single_file, "generating module");

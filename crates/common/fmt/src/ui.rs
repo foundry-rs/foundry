@@ -186,7 +186,6 @@ impl UIfmt for AnyTransactionReceipt {
                         },
                     blob_gas_price,
                     blob_gas_used,
-                    authorization_list,
                 },
             other,
         } = self;
@@ -208,8 +207,7 @@ transactionHash      {}
 transactionIndex     {}
 type                 {}
 blobGasPrice         {}
-blobGasUsed          {}
-authorizationList    {}",
+blobGasUsed          {}",
             block_hash.pretty(),
             block_number.pretty(),
             contract_address.pretty(),
@@ -225,11 +223,7 @@ authorizationList    {}",
             transaction_index.pretty(),
             transaction_type,
             blob_gas_price.pretty(),
-            blob_gas_used.pretty(),
-            authorization_list
-                .as_ref()
-                .map(|l| serde_json::to_string(&l).unwrap())
-                .unwrap_or_default(),
+            blob_gas_used.pretty()
         );
 
         if let Some(to) = to {
@@ -301,7 +295,7 @@ impl UIfmt for OtherFields {
             let val = EthValue::from(value.clone()).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);
-            s.extend(std::iter::repeat(' ').take(offset + 1));
+            s.extend(std::iter::repeat_n(' ', offset + 1));
             s.push_str(&val);
             s.push('\n');
         }
@@ -1456,7 +1450,6 @@ transactionIndex     16
 type                 2
 blobGasPrice         
 blobGasUsed          
-authorizationList    
 to                   0x4200000000000000000000000000000000000000
 l1BaseFeeScalar      5227
 l1BlobBaseFee        111685752

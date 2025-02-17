@@ -1,4 +1,5 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_dyn_abi::ErrorExt;
 use alloy_json_abi::Function;
 use alloy_network::{
     AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
@@ -8,22 +9,26 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
-use alloy_transport::Transport;
+use alloy_transport::TransportError;
+use cast::traces::identifier::SignaturesIdentifier;
 use eyre::Result;
 use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, fmt::format_tokens};
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
+use itertools::Itertools;
+use serde_json::value::RawValue;
+use std::fmt::Write;
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
     /// accounts.
     Address(Address),
-    /// A refersnce to a signer.
+    /// A reference to a signer.
     Signer(&'a WalletSigner),
     /// An owned signer.
     OwnedSigner(WalletSigner),
@@ -126,7 +131,7 @@ pub struct InputState {
 /// It is implemented as a stateful builder with expected state transition of [InitState] ->
 /// [TxKindState] -> [InputState].
 #[derive(Debug)]
-pub struct CastTxBuilder<T, P, S> {
+pub struct CastTxBuilder<P, S> {
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
     legacy: bool,
@@ -136,14 +141,9 @@ pub struct CastTxBuilder<T, P, S> {
     etherscan_api_key: Option<String>,
     access_list: Option<Option<AccessList>>,
     state: S,
-    _t: std::marker::PhantomData<T>,
 }
 
-impl<T, P> CastTxBuilder<T, P, InitState>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
     /// Creates a new instance of [CastTxBuilder] filling transaction with fields present in
     /// provided [TransactionOpts].
     pub async fn new(provider: P, tx_opts: TransactionOpts, config: &Config) -> Result<Self> {
@@ -193,12 +193,11 @@ where
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
-            _t: std::marker::PhantomData,
         })
     }
 
     /// Sets [TxKind] for this builder and changes state to [TxKindState].
-    pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<T, P, ToState>> {
+    pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<P, ToState>> {
         let to = if let Some(to) = to { Some(to.resolve(&self.provider).await?) } else { None };
         Ok(CastTxBuilder {
             provider: self.provider,
@@ -210,16 +209,11 @@ where
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
-            _t: self._t,
         })
     }
 }
 
-impl<T, P> CastTxBuilder<T, P, ToState>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
     /// Accepts user-provided code, sig and args params and constructs calldata for the transaction.
     /// If code is present, input will be set to code + encoded constructor arguments. If no code is
     /// present, input is set to just provided arguments.
@@ -228,7 +222,7 @@ where
         code: Option<String>,
         sig: Option<String>,
         args: Vec<String>,
-    ) -> Result<CastTxBuilder<T, P, InputState>> {
+    ) -> Result<CastTxBuilder<P, InputState>> {
         let (mut args, func) = if let Some(sig) = sig {
             parse_function_args(
                 &sig,
@@ -271,16 +265,11 @@ where
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
-            _t: self._t,
         })
     }
 }
 
-impl<T, P> CastTxBuilder<T, P, InputState>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
     /// Builds [TransactionRequest] and fiils missing fields. Returns a transaction which is ready
     /// to be broadcasted.
     pub async fn build(
@@ -367,10 +356,34 @@ where
         }
 
         if self.tx.gas.is_none() {
-            self.tx.gas = Some(self.provider.estimate_gas(&self.tx).await?);
+            self.estimate_gas().await?;
         }
 
         Ok((self.tx, self.state.func))
+    }
+
+    /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
+    async fn estimate_gas(&mut self) -> Result<()> {
+        match self.provider.estimate_gas(&self.tx).await {
+            Ok(estimated) => {
+                self.tx.gas = Some(estimated);
+                Ok(())
+            }
+            Err(err) => {
+                if let TransportError::ErrorResp(payload) = &err {
+                    // If execution reverted with code 3 during provider gas estimation then try
+                    // to decode custom errors and append it to the error message.
+                    if payload.code == 3 {
+                        if let Some(data) = &payload.data {
+                            if let Ok(Some(decoded_error)) = decode_execution_revert(data).await {
+                                eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                            }
+                        }
+                    }
+                }
+                eyre::bail!("Failed to estimate gas: {}", err)
+            }
+        }
     }
 
     /// Parses the passed --auth value and sets the authorization list on the transaction.
@@ -401,10 +414,9 @@ where
     }
 }
 
-impl<T, P, S> CastTxBuilder<T, P, S>
+impl<P, S> CastTxBuilder<P, S>
 where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
+    P: Provider<AnyNetwork>,
 {
     pub fn with_blob_data(mut self, blob_data: Option<Vec<u8>>) -> Result<Self> {
         let Some(blob_data) = blob_data else { return Ok(self) };
@@ -418,4 +430,26 @@ where
 
         Ok(self)
     }
+}
+
+/// Helper function that tries to decode custom error name and inputs from error payload data.
+async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
+    if let Some(err_data) = serde_json::from_str::<String>(data.get())?.strip_prefix("0x") {
+        let selector = err_data.get(..8).unwrap();
+        if let Some(known_error) = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
+            .write()
+            .await
+            .identify_error(&hex::decode(selector)?)
+            .await
+        {
+            let mut decoded_error = known_error.name.clone();
+            if !known_error.inputs.is_empty() {
+                if let Ok(error) = known_error.decode_error(&hex::decode(err_data)?) {
+                    write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
+                }
+            }
+            return Ok(Some(decoded_error))
+        }
+    }
+    Ok(None)
 }

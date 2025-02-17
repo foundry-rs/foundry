@@ -84,7 +84,6 @@ impl FuzzedExecutor {
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
         address: Address,
-        should_fail: bool,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
@@ -109,7 +108,7 @@ impl FuzzedExecutor {
                 return Err(TestCaseError::fail(TEST_TIMEOUT));
             }
 
-            let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
+            let fuzz_res = self.single_fuzz(address, calldata)?;
 
             // If running with progress then increment current run.
             if let Some(progress) = progress {
@@ -238,7 +237,6 @@ impl FuzzedExecutor {
     pub fn single_fuzz(
         &self,
         address: Address,
-        should_fail: bool,
         calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
@@ -256,7 +254,7 @@ impl FuzzedExecutor {
                 (cheats.breakpoints.clone(), cheats.deprecated_cheatcodes.clone())
             });
 
-        let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
+        let success = self.executor.is_raw_call_mut_success(address, &mut call, false);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },

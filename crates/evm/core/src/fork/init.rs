@@ -3,15 +3,13 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactionsKind};
-use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
-
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
-pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
+pub async fn environment<N: Network, P: Provider<N>>(
     provider: &P,
     memory_limit: u64,
     gas_price: Option<u128>,
@@ -23,7 +21,7 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
     } else {
-        provider.get_block_number().await.wrap_err("Failed to get latest block number")?
+        provider.get_block_number().await.wrap_err("failed to get latest block number")?
     };
     let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
@@ -44,12 +42,11 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
                 error!("{NON_ARCHIVE_NODE_WARNING}");
             }
             eyre::bail!(
-                "Failed to get block for block number: {}\nlatest block number: {}",
-                block_number,
-                latest_block
+                "failed to get block for block number: {block_number}; \
+                 latest block number: {latest_block}"
             );
         }
-        eyre::bail!("Failed to get block for block number: {}", block_number)
+        eyre::bail!("failed to get block for block number: {block_number}")
     };
 
     let mut cfg = CfgEnv::default();
