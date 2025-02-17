@@ -8,8 +8,10 @@ use foundry_compilers::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
+    filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
-    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
+    SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -17,6 +19,7 @@ use foundry_test_utils::{
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
+use semver::VersionReq;
 use similar_asserts::assert_eq;
 use std::{
     fs,
@@ -1630,4 +1633,79 @@ contract GasSnapshotEmitTest is DSTest {
 
     // Assert that snapshots were not emitted to disk.
     assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+});
+
+// Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
+forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.clear();
+    prj.add_source(
+        "v1/CounterV1.sol",
+        r#"
+contract CounterV1 {
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "v2/CounterV2.sol",
+        r#"
+contract CounterV2 {
+}
+    "#,
+    )
+    .unwrap();
+
+    // Additional profiles v1 and v2 are defined with optimizer runs but without explicitly
+    // enabling optimizer.
+    let v1_profile = SettingsOverrides {
+        name: "v1".to_string(),
+        via_ir: Some(true),
+        evm_version: Some(EvmVersion::Cancun),
+        optimizer: None,
+        optimizer_runs: Some(44444444),
+        bytecode_hash: None,
+    };
+    let v1_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v1/CounterV1.sol").unwrap(),
+        version: Some(VersionReq::from_str("0.8.16").unwrap()),
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(44444444),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let v2_profile = SettingsOverrides {
+        name: "v2".to_string(),
+        via_ir: None,
+        evm_version: None,
+        optimizer: None,
+        optimizer_runs: Some(999999),
+        bytecode_hash: None,
+    };
+    let v2_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v2/**").unwrap(),
+        version: None,
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(999999),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let additional_compiler_profiles = vec![v1_profile, v2_profile];
+    let compilation_restrictions = vec![v1_restrictions, v2_restrictions];
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.additional_compiler_profiles = additional_compiler_profiles;
+        config.compilation_restrictions = compilation_restrictions;
+    });
+    // Should find all profiles satisfying settings restrictions.
+    cmd.forge_fuse().args(["build"]).assert_success();
 });
