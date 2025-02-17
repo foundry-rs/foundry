@@ -230,13 +230,13 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             /// forge-config: default.isolate = true
             function test_isolate() public {
                 vm.startSnapshotGas("testIsolatedFunction");
-                dummy.setNumber(42);
+                dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
 
             function test_non_isolate() public {
                 vm.startSnapshotGas("testNonIsolatedFunction");
-                dummy.setNumber(42);
+                dummy.setNumber(2);
                 vm.stopSnapshotGas();
             }
         }
@@ -251,7 +251,7 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
 
             function test_non_isolate() public {
                 vm.startSnapshotGas("testIsolatedContract");
-                dummy.setNumber(42);
+                dummy.setNumber(3);
                 vm.stopSnapshotGas();
             }
         }
@@ -318,6 +318,15 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         read_snapshot(&prj.root().join("snapshots/FunctionConfig.json"));
     let contract_config: ContractConfig =
         read_snapshot(&prj.root().join("snapshots/ContractConfig.json"));
+
+    // FunctionConfig {
+    //     test_isolated_function: 48926,
+    //     test_non_isolated_function: 27722,
+    // }
+
+    // ContractConfig {
+    //     test_isolated_contract: 48926,
+    // }
 
     assert!(function_config.test_isolated_function > function_config.test_non_isolated_function);
     assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
