@@ -243,11 +243,11 @@ impl SuiteResult {
         }
         if !isolated_cheatcodes.is_empty() {
             let mut warning =
-                "the following cheatcode(s) require isolation mode and were skipped:".to_string();
+                "the following cheatcode(s) require isolation mode and were ignored:".to_string();
             for cheatcode in isolated_cheatcodes {
                 write!(warning, "\n  {cheatcode}").unwrap();
             }
-            write!(warning, "\n\nTo enable isolation mode, pass the `--isolated` flag\n").unwrap();
+            write!(warning, "\n\nTo enable isolation mode, pass the `--isolate` flag\n").unwrap();
             warnings.push(warning);
         }
 

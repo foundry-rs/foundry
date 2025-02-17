@@ -526,14 +526,12 @@ impl MultiContractRunnerBuilder {
                 env,
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
-
                 coverage: self.coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 odyssey: self.odyssey,
-
                 config: self.config,
             },
         })
