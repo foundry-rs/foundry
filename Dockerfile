@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM alpine:3.20 as build-environment
+FROM alpine:3.21 as build-environment
 
 ARG TARGETARCH
 WORKDIR /opt
@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/r
     && strip out/chisel \
     && strip out/anvil;
 
-FROM alpine:3.20 as foundry-client
+FROM alpine:3.21 as foundry-client
 
 RUN apk add --no-cache linux-headers git gcompat libstdc++
 
