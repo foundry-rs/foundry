@@ -3271,7 +3271,8 @@
       },
       "group": "testing",
       "status": "stable",
-      "safety": "safe"
+      "safety": "safe",
+      "requires": "none"
     },
     {
       "func": {
@@ -3291,7 +3292,8 @@
       },
       "group": "testing",
       "status": "stable",
-      "safety": "safe"
+      "safety": "safe",
+      "requires": "none"
     },
     {
       "func": {
