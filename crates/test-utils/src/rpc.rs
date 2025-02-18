@@ -34,11 +34,11 @@ static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 // List of alchemy keys for mainnet
 static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
-        "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
-        "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
-        "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
-        "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
-        "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
+        // "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
+        // "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
+        // "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
+        // "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
+        // "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
         // "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
         // "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
         // "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
