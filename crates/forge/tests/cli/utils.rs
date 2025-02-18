@@ -151,27 +151,22 @@ pub fn parse_verification_guid(out: &str) -> Option<String> {
     None
 }
 
-// Generates a string containing the code of a Solidity contract
-// with a variable init code size.
-pub fn generate_large_contract(num_elements: usize) -> String {
-    let mut contract_code = String::new();
-
-    contract_code.push_str(
-        "// Auto-generated Solidity contract to inflate initcode size\ncontract HugeContract {\n    uint256 public number;\n"
-    );
-
-    contract_code.push_str("    uint256[] public largeArray;\n\n    constructor() {\n");
-    contract_code.push_str("        largeArray = [");
-
-    for i in 0..num_elements {
-        if i != 0 {
-            contract_code.push_str(", ");
-        }
-        contract_code.push_str(&i.to_string());
-    }
-
-    contract_code.push_str("];\n");
-    contract_code.push_str("    }\n}");
-
-    contract_code
+/// Generates a string containing the code of a Solidity contract.
+///
+/// This contract compiles to a large init bytecode size, but small runtime size.
+pub fn generate_large_init_contract(n: usize) -> String {
+    let data = vec![0xff; n];
+    let hex = alloy_primitives::hex::encode(data);
+    format!(
+        "\
+contract LargeContract {{
+    constructor() {{
+        bytes memory data = hex\"{hex}\";
+        assembly {{
+            pop(mload(data))
+        }}
+    }}
+}}    
+"
+    )
 }

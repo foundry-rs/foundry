@@ -34,11 +34,11 @@ static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 // List of alchemy keys for mainnet
 static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
-        "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
-        "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
-        "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
-        "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
-        "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
+        // "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
+        // "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
+        // "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
+        // "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
+        // "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
         // "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
         // "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
         // "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
@@ -48,18 +48,18 @@ static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         "GWdgwabOE2XfBdLp_gIq-q6QHa7DSoag",
         "Uz0cF5HCXFtpZlvd9NR7kHxfB_Wdpsx7",
         "wWZMf1SOu9lT1GNIJHOX-5WL1MiYXycT",
-        "HACxy4wNUoD-oLlCq_v5LG0bclLc_DRL",
-        "_kCjfMjYo8x0rOm6YzmvSI0Qk-c8SO5I",
-        "kD-M-g5TKb957S3bbOXxXPeMUxm1uTuU",
-        "jQqqfTOQN_7A6gQEjzRYpVwXzxEBN9aj",
-        "jGiK5vwDfC3F4r0bqukm-W2GqgdrxdSr",
-        "Reoz-NZSjWczcAQOeVTz_Ejukb8mAton",
-        "-DQx9U-heCeTgYsAXwaTurmGytc-0mbR",
-        "sDNCLu_e99YZRkbWlVHiuM3BQ5uxYCZU",
-        "M6lfpxTBrywHOvKXOS4yb7cTTpa25ZQ9",
-        "UK8U_ogrbYB4lQFTGJHHDrbiS4UPnac6",
+        // "HACxy4wNUoD-oLlCq_v5LG0bclLc_DRL",
+        // "_kCjfMjYo8x0rOm6YzmvSI0Qk-c8SO5I",
+        // "kD-M-g5TKb957S3bbOXxXPeMUxm1uTuU",
+        // "jQqqfTOQN_7A6gQEjzRYpVwXzxEBN9aj",
+        // "jGiK5vwDfC3F4r0bqukm-W2GqgdrxdSr",
+        // "Reoz-NZSjWczcAQOeVTz_Ejukb8mAton",
+        // "-DQx9U-heCeTgYsAXwaTurmGytc-0mbR",
+        // "sDNCLu_e99YZRkbWlVHiuM3BQ5uxYCZU",
+        // "M6lfpxTBrywHOvKXOS4yb7cTTpa25ZQ9",
+        // "UK8U_ogrbYB4lQFTGJHHDrbiS4UPnac6",
         "Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf",
-        "UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE",
+        // "UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE",
         "bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
     ];
     keys.shuffle(&mut rand::thread_rng());
@@ -275,7 +275,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return, clippy::disallowed_macros)]
+#[allow(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use alloy_primitives::address;

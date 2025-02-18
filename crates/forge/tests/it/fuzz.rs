@@ -7,7 +7,6 @@ use forge::{
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
 };
-use foundry_config::Config;
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
@@ -118,7 +117,6 @@ async fn test_persist_fuzz_failure() {
         () => { run_fail!(|config| {}) };
         (|$config:ident| $e:expr) => {{
             let mut runner = TEST_DATA_DEFAULT.runner_with(|$config| {
-                $config.optimizer = Some(true);
                 $config.fuzz.runs = 1000;
                 $e
             });
@@ -163,7 +161,7 @@ async fn test_persist_fuzz_failure() {
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "FuzzerDict.sol",
         r#"
@@ -230,7 +228,7 @@ import {Test} from "forge-std/Test.sol";
 contract InlineMaxRejectsTest is Test {
     /// forge-config: default.fuzz.max-test-rejects = 1
     function test_fuzz_bound(uint256 a) public {
-        vm.assume(a == 0);
+        vm.assume(false);
     }
 }
    "#,
