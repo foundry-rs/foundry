@@ -44,7 +44,7 @@ pub struct InitArgs {
 impl InitArgs {
     pub fn run(self) -> Result<()> {
         let Self { root, template, branch, install, offline, force, vscode } = self;
-        let DependencyInstallOpts { shallow, no_git, no_commit } = install;
+        let DependencyInstallOpts { shallow, no_git, commit } = install;
 
         // create the root dir if it does not exist
         if !root.exists() {
@@ -70,17 +70,15 @@ impl InitArgs {
             // collapsed. gitmodules will be initialized after the template is fetched
             git.fetch(true, &template, branch)?;
 
-            if !no_commit {
-                // reset git history to the head of the template
-                // first get the commit hash that was fetched
-                let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
-                // format a commit message for the new repo
-                let commit_msg = format!("chore: init from {template} at {commit_hash}");
-                // get the hash of the FETCH_HEAD with the new commit message
-                let new_commit_hash = git.commit_tree("FETCH_HEAD^{tree}", Some(commit_msg))?;
-                // reset head of this repo to be the head of the template repo
-                git.reset(true, new_commit_hash)?;
-            }
+            // reset git history to the head of the template
+            // first get the commit hash that was fetched
+            let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
+            // format a commit message for the new repo
+            let commit_msg = format!("chore: init from {template} at {commit_hash}");
+            // get the hash of the FETCH_HEAD with the new commit message
+            let new_commit_hash = git.commit_tree("FETCH_HEAD^{tree}", Some(commit_msg))?;
+            // reset head of this repo to be the head of the template repo
+            git.reset(true, new_commit_hash)?;
 
             // if shallow, just initialize submodules
             if shallow {
@@ -102,7 +100,7 @@ impl InitArgs {
             }
 
             // ensure git status is clean before generating anything
-            if !no_git && !no_commit && !force && git.is_in_repo()? {
+            if !no_git && commit && !force && git.is_in_repo()? {
                 git.ensure_clean()?;
             }
 
@@ -141,7 +139,7 @@ impl InitArgs {
 
             // set up the repo
             if !no_git {
-                init_git_repo(git, no_commit)?;
+                init_git_repo(git, commit)?;
             }
 
             // install forge-std
@@ -170,8 +168,8 @@ impl InitArgs {
 ///
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
 ///
-/// Commits everything in `root` if `no_commit` is false.
-fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
+/// Commits everything in `root` if `commit` is true.
+fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
     // git init
     if !git.is_in_repo()? {
         git.init()?;
@@ -191,7 +189,7 @@ fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
     }
 
     // commit everything
-    if !no_commit {
+    if commit {
         git.add(Some("--all"))?;
         git.commit("chore: forge init")?;
     }

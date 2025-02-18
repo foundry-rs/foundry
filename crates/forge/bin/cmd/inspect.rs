@@ -36,11 +36,15 @@ pub struct InspectArgs {
     /// All build arguments are supported
     #[command(flatten)]
     build: BuildOpts,
+
+    /// Whether to remove comments when inspecting `ir` and `irOptimized` artifact fields.
+    #[arg(long, short, help_heading = "Display options")]
+    pub strip_yul_comments: bool,
 }
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { contract, field, build } = self;
+        let Self { contract, field, build, strip_yul_comments } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -106,10 +110,10 @@ impl InspectArgs {
                 print_json(&artifact.devdoc)?;
             }
             ContractArtifactField::Ir => {
-                print_yul(artifact.ir.as_deref())?;
+                print_yul(artifact.ir.as_deref(), strip_yul_comments)?;
             }
             ContractArtifactField::IrOptimized => {
-                print_yul(artifact.ir_optimized.as_deref())?;
+                print_yul(artifact.ir_optimized.as_deref(), strip_yul_comments)?;
             }
             ContractArtifactField::Metadata => {
                 print_json(&artifact.metadata)?;
@@ -532,15 +536,19 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
     Ok(())
 }
 
-fn print_yul(yul: Option<&str>) -> Result<()> {
+fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     let Some(yul) = yul else {
         eyre::bail!("Could not get IR output");
     };
 
     static YUL_COMMENTS: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
+        LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*?\*/)").unwrap());
 
-    sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
+    if strip_comments {
+        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
+    } else {
+        sh_println!("{yul}")?;
+    }
 
     Ok(())
 }

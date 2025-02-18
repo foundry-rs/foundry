@@ -295,13 +295,13 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
     fs::create_dir_all(&nested).unwrap();
 
     cmd.current_dir(&nested);
-    cmd.arg("init").assert_failure().stderr_eq(str![[r#"
+    cmd.args(["init", "--commit"]).assert_failure().stderr_eq(str![[r#"
 Error: The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
+ignore them in the `.gitignore` file.
 
 "#]]);
 
@@ -584,10 +584,10 @@ Error: git fetch exited with code 128
 "#]]);
 });
 
-// checks that `forge init --template [template] work with --no-commit
+// checks that `forge init --template [template] works by default i.e without committing
 forgetest!(can_init_template_with_no_commit, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "foundry-rs/forge-template", "--no-commit"])
+    cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
@@ -1308,14 +1308,13 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse()
-            .args(["install", "foundry-rs/forge-std", "--no-commit"])
-            .assert_success()
-            .stdout_eq(str![[r#"
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
+            str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]]);
+"#]],
+        );
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -1376,14 +1375,13 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse()
-            .args(["install", "foundry-rs/forge-std", "--no-commit"])
-            .assert_success()
-            .stdout_eq(str![[r#"
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
+            str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]]);
+"#]],
+        );
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -1446,7 +1444,7 @@ forgetest!(
 
         // install main dependency
         cmd.forge_fuse()
-            .args(["install", "evalir/forge-5980-test", "--no-commit"])
+            .args(["install", "evalir/forge-5980-test"])
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
@@ -3064,7 +3062,51 @@ Compiler run successful!
 // checks `forge inspect <contract> irOptimized works
 forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
     cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        {
+            /// @src 0:65:257  "contract Counter {..."
+            mstore(64, memoryguard(0x80))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "irOptimized", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+object "Counter_21" {
+    code {
+        {
+            mstore(64, memoryguard(0x80))
+            if callvalue()
+...
+"#]]);
+});
+
+// checks `forge inspect <contract> irOptimized works
+forgetest_init!(can_inspect_ir, |_prj, cmd| {
+    cmd.args(["inspect", TEMPLATE_CONTRACT, "ir"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        /// @src 0:65:257  "contract Counter {..."
+        mstore(64, memoryguard(128))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "ir", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+object "Counter_21" {
+    code {
+        mstore(64, memoryguard(128))
+        if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
+...
+"#]]);
 });
 
 // checks forge bind works correctly on the default project
