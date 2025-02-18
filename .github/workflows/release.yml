@@ -99,7 +99,9 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: macos-12-large
+          # This is pinned to `macos-13-large` to support old SDK versions.
+          # If the runner is deprecated it should be pinned to the oldest available version of the runner.
+          - runner: macos-13-large
             target: x86_64-apple-darwin
             svm_target_platform: macosx-amd64
             platform: darwin
@@ -278,7 +280,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, cleanup]
+    needs: [ prepare, release-docker, release, cleanup ]
     if: failure()
     steps:
       - uses: actions/checkout@v4
