@@ -158,6 +158,11 @@ impl<'a> ContractRunner<'a> {
             U256::ZERO,
             Some(&self.mcr.revert_decoder),
         );
+
+        if let Err(EvmError::Execution(_err)) = &deploy_result {
+            return Ok(TestSetup::failed(format!("{} contract deployment failed, check test contracts `constructor()` for possible reverts", self.name)));
+        }
+
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
@@ -337,6 +342,19 @@ impl<'a> ContractRunner<'a> {
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         self.executor.inspector_mut().tracer = prev_tracer;
+
+        if setup.reason.as_ref().is_some_and(|reason| reason.contains("contract deployment failed"))
+        {
+            return SuiteResult::new(
+                start.elapsed(),
+                [(
+                    "constructor failure".to_string(),
+                    TestResult::fail("TestDeploymentFailed".to_string()),
+                )]
+                .into(),
+                warnings,
+            )
+        }
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
