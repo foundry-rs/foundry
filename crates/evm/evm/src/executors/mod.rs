@@ -338,7 +338,7 @@ impl Executor {
 
         // Determine whether we should enable call tracing or not.
         let enable_call_tracing =
-            self.inspector().tracer.as_ref().map_or(true, |t| !t.config().record_steps);
+            self.inspector().tracer.as_ref().is_none_or(|t| !t.config().record_steps);
 
         if enable_call_tracing {
             self.inspector_mut().tracing(TraceMode::Call);
