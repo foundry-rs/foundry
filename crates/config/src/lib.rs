@@ -200,10 +200,10 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// where the gas snapshots are stored
     pub snapshots: PathBuf,
+    /// whether to create gas snapshots and write to disk
+    pub gas_snapshot: bool,
     /// whether to check for differences against previously stored gas snapshots
     pub gas_snapshot_check: bool,
-    /// whether to emit gas snapshots to disk
-    pub gas_snapshot_emit: bool,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -2322,8 +2322,8 @@ impl Default for Config {
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
+            gas_snapshot: false,
             gas_snapshot_check: false,
-            gas_snapshot_emit: true,
             allow_paths: vec![],
             include_paths: vec![],
             force: false,

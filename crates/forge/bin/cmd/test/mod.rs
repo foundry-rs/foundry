@@ -118,13 +118,13 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
-    /// Check gas snapshots against previous runs.
-    #[arg(long, env = "FORGE_SNAPSHOT_CHECK")]
-    gas_snapshot_check: Option<bool>,
+    /// Enable or disable recording of gas snapshots.
+    #[arg(long, env = "FORGE_GAS_SNAPSHOT")]
+    gas_snapshot: bool,
 
-    /// Enable/disable recording of gas snapshot results.
-    #[arg(long, env = "FORGE_SNAPSHOT_EMIT")]
-    gas_snapshot_emit: Option<bool>,
+    /// Check gas snapshots against previous runs.
+    #[arg(long, env = "FORGE_GAS_SNAPSHOT_CHECK")]
+    gas_snapshot_check: Option<bool>,
 
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
@@ -283,10 +283,15 @@ impl TestArgs {
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
-        if self.gas_report {
+        if self.gas_report ||
+            self.gas_snapshot ||
+            self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check)
+        {
             evm_opts.isolate = true;
-        } else {
-            // Do not collect gas report traces if gas report is not enabled.
+        }
+
+        // Do not collect gas report traces if gas report is not enabled.
+        if !self.gas_report {
             config.fuzz.gas_report_samples = 0;
             config.invariant.gas_report_samples = 0;
         }
@@ -679,7 +684,7 @@ impl TestArgs {
                 // By default `gas_snapshot_check` is set to `false` in the config.
                 //
                 // The user can either:
-                // - Set `FORGE_SNAPSHOT_CHECK=true` in the environment.
+                // - Set `FORGE_GAS_SNAPSHOT_CHECK=true` in the environment.
                 // - Pass `--gas-snapshot-check=true` as a CLI argument.
                 // - Set `gas_snapshot_check = true` in the config.
                 //
@@ -742,16 +747,16 @@ impl TestArgs {
                     }
                 }
 
-                // By default `gas_snapshot_emit` is set to `true` in the config.
+                // By default `gas_snapshot` is set to `false` in the config.
                 //
                 // The user can either:
-                // - Set `FORGE_SNAPSHOT_EMIT=false` in the environment.
-                // - Pass `--gas-snapshot-emit=false` as a CLI argument.
-                // - Set `gas_snapshot_emit = false` in the config.
+                // - Set `FORGE_GAS_SNAPSHOT` in the environment.
+                // - Pass `--gas-snapshot` as a CLI argument.
+                // - Set `gas_snapshot = true` in the config.
                 //
                 // If the user passes `--gas-snapshot-emit=<bool>` then it will override the config
                 // and the environment variable, enabling the check if `true` is passed.
-                if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
+                if self.gas_snapshot {
                     // Create `snapshots` directory if it doesn't exist.
                     fs::create_dir_all(&config.snapshots)?;
 
