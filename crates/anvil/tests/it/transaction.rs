@@ -3,7 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{map::B256HashSet, Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
@@ -1234,4 +1234,19 @@ async fn can_mine_multiple_in_block() {
 
     let txs = block.transactions.hashes().collect::<Vec<_>>();
     assert_eq!(txs, vec![first, second]);
+}
+
+// ensures that the gas estimate is running on pending block by default
+#[tokio::test(flavor = "multi_thread")]
+async fn estimates_gas_prague() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    // {"data":"0xcafebabe","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"
+    // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}
+    let req = TransactionRequest::default()
+        .with_input(hex!("0xcafebabe"))
+        .with_from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+        .with_to(address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"));
+    api.estimate_gas(WithOtherFields::new(req), None, None).await.unwrap();
 }
