@@ -159,9 +159,7 @@ impl<'a> ContractRunner<'a> {
             Some(&self.mcr.revert_decoder),
         );
 
-        if let Err(EvmError::Execution(err)) = &deploy_result {
-            return Ok(TestSetup::failed(format!("TestDeploymentFailed:{err}")));
-        }
+        result.deployment_failure = deploy_result.is_err();
 
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
@@ -343,27 +341,16 @@ impl<'a> ContractRunner<'a> {
 
         self.executor.inspector_mut().tracer = prev_tracer;
 
-        // Check if test deployment failed due to reverting `constructor()`
-        if setup.reason.as_ref().is_some_and(|reason| reason.contains("TestDeploymentFailed")) {
-            let reason = setup
-                .reason
-                .as_ref()
-                .unwrap()
-                .strip_prefix("TestDeploymentFailed:execution reverted:")
-                .unwrap()
-                .trim();
-            return SuiteResult::new(
-                start.elapsed(),
-                [("faulty constructor()".to_string(), TestResult::fail(reason.to_string()))].into(),
-                warnings,
-            )
-        }
-
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
+            let fail_msg = if !setup.deployment_failure {
+                "setUp()".to_string()
+            } else {
+                "constructor()".to_string()
+            };
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::setup_result(setup))].into(),
+                [(fail_msg, TestResult::setup_result(setup))].into(),
                 warnings,
             )
         }

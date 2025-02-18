@@ -3165,6 +3165,6 @@ contract TestDeploymentFailure is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFailure
-[FAIL: EvmError: Revert ([GAS])] faulty constructor() ([GAS])
+[FAIL: EvmError: Revert] constructor() ([GAS])
 ..."#]]);
 });
