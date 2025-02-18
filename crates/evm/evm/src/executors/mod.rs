@@ -335,6 +335,15 @@ impl Executor {
         let from = from.unwrap_or(CALLER);
         self.backend_mut().set_test_contract(to).set_caller(from);
         let calldata = Bytes::from_static(&ITest::setUpCall::SELECTOR);
+
+        // Determine whether we should enable call tracing or not.
+        let enable_call_tracing =
+            self.inspector().tracer.as_ref().map_or(true, |t| !t.config().record_steps);
+
+        if enable_call_tracing {
+            self.inspector_mut().tracing(TraceMode::Call);
+        }
+
         let mut res = self.transact_raw(from, to, calldata, U256::ZERO)?;
         res = res.into_result(rd)?;
 

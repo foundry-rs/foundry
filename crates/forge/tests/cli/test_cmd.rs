@@ -3138,18 +3138,26 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 "#]]);
 });
 
-forgetest!(catch_test_deployment_failure, |prj, cmd| {
-    prj.add_test(
-        "TestDeploymentFailure.t.sol",
+forgetest!(catch_deployment_failure_in_setup, |prj, cmd| {
+    prj.add_source(
+        "FailingDeployment",
         r#"
+    contract FailingDeployment {
+        constructor() {
+            revert("constructor failed");
+        }
+    }
+    "#,
+    )
+    .unwrap();
+    prj.add_test(
+        "TestDeploymentFailure",
+        r#"
+import "src/FailingDeployment.sol";
 contract TestDeploymentFailure {
 
-    constructor() {
-        require(false);
-    }
-
     function setUp() public {
-        require(true);
+        FailingDeployment f = new FailingDeployment();
     }
 
     function test_something() public {
@@ -3163,7 +3171,7 @@ contract TestDeploymentFailure {
     cmd.arg("t").assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
-Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFailure
-[FAIL: EvmError: Revert ([GAS])] constructor() ([GAS])
+Encountered 1 failing test in test/TestDeploymentFailure.sol:TestDeploymentFailure
+[FAIL: revert: constructor failed] FailingDeployment deployment failed in setUp() ([GAS])
 ..."#]]);
 });

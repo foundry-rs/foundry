@@ -159,10 +159,6 @@ impl<'a> ContractRunner<'a> {
             Some(&self.mcr.revert_decoder),
         );
 
-        if let Err(EvmError::Execution(err)) = &deploy_result {
-            return Ok(TestSetup::failed(format!("contract deployment failed: {err}")));
-        }
-
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
@@ -184,9 +180,51 @@ impl<'a> ContractRunner<'a> {
         if call_setup {
             trace!("calling setUp");
             let res = self.executor.setup(None, address, Some(&self.mcr.revert_decoder));
+            let maybe_create_failures = res.as_ref().err().and_then(|err| {
+                if let EvmError::Execution(err) = &err {
+                    err.traces.as_ref().map(|traces| {
+                        let failed_creates = traces
+                            .arena
+                            .nodes()
+                            .iter()
+                            .filter_map(|t| {
+                                if !t.trace.success && t.trace.kind.is_any_create() {
+                                    Some(t.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
+
+                        failed_creates
+                    })
+                } else {
+                    None
+                }
+            });
+
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
             result.extend(raw, TraceKind::Setup);
-            result.reason = reason;
+            result.reason = reason.clone();
+
+            if maybe_create_failures
+                .as_ref()
+                .is_some_and(|create_failures| !create_failures.is_empty())
+            {
+                let failed_deployment = maybe_create_failures.as_ref().unwrap().first().unwrap();
+                let contract =
+                    self.mcr.known_contracts.find_by_creation_code(&failed_deployment.trace.data);
+                if let Some((_, contract_data)) = contract {
+                    result.reason = Some(format!(
+                        "{} deployment failed in setUp():{}",
+                        contract_data.name,
+                        reason.unwrap()
+                    ))
+                } else {
+                    result.reason =
+                        Some(format!("Contract deployment failed in setUp():{}", reason.unwrap()));
+                }
+            }
         }
 
         result.fuzz_fixtures = self.fuzz_fixtures(address);
@@ -343,21 +381,21 @@ impl<'a> ContractRunner<'a> {
 
         self.executor.inspector_mut().tracer = prev_tracer;
 
-        // Check if test deployment failed due to reverting `constructor()`
-        if setup.reason.as_ref().is_some_and(|reason| reason.contains("contract deployment failed"))
+        // Check if deployment failed.
+        if setup
+            .reason
+            .as_ref()
+            .is_some_and(|reason| reason.contains("deployment failed in setUp()"))
         {
-            let reason = setup
-                .reason
-                .as_ref()
-                .unwrap()
-                .strip_prefix("contract deployment failed: execution reverted: ")
-                .unwrap()
-                .trim();
-            return SuiteResult::new(
-                start.elapsed(),
-                [("constructor()".to_string(), TestResult::fail(reason.to_string()))].into(),
-                warnings,
-            )
+            if let Some((msg, reason)) = setup.reason.as_ref().unwrap().split_once(":") {
+                return SuiteResult::new(
+                    start.elapsed(),
+                    [(msg.to_string(), TestResult::fail(reason.to_string()))].into(),
+                    warnings,
+                )
+            } else {
+                unreachable!()
+            }
         }
 
         if setup.reason.is_some() {
