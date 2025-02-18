@@ -160,7 +160,7 @@ impl<'a> ContractRunner<'a> {
         );
 
         if let Err(EvmError::Execution(_err)) = &deploy_result {
-            return Ok(TestSetup::failed(format!("{} contract deployment failed, check test contracts `constructor()` for possible reverts", self.name)));
+            return Ok(TestSetup::failed("contract deployment failed".to_string()));
         }
 
         if let Ok(dr) = &deploy_result {
@@ -343,12 +343,11 @@ impl<'a> ContractRunner<'a> {
 
         self.executor.inspector_mut().tracer = prev_tracer;
 
-        if setup.reason.as_ref().is_some_and(|reason| reason.contains("contract deployment failed"))
-        {
+        if setup.reason.as_ref().is_some_and(|reason| reason.eq("contract deployment failed")) {
             return SuiteResult::new(
                 start.elapsed(),
                 [(
-                    "constructor failure".to_string(),
+                    "constructor() failure".to_string(),
                     TestResult::fail("TestDeploymentFailed".to_string()),
                 )]
                 .into(),
