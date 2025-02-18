@@ -160,7 +160,7 @@ impl<'a> ContractRunner<'a> {
         );
 
         if let Err(EvmError::Execution(err)) = &deploy_result {
-            return Ok(TestSetup::failed(format!("contract deployment failed: {err}")));
+            return Ok(TestSetup::failed(format!("TestDeploymentFailed:{err}")));
         }
 
         if let Ok(dr) = &deploy_result {
@@ -344,18 +344,17 @@ impl<'a> ContractRunner<'a> {
         self.executor.inspector_mut().tracer = prev_tracer;
 
         // Check if test deployment failed due to reverting `constructor()`
-        if setup.reason.as_ref().is_some_and(|reason| reason.contains("contract deployment failed"))
-        {
+        if setup.reason.as_ref().is_some_and(|reason| reason.contains("TestDeploymentFailed")) {
             let reason = setup
                 .reason
                 .as_ref()
                 .unwrap()
-                .strip_prefix("contract deployment failed: execution reverted: ")
+                .strip_prefix("TestDeploymentFailed:execution reverted:")
                 .unwrap()
                 .trim();
             return SuiteResult::new(
                 start.elapsed(),
-                [("constructor()".to_string(), TestResult::fail(reason.to_string()))].into(),
+                [("faulty constructor()".to_string(), TestResult::fail(reason.to_string()))].into(),
                 warnings,
             )
         }

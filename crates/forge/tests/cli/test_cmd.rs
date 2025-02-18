@@ -3138,11 +3138,12 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 "#]]);
 });
 
-forgetest!(catch_test_deployment_failure, |prj, cmd| {
+forgetest_init!(catch_test_deployment_failure, |prj, cmd| {
     prj.add_test(
         "TestDeploymentFailure.t.sol",
         r#"
-contract TestDeploymentFailure {
+import "forge-std/Test.sol";
+contract TestDeploymentFailure is Test {
 
     constructor() {
         require(false);
@@ -3160,10 +3161,10 @@ contract TestDeploymentFailure {
     )
     .unwrap();
 
-    cmd.arg("t").assert_failure().stdout_eq(str![[r#"
+    cmd.args(["t", "--mt", "test_something"]).assert_failure().stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFailure
-[FAIL: EvmError: Revert ([GAS])] constructor() ([GAS])
+[FAIL: EvmError: Revert ([GAS])] faulty constructor() ([GAS])
 ..."#]]);
 });
