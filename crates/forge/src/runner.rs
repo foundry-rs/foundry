@@ -159,8 +159,8 @@ impl<'a> ContractRunner<'a> {
             Some(&self.mcr.revert_decoder),
         );
 
-        if let Err(EvmError::Execution(_err)) = &deploy_result {
-            return Ok(TestSetup::failed("contract deployment failed".to_string()));
+        if let Err(EvmError::Execution(err)) = &deploy_result {
+            return Ok(TestSetup::failed(format!("contract deployment failed: {err}")));
         }
 
         if let Ok(dr) = &deploy_result {
@@ -343,14 +343,19 @@ impl<'a> ContractRunner<'a> {
 
         self.executor.inspector_mut().tracer = prev_tracer;
 
-        if setup.reason.as_ref().is_some_and(|reason| reason.eq("contract deployment failed")) {
+        // Check if test deployment failed due to reverting `constructor()`
+        if setup.reason.as_ref().is_some_and(|reason| reason.contains("contract deployment failed"))
+        {
+            let reason = setup
+                .reason
+                .as_ref()
+                .unwrap()
+                .strip_prefix("contract deployment failed: execution reverted: ")
+                .unwrap()
+                .trim();
             return SuiteResult::new(
                 start.elapsed(),
-                [(
-                    "constructor() failure".to_string(),
-                    TestResult::fail("TestDeploymentFailed".to_string()),
-                )]
-                .into(),
+                [("constructor()".to_string(), TestResult::fail(reason.to_string()))].into(),
                 warnings,
             )
         }
