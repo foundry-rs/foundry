@@ -5475,7 +5475,7 @@
     {
       "func": {
         "id": "foundryVersionAtLeast",
-        "description": "Returns true if the current Foundry version is at least the given version.\nVersion string can be in the format `major.minor.patch`.",
+        "description": "Returns true if the current Foundry version is greater than or equal to the given version.\nThe given version string must be in the format `major.minor.patch`.\nThis is equivalent to `foundryVersionCmp(version) >= 0`.",
         "declaration": "function foundryVersionAtLeast(string calldata version) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
@@ -5495,7 +5495,7 @@
     {
       "func": {
         "id": "foundryVersionCmp",
-        "description": "Compares the current Foundry version with the given version string.\nVersion string can be in the format `major.minor.patch`.\nReturns:\n-1 if current version is less than the given version\n0 if current version equals the given version\n1 if current version is greater than the given version",
+        "description": "Compares the current Foundry version with the given version string.\nThe given version string must be in the format `major.minor.patch`.\nReturns:\n-1 if current Foundry version is less than the given version\n0 if current Foundry version equals the given version\n1 if current Foundry version is greater than the given version\nThis result can then be used with a comparison operator against `0`.\nFor example, to check if the current Foundry version is greater than or equal to `1.0.0`:\n`if (foundryVersionCmp(\"1.0.0\") >= 0) { ... }`",
         "declaration": "function foundryVersionCmp(string calldata version) external view returns (int256);",
         "visibility": "external",
         "mutability": "view",
