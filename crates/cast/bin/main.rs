@@ -520,7 +520,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{sig}")?
             }
         }
-        CastSubcommand::FourByteDecode { calldata } => {
+        CastSubcommand::FourByteCalldata { calldata } => {
             let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| {
