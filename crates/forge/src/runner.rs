@@ -158,6 +158,9 @@ impl<'a> ContractRunner<'a> {
             U256::ZERO,
             Some(&self.mcr.revert_decoder),
         );
+
+        result.deployment_failure = deploy_result.is_err();
+
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
@@ -340,9 +343,14 @@ impl<'a> ContractRunner<'a> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
+            let fail_msg = if !setup.deployment_failure {
+                "setUp()".to_string()
+            } else {
+                "constructor()".to_string()
+            };
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::setup_result(setup))].into(),
+                [(fail_msg, TestResult::setup_result(setup))].into(),
                 warnings,
             )
         }

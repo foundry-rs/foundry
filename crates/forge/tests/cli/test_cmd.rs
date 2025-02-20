@@ -3137,3 +3137,34 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 
 "#]]);
 });
+
+forgetest_init!(catch_test_deployment_failure, |prj, cmd| {
+    prj.add_test(
+        "TestDeploymentFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract TestDeploymentFailure is Test {
+
+    constructor() {
+        require(false);
+    }
+
+    function setUp() public {
+        require(true);
+    }
+
+    function test_something() public {
+        require(1 == 1);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["t", "--mt", "test_something"]).assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFailure
+[FAIL: EvmError: Revert] constructor() ([GAS])
+..."#]]);
+});

@@ -468,7 +468,9 @@ impl EthApi {
         };
 
         if let ResponseResult::Error(err) = &response {
-            node_info!("RPC request failed: {request:?}, error: {err:?}");
+            node_info!("\nRPC request failed:");
+            node_info!("    Request: {:?}", request);
+            node_info!("    Error: {}\n", err);
         }
 
         response

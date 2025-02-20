@@ -281,6 +281,9 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::CallGasCostMoreThanGasLimit => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
+            InvalidTransaction::GasFloorMoreThanGasLimit => {
+                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
+            }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
             InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,
             InvalidTransaction::OverflowPaymentInTransaction => Self::GasUintOverflow,
@@ -305,7 +308,6 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::OptimismError(_) |
             InvalidTransaction::EofCrateShouldHaveToAddress |
             InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
-            InvalidTransaction::GasFloorMoreThanGasLimit => Self::Revm(err),
         }
     }
 }

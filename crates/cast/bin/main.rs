@@ -289,7 +289,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             sh_println!(
-                "{}",
+                "{} UTC",
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
