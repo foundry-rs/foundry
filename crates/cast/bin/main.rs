@@ -702,7 +702,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
     };
 
-    //// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether
+    /// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether
     /// the shell is in JSON mode.
     ///
     /// This is included here to avoid a cyclic dependency between `fmt` and `common`.
