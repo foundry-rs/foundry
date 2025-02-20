@@ -29,20 +29,16 @@ contract ExpectCreateTest is DSTest {
         new Contract();
     }
 
-    function testExpectNestedCreate() public {
-        ContractDeployer foo = new ContractDeployer();
-        vm.expectCreate(bytecode, address(foo));
-        foo.deployContract();
-    }
-
     function testExpectCreate2() public {
         vm.expectCreate2(bytecode, address(this));
         new Contract{salt: "foo"}();
     }
 
-    function testExpectNestedCreate2() public {
+    function testExpectNestedCreate() public {
         ContractDeployer foo = new ContractDeployer();
+        vm.expectCreate(bytecode, address(foo));
         vm.expectCreate2(bytecode, address(foo));
+        foo.deployContract();
         foo.deployContractCreate2();
     }
 }
