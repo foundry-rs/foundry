@@ -23,6 +23,8 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_config::Config;
+use regex::Regex;
+use serde_json::{self, Value};
 use std::time::Instant;
 
 pub mod args;
