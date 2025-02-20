@@ -184,6 +184,10 @@ pub enum WalletSubcommands {
         /// used (~/.foundry/keystores).
         #[arg(long)]
         dir: Option<String>,
+        /// Password for the JSON keystore in cleartext
+        /// This is unsafe, we recommend using the default hidden password prompt
+        #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
+        unsafe_password: Option<String>,
     },
 
     /// Derives private key from mnemonic
@@ -469,7 +473,7 @@ flag to set your key via:
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::Remove { name, dir } => {
+            Self::Remove { name, dir, unsafe_password } => {
                 let dir = if let Some(path) = dir {
                     Path::new(&path).to_path_buf()
                 } else {
@@ -482,7 +486,12 @@ flag to set your key via:
                 if !keystore_path.exists() {
                     eyre::bail!("Keystore file does not exist at {}", keystore_path.display());
                 }
-                let password = rpassword::prompt_password("Enter password: ")?;
+
+                let password = if let Some(pwd) = unsafe_password {
+                    pwd
+                } else {
+                    rpassword::prompt_password("Enter password: ")?
+                };
 
                 if PrivateKeySigner::decrypt_keystore(&keystore_path, password).is_err() {
                     eyre::bail!("Invalid password - wallet removal cancelled");
