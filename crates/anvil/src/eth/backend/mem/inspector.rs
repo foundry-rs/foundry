@@ -35,18 +35,18 @@ impl Inspector {
         }
     }
 
+    /// Consumes the type and prints the traces.
+    pub fn into_print_traces(mut self) {
+        if let Some(a) = self.tracer.take() {
+            print_traces(a)
+        }
+    }
+
     /// Called after the inspecting the evm
     /// This will log all traces
     pub fn print_traces(&self) {
-        let traces = &self
-            .tracer
-            .clone()
-            .map(|tracer| tracer.into_traces())
-            .map(|arena| SparsedTraceArena { arena, ignored: Default::default() });
-
-        if let Some(traces) = &traces {
-            node_info!("Traces:");
-            node_info!("{}", render_trace_arena_inner(traces, false, true));
+        if let Some(a) = self.tracer.clone() {
+            print_traces(a)
         }
     }
 
@@ -78,6 +78,13 @@ impl Inspector {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
+}
+
+/// Prints the traces for the inspector
+fn print_traces(tracer: TracingInspector) {
+    let traces = SparsedTraceArena { arena: tracer.into_traces(), ignored: Default::default() };
+    node_info!("Traces:");
+    node_info!("{}", render_trace_arena_inner(&traces, false, true));
 }
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {

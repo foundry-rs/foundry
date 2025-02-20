@@ -1433,7 +1433,7 @@ impl Backend {
         env
     }
 
-    /// Builds [`Inspector`] with the configured options
+    /// Builds [`Inspector`] with the configured options.
     fn build_inspector(&self) -> Inspector {
         let mut inspector = Inspector::default();
 
@@ -1472,7 +1472,7 @@ impl Backend {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.print_traces();
+            inspector.into_print_traces();
         }
 
         Ok((exit_reason, out, gas_used as u128, state))
