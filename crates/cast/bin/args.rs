@@ -650,8 +650,8 @@ pub enum CastSubcommand {
     },
 
     /// Decode ABI-encoded calldata using https://openchain.xyz.
-    #[command(name = "4byte-decode", visible_aliases = &["4d", "4bd"])]
-    FourByteDecode {
+    #[command(name = "4byte-calldata", aliases = &["4byte-decode", "4d", "4bd"], visible_aliases = &["4bc", "4c"])]
+    FourByteCalldata {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
