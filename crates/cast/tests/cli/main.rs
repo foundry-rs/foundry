@@ -189,6 +189,62 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast wallet remove` can successfully remove a keystore file and validates password
+casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+
+    cmd.set_current_dir(prj.root());
+
+    let account_name = "testAccount";
+
+    // Default Anvil private key
+    let test_private_key =
+        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    // import private key
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "import",
+            account_name,
+            "--private-key",
+            &test_private_key.to_string(),
+            "-k",
+            "keystore",
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+`testAccount` keystore was saved successfully. [ADDRESS]
+
+"#]]);
+
+    // check that the keystore file was created
+    let keystore_file = keystore_path.join(account_name);
+
+    assert!(keystore_file.exists());
+    // Remove the wallet
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            account_name,
+            "--dir",
+            keystore_path.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+`testAccount` keystore was removed successfully.
+
+"#]]);
+
+    assert!(!keystore_file.exists());
+});
+
 // tests that `cast wallet sign message` outputs the expected signature
 casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
     let pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
