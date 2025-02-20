@@ -765,6 +765,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Whether setup and entire test suite is skipped.
     pub skipped: bool,
+    /// Whether the test failed to deploy.
+    pub deployment_failure: bool,
 }
 
 impl TestSetup {

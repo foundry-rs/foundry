@@ -1685,6 +1685,27 @@ interface Vm {
         string calldata error
     ) external pure;
 
+    /// Returns true if the current Foundry version is greater than or equal to the given version.
+    /// The given version string must be in the format `major.minor.patch`.
+    ///
+    /// This is equivalent to `foundryVersionCmp(version) >= 0`.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function foundryVersionAtLeast(string calldata version) external view returns (bool);
+
+    /// Compares the current Foundry version with the given version string.
+    /// The given version string must be in the format `major.minor.patch`.
+    ///
+    /// Returns:
+    /// -1 if current Foundry version is less than the given version
+    /// 0 if current Foundry version equals the given version
+    /// 1 if current Foundry version is greater than the given version
+    ///
+    /// This result can then be used with a comparison operator against `0`.
+    /// For example, to check if the current Foundry version is greater than or equal to `1.0.0`:
+    /// `if (foundryVersionCmp("1.0.0") >= 0) { ... }`
+    #[cheatcode(group = Testing, safety = Safe)]
+    function foundryVersionCmp(string calldata version) external view returns (int256);
+
     // ======== OS and Filesystem ========
 
     // -------- Metadata --------
