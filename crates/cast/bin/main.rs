@@ -715,12 +715,11 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let input = tokens_str.replace("(", "[").replace(")", "]");
             let data: Vec<String> = serde_json::from_str(&input).unwrap();
             let re = Regex::new(r"0x[0-9a-fA-F]+").unwrap();
-	        let mut result: Vec<Value> = Vec::new();
+            let mut result: Vec<Value> = Vec::new();
 
             for i in data {
-                let i = re.replace_all(&i, |caps: &regex::Captures<'_>| {
-                    format!(r#""{}""#, &caps[0])
-                });
+                let i =
+                    re.replace_all(&i, |caps: &regex::Captures<'_>| format!(r#""{}""#, &caps[0]));
 
                 let d: Value = serde_json::from_str(&i).unwrap();
                 result.push(d);
