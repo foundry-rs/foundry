@@ -10,6 +10,16 @@ contract Contract {
     }
 }
 
+contract ContractDeployer {
+    function deployContract() public {
+        new Contract();
+    }
+
+    function deployContractCreate2() public {
+        new Contract{salt: "foo"}();
+    }
+}
+
 contract ExpectCreateTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     bytes bytecode = vm.getDeployedCode("cheats/ExpectCreate.t.sol:Contract");
@@ -19,8 +29,20 @@ contract ExpectCreateTest is DSTest {
         new Contract();
     }
 
+    function testExpectNestedCreate() public {
+        ContractDeployer foo = new ContractDeployer();
+        vm.expectCreate(bytecode, address(foo));
+        foo.deployContract();
+    }
+
     function testExpectCreate2() public {
         vm.expectCreate2(bytecode, address(this));
         new Contract{salt: "foo"}();
+    }
+
+    function testExpectNestedCreate2() public {
+        ContractDeployer foo = new ContractDeployer();
+        vm.expectCreate2(bytecode, address(foo));
+        foo.deployContractCreate2();
     }
 }

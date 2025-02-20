@@ -844,17 +844,20 @@ where {
         }
 
         // Match the create against expected_creates
-        if let (Some(address), Some(call)) = (outcome.address, call) {
-            if let Ok(created_acc) = ecx.journaled_state.load_account(address, &mut ecx.db) {
-                let bytecode = created_acc.info.code.clone().unwrap_or_default().original_bytes();
-                if let Some((index, _)) =
-                    self.expected_creates.iter().find_position(|expected_create| {
-                        expected_create.deployer == call.caller &&
-                            expected_create.create_scheme.eq(call.scheme) &&
-                            expected_create.bytecode == bytecode
-                    })
-                {
-                    self.expected_creates.swap_remove(index);
+        if !self.expected_creates.is_empty() {
+            if let (Some(address), Some(call)) = (outcome.address, call) {
+                if let Ok(created_acc) = ecx.journaled_state.load_account(address, &mut ecx.db) {
+                    let bytecode =
+                        created_acc.info.code.clone().unwrap_or_default().original_bytes();
+                    if let Some((index, _)) =
+                        self.expected_creates.iter().find_position(|expected_create| {
+                            expected_create.deployer == call.caller &&
+                                expected_create.create_scheme.eq(call.scheme) &&
+                                expected_create.bytecode == bytecode
+                        })
+                    {
+                        self.expected_creates.swap_remove(index);
+                    }
                 }
             }
         }

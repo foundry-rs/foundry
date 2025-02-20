@@ -109,8 +109,11 @@ pub struct ExpectedEmit {
 
 #[derive(Clone, Debug)]
 pub struct ExpectedCreate {
+    /// The address that deployed the contract
     pub deployer: Address,
+    /// Runtime bytecode of the contract
     pub bytecode: Bytes,
+    /// Whether deployed with CREATE or CREATE2
     pub create_scheme: CreateScheme,
 }
 
@@ -376,24 +379,14 @@ impl Cheatcode for expectEmitAnonymous_3Call {
 impl Cheatcode for expectCreateCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { bytecode, deployer } = self;
-        let expected_create = ExpectedCreate {
-            bytecode: bytecode.clone(),
-            deployer: *deployer,
-            create_scheme: CreateScheme::Create,
-        };
-        expect_create(state, expected_create)
+        expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create)
     }
 }
 
 impl Cheatcode for expectCreate2Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { bytecode, deployer } = self;
-        let expected_create = ExpectedCreate {
-            bytecode: bytecode.clone(),
-            deployer: *deployer,
-            create_scheme: CreateScheme::Create2,
-        };
-        expect_create(state, expected_create)
+        expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
     }
 }
 
@@ -948,7 +941,13 @@ impl LogCountMap {
     }
 }
 
-fn expect_create(state: &mut Cheatcodes, expected_create: ExpectedCreate) -> Result {
+fn expect_create(
+    state: &mut Cheatcodes,
+    bytecode: Bytes,
+    deployer: Address,
+    create_scheme: CreateScheme,
+) -> Result {
+    let expected_create = ExpectedCreate { bytecode, deployer, create_scheme };
     state.expected_creates.push(expected_create);
 
     Ok(Default::default())
