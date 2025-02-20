@@ -156,6 +156,30 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
         );
 });
 
+forgetest!(expect_create_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let expect_create_failures = include_str!("../fixtures/ExpectCreateFailures.t.sol");
+
+    prj.add_source("ExpectCreateFailures.t.sol", expect_create_failures).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectCreateFailureTest"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate() ([GAS])
+[FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2() ([GAS])
+[FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2WrongBytecode() ([GAS])
+[FAIL: expected CREATE2 call by address 0x0000000000000000000000000000000000000000 for bytecode [..] but not found] testShouldFailExpectCreate2WrongDeployer() ([GAS])
+[FAIL: expected CREATE2 call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreate2WrongScheme() ([GAS])
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreateWrongBytecode() ([GAS])
+[FAIL: expected CREATE call by address 0x0000000000000000000000000000000000000000 for bytecode [..] but not found] testShouldFailExpectCreateWrongDeployer() ([GAS])
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode [..] but not found] testShouldFailExpectCreateWrongScheme() ([GAS])
+Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
+...
+
+"#]]);
+});
+
 forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
