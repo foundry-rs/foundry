@@ -32,8 +32,9 @@ casttest!(fourbyte_calldata, |_prj, cmd| {
 31802608249 [3.18e10]
 
 "#]]);
+});
 
-    // Test for 4byte-decode alias
+casttest!(fourbyte_calldata_alias, |_prj, cmd| {
     cmd.args(["4byte-decode", "0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"]).assert_success().stdout_eq(str![[r#"
 1) "transfer(address,uint256)"
 0x0A2AC0c368Dc8eC680a0c98C907656BD97067595
