@@ -1484,7 +1484,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
 
     async fn get_block_from_cache_path(api: &mut EthApi) -> u64 {
         let db = api.backend.get_db().read().await;
-        let cache_path = db.maybe_inner().unwrap().cache().cache_path().clone().unwrap();
+        let cache_path = db.maybe_inner().unwrap().cache().cache_path().unwrap();
         cache_path
             .parent()
             .expect("must have filename")
