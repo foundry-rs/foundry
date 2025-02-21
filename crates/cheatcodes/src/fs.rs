@@ -26,15 +26,19 @@ use std::{
 use walkdir::WalkDir;
 
 impl Cheatcode for existsCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = bool;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(path.exists().abi_encode())
+        Ok(path.exists())
     }
 }
 
 impl Cheatcode for fsMetadataCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = FsMetadata;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -54,46 +58,55 @@ impl Cheatcode for fsMetadataCall {
             modified: U256::from(modified),
             accessed: U256::from(accessed),
             created: U256::from(created),
-        }
-        .abi_encode())
+        })
     }
 }
 
 impl Cheatcode for isDirCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = bool;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(path.is_dir().abi_encode())
+        Ok(path.is_dir())
     }
 }
 
 impl Cheatcode for isFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = bool;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        Ok(path.is_file().abi_encode())
+        Ok(path.is_file())
     }
 }
 
 impl Cheatcode for projectRootCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self {} = self;
-        Ok(state.config.root.display().to_string().abi_encode())
+        Ok(state.config.root.display().to_string())
     }
 }
 
 impl Cheatcode for unixTimeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = u128;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self {} = self;
         let difference = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| fmt_err!("failed getting Unix timestamp: {e}"))?;
-        Ok(difference.as_millis().abi_encode())
+        Ok(difference.as_millis())
     }
 }
 
 impl Cheatcode for closeFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = Default;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
@@ -104,19 +117,23 @@ impl Cheatcode for closeFileCall {
 }
 
 impl Cheatcode for copyFileCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = u64;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { from, to } = self;
         let from = state.config.ensure_path_allowed(from, FsAccessKind::Read)?;
         let to = state.config.ensure_path_allowed(to, FsAccessKind::Write)?;
         state.config.ensure_not_foundry_toml(&to)?;
 
         let n = fs::copy(from, to)?;
-        Ok(n.abi_encode())
+        Ok(n)
     }
 }
 
 impl Cheatcode for createDirCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    type Return = Default;
+
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
         if *recursive { fs::create_dir_all(path) } else { fs::create_dir(path) }?;

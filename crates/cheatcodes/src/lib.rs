@@ -64,10 +64,13 @@ mod utils;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
+    /// The function's return struct.
+    type Return;
+
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you don't need access to the EVM data.
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let _ = state;
         unimplemented!("{}", Self::CHEATCODE.func.id)
     }
@@ -76,7 +79,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result<<Self as Cheatcode>::Return> {
         self.apply(ccx.state)
     }
 
@@ -84,7 +87,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
-    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result<<Self as Cheatcode>::Return> {
         let _ = executor;
         self.apply_stateful(ccx)
     }
@@ -95,7 +98,7 @@ pub(crate) trait DynCheatcode: 'static {
 
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 
-    fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result;
+    fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result<<Self as Cheatcode>::Return>;
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
@@ -110,7 +113,7 @@ impl<T: Cheatcode> DynCheatcode for T {
     }
 
     #[inline]
-    fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+    fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result<<Self as Cheatcode>::Return> {
         self.apply_full(ccx, executor)
     }
 }

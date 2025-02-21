@@ -21,20 +21,24 @@ impl Cheatcode for setEnvCall {
             Err(fmt_err!("environment variable value can't contain NUL character `\\0`"))
         } else {
             env::set_var(key, value);
-            Ok(Default::default())
+            Ok(Default::default()) // TODO: what type to return here? Atm it will be an empty Vec<u8> - but if we type, then...?
         }
     }
 }
 
 impl Cheatcode for envExistsCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = bool;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { name } = self;
-        Ok(env::var(name).is_ok().abi_encode())
+        Ok(env::var(name).is_ok())
     }
 }
 
 impl Cheatcode for envBool_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = bool;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { name } = self;
         env(name, &DynSolType::Bool)
     }

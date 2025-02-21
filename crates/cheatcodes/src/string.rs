@@ -7,141 +7,179 @@ use alloy_sol_types::SolValue;
 
 // address
 impl Cheatcode for toString_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { value } = self;
-        Ok(value.to_string().abi_encode())
+        Ok(value.to_string())
     }
 }
 
 // bytes
-impl Cheatcode for toString_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for toString_1Call { 
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { value } = self;
-        Ok(value.to_string().abi_encode())
+        Ok(value.to_string())
     }
 }
 
 // bytes32
 impl Cheatcode for toString_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { value } = self;
-        Ok(value.to_string().abi_encode())
+        Ok(value.to_string())
     }
 }
 
 // bool
 impl Cheatcode for toString_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { value } = self;
-        Ok(value.to_string().abi_encode())
+        Ok(value.to_string())
     }
 }
 
 // uint256
 impl Cheatcode for toString_4Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { value } = self;
-        Ok(value.to_string().abi_encode())
+        Ok(value.to_string())
     }
 }
 
 // int256
 impl Cheatcode for toString_5Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { value } = self;
-        Ok(value.to_string().abi_encode())
+        Ok(value.to_string())
     }
 }
 
 impl Cheatcode for parseBytesCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<u8>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseAddressCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<u8>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseUintCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<u8>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseIntCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<u8>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseBytes32Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<u8>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseBoolCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<u8>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { stringifiedValue } = self;
         parse(stringifiedValue, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for toLowercaseCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { input } = self;
-        Ok(input.to_lowercase().abi_encode())
+        Ok(input.to_lowercase())
     }
 }
 
 impl Cheatcode for toUppercaseCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { input } = self;
-        Ok(input.to_uppercase().abi_encode())
+        Ok(input.to_uppercase())
     }
 }
 
 impl Cheatcode for trimCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String; // TODO: fix
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { input } = self;
-        Ok(input.trim().abi_encode())
+        Ok(input.trim())
     }
 }
 
 impl Cheatcode for replaceCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = String;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { input, from, to } = self;
-        Ok(input.replace(from, to).abi_encode())
+        Ok(input.replace(from, to))
     }
 }
 
 impl Cheatcode for splitCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = Vec<String>;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { input, delimiter } = self;
         let parts: Vec<&str> = input.split(delimiter).collect();
-        Ok(parts.abi_encode())
+        Ok(parts.into_iter().map(|s| s.to_string()).collect())
     }
 }
 
 impl Cheatcode for indexOfCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = U256;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { input, key } = self;
-        Ok(input.find(key).map(U256::from).unwrap_or(U256::MAX).abi_encode())
+        Ok(input.find(key).map(U256::from).unwrap_or(U256::MAX))
     }
 }
 
 impl Cheatcode for containsCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    type Return = bool;
+
+    fn apply(&self, _state: &mut Cheatcodes) -> Result<<Self as Cheatcode>::Return> {
         let Self { subject, search } = self;
-        Ok(subject.contains(search).abi_encode())
+        Ok(subject.contains(search))
     }
 }
 
