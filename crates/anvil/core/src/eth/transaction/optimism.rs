@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable, Error as DecodeError, Header as RlpHeader};
-use maili_consensus::TxDeposit;
+use op_alloy_consensus::TxDeposit;
 use serde::{Deserialize, Serialize};
 
 pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;

@@ -11,7 +11,6 @@ forgetest_init!(test_eof_flag, |prj, cmd| {
 Compiler run successful with warnings:
 Warning (3805): This is a pre-release compiler version, please do not use it in production.
 
-
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
 [PASS] test_Increment() ([GAS])

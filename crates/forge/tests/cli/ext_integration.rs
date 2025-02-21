@@ -1,50 +1,44 @@
 use foundry_test_utils::util::ExtTester;
 
+// Actively maintained tests
+
+// <https://github.com/foundry-rs/forge-std>
 #[test]
 fn forge_std() {
-    ExtTester::new("foundry-rs", "forge-std", "2b59872eee0b8088ddcade39fe8c041e17bb79c0")
+    ExtTester::new("foundry-rs", "forge-std", "464587138602dd194ed0eb5aab15b4721859d422")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
         .run();
 }
 
-#[test]
-fn solmate() {
-    let mut tester =
-        ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925");
-
-    if cfg!(feature = "isolate-by-default") {
-        tester = tester.args(["--nmc", "ReentrancyGuardTest"]);
-    }
-
-    tester.run();
-}
-
+// <https://github.com/PaulRBerg/prb-math>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
-    ExtTester::new("PaulRBerg", "prb-math", "5b6279a0cf7c1b1b6a5cc96082811f7ef620cf60")
+    ExtTester::new("PaulRBerg", "prb-math", "b03f814a03558ed5b62f89a57bcc8d720a393f67")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
+// <https://github.com/PaulRBerg/prb-proxy>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_proxy() {
-    ExtTester::new("PaulRBerg", "prb-proxy", "fa13cf09fbf544a2d575b45884b8e94a79a02c06")
+    ExtTester::new("PaulRBerg", "prb-proxy", "e45f5325d4b6003227a6c4bdaefac9453f89de2e")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
+// <https://github.com/sablier-labs/v2-core>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
-fn sablier_v2() {
+fn sablier_v2_core() {
     let mut tester =
-        ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
+        ExtTester::new("sablier-labs", "v2-core", "43cf7c9d968e61a5a03e9237a71a27165b125414")
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
@@ -64,72 +58,55 @@ fn sablier_v2() {
     tester.run();
 }
 
+// <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "54ea1543a229b88b44ccb6ec5ea570135811a7d9").run();
+    ExtTester::new("Vectorized", "solady", "66162801e022c268a2a0f621ac5eb0df4986f6eb").run();
 }
 
-#[test]
-#[cfg_attr(windows, ignore = "weird git fail")]
-#[cfg(not(feature = "isolate-by-default"))]
-fn geb() {
-    ExtTester::new("reflexer-labs", "geb", "1a59f16a377386c49f520006ed0f7fd9d128cb09")
-        .env("FOUNDRY_LEGACY_ASSERTIONS", "true")
-        .args(["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"])
-        .run();
-}
-
-#[test]
-fn stringutils() {
-    ExtTester::new("Arachnid", "solidity-stringutils", "4b2fcc43fa0426e19ce88b1f1ec16f5903a2e461")
-        .run();
-}
-
-#[test]
-fn lootloose() {
-    ExtTester::new("gakonst", "lootloose", "7b639efe97836155a6a6fc626bf1018d4f8b2495")
-        .install_command(&["make", "install"])
-        .args(["--evm-version", "paris"])
-        .run();
-}
-
-#[test]
-fn lil_web3() {
-    ExtTester::new("m1guelpf", "lil-web3", "7346bd28c2586da3b07102d5290175a276949b15").run();
-}
-
+// <https://github.com/pcaversaccio/snekmate>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 #[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
     ExtTester::new("pcaversaccio", "snekmate", "df226f4a45e86c8f8c3ff1f9fa3443d260002050")
+        .args(["--nmc", "ERC4626VaultTest"])
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
         .run();
 }
 
+// <https://github.com/mds1/multicall>
+#[test]
+fn mds1_multicall3() {
+    ExtTester::new("mds1", "multicall", "f534fbc9f98386a217eaaf9b29d3d4f6f920d5ec").run();
+}
+
+// Legacy tests
+
+// <https://github.com/Arachnid/solidity-stringutils>
+#[test]
+fn solidity_stringutils() {
+    ExtTester::new("Arachnid", "solidity-stringutils", "4b2fcc43fa0426e19ce88b1f1ec16f5903a2e461")
+        .run();
+}
+
+// <https://github.com/m1guelpf/lil-web3>
+#[test]
+fn lil_web3() {
+    ExtTester::new("m1guelpf", "lil-web3", "7346bd28c2586da3b07102d5290175a276949b15").run();
+}
+
+// <https://github.com/makerdao/multicall>
 #[test]
 fn makerdao_multicall() {
     ExtTester::new("makerdao", "multicall", "103a8a28e4e372d582d6539b30031bda4cd48e21").run();
 }
 
-#[test]
-fn mds1_multicall() {
-    ExtTester::new("mds1", "multicall", "263ef67f29ab9e450142b42dde617ad69adbf211").run();
-}
+// Legacy forking tests
 
-// Forking tests
-
-#[test]
-fn drai() {
-    ExtTester::new("mds1", "drai", "f31ce4fb15bbb06c94eefea2a3a43384c75b95cf")
-        .args(["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"])
-        .env("FOUNDRY_LEGACY_ASSERTIONS", "true")
-        .fork_block(13633752)
-        .run();
-}
-
+// <https://github.com/hexonaut/guni-lev>
 #[test]
 fn gunilev() {
     ExtTester::new("hexonaut", "guni-lev", "15ee8b4c2d28e553c5cd5ba9a2a274af97563bc4")
@@ -137,6 +114,7 @@ fn gunilev() {
         .run();
 }
 
+// <https://github.com/mds1/convex-shutdown-simulation>
 #[test]
 fn convex_shutdown_simulation() {
     ExtTester::new(

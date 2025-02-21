@@ -593,7 +593,6 @@ pub struct MinedTransactionReceipt {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
@@ -652,7 +651,7 @@ mod tests {
         storage.insert(two, StateDb::new(MemDb::default()));
 
         // wait for files to be flushed
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         assert_eq!(storage.on_disk_states.len(), 1);
         assert!(storage.on_disk_states.contains_key(&one));
@@ -680,7 +679,7 @@ mod tests {
         }
 
         // wait for files to be flushed
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         assert_eq!(storage.on_disk_states.len(), num_states - storage.min_in_memory_limit);
         assert_eq!(storage.present.len(), storage.min_in_memory_limit);

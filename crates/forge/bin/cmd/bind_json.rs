@@ -66,7 +66,7 @@ impl BindJsonArgs {
     /// in most of the cases.
     fn preprocess(self) -> Result<PreprocessedState> {
         let config = self.load_config()?;
-        let project = config.create_project(false, true)?;
+        let project = config.ephemeral_project()?;
 
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
