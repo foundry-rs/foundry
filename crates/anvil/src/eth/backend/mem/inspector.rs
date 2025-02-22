@@ -13,7 +13,9 @@ use foundry_evm::{
         primitives::U256,
         EvmContext,
     },
-    traces::{render_trace_arena_inner, SparsedTraceArena, TracingInspectorConfig},
+    traces::{
+        render_trace_arena_inner, CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig,
+    },
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -81,8 +83,23 @@ impl Inspector {
 }
 
 /// Prints the traces for the inspector
+///
+/// Caution: This blocks on call trace decoding
+///
+/// # Panics
+///
+/// If called outside tokio runtime
 fn print_traces(tracer: TracingInspector) {
-    let traces = SparsedTraceArena { arena: tracer.into_traces(), ignored: Default::default() };
+    let arena = tokio::task::block_in_place(move || {
+        tokio::runtime::Handle::current().block_on(async move {
+            let mut arena = tracer.into_traces();
+            let decoder = CallTraceDecoder::new();
+            decoder.populate_traces(arena.nodes_mut()).await;
+            arena
+        })
+    });
+
+    let traces = SparsedTraceArena { arena, ignored: Default::default() };
     node_info!("Traces:");
     node_info!("{}", render_trace_arena_inner(&traces, false, true));
 }
