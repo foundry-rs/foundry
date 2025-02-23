@@ -698,7 +698,10 @@ impl InspectorStackRefMut<'_> {
     /// it.
     fn with_stack<O>(&mut self, f: impl FnOnce(&mut InspectorStack) -> O) -> O {
         let mut stack = InspectorStack {
-            cheatcodes: self.cheatcodes.as_deref_mut().map(std::mem::take),
+            cheatcodes: self
+                .cheatcodes
+                .as_deref_mut()
+                .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone()))),
             inner: std::mem::take(self.inner),
         };
 
