@@ -205,6 +205,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]]);
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(config_inline_isolate, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
