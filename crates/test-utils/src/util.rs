@@ -197,7 +197,7 @@ impl ExtTester {
     pub fn run(&self) {
         // Skip fork tests if the RPC url is not set.
         if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            let _ = eprintln!("ETH_RPC_URL is not set; skipping");
+            eprintln!("ETH_RPC_URL is not set; skipping");
             return;
         }
 

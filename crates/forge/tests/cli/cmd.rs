@@ -10,7 +10,9 @@ use foundry_test_utils::{
     rpc::next_mainnet_etherscan_api_key,
     snapbox::IntoData,
     util::{read_string, OutputExt},
+    TestCommand,
 };
+use semver::Version;
 use std::{
     fs,
     path::Path,
