@@ -294,13 +294,13 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
     fs::create_dir_all(&nested).unwrap();
 
     cmd.current_dir(&nested);
-    cmd.arg("init").assert_failure().stderr_eq(str![[r#"
+    cmd.args(["init", "--commit"]).assert_failure().stderr_eq(str![[r#"
 Error: The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
+ignore them in the `.gitignore` file.
 
 "#]]);
 
@@ -583,10 +583,10 @@ Error: git fetch exited with code 128
 "#]]);
 });
 
-// checks that `forge init --template [template] work with --no-commit
+// checks that `forge init --template [template] works by default i.e without committing
 forgetest!(can_init_template_with_no_commit, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "foundry-rs/forge-template", "--no-commit"])
+    cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
@@ -1294,6 +1294,209 @@ Error (2314): Expected ';' but got identifier
     let cache_after = fs::read_to_string(prj.cache()).unwrap();
     assert_eq!(cache, cache_after);
 });
+
+// test to check that install/remove works properly
+forgetest!(can_install_and_remove, |prj, cmd| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
+            str![[r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+
+"#]],
+        );
+
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    let remove = |cmd: &mut TestCommand, target: &str| {
+        // TODO: flaky behavior with URL, sometimes it is None, sometimes it is Some("https://github.com/lib/forge-std")
+        cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
+            r#"
+Removing 'forge-std' in [..], (url: [..], tag: None)
+
+"#
+        ]]);
+
+        assert!(!forge_std.exists());
+        assert!(!forge_std_mod.exists());
+        let submods = read_string(&git_mod_file);
+        assert!(!submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    remove(&mut cmd, "forge-std");
+
+    // install again and remove via relative path
+    install(&mut cmd);
+    remove(&mut cmd, "lib/forge-std");
+});
+
+// test to check we can run `forge install` in an empty dir <https://github.com/foundry-rs/foundry/issues/6519>
+forgetest!(can_install_empty, |prj, cmd| {
+    // create
+    cmd.git_init();
+    cmd.forge_fuse().args(["install"]);
+    cmd.assert_empty_stdout();
+
+    // create initial commit
+    fs::write(prj.root().join("README.md"), "Initial commit").unwrap();
+
+    cmd.git_add();
+    cmd.git_commit("Initial commit");
+
+    cmd.forge_fuse().args(["install"]);
+    cmd.assert_empty_stdout();
+});
+
+// test to check that package can be reinstalled after manually removing the directory
+forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
+            str![[r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+
+"#]],
+        );
+
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
+
+    // install again
+    install(&mut cmd);
+});
+
+// test that we can repeatedly install the same dependency without changes
+forgetest!(can_install_repeatedly, |_prj, cmd| {
+    cmd.git_init();
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]);
+    for _ in 0..3 {
+        cmd.assert_success();
+    }
+});
+
+// test that by default we install the latest semver release tag
+// <https://github.com/openzeppelin/openzeppelin-contracts>
+forgetest!(can_install_latest_release_tag, |prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts"]);
+    cmd.assert_success();
+
+    let dep = prj.paths().libraries[0].join("openzeppelin-contracts");
+    assert!(dep.exists());
+
+    // the latest release at the time this test was written
+    let version: Version = "4.8.0".parse().unwrap();
+    let out = Command::new("git").current_dir(&dep).args(["describe", "--tags"]).output().unwrap();
+    let tag = String::from_utf8_lossy(&out.stdout);
+    let current: Version = tag.as_ref().trim_start_matches('v').trim().parse().unwrap();
+
+    assert!(current >= version);
+});
+
+// Tests that forge update doesn't break a working dependency by recursively updating nested
+// dependencies
+forgetest!(
+    #[cfg_attr(windows, ignore = "weird git fail")]
+    can_update_library_with_outdated_nested_dependency,
+    |prj, cmd| {
+        cmd.git_init();
+
+        let libs = prj.root().join("lib");
+        let git_mod = prj.root().join(".git/modules/lib");
+        let git_mod_file = prj.root().join(".gitmodules");
+
+        // get paths to check inside install fn
+        let package = libs.join("forge-5980-test");
+        let package_mod = git_mod.join("forge-5980-test");
+
+        // install main dependency
+        cmd.forge_fuse()
+            .args(["install", "evalir/forge-5980-test"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
+    Installed forge-5980-test
+
+"#]]);
+
+        // assert paths exist
+        assert!(package.exists());
+        assert!(package_mod.exists());
+
+        let submods = read_string(git_mod_file);
+        assert!(submods.contains("https://github.com/evalir/forge-5980-test"));
+
+        // try to update the top-level dependency; there should be no update for this dependency,
+        // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
+        // update the sub-dependency
+        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
+
+        // add explicit remappings for test file
+        prj.update_config(|config| {
+            config.remappings = vec![
+                Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
+                // explicit remapping for sub-dependendy seems necessary for some reason
+                Remapping::from_str(
+                    "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
+                )
+                .unwrap()
+                .into(),
+            ];
+        });
+
+        // create test file that uses the top-level dependency; if the sub-dependency is updated,
+        // compilation will fail
+        prj.add_source(
+            "CounterCopy",
+            r#"
+import "forge-5980-test/Counter.sol";
+contract CounterCopy is Counter {
+}
+   "#,
+        )
+        .unwrap();
+
+        // build and check output
+        cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+    }
+);
 
 const GAS_REPORT_CONTRACTS: &str = r#"
 //SPDX-license-identifier: MIT
@@ -2519,6 +2722,105 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         );
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9858>
+forgetest_init!(gas_report_fallback_with_calldata, |prj, cmd| {
+    prj.add_test(
+        "FallbackWithCalldataTest.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterWithFallback {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+
+    fallback() external {
+        number++;
+    }
+}
+
+contract CounterWithFallbackTest is Test {
+    CounterWithFallback public counter;
+
+    function setUp() public {
+        counter = new CounterWithFallback();
+    }
+
+    function test_fallback_with_calldata() public {
+        (bool success,) = address(counter).call("hello");
+        require(success);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_fallback_with_calldata", "-vvvv", "--gas-report"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/FallbackWithCalldataTest.sol:CounterWithFallbackTest
+[PASS] test_fallback_with_calldata() ([GAS])
+Traces:
+  [48777] CounterWithFallbackTest::test_fallback_with_calldata()
+    ├─ [43461] CounterWithFallback::fallback(0x68656c6c6f)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+╭----------------------------------------------------------------+-----------------+-------+--------+-------+---------╮
+| test/FallbackWithCalldataTest.sol:CounterWithFallback Contract |                 |       |        |       |         |
++=====================================================================================================================+
+| Deployment Cost                                                | Deployment Size |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| 132471                                                         | 396             |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+|                                                                |                 |       |        |       |         |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| Function Name                                                  | Min             | Avg   | Median | Max   | # Calls |
+|----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
+| fallback                                                       | 43461           | 43461 | 43461  | 43461 | 1       |
+╰----------------------------------------------------------------+-----------------+-------+--------+-------+---------╯
+
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "test_fallback_with_calldata", "--gas-report", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
+    "deployment": {
+      "gas": 132471,
+      "size": 396
+    },
+    "functions": {
+      "fallback()": {
+        "calls": 1,
+        "min": 43461,
+        "mean": 43461,
+        "median": 43461,
+        "max": 43461
+      }
+    }
+  }
+]
+"#]]
+            .is_json(),
+        );
+});
+
 // <https://github.com/foundry-rs/foundry/issues/9300>
 forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
     prj.add_test(
@@ -2571,19 +2873,19 @@ contract NestedDeploy is Test {
 | w                                               | 21185           | 21185 | 21185  | 21185 | 1       |
 ╰-------------------------------------------------+-----------------+-------+--------+-------+---------╯
 
-╭------------------------------------------+-----------------+-----+--------+-----+---------╮
-| test/NestedDeployTest.sol:Child Contract |                 |     |        |     |         |
-+===========================================================================================+
-| Deployment Cost                          | Deployment Size |     |        |     |         |
-|------------------------------------------+-----------------+-----+--------+-----+---------|
-| 0                                        | 731             |     |        |     |         |
-|------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                          |                 |     |        |     |         |
-|------------------------------------------+-----------------+-----+--------+-----+---------|
-| Function Name                            | Min             | Avg | Median | Max | # Calls |
-|------------------------------------------+-----------------+-----+--------+-----+---------|
-| child                                    | 681             | 681 | 681    | 681 | 1       |
-╰------------------------------------------+-----------------+-----+--------+-----+---------╯
+╭------------------------------------------+-----------------+------+--------+------+---------╮
+| test/NestedDeployTest.sol:Child Contract |                 |      |        |      |         |
++=============================================================================================+
+| Deployment Cost                          | Deployment Size |      |        |      |         |
+|------------------------------------------+-----------------+------+--------+------+---------|
+| 0                                        | 731             |      |        |      |         |
+|------------------------------------------+-----------------+------+--------+------+---------|
+|                                          |                 |      |        |      |         |
+|------------------------------------------+-----------------+------+--------+------+---------|
+| Function Name                            | Min             | Avg  | Median | Max  | # Calls |
+|------------------------------------------+-----------------+------+--------+------+---------|
+| child                                    | 2681            | 2681 | 2681   | 2681 | 1       |
+╰------------------------------------------+-----------------+------+--------+------+---------╯
 
 ╭-------------------------------------------+-----------------+-----+--------+-----+---------╮
 | test/NestedDeployTest.sol:Parent Contract |                 |     |        |     |         |
@@ -2635,10 +2937,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     "functions": {
       "child()": {
         "calls": 1,
-        "min": 681,
-        "mean": 681,
-        "median": 681,
-        "max": 681
+        "min": 2681,
+        "mean": 2681,
+        "median": 2681,
+        "max": 2681
       }
     }
   },
@@ -2759,7 +3061,51 @@ Compiler run successful!
 // checks `forge inspect <contract> irOptimized works
 forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
     cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        {
+            /// @src 0:65:257  "contract Counter {..."
+            mstore(64, memoryguard(0x80))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "irOptimized", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+object "Counter_21" {
+    code {
+        {
+            mstore(64, memoryguard(0x80))
+            if callvalue()
+...
+"#]]);
+});
+
+// checks `forge inspect <contract> irOptimized works
+forgetest_init!(can_inspect_ir, |_prj, cmd| {
+    cmd.args(["inspect", TEMPLATE_CONTRACT, "ir"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+/// @use-src 0:"src/Counter.sol"
+object "Counter_21" {
+    code {
+        /// @src 0:65:257  "contract Counter {..."
+        mstore(64, memoryguard(128))
+...
+"#]]);
+
+    // check inspect with strip comments
+    cmd.forge_fuse().args(["inspect", TEMPLATE_CONTRACT, "ir", "-s"]);
+    cmd.assert_success().stdout_eq(str![[r#"
+
+object "Counter_21" {
+    code {
+        mstore(64, memoryguard(128))
+        if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
+...
+"#]]);
 });
 
 // checks forge bind works correctly on the default project
@@ -3025,6 +3371,12 @@ const CUSTOM_COUNTER: &str = r#"
     }
 }
     "#;
+
+const ANOTHER_COUNTER: &str = r#"
+    contract AnotherCounter is Counter {
+        constructor(uint256 _number) Counter(_number) {}
+    }
+"#;
 forgetest!(inspect_custom_counter_abi, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
@@ -3100,6 +3452,43 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_path_only_identifier, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
+forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
+    let source = format!("{CUSTOM_COUNTER}\n{ANOTHER_COUNTER}");
+    prj.add_source("Counter.sol", &source).unwrap();
+
+    cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_failure().stderr_eq(str![[r#"Error: Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>[..]"#]]);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
+
+╭-------------------------------+----------╮
+| Error                         | Selector |
++==========================================+
+| CustomErr(Counter.ErrWithMsg) | 0625625a |
+|-------------------------------+----------|
+| NumberIsZero()                | de5d32ac |
+╰-------------------------------+----------╯
+
+
+"#]]);
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
@@ -3151,7 +3540,7 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 |----------------------------------+-----------------+-------+--------+-------+---------|
 | increment                        | 43482           | 43482 | 43482  | 43482 | 1       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-| number                           | 424             | 424   | 424    | 424   | 1       |
+| number                           | 2424            | 2424  | 2424   | 2424  | 1       |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 | setNumber                        | 23784           | 23784 | 23784  | 23784 | 1       |
 ╰----------------------------------+-----------------+-------+--------+-------+---------╯
@@ -3169,7 +3558,7 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | setUp                                   | 218902          | 218902 | 218902 | 218902 | 1       |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| test_Increment                          | 52915           | 52915  | 52915  | 52915  | 1       |
+| test_Increment                          | 54915           | 54915  | 54915  | 54915  | 1       |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
 
 
@@ -3199,10 +3588,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
       },
       "number()": {
         "calls": 1,
-        "min": 424,
-        "mean": 424,
-        "median": 424,
-        "max": 424
+        "min": 2424,
+        "mean": 2424,
+        "median": 2424,
+        "max": 2424
       },
       "setNumber(uint256)": {
         "calls": 1,
@@ -3229,10 +3618,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
       },
       "test_Increment()": {
         "calls": 1,
-        "min": 52915,
-        "mean": 52915,
-        "median": 52915,
-        "max": 52915
+        "min": 54915,
+        "mean": 54915,
+        "median": 54915,
+        "max": 54915
       }
     }
   }

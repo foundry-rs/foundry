@@ -1,6 +1,5 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
-use foundry_common::sh_eprintln;
 use foundry_compilers::{
     artifacts::Contract,
     cache::CompilerCache,
@@ -198,7 +197,7 @@ impl ExtTester {
     pub fn run(&self) {
         // Skip fork tests if the RPC url is not set.
         if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            let _ = sh_eprintln!("ETH_RPC_URL is not set; skipping");
+            let _ = eprintln!("ETH_RPC_URL is not set; skipping");
             return;
         }
 

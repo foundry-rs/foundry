@@ -122,7 +122,7 @@ mod bind_json;
 use bind_json::BindJsonConfig;
 
 mod compilation;
-use compilation::{CompilationRestrictions, SettingsOverrides};
+pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 /// Foundry configuration
 ///
@@ -202,6 +202,8 @@ pub struct Config {
     pub snapshots: PathBuf,
     /// whether to check for differences against previously stored gas snapshots
     pub gas_snapshot_check: bool,
+    /// whether to emit gas snapshots to disk
+    pub gas_snapshot_emit: bool,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -2321,6 +2323,7 @@ impl Default for Config {
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
             gas_snapshot_check: false,
+            gas_snapshot_emit: true,
             allow_paths: vec![],
             include_paths: vec![],
             force: false,

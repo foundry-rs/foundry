@@ -77,9 +77,9 @@ pub struct DependencyInstallOpts {
     #[arg(long)]
     pub no_git: bool,
 
-    /// Do not create a commit.
+    /// Create a commit after installing the dependencies.
     #[arg(long)]
-    pub no_commit: bool,
+    pub commit: bool,
 }
 
 impl DependencyInstallOpts {
@@ -92,12 +92,11 @@ impl DependencyInstallOpts {
     /// See also [`Self::install`].
     ///
     /// Returns true if any dependency was installed.
-    pub fn install_missing_dependencies(mut self, config: &mut Config) -> bool {
+    pub fn install_missing_dependencies(self, config: &mut Config) -> bool {
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             // The extra newline is needed, otherwise the compiler output will overwrite the message
             let _ = sh_println!("Missing dependencies found. Installing now...\n");
-            self.no_commit = true;
             if self.install(config, Vec::new()).is_err() {
                 let _ =
                     sh_warn!("Your project has missing dependencies that could not be installed.");
@@ -110,7 +109,7 @@ impl DependencyInstallOpts {
 
     /// Installs all dependencies
     pub fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
-        let Self { no_git, no_commit, .. } = self;
+        let Self { no_git, commit, .. } = self;
 
         let git = self.git(config);
 
@@ -155,7 +154,7 @@ impl DependencyInstallOpts {
 
         fs::create_dir_all(&libs)?;
 
-        let installer = Installer { git, no_commit };
+        let installer = Installer { git, commit };
         for dep in dependencies {
             let path = libs.join(dep.name());
             let rel_path = path
@@ -175,7 +174,7 @@ impl DependencyInstallOpts {
             if no_git {
                 installed_tag = installer.install_as_folder(&dep, &path)?;
             } else {
-                if !no_commit {
+                if commit {
                     git.ensure_clean()?;
                 }
                 installed_tag = installer.install_as_submodule(&dep, &path)?;
@@ -208,10 +207,13 @@ impl DependencyInstallOpts {
                         new_insertion = true;
                         lockfile.insert(rel_path.to_path_buf(), dep_id.clone());
                     }
-                    // update .gitmodules which is at the root of the repo,
-                    // not necessarily at the root of the current Foundry project
-                    let root = Git::root_of(git.root)?;
-                    git.root(&root).add(Some(".gitmodules"))?;
+
+                    if commit {
+                        // update .gitmodules which is at the root of the repo,
+                        // not necessarily at the root of the current Foundry project
+                        let root = Git::root_of(git.root)?;
+                        git.root(&root).add(Some(".gitmodules"))?;
+                    }
                 }
 
                 if new_insertion ||
@@ -222,7 +224,7 @@ impl DependencyInstallOpts {
                 }
 
                 // commit the installation
-                if !no_commit {
+                if commit {
                     let mut msg = String::with_capacity(128);
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
@@ -273,7 +275,7 @@ pub fn install_missing_dependencies(config: &mut Config) -> bool {
 #[derive(Clone, Copy, Debug)]
 struct Installer<'a> {
     git: Git<'a>,
-    no_commit: bool,
+    commit: bool,
 }
 
 impl Installer<'_> {
@@ -332,7 +334,7 @@ impl Installer<'_> {
             std::iter::empty::<PathBuf>(),
         )?;
 
-        if !self.no_commit {
+        if self.commit {
             self.git.add(Some(path))?;
         }
 
@@ -579,7 +581,7 @@ mod tests {
     fn get_oz_tags() {
         let tmp = tempdir().unwrap();
         let git = Git::new(tmp.path());
-        let installer = Installer { git, no_commit: true };
+        let installer = Installer { git, commit: false };
 
         git.init().unwrap();
 
