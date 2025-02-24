@@ -334,7 +334,7 @@ forgetest!(can_remove_dep_from_foundry_lock, |prj, cmd| {
         .assert_success();
 
     cmd.forge_fuse().args(["install", "vectorized/solady@513f581"]).assert_success();
-    cmd.forge_fuse().args(["remove", "openzeppelin-contracts"]).assert_success();
+    cmd.forge_fuse().args(["remove", "openzeppelin-contracts", "--force"]).assert_success();
 
     let mut lock = Lockfile::new(prj.root());
 
