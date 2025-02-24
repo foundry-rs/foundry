@@ -158,7 +158,7 @@ casttest!(finds_block, |_prj, cmd| {
 
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
-    cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]).assert_success().stdout_eq(str![
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success().stdout_eq(str![
         [r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
