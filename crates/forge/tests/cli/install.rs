@@ -92,14 +92,13 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse()
-            .args(["install", "foundry-rs/forge-std", "--no-commit"])
-            .assert_success()
-            .stdout_eq(str![[r#"
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
+            str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]]);
+"#]],
+        );
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -164,12 +163,11 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse()
-            .args(["install", "foundry-rs/forge-std", "--no-commit"])
-            .assert_success()
-            .stdout_eq(str![[r#"
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
+            str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std tag=[..]"#]]);
+    Installed forge-std tag=[..]"#]],
+        );
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -392,7 +390,7 @@ forgetest!(
 
         // install main dependency
         cmd.forge_fuse()
-            .args(["install", "evalir/forge-5980-test", "--no-commit"])
+            .args(["install", "evalir/forge-5980-test"])
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
