@@ -868,6 +868,13 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
                     let JournaledState { state, warm_preloaded_addresses, .. } =
                         &mut ecx.journaled_state;
                     for (addr, acc_mut) in state {
+                        // Do not mark accounts and storage cold accounts with arbitrary storage.
+                        if let Some(cheatcodes) = &self.cheatcodes {
+                            if cheatcodes.has_arbitrary_storage(addr) {
+                                continue;
+                            }
+                        }
+
                         if !warm_preloaded_addresses.contains(addr) {
                             acc_mut.mark_cold();
                         }
