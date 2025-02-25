@@ -525,7 +525,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             if calldata.len() == 10 {
                 let sigs = decode_function_selector(&calldata).await?;
                 if sigs.is_empty() {
-                    eyre::bail!("No matching function signatures found for selector `{calldata}`");
+                    eyre::bail!("No matching function signatures found for calldata `{calldata}`");
                 }
                 for sig in sigs {
                     sh_println!("{sig}")?
