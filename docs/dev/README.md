@@ -5,7 +5,7 @@ The Foundry project is organized as a regular [Cargo workspace][cargo-workspace]
 ## Installation requirements
 
 - [Rust](https://rustup.rs/)
-- Make
+- [Make](https://www.gnu.org/software/make/)
 
 We use `cargo-nextest` as test runner (both locally and in the [CI](#ci)):
 
