@@ -1456,7 +1456,13 @@ impl Config {
         self.get_etherscan_config_with_chain(chain)
             .map_err(|e| {
                 // `sh_warn!` is a circular dependency, preventing us from using it here.
-                eprintln!("Error getting etherscan config: {}", e);
+                eprintln!(
+                        "{}",
+                        yansi::Paint::yellow(&format!(
+                            "Error getting etherscan config: {}",
+                            e
+                        ))
+                    );
             })
             .ok()
             .flatten()
