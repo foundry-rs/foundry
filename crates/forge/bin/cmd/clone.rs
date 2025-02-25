@@ -523,7 +523,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     // remove the temporary directory
     std::fs::remove_dir_all(tmp_dump_dir)?;
 
-    // add remappings in the metedata
+    // add remappings in the metadata
     for mut r in meta.settings()?.remappings {
         if to_reorg {
             // we should update its remapped path in the same way as we dump sources
