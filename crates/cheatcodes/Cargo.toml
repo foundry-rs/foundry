@@ -39,7 +39,6 @@ alloy-signer-local = { workspace = true, features = [
 parking_lot.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
-alloy-rlp.workspace = true
 
 base64.workspace = true
 dialoguer = "0.11"
