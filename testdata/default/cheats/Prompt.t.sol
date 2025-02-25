@@ -9,7 +9,7 @@ contract PromptTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testPrompt_revertNotATerminal() public {
-        // should revert in CI and testing environments either with timout or because no terminal is available
+        // should revert in CI and testing environments either with timeout or because no terminal is available
         vm._expectCheatcodeRevert();
         vm.prompt("test");
 
