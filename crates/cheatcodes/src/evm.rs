@@ -7,8 +7,8 @@ use crate::{
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
-use alloy_rlp::Decodable;
+use alloy_network::eip2718::Decodable2718;
+use alloy_primitives::{hex, map::HashMap, Address, Bytes, B256, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
@@ -776,7 +776,9 @@ impl Cheatcode for getStateDiffJsonCall {
 
 impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let tx = TxEnvelope::decode(&mut self.data.as_ref())
+        let data = self.data.as_ref();
+        let tx_hex = hex::decode(data)?;
+        let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         ccx.ecx.db.transact_from_tx(
