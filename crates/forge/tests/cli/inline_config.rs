@@ -1,7 +1,3 @@
-use std::{fs, path::Path};
-
-use serde::{Deserialize, Deserializer};
-
 forgetest!(runs, |prj, cmd| {
     prj.add_test(
         "inline.sol",
@@ -205,7 +201,11 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]]);
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(config_inline_isolate, |prj, cmd| {
+    use serde::{Deserialize, Deserializer};
+    use std::{fs, path::Path};
+
     prj.wipe_contracts();
     prj.add_test(
         "inline.sol",
