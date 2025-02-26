@@ -1452,17 +1452,15 @@ impl Config {
     /// Optionally updates the config with the given `chain`.
     ///
     /// See also [Self::get_etherscan_config_with_chain]
+    #[expect(clippy::disallowed_macros)]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain)
             .map_err(|e| {
                 // `sh_warn!` is a circular dependency, preventing us from using it here.
                 eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(&format!(
-                            "Error getting etherscan config: {}",
-                            e
-                        ))
-                    );
+                    "{}",
+                    yansi::Paint::yellow(&format!("Error getting etherscan config: {}", e))
+                );
             })
             .ok()
             .flatten()
