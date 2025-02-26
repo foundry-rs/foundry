@@ -162,7 +162,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, &block);
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, block);
         }
 
         let trace_mode = TraceMode::Call
