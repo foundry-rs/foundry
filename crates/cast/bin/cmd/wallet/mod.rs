@@ -259,9 +259,9 @@ impl WalletSubcommands {
                     for i in 0..number {
                         let account_name_ref = account_name.as_deref().map(|name| match number {
                             1 => name.to_string(),
-                            _ => format!("{}_{}", name, i + 1)
+                            _ => format!("{}_{}", name, i + 1),
                         });
-                        
+
                         let (wallet, uuid) = PrivateKeySigner::new_keystore(
                             &path,
                             &mut rng,
