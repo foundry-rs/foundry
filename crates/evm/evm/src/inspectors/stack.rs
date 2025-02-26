@@ -17,7 +17,7 @@ use revm::{
         Account, AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult,
         HashMap, Output, TransactTo,
     },
-    EvmContext, Inspector,
+    EvmContext, Inspector, JournaledState,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -698,7 +698,10 @@ impl InspectorStackRefMut<'_> {
     /// it.
     fn with_stack<O>(&mut self, f: impl FnOnce(&mut InspectorStack) -> O) -> O {
         let mut stack = InspectorStack {
-            cheatcodes: self.cheatcodes.as_deref_mut().map(std::mem::take),
+            cheatcodes: self
+                .cheatcodes
+                .as_deref_mut()
+                .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone()))),
             inner: std::mem::take(self.inner),
         };
 
@@ -843,20 +846,47 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
             }
         }
 
-        if self.enable_isolation &&
-            call.scheme == CallScheme::Call &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
-        {
-            let (result, _) = self.transact_inner(
-                ecx,
-                TxKind::Call(call.target_address),
-                call.caller,
-                call.input.clone(),
-                call.gas_limit,
-                call.value.get(),
-            );
-            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() });
+        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+            match call.scheme {
+                // Isolate CALLs
+                CallScheme::Call | CallScheme::ExtCall => {
+                    let (result, _) = self.transact_inner(
+                        ecx,
+                        TxKind::Call(call.target_address),
+                        call.caller,
+                        call.input.clone(),
+                        call.gas_limit,
+                        call.value.get(),
+                    );
+                    return Some(CallOutcome {
+                        result,
+                        memory_offset: call.return_memory_offset.clone(),
+                    });
+                }
+                // Mark accounts and storage cold before STATICCALLs
+                CallScheme::StaticCall | CallScheme::ExtStaticCall => {
+                    let JournaledState { state, warm_preloaded_addresses, .. } =
+                        &mut ecx.journaled_state;
+                    for (addr, acc_mut) in state {
+                        // Do not mark accounts and storage cold accounts with arbitrary storage.
+                        if let Some(cheatcodes) = &self.cheatcodes {
+                            if cheatcodes.has_arbitrary_storage(addr) {
+                                continue;
+                            }
+                        }
+
+                        if !warm_preloaded_addresses.contains(addr) {
+                            acc_mut.mark_cold();
+                        }
+
+                        for slot_mut in acc_mut.storage.values_mut() {
+                            slot_mut.is_cold = true;
+                        }
+                    }
+                }
+                // Process other variants as usual
+                CallScheme::CallCode | CallScheme::DelegateCall | CallScheme::ExtDelegateCall => {}
+            }
         }
 
         None

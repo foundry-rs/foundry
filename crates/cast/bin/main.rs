@@ -520,8 +520,21 @@ async fn main_args(args: CastArgs) -> Result<()> {
                 sh_println!("{sig}")?
             }
         }
+
         CastSubcommand::FourByteCalldata { calldata } => {
             let calldata = stdin::unwrap_line(calldata)?;
+
+            if calldata.len() == 10 {
+                let sigs = decode_function_selector(&calldata).await?;
+                if sigs.is_empty() {
+                    eyre::bail!("No matching function signatures found for calldata `{calldata}`");
+                }
+                for sig in sigs {
+                    sh_println!("{sig}")?
+                }
+                return Ok(());
+            }
+
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| {
                 let _ = sh_println!("{}) \"{sig}\"", i + 1);
@@ -539,6 +552,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
             print_tokens(&tokens);
         }
+
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;
             let sigs = decode_event_topic(&topic).await?;
