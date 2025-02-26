@@ -270,7 +270,8 @@ contract Counter {
     )
     .unwrap();
 
-    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
 {
    "Counter (src/Counter.sol)":{
       "runtime_size":481,
@@ -297,7 +298,9 @@ contract Counter {
       "init_margin":49064
    }
 }
-"#]].is_json());
+"#]]
+        .is_json(),
+    );
 });
 
 // tests that skip key in config can be used to skip non-compilable contract
