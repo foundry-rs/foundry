@@ -233,6 +233,73 @@ contract Counter {
 "#]]);
 });
 
+// tests build output --sizes --json handles multiple contracts with the same name
+forgetest_init!(build_sizes_multiple_contracts_json, |prj, cmd| {
+    prj.add_source(
+        "Foo",
+        r"
+contract Foo {
+}
+",
+    )
+    .unwrap();
+
+    prj.add_source(
+        "a/Counter",
+        r"
+contract Counter {
+    uint256 public count;
+    function increment() public {
+        count++;
+    }
+}
+",
+    )
+    .unwrap();
+
+    prj.add_source(
+        "b/Counter",
+        r"
+contract Counter {
+    uint256 public count;
+    function decrement() public {
+        count--;
+    }
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(str![[r#"
+{
+   "Counter (src/Counter.sol)":{
+      "runtime_size":481,
+      "init_size":509,
+      "runtime_margin":24095,
+      "init_margin":48643
+   },
+   "Counter (src/a/Counter.sol)":{
+      "runtime_size":344,
+      "init_size":372,
+      "runtime_margin":24232,
+      "init_margin":48780
+   },
+   "Counter (src/b/Counter.sol)":{
+      "runtime_size":291,
+      "init_size":319,
+      "runtime_margin":24285,
+      "init_margin":48833
+   },
+   "Foo":{
+      "runtime_size":62,
+      "init_size":88,
+      "runtime_margin":24514,
+      "init_margin":49064
+   }
+}
+"#]].is_json());
+});
+
 // tests that skip key in config can be used to skip non-compilable contract
 forgetest_init!(test_can_skip_contract, |prj, cmd| {
     prj.add_source(
