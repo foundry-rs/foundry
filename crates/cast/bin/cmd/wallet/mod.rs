@@ -34,6 +34,11 @@ pub enum WalletSubcommands {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
         path: Option<String>,
 
+        /// Account name for the keystore file. If provided, the keystore file
+        /// will be named using this account name.
+        #[arg(value_name = "ACCOUNT_NAME")]
+        account_name: Option<String>,
+
         /// Triggers a hidden password prompt for the JSON keystore.
         ///
         /// Deprecated: prompting for a hidden password is now the default.
@@ -226,7 +231,7 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, unsafe_password, number, .. } => {
+            Self::New { path, account_name, unsafe_password, number, .. } => {
                 let mut rng = thread_rng();
 
                 let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
@@ -251,24 +256,29 @@ impl WalletSubcommands {
                         rpassword::prompt_password("Enter secret: ")?
                     };
 
-                    for _ in 0..number {
+                    for i in 0..number {
+                        let account_name_ref = account_name.as_deref().map(|name| match number {
+                            1 => name.to_string(),
+                            _ => format!("{}_{}", name, i + 1),
+                        });
+
                         let (wallet, uuid) = PrivateKeySigner::new_keystore(
                             &path,
                             &mut rng,
                             password.clone(),
-                            None,
+                            account_name_ref.as_deref(),
                         )?;
+                        let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
 
                         if let Some(json) = json_values.as_mut() {
                             json.push(json!({
                                 "address": wallet.address().to_checksum(None),
-                                "path": format!("{}", path.join(uuid).display()),
-                            }
-                            ));
+                                "path": format!("{}", path.join(identifier).display()),
+                            }));
                         } else {
                             sh_println!(
                                 "Created new encrypted keystore file: {}",
-                                path.join(uuid).display()
+                                path.join(identifier).display()
                             )?;
                             sh_println!("Address: {}", wallet.address().to_checksum(None))?;
                         }
