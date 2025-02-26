@@ -1,9 +1,9 @@
 use alloy_consensus::Transaction;
-use alloy_network::TransactionResponse;
+use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::revm::primitives::EnvWithHandlerCfg;
+use cast::{revm::primitives::EnvWithHandlerCfg, utils::apply_chain_and_block_specific_env_changes};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -140,7 +140,6 @@ impl RunArgs {
         let create2_deployer = evm_opts.create2_deployer;
         let (mut env, fork, chain, odyssey) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
-
         let mut evm_version = self.evm_version;
 
         env.block.number = U256::from(tx_block_number);
@@ -152,7 +151,7 @@ impl RunArgs {
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
             env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
             env.block.gas_limit = U256::from(block.header.gas_limit);
-
+            
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
             if evm_version.is_none() {
@@ -161,6 +160,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, &block);
         }
 
         let trace_mode = TraceMode::Call
