@@ -180,6 +180,15 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 // tests build output --sizes handles multiple contracts with the same name
 forgetest_init!(build_sizes_multiple_contracts, |prj, cmd| {
     prj.add_source(
+        "Foo",
+        r"
+contract Foo {
+}
+",
+    )
+    .unwrap();
+
+    prj.add_source(
         "a/Counter",
         r"
 contract Counter {
@@ -216,6 +225,8 @@ contract Counter {
 | Counter (out/a/Counter.sol/Counter.json) | 344              | 372               | 24,232             | 48,780              |
 |------------------------------------------+------------------+-------------------+--------------------+---------------------|
 | Counter (out/b/Counter.sol/Counter.json) | 291              | 319               | 24,285             | 48,833              |
+|------------------------------------------+------------------+-------------------+--------------------+---------------------|
+| Foo                                      | 62               | 88                | 24,514             | 49,064              |
 ╰------------------------------------------+------------------+-------------------+--------------------+---------------------╯
 
 
