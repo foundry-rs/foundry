@@ -177,6 +177,51 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     );
 });
 
+// tests build output --sizes handles multiple contracts with the same name
+forgetest_init!(build_sizes_multiple_contracts, |prj, cmd| {
+    prj.add_source(
+        "a/Counter",
+        r"
+contract Counter {
+    uint256 public count;
+    function increment() public {
+        count++;
+    }
+}
+",
+    )
+    .unwrap();
+
+    prj.add_source(
+        "b/Counter",
+        r"
+contract Counter {
+    uint256 public count;
+    function decrement() public {
+        count--;
+    }
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+...
+
+╭------------------------------------------+------------------+-------------------+--------------------+---------------------╮
+| Contract                                 | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++============================================================================================================================+
+| Counter (out/Counter.sol/Counter.json)   | 481              | 509               | 24,095             | 48,643              |
+|------------------------------------------+------------------+-------------------+--------------------+---------------------|
+| Counter (out/a/Counter.sol/Counter.json) | 344              | 372               | 24,232             | 48,780              |
+|------------------------------------------+------------------+-------------------+--------------------+---------------------|
+| Counter (out/b/Counter.sol/Counter.json) | 291              | 319               | 24,285             | 48,833              |
+╰------------------------------------------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+});
+
 // tests that skip key in config can be used to skip non-compilable contract
 forgetest_init!(test_can_skip_contract, |prj, cmd| {
     prj.add_source(
