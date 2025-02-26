@@ -52,9 +52,10 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
             BinanceSmartChain | BinanceSmartChainTestnet => {
                 // https://github.com/foundry-rs/foundry/issues/9942
                 // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
-                // is still in use and returned by the corresponding opcode but `prevrandao` (`mixHash`)
-                // is always zero, even though bsc adopts the newer EVM specification. This will confuse
-                // revm and causes emulation failure.
+                // is still in use and returned by the corresponding opcode but `prevrandao`
+                // (`mixHash`) is always zero, even though bsc adopts the newer EVM
+                // specification. This will confuse revm and causes emulation
+                // failure.
                 env.block.prevrandao = Some(env.block.difficulty.into());
                 return;
             }
