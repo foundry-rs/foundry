@@ -21,7 +21,7 @@ impl From<DepositTransaction> for TxDeposit {
 }
 
 /// An op-stack deposit transaction.
-/// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
+/// See <https://github.com/ethereum-optimism/optimistic-specs/blob/main/specs/deposits.md#the-deposited-transaction-type>
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
     pub nonce: u64,
