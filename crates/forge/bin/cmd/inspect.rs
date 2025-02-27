@@ -254,7 +254,7 @@ fn get_ty_sig(inputs: &[Param]) -> String {
 }
 
 fn internal_ty(ty: &InternalType) -> String {
-    let contract_ty = |c: Option<&str>, ty: &String| c.map_or(ty.clone(), |c| format!("{c}.{ty}"));
+    let contract_ty = |c: Option<&str>, ty: &String| c.map_or_else(|| ty.clone(), |c| format!("{c}.{ty}"));
     match ty {
         InternalType::AddressPayable(addr) => addr.clone(),
         InternalType::Contract(contract) => contract.clone(),
