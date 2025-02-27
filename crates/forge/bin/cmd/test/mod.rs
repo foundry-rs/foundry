@@ -7,6 +7,7 @@ use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
+    mutation::MutationCampaign,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
@@ -14,11 +15,12 @@ use forge::{
         identifier::SignaturesIdentifier,
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter
 };
+
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, FoundryPathExt},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
@@ -193,6 +195,12 @@ pub struct TestArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    /// Enable mutation testing.
+    /// If passed without arguments, all contracts will be tested.
+    /// If passed with file paths, only those files will be tested.
+    #[arg(long, num_args(0..), value_name = "PATH")]
+    pub mutate: Option<Vec<PathBuf>>,
 }
 
 impl TestArgs {
@@ -315,6 +323,7 @@ impl TestArgs {
 
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
+        let should_mutate = self.mutate.is_some();
 
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;
@@ -421,6 +430,34 @@ impl TestArgs {
             } else {
                 debugger.try_run_tui()?;
             }
+        }
+
+        // All test have been run once before reaching this point
+        if should_mutate {
+            // check outcome here, stop if any test failed
+            // @todo rather set non-allowed failed tests in config and ensure_ok() here
+            // @todo other checks: no fork (or just exclude based on clap arg?)
+            if outcome.failed() > 0 {
+                eyre::bail!("Cannot run mutation testing with failed tests");
+            }
+
+            let mutate_paths =
+                if self.mutate.as_ref().unwrap().is_empty() {
+                    // If --mutate is passed without arguments, list all non-test contracts
+                    source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        .filter(|entry| {
+                            entry.is_sol() && !entry.is_sol_test()
+                        })
+                        .collect()
+                } else {
+                    // If --mutate is passed with arguments, use those paths
+                    self.mutate.unwrap().clone()
+                };
+
+            let campaign = MutationCampaign::new(mutate_paths);
+
+            // Result should then be stored into the outcome (with the src contract name as test name?)
+            outcome = campaign.run();
         }
 
         Ok(outcome)
