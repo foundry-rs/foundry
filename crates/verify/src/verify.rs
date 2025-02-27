@@ -221,6 +221,9 @@ impl VerifyArgs {
 
         let verifier_url = self.verifier.verifier_url.clone();
         sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        if let Some(version) = &self.evm_version {
+            sh_println!("EVM version: {version}")?;
+        }
         if let Some(version) = &self.compiler_version {
             sh_println!("Compiler version: {version}")?;
         }
