@@ -206,7 +206,8 @@ pub struct TestArgs {
 impl TestArgs {
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
-        self.execute_tests().await
+        let outcome = self.execute_tests().await?;
+        Ok(outcome)
     }
 
     /// Returns sources which include any tests to be executed.
@@ -348,7 +349,7 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
-        let config = Arc::new(config);
+        let config = Arc::new(config);        
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -358,10 +359,10 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
             .odyssey(evm_opts.odyssey)
-            .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
+            .build::<MultiCompiler>(project_root, &output, env, evm_opts.clone())?;
 
         let libraries = runner.libraries.clone();
-        let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
+        let mut outcome = self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -435,7 +436,7 @@ impl TestArgs {
         // All test have been run once before reaching this point
         if should_mutate {
             // check outcome here, stop if any test failed
-            // @todo rather set non-allowed failed tests in config and ensure_ok() here
+            // @todo rather set non-allowed failed tests in config and ensure_ok() here?
             // @todo other checks: no fork (or just exclude based on clap arg?)
             if outcome.failed() > 0 {
                 eyre::bail!("Cannot run mutation testing with failed tests");
@@ -454,11 +455,14 @@ impl TestArgs {
                     self.mutate.unwrap().clone()
                 };
 
-            let campaign = MutationCampaign::new(mutate_paths);
+            dbg!(&mutate_paths);
+
+            let campaign = MutationCampaign::new(mutate_paths, config.clone(), &evm_opts);
 
             // Result should then be stored into the outcome (with the src contract name as test name?)
-            outcome = campaign.run();
+            campaign.run();
         }
+
 
         Ok(outcome)
     }
