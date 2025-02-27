@@ -170,7 +170,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
         .iter()
         .map(|p| {
             if let Some(ty) = p.internal_type() {
-                return internal_ty(ty)
+                return internal_ty(ty);
             }
             p.ty.clone()
         })
@@ -180,7 +180,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
 
 fn print_abi(abi: &JsonAbi) -> Result<()> {
     if shell::is_json() {
-        return print_json(abi)
+        return print_json(abi);
     }
 
     let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
@@ -254,14 +254,13 @@ fn get_ty_sig(inputs: &[Param]) -> String {
 }
 
 fn internal_ty(ty: &InternalType) -> String {
-    let contract_ty =
-        |c: &Option<String>, ty: &String| c.clone().map_or(ty.clone(), |c| format!("{c}.{ty}"));
+    let contract_ty = |c: Option<&str>, ty: &String| c.map_or(ty.clone(), |c| format!("{c}.{ty}"));
     match ty {
         InternalType::AddressPayable(addr) => addr.clone(),
         InternalType::Contract(contract) => contract.clone(),
-        InternalType::Enum { contract, ty } => contract_ty(contract, ty),
-        InternalType::Struct { contract, ty } => contract_ty(contract, ty),
-        InternalType::Other { contract, ty } => contract_ty(contract, ty),
+        InternalType::Enum { contract, ty } => contract_ty(contract.as_deref(), ty),
+        InternalType::Struct { contract, ty } => contract_ty(contract.as_deref(), ty),
+        InternalType::Other { contract, ty } => contract_ty(contract.as_deref(), ty),
     }
 }
 
@@ -271,7 +270,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
     };
 
     if shell::is_json() {
-        return print_json(&storage_layout)
+        return print_json(&storage_layout);
     }
 
     let headers = vec![
@@ -304,7 +303,7 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
     };
 
     if shell::is_json() {
-        return print_json(method_identifiers)
+        return print_json(method_identifiers);
     }
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];

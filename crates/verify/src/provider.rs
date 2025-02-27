@@ -169,7 +169,7 @@ pub enum VerificationProviderType {
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
-    pub fn client(&self, key: &Option<String>) -> Result<Box<dyn VerificationProvider>> {
+    pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
         if key.as_ref().is_some_and(|k| !k.is_empty()) && matches!(self, Self::Sourcify) {
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
