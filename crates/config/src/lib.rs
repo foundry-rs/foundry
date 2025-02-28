@@ -27,11 +27,12 @@ use foundry_compilers::{
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
-        multi::{MultiCompiler, MultiCompilerSettings},
+        multi::{MultiCompiler, MultiCompilerSettings, SolidityCompiler},
         solc::{Solc, SolcCompiler},
         vyper::{Vyper, VyperSettings},
         Compiler,
     },
+    resolc::Resolc,
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
@@ -123,6 +124,9 @@ use bind_json::BindJsonConfig;
 
 mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
+
+pub mod revive;
+use revive::ReviveConfig;
 
 /// Foundry configuration
 ///
@@ -534,6 +538,8 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
+    /// Revive Config/Settings
+    pub revive: ReviveConfig,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -1243,9 +1249,20 @@ impl Config {
         Ok(vyper)
     }
 
+    /// Returns the [Revive] compiler.
+    pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
+        Resolc::new(
+            self.revive.revive_path.clone().unwrap_or_default(),
+            self.solc_compiler()?,
+        )
+    }
+
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
-        Ok(MultiCompiler { solc: Some(self.solc_compiler()?), vyper: self.vyper_compiler()? })
+        Ok(MultiCompiler {
+            solidity: if self.revive.revive_compile { SolidityCompiler::Resolc(self.revive_compiler()?) } else { SolidityCompiler::Solc(self.solc_compiler()?) },
+            vyper: self.vyper_compiler()?,
+        })
     }
 
     /// Returns configured [MultiCompilerSettings].
@@ -2428,6 +2445,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             eof: false,
             _non_exhaustive: (),
+            revive: Default::default(),
         }
     }
 }

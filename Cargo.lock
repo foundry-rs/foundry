@@ -3784,8 +3784,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de23802550de5204eec1a6297296d2fef6b86ea61f33b1667eebd886577caa34"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=pkhry%2Fsimplify#33118c0204069f6818ecd458b382ea60e82b15ba"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3798,7 +3797,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "md-5",
  "path-slash",
  "rand",
@@ -3821,18 +3820,38 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27f065a1c785b3ec556a7a49a27016fc723bd9a4d8623f521c326f8396df64a6"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=pkhry%2Fsimplify#33118c0204069f6818ecd458b382ea60e82b15ba"
 dependencies = [
+ "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
 ]
 
 [[package]]
+name = "foundry-compilers-artifacts-resolc"
+version = "0.13.2"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=pkhry%2Fsimplify#33118c0204069f6818ecd458b382ea60e82b15ba"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "foundry-compilers-artifacts-solc",
+ "foundry-compilers-core",
+ "md-5",
+ "path-slash",
+ "rayon",
+ "semver 1.0.25",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.11",
+ "tracing",
+ "walkdir",
+ "yansi",
+]
+
+[[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "127e0e788765bc0103eb6b92067843c6ffe660090b2f6fbff1a1441a51939aa0"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=pkhry%2Fsimplify#33118c0204069f6818ecd458b382ea60e82b15ba"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3855,8 +3874,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8764f450332267305440ec399560919e01aa98f23af2c36ac952f9216449cdca"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=pkhry%2Fsimplify#33118c0204069f6818ecd458b382ea60e82b15ba"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3870,8 +3888,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c59caebbeaeb0e34564c1a404081478a0aadaa8999b57f0befd85965252e074a"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=pkhry%2Fsimplify#33118c0204069f6818ecd458b382ea60e82b15ba"
 dependencies = [
  "alloy-primitives",
  "cfg-if",

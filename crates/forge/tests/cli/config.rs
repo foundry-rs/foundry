@@ -165,6 +165,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         compilation_restrictions: Default::default(),
         eof: false,
         _non_exhaustive: (),
+        revive: Default::default(),
     };
     prj.write_config(input.clone());
     let config = cmd.config();
