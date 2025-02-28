@@ -936,7 +936,7 @@ fn persisted_call_sequence(path: &Path, bytecode: &Bytes) -> Option<Vec<BaseCoun
                 // Ignore persisted sequence if test bytecode doesn't match.
                 if !bytecode.eq(persisted_bytecode) {
                     let _= sh_warn!("\
-                            Failure from {:?} file was ignored because test contract bytecode doesn't match.",
+                            Failure from {:?} file was ignored because test contract bytecode has changed.",
                         path
                     );
                     return None;
