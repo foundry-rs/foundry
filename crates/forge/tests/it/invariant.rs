@@ -1258,7 +1258,7 @@ contract OwnableTest is Test {
     .unwrap();
     cmd.assert_success().stderr_eq(str![[r#"
 ...
-Warning: Failure from "cache/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode doesn't match.
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode doesn't match.
 ...
 "#]])
     .stdout_eq(str![[r#"

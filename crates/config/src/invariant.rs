@@ -73,12 +73,4 @@ impl InvariantConfig {
             show_solidity: false,
         }
     }
-
-    /// Returns path to failure dir of given invariant test contract.
-    pub fn failure_dir(self, contract_name: &str) -> PathBuf {
-        self.failure_persist_dir
-            .unwrap()
-            .join("failures")
-            .join(contract_name.split(':').next_back().unwrap())
-    }
 }

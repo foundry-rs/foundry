@@ -12,7 +12,8 @@ use alloy_json_abi::Function;
 use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{contracts::ContractsByAddress, TestFunctionExt, TestFunctionKind};
-use foundry_config::Config;
+use foundry_compilers::utils::canonicalized;
+use foundry_config::{Config, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
@@ -35,7 +36,14 @@ use proptest::test_runner::{
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, cmp::min, collections::BTreeMap, path::Path, sync::Arc, time::Instant};
+use std::{
+    borrow::Cow,
+    cmp::min,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use tracing::Span;
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
@@ -595,9 +603,12 @@ impl<'a> FunctionRunner<'a> {
             abi: &self.cr.contract.abi,
         };
 
-        let failure_dir = invariant_config.clone().failure_dir(self.cr.name);
-        let failure_file = failure_dir.join(&invariant_contract.invariant_function.name);
-        let show_solidity = invariant_config.clone().show_solidity;
+        let (failure_dir, failure_file) = invariant_failure_paths(
+            invariant_config,
+            self.cr.name,
+            &invariant_contract.invariant_function.name,
+        );
+        let show_solidity = invariant_config.show_solidity;
 
         // Try to replay recorded failure if any.
         if let Some(mut call_sequence) =
@@ -934,4 +945,21 @@ fn persisted_call_sequence(path: &Path, bytecode: &Bytes) -> Option<Vec<BaseCoun
             Some(persisted_failure.call_sequence)
         },
     )
+}
+
+/// Helper functions to return canonicalized invariant failure paths.
+fn invariant_failure_paths(
+    config: &InvariantConfig,
+    contract_name: &str,
+    invariant_name: &str,
+) -> (PathBuf, PathBuf) {
+    let dir = config
+        .failure_persist_dir
+        .clone()
+        .unwrap()
+        .join("failures")
+        .join(contract_name.split(':').next_back().unwrap());
+    let dir = canonicalized(dir);
+    let file = canonicalized(dir.join(invariant_name));
+    (dir, file)
 }
