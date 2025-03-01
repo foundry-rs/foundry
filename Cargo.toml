@@ -267,7 +267,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = "0.7"
+axum = "0.8"
 color-eyre = "0.6"
 comfy-table = "7"
 dirs = "6"
