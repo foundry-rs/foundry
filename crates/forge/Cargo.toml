@@ -86,8 +86,8 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = "0.22"
-watchexec = "5.0"
-watchexec-events = "4.0"
+watchexec = "6.0"
+watchexec-events = "5.0"
 watchexec-signals = "4.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
