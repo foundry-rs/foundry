@@ -152,7 +152,7 @@ dependencies = [
  "derive_arbitrary",
  "derive_more",
  "itoa",
- "proptest",
+ "proptest 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "winnow 0.7.3",
@@ -336,7 +336,7 @@ dependencies = [
  "k256",
  "keccak-asm",
  "paste",
- "proptest",
+ "proptest 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "proptest-derive",
  "rand 0.8.5",
  "ruint",
@@ -1015,7 +1015,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.9.0",
  "revm",
  "serde",
  "serde_json",
@@ -1048,7 +1048,7 @@ dependencies = [
  "foundry-common",
  "foundry-evm",
  "op-alloy-consensus",
- "rand 0.8.5",
+ "rand 0.9.0",
  "revm",
  "serde",
  "serde_json",
@@ -2075,7 +2075,7 @@ dependencies = [
  "futures",
  "indicatif",
  "itertools 0.14.0",
- "rand 0.8.5",
+ "rand 0.9.0",
  "rayon",
  "regex",
  "rpassword",
@@ -2482,7 +2482,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "hex",
- "proptest",
+ "proptest 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
 ]
 
@@ -3416,7 +3416,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "path-slash",
- "proptest",
+ "proptest 1.6.0 (git+https://github.com/getong/proptest?branch=update-rand-0.9)",
  "quick-junit",
  "rayon",
  "regex",
@@ -3659,8 +3659,8 @@ dependencies = [
  "memchr",
  "p256",
  "parking_lot",
- "proptest",
- "rand 0.8.5",
+ "proptest 1.6.0 (git+https://github.com/getong/proptest?branch=update-rand-0.9)",
+ "rand 0.9.0",
  "revm",
  "revm-inspectors",
  "semver 1.0.25",
@@ -3978,7 +3978,7 @@ dependencies = [
  "foundry-evm-traces",
  "indicatif",
  "parking_lot",
- "proptest",
+ "proptest 1.6.0 (git+https://github.com/getong/proptest?branch=update-rand-0.9)",
  "revm",
  "revm-inspectors",
  "serde",
@@ -4064,8 +4064,8 @@ dependencies = [
  "foundry-evm-traces",
  "itertools 0.14.0",
  "parking_lot",
- "proptest",
- "rand 0.8.5",
+ "proptest 1.6.0 (git+https://github.com/getong/proptest?branch=update-rand-0.9)",
+ "rand 0.9.0",
  "revm",
  "serde",
  "thiserror 2.0.11",
@@ -4156,7 +4156,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.9.0",
  "regex",
  "serde_json",
  "snapbox",
@@ -6259,7 +6259,7 @@ checksum = "8983bb634df7248924ee0c4c3a749609b5abcb082c28fffe3254b3eb3602b307"
 dependencies = [
  "alloy-rlp",
  "const-hex",
- "proptest",
+ "proptest 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "smallvec",
 ]
@@ -6905,7 +6905,26 @@ dependencies = [
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
- "rand_xorshift",
+ "rand_xorshift 0.3.0",
+ "regex-syntax 0.8.5",
+ "rusty-fork",
+ "tempfile",
+ "unarray",
+]
+
+[[package]]
+name = "proptest"
+version = "1.6.0"
+source = "git+https://github.com/getong/proptest?branch=update-rand-0.9#b5cc7b8f48f88764c7ff361d3366e4d8d58efcf5"
+dependencies = [
+ "bit-set 0.8.0",
+ "bit-vec 0.8.0",
+ "bitflags 2.8.0",
+ "lazy_static",
+ "num-traits",
+ "rand 0.9.0",
+ "rand_chacha 0.9.0",
+ "rand_xorshift 0.4.0",
  "regex-syntax 0.8.5",
  "rusty-fork",
  "tempfile",
@@ -7178,6 +7197,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d25bf25ec5ae4a3f1b92f929810509a2f53d7dca2f50b794ff57e3face536c8f"
 dependencies = [
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand_xorshift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+dependencies = [
+ "rand_core 0.9.2",
 ]
 
 [[package]]
@@ -7533,7 +7561,7 @@ dependencies = [
  "num-traits",
  "parity-scale-codec",
  "primitive-types",
- "proptest",
+ "proptest 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.8.5",
  "rlp",
  "ruint-macro",
