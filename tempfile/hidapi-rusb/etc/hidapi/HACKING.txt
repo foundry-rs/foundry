@@ -1,0 +1,10 @@
+This file is mostly for the maintainer.
+
+Updating a Version:
+1. Update VERSION file.
+2. HID_API_VERSION_MAJOR/HID_API_VERSION_MINOR/HID_API_VERSION_PATCH in hidapi.h.
+
+Firing a new release:
+1. Update the Version (if not yet updated).
+2. Build hidapi.dll/.lib for x86/x64.
+3. Upload Windows binaries to Github release page.

@@ -1,0 +1,5 @@
+error: Not supported by full-automatic tuple implementation. Use semi-automatic tuple implementation for more control of the implementation.
+ --> tests/ui/no_return_value.rs:3:15
+  |
+3 |     fn test() -> u32;
+  |               ^

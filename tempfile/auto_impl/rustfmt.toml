@@ -1,0 +1,7 @@
+unstable_features = true
+
+blank_lines_upper_bound = 3
+format_macro_matchers = true
+imports_granularity="Crate"
+normalize_comments = true
+reorder_impl_items = true

@@ -1,0 +1,10 @@
+# Configuration file for [`cargo-release`](https://github.com/crate-ci/cargo-release)
+# See: https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+
+allow-branch = ["main"]
+sign-commit = true
+sign-tag = true
+shared-version = true
+pre-release-commit-message = "chore: release {{version}}"
+tag-prefix = "" # tag only once instead of per every crate
+pre-release-hook = ["sh", "-c", "$WORKSPACE_ROOT/scripts/changelog.sh --tag {{version}}"]

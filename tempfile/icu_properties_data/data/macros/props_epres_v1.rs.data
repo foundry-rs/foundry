@@ -1,0 +1,45 @@
+// @generated
+/// Implement `DataProvider<EmojiPresentationV1Marker>` on the given struct using the data
+/// hardcoded in this file. This allows the struct to be used with
+/// `icu`'s `_unstable` constructors.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_props_epres_v1 {
+    ($ provider : ty) => {
+        #[clippy::msrv = "1.67"]
+        const _: () = <$provider>::MUST_USE_MAKE_PROVIDER_MACRO;
+        #[clippy::msrv = "1.67"]
+        impl $provider {
+            #[doc(hidden)]
+            pub const SINGLETON_PROPS_EPRES_V1: &'static <icu::properties::provider::EmojiPresentationV1Marker as icu_provider::DataMarker>::Yokeable = &icu::properties::provider::PropertyCodePointSetV1::InversionList(unsafe {
+                #[allow(unused_unsafe)]
+                icu::collections::codepointinvlist::CodePointInversionList::from_parts_unchecked(unsafe { zerovec::ZeroVec::from_bytes_unchecked(b"\x1A#\0\0\x1C#\0\0\xE9#\0\0\xED#\0\0\xF0#\0\0\xF1#\0\0\xF3#\0\0\xF4#\0\0\xFD%\0\0\xFF%\0\0\x14&\0\0\x16&\0\0H&\0\0T&\0\0\x7F&\0\0\x80&\0\0\x93&\0\0\x94&\0\0\xA1&\0\0\xA2&\0\0\xAA&\0\0\xAC&\0\0\xBD&\0\0\xBF&\0\0\xC4&\0\0\xC6&\0\0\xCE&\0\0\xCF&\0\0\xD4&\0\0\xD5&\0\0\xEA&\0\0\xEB&\0\0\xF2&\0\0\xF4&\0\0\xF5&\0\0\xF6&\0\0\xFA&\0\0\xFB&\0\0\xFD&\0\0\xFE&\0\0\x05'\0\0\x06'\0\0\n'\0\0\x0C'\0\0('\0\0)'\0\0L'\0\0M'\0\0N'\0\0O'\0\0S'\0\0V'\0\0W'\0\0X'\0\0\x95'\0\0\x98'\0\0\xB0'\0\0\xB1'\0\0\xBF'\0\0\xC0'\0\0\x1B+\0\0\x1D+\0\0P+\0\0Q+\0\0U+\0\0V+\0\0\x04\xF0\x01\0\x05\xF0\x01\0\xCF\xF0\x01\0\xD0\xF0\x01\0\x8E\xF1\x01\0\x8F\xF1\x01\0\x91\xF1\x01\0\x9B\xF1\x01\0\xE6\xF1\x01\0\0\xF2\x01\0\x01\xF2\x01\0\x02\xF2\x01\0\x1A\xF2\x01\0\x1B\xF2\x01\0/\xF2\x01\x000\xF2\x01\x002\xF2\x01\x007\xF2\x01\08\xF2\x01\0;\xF2\x01\0P\xF2\x01\0R\xF2\x01\0\0\xF3\x01\0!\xF3\x01\0-\xF3\x01\x006\xF3\x01\x007\xF3\x01\0}\xF3\x01\0~\xF3\x01\0\x94\xF3\x01\0\xA0\xF3\x01\0\xCB\xF3\x01\0\xCF\xF3\x01\0\xD4\xF3\x01\0\xE0\xF3\x01\0\xF1\xF3\x01\0\xF4\xF3\x01\0\xF5\xF3\x01\0\xF8\xF3\x01\0?\xF4\x01\0@\xF4\x01\0A\xF4\x01\0B\xF4\x01\0\xFD\xF4\x01\0\xFF\xF4\x01\0>\xF5\x01\0K\xF5\x01\0O\xF5\x01\0P\xF5\x01\0h\xF5\x01\0z\xF5\x01\0{\xF5\x01\0\x95\xF5\x01\0\x97\xF5\x01\0\xA4\xF5\x01\0\xA5\xF5\x01\0\xFB\xF5\x01\0P\xF6\x01\0\x80\xF6\x01\0\xC6\xF6\x01\0\xCC\xF6\x01\0\xCD\xF6\x01\0\xD0\xF6\x01\0\xD3\xF6\x01\0\xD5\xF6\x01\0\xD8\xF6\x01\0\xDC\xF6\x01\0\xE0\xF6\x01\0\xEB\xF6\x01\0\xED\xF6\x01\0\xF4\xF6\x01\0\xFD\xF6\x01\0\xE0\xF7\x01\0\xEC\xF7\x01\0\xF0\xF7\x01\0\xF1\xF7\x01\0\x0C\xF9\x01\0;\xF9\x01\0<\xF9\x01\0F\xF9\x01\0G\xF9\x01\0\0\xFA\x01\0p\xFA\x01\0}\xFA\x01\0\x80\xFA\x01\0\x89\xFA\x01\0\x90\xFA\x01\0\xBE\xFA\x01\0\xBF\xFA\x01\0\xC6\xFA\x01\0\xCE\xFA\x01\0\xDC\xFA\x01\0\xE0\xFA\x01\0\xE9\xFA\x01\0\xF0\xFA\x01\0\xF9\xFA\x01\0") }, 1205u32)
+            });
+        }
+        #[clippy::msrv = "1.67"]
+        impl icu_provider::DataProvider<icu::properties::provider::EmojiPresentationV1Marker> for $provider {
+            fn load(&self, req: icu_provider::DataRequest) -> Result<icu_provider::DataResponse<icu::properties::provider::EmojiPresentationV1Marker>, icu_provider::DataError> {
+                if req.locale.is_empty() {
+                    Ok(icu_provider::DataResponse { payload: Some(icu_provider::DataPayload::from_static_ref(Self::SINGLETON_PROPS_EPRES_V1)), metadata: Default::default() })
+                } else {
+                    Err(icu_provider::DataErrorKind::ExtraneousLocale.with_req(<icu::properties::provider::EmojiPresentationV1Marker as icu_provider::KeyedDataMarker>::KEY, req))
+                }
+            }
+        }
+    };
+}
+/// Implement `IterableDataProvider<EmojiPresentationV1Marker>` on the given struct using the data
+/// hardcoded in this file. This allows the struct to be used with
+/// `DatagenDriver` for this key.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impliterable_props_epres_v1 {
+    ($ provider : ty) => {
+        #[clippy::msrv = "1.67"]
+        impl icu_provider::datagen::IterableDataProvider<icu::properties::provider::EmojiPresentationV1Marker> for $provider {
+            fn supported_locales(&self) -> Result<alloc::vec::Vec<icu_provider::DataLocale>, icu_provider::DataError> {
+                Ok([icu_provider::DataLocale::default()].into())
+            }
+        }
+    };
+}

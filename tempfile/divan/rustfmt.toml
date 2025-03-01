@@ -1,0 +1,5 @@
+# Rust code formatting; see https://rust-lang.github.io/rustfmt
+edition = "2021"
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_small_heuristics = "Max"

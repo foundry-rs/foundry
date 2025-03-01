@@ -1,0 +1,8 @@
+def five = match () in {
+	() => 5,
+	() => "5",
+}
+
+def six =
+    five
+    + 1

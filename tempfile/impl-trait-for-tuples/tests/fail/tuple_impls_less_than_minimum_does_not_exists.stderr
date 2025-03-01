@@ -1,0 +1,15 @@
+error[E0277]: the trait bound `(Impl, Impl): Test` is not satisfied
+  --> tests/fail/tuple_impls_less_than_minimum_does_not_exists.rs:10:12
+   |
+10 |     test::<(Impl, Impl)>();
+   |            ^^^^^^^^^^^^ the trait `Test` is not implemented for `(Impl, Impl)`
+   |
+   = help: the following other types implement trait `Test`:
+             (TupleElement0, TupleElement1, TupleElement2)
+             (TupleElement0, TupleElement1, TupleElement2, TupleElement3)
+             (TupleElement0, TupleElement1, TupleElement2, TupleElement3, TupleElement4)
+note: required by a bound in `test`
+  --> tests/fail/tuple_impls_less_than_minimum_does_not_exists.rs:8:12
+   |
+8  | fn test<T: Test>() {}
+   |            ^^^^ required by this bound in `test`

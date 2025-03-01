@@ -1,0 +1,5 @@
+error: the method `required` has the attribute `keep_default_for` but is not a default method (no body is provided)
+ --> tests/compile-fail/keep_default_for_on_required_method.rs:7:5
+  |
+7 |     fn required(&self);
+  |     ^^^^^^^^^^^^^^^^^^

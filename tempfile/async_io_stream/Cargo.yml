@@ -1,0 +1,88 @@
+package:
+
+  # When releasing to crates.io:
+  #
+  # - last check for all TODO, FIXME, expect, unwrap.
+  # - recheck log statements (informative, none left that were just for development, ...)
+  # - `cargo +nightly doc` and re-read and final polish of documentation.
+  #
+  # - Update CHANGELOG.md.
+  # - Update version numbers in Cargo.yml, Cargo.toml, install section of readme.
+  #
+  # - `touch **.rs && cargo clippy --tests --examples --benches --all-features`
+  # - `cargo update`
+  # - `cargo outdated --root-deps-only`
+  # - `cargo udeps --all-targets --all-features`
+  # - `cargo audit`
+  # - `cargo crev crate verify --show-all --recursive` and review.
+  # - 'cargo test --all-targets --all-features'
+  #
+  # - push dev and verify CI result
+  # - `cargo test` on dependent crates
+  #
+  # - cargo publish
+  # - `git checkout master && git merge dev --no-ff`
+  # - `git tag x.x.x` with version number.
+  # - `git push && git push --tags`
+  #
+  version       : 0.3.3
+  name          : async_io_stream
+  authors       : [ Naja Melan <najamelan@autistici.org> ]
+  description   : IntoAsyncRead on steriods
+  documentation : https://docs.rs/async_io_stream
+  repository    : https://github.com/najamelan/async_io_stream
+  readme        : README.md
+  keywords      : [ futures, io, async, asyncread, asyncwrite ]
+  categories    : [ asynchronous, network-programming ]
+  license       : Unlicense
+  edition       : "2021"
+  exclude       : [ benches, examples, tests ]
+  metadata:
+    docs:
+      rs:
+        all-features: true
+        targets     : []
+
+
+features:
+
+  # Implement AsyncRead/AsyncWrite from tokio
+  #
+  tokio_io  : [ tokio ]
+
+  # Implement Observable if the inner stream implements it and forward calls.
+  #
+  map_pharos: [ pharos ]
+
+
+badges:
+
+  maintenance : { status     : actively-developed     }
+  travis-ci   : { repository : najamelan/ws_stream_io }
+
+
+dependencies:
+
+  # Public dependencies (bump major if changing any version number here)
+  # Means we use types from these crates in our public API.
+  #
+  futures: ^0.3
+  pharos : { version: ^0.5, optional: true }
+  tokio  : { version: ^1  , optional: true }
+
+
+  # Private dependencies
+  #
+
+dev-dependencies:
+
+  assert_matches   : ^1
+  # flexi_logger     : ^0.15
+  futures          : ^0.3
+  log              : ^0.4
+  pretty_assertions: ^1
+
+
+build-dependencies:
+
+  rustc_version: ^0.4

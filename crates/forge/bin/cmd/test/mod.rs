@@ -447,7 +447,7 @@ impl TestArgs {
                     // If --mutate is passed without arguments, list all non-test contracts
                     source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
                         .filter(|entry| {
-                            entry.is_sol() && !entry.is_sol_test()
+                            entry.is_sol() && !entry.is_sol_test() // @todo filter out interfaces here?
                         })
                         .collect()
                 } else {
@@ -455,9 +455,7 @@ impl TestArgs {
                     self.mutate.unwrap().clone()
                 };
 
-            dbg!(&mutate_paths);
-
-            let campaign = MutationCampaign::new(mutate_paths, config.clone(), &evm_opts);
+            let mut campaign = MutationCampaign::new(mutate_paths, config.clone(), &evm_opts);
 
             // Result should then be stored into the outcome (with the src contract name as test name?)
             campaign.run();

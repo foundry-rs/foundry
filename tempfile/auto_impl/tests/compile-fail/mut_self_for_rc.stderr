@@ -1,0 +1,5 @@
+error: the trait `Foo` cannot be auto-implemented for Rc, because this method has a `&mut self` receiver (only `&self` and no receiver are allowed)
+ --> tests/compile-fail/mut_self_for_rc.rs:6:5
+  |
+6 |     fn foo(&mut self);
+  |     ^^^^^^^^^^^^^^^^^

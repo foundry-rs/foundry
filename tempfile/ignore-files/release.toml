@@ -1,0 +1,10 @@
+pre-release-commit-message = "release: ignore-files v{{version}}"
+tag-prefix = "ignore-files-"
+tag-message = "ignore-files {{version}}"
+
+[[pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "^## Next.*$"
+replace = "## Next (YYYY-MM-DD)\n\n## v{{version}} ({{date}})"
+prerelease = true
+max = 1

@@ -1,0 +1,9 @@
+error: this trait cannot be auto-implemented for Fn-traits (only traits with exactly one method and no other items are allowed)
+ --> tests/compile-fail/fn_associated_type.rs:5:1
+  |
+5 | / trait Foo {
+6 | |     type Out;
+7 | |
+8 | |     fn a(&self);
+9 | | }
+  | |_^

@@ -82,6 +82,7 @@ similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
 solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml = { workspace = true, features = ["preserve_order"] }

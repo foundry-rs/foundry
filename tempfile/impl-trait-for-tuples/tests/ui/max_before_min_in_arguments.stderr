@@ -1,0 +1,7 @@
+error: It is expected that `min` comes before `max` and that `max > min` is true!
+ --> tests/ui/max_before_min_in_arguments.rs:1:1
+  |
+1 | #[impl_trait_for_tuples::impl_for_tuples(5, 2)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `impl_trait_for_tuples::impl_for_tuples` (in Nightly builds, run with -Z macro-backtrace for more info)

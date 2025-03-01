@@ -1,0 +1,6 @@
+error: `#[auto_impl]` attributes are only allowed on methods
+ --> tests/compile-fail/keep_default_for_on_assoc_type.rs:6:5
+  |
+6 | /     #[auto_impl(keep_default_for(&))]
+7 | |     type Foo;
+  | |_____________^

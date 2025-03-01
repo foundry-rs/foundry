@@ -1,0 +1,5 @@
+error: expected `trait`
+ --> tests/compile-fail/attr_on_type.rs:5:1
+  |
+5 | type Baz = String;
+  | ^^^^

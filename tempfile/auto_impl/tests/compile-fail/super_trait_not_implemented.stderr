@@ -1,0 +1,25 @@
+error[E0277]: the trait bound `Box<Dog>: Foo` is not satisfied
+  --> tests/compile-fail/super_trait_not_implemented.rs:18:18
+   |
+18 |     requires_foo(Box::new(Dog)); // shouldn't, because `Box<Dog>: Supi` is not satisfied
+   |     ------------ ^^^^^^^^^^^^^ the trait `Supi` is not implemented for `Box<Dog>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+note: required for `Box<Dog>` to implement `Foo`
+  --> tests/compile-fail/super_trait_not_implemented.rs:5:1
+   |
+5  | #[auto_impl(Box, &)]
+   | ^^^^^^^^^^^^^^^^^^^^
+6  | trait Foo: Supi {}
+   |       ^^^  ---- unsatisfied trait bound introduced here
+note: required by a bound in `requires_foo`
+  --> tests/compile-fail/super_trait_not_implemented.rs:14:20
+   |
+14 | fn requires_foo<T: Foo>(_: T) {}
+   |                    ^^^ required by this bound in `requires_foo`
+   = note: this error originates in the attribute macro `auto_impl` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider dereferencing here
+   |
+18 |     requires_foo(*Box::new(Dog)); // shouldn't, because `Box<Dog>: Supi` is not satisfied
+   |                  +

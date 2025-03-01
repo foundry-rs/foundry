@@ -1,0 +1,5 @@
+error: expected one of: `,`, `+`, `-`, `|`, `&`, `*`, `/`
+  --> tests/ui/unknown_separator.rs:12:41
+   |
+12 |         for_tuples!( ( #( Tuple.test() )$* ) )
+   |                                         ^

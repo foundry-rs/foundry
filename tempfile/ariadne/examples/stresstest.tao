@@ -1,0 +1,8 @@
+def fives = ["5", 5]
+
+def sixes = ["6", 6, True, (), []]
+
+def multiline :: Str = match Some 5 in {
+	| Some x => x
+	| None => 0
+}

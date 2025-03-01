@@ -1,0 +1,50 @@
+[advisories]
+yanked = "warn"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[licenses]
+confidence-threshold = 0.9
+# copyleft = "deny"
+
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "MPL-2.0",
+    # https://github.com/briansmith/ring/issues/902
+    "LicenseRef-ring",
+    # https://github.com/briansmith/webpki/issues/148
+    "LicenseRef-webpki",
+]
+
+exceptions = [
+    # CC0 is a permissive license but somewhat unclear status for source code
+    # so we prefer to not have dependencies using it
+    # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
+    { allow = ["CC0-1.0"], name = "tiny-keccak" },
+]
+
+[[licenses.clarify]]
+name = "ring"
+expression = "LicenseRef-ring"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[[licenses.clarify]]
+name = "webpki"
+expression = "LicenseRef-webpki"
+license-files = [{ path = "LICENSE", hash = 0x001c7e6c }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

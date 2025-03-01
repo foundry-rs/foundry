@@ -1,0 +1,5 @@
+error: expected `trait`
+ --> tests/compile-fail/attr_on_impl_block.rs:7:1
+  |
+7 | impl Foo for usize {}
+  | ^^^^

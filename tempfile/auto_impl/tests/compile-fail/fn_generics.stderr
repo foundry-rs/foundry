@@ -1,0 +1,13 @@
+error: the trait 'Greeter' cannot be implemented for Fn-traits: generic arguments are not allowed
+ --> tests/compile-fail/fn_generics.rs:7:14
+  |
+7 |     fn greet<T: Display>(&self, name: T);
+  |              ^^^^^^^^^^
+
+warning: unused import: `std::fmt::Display`
+ --> tests/compile-fail/fn_generics.rs:1:5
+  |
+1 | use std::fmt::Display;
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default

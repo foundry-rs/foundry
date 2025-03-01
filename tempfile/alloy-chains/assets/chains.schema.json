@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Chains",
+  "description": "Ethereum EIP-155 chains.",
+  "type": "object",
+  "required": [
+    "chains"
+  ],
+  "properties": {
+    "chains": {
+      "description": "Map of chain IDs to chain definitions.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/Chain"
+      }
+    }
+  },
+  "definitions": {
+    "Chain": {
+      "description": "Specification for a single chain.",
+      "type": "object",
+      "required": [
+        "internalId",
+        "isLegacy",
+        "isTestnet",
+        "name",
+        "supportsShanghai"
+      ],
+      "properties": {
+        "averageBlocktimeHint": {
+          "description": "An optional hint for the average block time, in milliseconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "etherscanApiKeyName": {
+          "description": "The name of the environment variable that contains the Etherscan API key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "etherscanApiUrl": {
+          "description": "The chain's base block explorer API URL (e.g. `https://api.etherscan.io/`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "etherscanBaseUrl": {
+          "description": "The chain's base block explorer base URL (e.g. `https://etherscan.io/`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "internalId": {
+          "description": "The chain's internal ID. This is the Rust enum variant's name.",
+          "type": "string"
+        },
+        "isLegacy": {
+          "description": "Whether the chain is a legacy chain, which does not support EIP-1559.",
+          "type": "boolean"
+        },
+        "isTestnet": {
+          "description": "Whether the chain is a testnet.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "The chain's name. This is used in CLI argument parsing, TOML serialization etc.",
+          "type": "string"
+        },
+        "nativeCurrencySymbol": {
+          "description": "The chain's native currency symbol (e.g. `ETH`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supportsShanghai": {
+          "description": "Whether the chain supports the Shanghai hardfork.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

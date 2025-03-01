@@ -1,0 +1,5 @@
+error: Custom where clause not allowed at this position!
+ --> tests/ui/custom_where_clause_not_allowed.rs:8:9
+  |
+8 |         for_tuples!( where #( Tuple: Test ),* )
+  |         ^^^^^^^^^^

@@ -1,0 +1,10 @@
+tag-name = "v{{version}}"
+tag-message = "release: {{version}}"
+allow-branch = ["main"]
+pre-release-commit-message = "release: {{version}}"
+pre-release-hook = ["git", "cliff", "-c", "cliff.toml", "-p", "CHANGELOG.md", "--tag", "{{version}}", "-ul"]
+pre-release-replacements = [
+  { file = "README.md", search = "^clearscreen = \"[0-9\\.]+\"", replace = "clearscreen = \"{{version}}\""},
+  { file = "CITATION.cff", search = "^version: \"?[0-9\\.]+\"?", replace = "version: \"{{version}}\"" },
+  { file = "CITATION.cff", search = "^date-released: .+$", replace = "date-released: {{date}}" },
+]

@@ -1,0 +1,47 @@
+// @generated
+/// Implement `DataProvider<LineBreakNameToValueV1Marker>` on the given struct using the data
+/// hardcoded in this file. This allows the struct to be used with
+/// `icu`'s `_unstable` constructors.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_propnames_from_lb_v1 {
+    ($ provider : ty) => {
+        #[clippy::msrv = "1.67"]
+        const _: () = <$provider>::MUST_USE_MAKE_PROVIDER_MACRO;
+        #[clippy::msrv = "1.67"]
+        impl $provider {
+            #[doc(hidden)]
+            pub const SINGLETON_PROPNAMES_FROM_LB_V1: &'static <icu::properties::provider::LineBreakNameToValueV1Marker as icu_provider::DataMarker>::Yokeable = &icu::properties::provider::names::PropertyValueNameToEnumMapV1 {
+                map: unsafe {
+                    #[allow(unused_unsafe)]
+                    zerovec::ZeroMap::from_parts_unchecked(unsafe { zerovec::VarZeroVec::from_bytes_unchecked(b"[\0\0\0\0\0\x02\0\x04\0\n\0\x18\0$\0&\x000\09\0;\0=\0?\0A\0C\0E\0P\0\\\0f\0s\0\x82\0\x84\0\x86\0\x88\0\x99\0\xAA\0\xAC\0\xBA\0\xC9\0\xE5\0\xF5\0\xF7\0\xF9\0\xFB\0\x01\x01\x03\x01\r\x01\x0F\x01\x1A\x01\x1C\x01 \x01\"\x01$\x011\x013\x015\x01;\x01=\x01H\x01J\x01W\x01b\x01m\x01o\x01q\x01s\x01u\x01w\x01\x80\x01\x8F\x01\x98\x01\x9A\x01\xA4\x01\xA6\x01\xA8\x01\xAF\x01\xB1\x01\xC1\x01\xC3\x01\xD2\x01\xD4\x01\xE2\x01\xE4\x01\xED\x01\xFF\x01\x01\x02\x03\x02\x05\x02\x07\x02\x0C\x02\x15\x02\x17\x02\x1E\x02 \x02\"\x02(\x024\x026\x02A\x02C\x02E\x02H\x02AIAKAksaraAksara_PrebaseAksara_StartALAlphabeticAmbiguousAPASB2BABBBKBreak_AfterBreak_BeforeBreak_BothBreak_SymbolsCarriage_ReturnCBCJCLClose_ParenthesisClose_PunctuationCMCombining_MarkComplex_ContextConditional_Japanese_StarterContingent_BreakCPCREBE_BaseEME_ModifierEXExclamationGLGlueH2H3Hebrew_LetterHLHYHyphenIDIdeographicINInfix_NumericInseparableInseperableISJLJTJVLFLine_FeedMandatory_BreakNext_LineNLNonstarterNSNUNumericOPOpen_PunctuationPOPostfix_NumericPRPrefix_NumericQUQuotationRegional_IndicatorRISASGSPSpaceSurrogateSYUnknownVFVIViramaVirama_FinalWJWord_JoinerXXZWZWJZWSpace") }, unsafe { zerovec::ZeroVec::from_bytes_unchecked(b"\x01\0+\0+\0,\0-\0\x02\0\x02\0\x01\0,\0-\0\x03\0\x04\0\x05\0\x06\0\x04\0\x05\0\x03\0\x1B\0\n\0\x07\0%\0\x08\0$\0\x08\0\t\0\t\0\x18\0%\0\x07\0$\0\n\0(\0(\0)\0)\0\x0B\0\x0B\0\x0C\0\x0C\0\x1F\0 \0&\0&\0\r\0\r\0\x0E\0\x0E\0\x0F\0\x10\0\x0F\0\x0F\0\x10\0!\0\"\0#\0\x11\0\x11\0\x06\0\x1D\0\x1D\0\x12\0\x12\0\x13\0\x13\0\x14\0\x14\0\x15\0\x15\0\x16\0\x16\0\x17\0\x17\0'\0'\0\x18\0\x19\0\x1A\0\x1A\0\x19\0\x1B\0\0\0.\0/\0/\0.\0\x1E\0\x1E\0\0\0\x1C\0*\0\x1C\0") })
+                },
+            };
+        }
+        #[clippy::msrv = "1.67"]
+        impl icu_provider::DataProvider<icu::properties::provider::LineBreakNameToValueV1Marker> for $provider {
+            fn load(&self, req: icu_provider::DataRequest) -> Result<icu_provider::DataResponse<icu::properties::provider::LineBreakNameToValueV1Marker>, icu_provider::DataError> {
+                if req.locale.is_empty() {
+                    Ok(icu_provider::DataResponse { payload: Some(icu_provider::DataPayload::from_static_ref(Self::SINGLETON_PROPNAMES_FROM_LB_V1)), metadata: Default::default() })
+                } else {
+                    Err(icu_provider::DataErrorKind::ExtraneousLocale.with_req(<icu::properties::provider::LineBreakNameToValueV1Marker as icu_provider::KeyedDataMarker>::KEY, req))
+                }
+            }
+        }
+    };
+}
+/// Implement `IterableDataProvider<LineBreakNameToValueV1Marker>` on the given struct using the data
+/// hardcoded in this file. This allows the struct to be used with
+/// `DatagenDriver` for this key.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impliterable_propnames_from_lb_v1 {
+    ($ provider : ty) => {
+        #[clippy::msrv = "1.67"]
+        impl icu_provider::datagen::IterableDataProvider<icu::properties::provider::LineBreakNameToValueV1Marker> for $provider {
+            fn supported_locales(&self) -> Result<alloc::vec::Vec<icu_provider::DataLocale>, icu_provider::DataError> {
+                Ok([icu_provider::DataLocale::default()].into())
+            }
+        }
+    };
+}

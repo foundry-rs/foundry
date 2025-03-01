@@ -1,0 +1,8 @@
+error: this trait cannot be auto-implemented for Fn-traits (only traits with exactly one method and no other items are allowed)
+ --> tests/compile-fail/fn_multiple_methods.rs:5:1
+  |
+5 | / trait Foo {
+6 | |     fn a(&self);
+7 | |     fn b(&self);
+8 | | }
+  | |_^

@@ -1,0 +1,9 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ SPANTRACE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ 0: [91mthemes[0m[91m::[0m[91mtest_capture[0m with [96mx=42[0m
+    at [35mtests/themes.rs[0m:[35m42[0m
+      40 │ use tracing_subscriber::{prelude::*, registry::Registry};
+      41 │ 
+[37;1m      42 > #[instrument][0m
+      43 │ fn test_capture(x: u8) -> SpanTrace {
+      44 │     #[allow(clippy::if_same_then_else)]

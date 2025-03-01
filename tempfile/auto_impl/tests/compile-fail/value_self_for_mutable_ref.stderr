@@ -1,0 +1,5 @@
+error: the trait `Foo` cannot be auto-implemented for mutable references, because this method has a `self` receiver (only `&self`, `&mut self` and no receiver are allowed)
+ --> tests/compile-fail/value_self_for_mutable_ref.rs:6:5
+  |
+6 |     fn foo(self);
+  |     ^^^^^^^^^^^^

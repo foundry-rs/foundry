@@ -1,0 +1,5 @@
+error: Not supported by full-automatic tuple implementation. Use semi-automatic tuple implementation for more control of the implementation.
+ --> tests/ui/no_type_parameter.rs:3:2
+  |
+3 |     type Test;
+  |     ^^^^

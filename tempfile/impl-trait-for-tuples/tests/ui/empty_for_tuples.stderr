@@ -1,0 +1,5 @@
+error: unexpected end of input, expected one of: `type`, `const`, parentheses, `#`, `where`
+  --> tests/ui/empty_for_tuples.rs:12:21
+   |
+12 |         for_tuples!()
+   |                     ^

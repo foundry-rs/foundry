@@ -1,0 +1,11 @@
+error: Unknown field: `name`
+ --> tests/compile-fail/rename_setter_struct_level.rs:5:18
+  |
+5 | #[builder(setter(name = "foo"))]
+  |                  ^^^^
+
+error[E0433]: failed to resolve: use of undeclared type `LoremBuilder`
+  --> tests/compile-fail/rename_setter_struct_level.rs:12:13
+   |
+12 |     let x = LoremBuilder::default()
+   |             ^^^^^^^^^^^^ use of undeclared type `LoremBuilder`

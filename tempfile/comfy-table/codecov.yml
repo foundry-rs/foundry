@@ -1,0 +1,18 @@
+ignore:
+  - "benches"
+  - "examples"
+  - "proptest_regressions"
+  - "tests"
+  - "CHANGELOG.md"
+  - "Cargo.lock"
+  - "Cargo.toml"
+  - "FAQ.md"
+  - "LICENSE"
+  - "README.md"
+
+codecov:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
