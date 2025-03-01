@@ -271,9 +271,9 @@ impl <'ast> MutationHandler<'ast> {
     }
 
     fn collect_mutations<T: Mutate>(&self, item: &T, mutants: &mut Vec<Mutant>) {
+        dbg!("haaaa I'm collecting");
         if let Some(new_mutants) = item.get_all_mutations() {
             mutants.extend(new_mutants);
-            dbg!("haaaa I'm collecting");
         }
     }
 
@@ -314,12 +314,14 @@ pub trait Mutate {
 
 impl<'ast> Mutate for Expr<'ast> {
     fn get_all_mutations(&self) -> Option<Vec<Mutant>> {
+        dbg!(&self.kind);
         None
     }
 }
 
 impl<'ast> Mutate for VariableDefinition<'ast> {
     fn get_all_mutations(&self) -> Option<Vec<Mutant>> {
+        dbg!(&self.name);
         None
     }
 }
