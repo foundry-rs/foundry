@@ -67,12 +67,17 @@ class Expanded:
 
 profile = os.environ.get("PROFILE")
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
-t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
+t_linux_x86_gnu = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
+t_linux_x86_musl = Target("ubuntu-latest", "x86_64-unknown-linux-musl", "linux-amd64")
 # TODO: Figure out how to make this work
 # t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu", "linux-aarch64")
 t_macos = Target("macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
 t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
-targets = [t_linux_x86, t_windows] if is_pr else [t_linux_x86, t_macos, t_windows]
+targets = (
+    [t_linux_x86_gnu, t_linux_x86_musl, t_windows]
+    if is_pr
+    else [t_linux_x86_gnu, t_linux_x86_musl, t_macos, t_windows]
+)
 
 config = [
     Case(
@@ -106,7 +111,11 @@ def main():
     expanded = []
     for target in targets:
         for case in config:
-            if is_pr and (not case.pr_cross_platform and target != t_linux_x86):
+            if is_pr and (
+                not case.pr_cross_platform
+                and target != t_linux_x86_gnu
+                and target != t_linux_x86_musl
+            ):
                 continue
 
             for partition in range(1, case.n_partitions + 1):
@@ -120,7 +129,7 @@ def main():
                     s = f"{partition}/{case.n_partitions}"
                     name += f" ({s})"
                     flags += f" --partition count:{s}"
-                
+
                 if profile == "isolate":
                     flags += " --features=isolate-by-default"
                 name += os_str
