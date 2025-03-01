@@ -1,7 +1,0 @@
---out src/offset/local/win_bindings.rs
---config flatten sys no-bindgen-comment
---filter
-    Windows.Win32.System.Time.GetTimeZoneInformationForYear
-    Windows.Win32.System.Time.SystemTimeToFileTime
-    Windows.Win32.System.Time.SystemTimeToTzSpecificLocalTime
-    Windows.Win32.System.Time.TzSpecificLocalTimeToSystemTime

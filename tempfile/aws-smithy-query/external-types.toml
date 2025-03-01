@@ -1,3 +1,0 @@
-allowed_external_types = [
-    "aws_smithy_types::*",
-]

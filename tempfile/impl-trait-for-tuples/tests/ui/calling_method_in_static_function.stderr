@@ -1,5 +1,0 @@
-error: Can not call non-static method from within a static method.
-  --> $DIR/calling_method_in_static_function.rs:12:27
-   |
-12 |         for_tuples!( ( #( Tuple.test() ),* ) )
-   |                           ^^^^^

@@ -1,5 +1,0 @@
-error: expected `trait`
- --> tests/compile-fail/attr_on_struct.rs:5:1
-  |
-5 | struct Foo {
-  | ^^^^^^

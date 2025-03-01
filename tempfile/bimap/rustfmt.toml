@@ -1,3 +1,0 @@
-imports_granularity = "Crate"
-wrap_comments = true
-comment_width = 80
