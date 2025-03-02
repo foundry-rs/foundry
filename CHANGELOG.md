@@ -14,7 +14,7 @@ To use the latest pinned nightly locally, use the following command:
 foundryup --version nightly-e15e33a07c0920189fc336391f538c3dad53da73
 ````
 
-To use the latest pinned nightly on your CI, modify your Foundry installation step to use an specific version:
+To use the latest pinned nightly on your CI, modify your Foundry installation step to use a specific version:
 
 ```
 - name: Install Foundry
