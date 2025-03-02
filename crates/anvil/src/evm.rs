@@ -76,6 +76,6 @@ mod tests {
             .any(|&addr| addr == PRECOMPILE_ADDR));
 
         let result = evm.transact().unwrap();
-        assert!(result.result.is_success());
+        assert!(result.is_success());
     }
 }
