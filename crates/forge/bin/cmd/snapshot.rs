@@ -159,12 +159,12 @@ impl GasSnapshotConfig {
     fn is_in_gas_range(&self, gas_used: u64) -> bool {
         if let Some(min) = self.min {
             if gas_used < min {
-                return false
+                return false;
             }
         }
         if let Some(max) = self.max {
             if gas_used > max {
-                return false
+                return false;
             }
         }
         true

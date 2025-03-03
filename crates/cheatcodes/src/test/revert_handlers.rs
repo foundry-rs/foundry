@@ -94,8 +94,8 @@ fn handle_revert(
     // Try decoding as known errors.
     actual_revert = decode_revert(actual_revert);
 
-    if actual_revert == expected_reason ||
-        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
+    if actual_revert == expected_reason
+        || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
         Ok(())
     } else {

@@ -79,7 +79,7 @@ impl TomlFile {
             return Err(InsertProfileError {
                 message: format!("Expected [{profile_str}] to be a Table"),
                 value,
-            })
+            });
         }
         // get or create the profile section
         let profile_map = if let Some(map) = self.get_mut(Config::PROFILE_SECTION) {
@@ -99,7 +99,7 @@ impl TomlFile {
             return Err(InsertProfileError {
                 message: format!("Expected [{}] to be a Table", Config::PROFILE_SECTION),
                 value,
-            })
+            });
         };
         // check the profile map for structure and existing keys
         if let Some(profile) = profile_map.get(profile_str) {
@@ -112,7 +112,7 @@ impl TomlFile {
                             profile_str
                         ),
                         value,
-                    })
+                    });
                 }
             } else {
                 return Err(InsertProfileError {
@@ -122,7 +122,7 @@ impl TomlFile {
                         profile_str
                     ),
                     value,
-                })
+                });
             }
         }
         // insert the profile
@@ -187,7 +187,7 @@ pub fn fix_tomls() -> Vec<Warning> {
             Ok(toml_file) => toml_file,
             Err(err) => {
                 warnings.push(Warning::CouldNotReadToml { path: toml, err: err.to_string() });
-                continue
+                continue;
             }
         };
 

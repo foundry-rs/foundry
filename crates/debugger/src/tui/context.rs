@@ -332,16 +332,16 @@ fn pretty_opcode(step: &CallTraceStep) -> String {
 fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
     if !matches!(
         prev.op,
-        OpCode::JUMP |
-            OpCode::JUMPI |
-            OpCode::JUMPF |
-            OpCode::RJUMP |
-            OpCode::RJUMPI |
-            OpCode::RJUMPV |
-            OpCode::CALLF |
-            OpCode::RETF
+        OpCode::JUMP
+            | OpCode::JUMPI
+            | OpCode::JUMPF
+            | OpCode::RJUMP
+            | OpCode::RJUMPI
+            | OpCode::RJUMPV
+            | OpCode::CALLF
+            | OpCode::RETF
     ) {
-        return false
+        return false;
     }
 
     let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());

@@ -102,8 +102,8 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
             if param.name.is_empty() {
                 param.name = format!("param{index}");
             }
-            if num_inputs == indexed_params ||
-                (num_address_params == indexed_params && param.ty == "address")
+            if num_inputs == indexed_params
+                || (num_address_params == indexed_params && param.ty == "address")
             {
                 param.indexed = true;
             }
@@ -131,7 +131,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_function_args(&func, args);
         if res.is_ok() {
-            return Ok(func)
+            return Ok(func);
         }
     }
 

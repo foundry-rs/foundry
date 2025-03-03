@@ -508,9 +508,9 @@ impl InspectorStackRefMut<'_> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result
+                    || (new_outcome.result.result == InstructionResult::Revert
+                        && new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
         );
@@ -533,9 +533,9 @@ impl InspectorStackRefMut<'_> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result
+                    || (new_outcome.result.result == InstructionResult::Revert
+                        && new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
         );
@@ -558,9 +558,9 @@ impl InspectorStackRefMut<'_> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result
+                    || (new_outcome.result.result == InstructionResult::Revert
+                        && new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
         );
@@ -650,12 +650,12 @@ impl InspectorStackRefMut<'_> {
         for (addr, mut acc) in res.state {
             let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) else {
                 ecx.journaled_state.state.insert(addr, acc);
-                continue
+                continue;
             };
 
             // make sure accounts that were warmed earlier do not become cold
-            if acc.status.contains(AccountStatus::Cold) &&
-                !acc_mut.status.contains(AccountStatus::Cold)
+            if acc.status.contains(AccountStatus::Cold)
+                && !acc_mut.status.contains(AccountStatus::Cold)
             {
                 acc.status -= AccountStatus::Cold;
             }
@@ -665,7 +665,7 @@ impl InspectorStackRefMut<'_> {
             for (key, val) in acc.storage {
                 let Some(slot_mut) = acc_mut.storage.get_mut(&key) else {
                     acc_mut.storage.insert(key, val);
-                    continue
+                    continue;
                 };
                 slot_mut.present_value = val.present_value;
                 slot_mut.is_cold &= val.is_cold;
@@ -843,10 +843,10 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
             }
         }
 
-        if self.enable_isolation &&
-            call.scheme == CallScheme::Call &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
+        if self.enable_isolation
+            && call.scheme == CallScheme::Call
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
         {
             let (result, _) = self.transact_inner(
                 ecx,
@@ -903,10 +903,10 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
-        if !matches!(create.scheme, CreateScheme::Create2 { .. }) &&
-            self.enable_isolation &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
+        if !matches!(create.scheme, CreateScheme::Create2 { .. })
+            && self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
         {
             let (result, address) = self.transact_inner(
                 ecx,
@@ -963,10 +963,10 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
             |inspector| inspector.eofcreate(ecx, create).map(Some),
         );
 
-        if matches!(create.kind, EOFCreateKind::Tx { .. }) &&
-            self.enable_isolation &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
+        if matches!(create.kind, EOFCreateKind::Tx { .. })
+            && self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
         {
             let init_code = match &mut create.kind {
                 EOFCreateKind::Tx { initdata } => initdata.clone(),

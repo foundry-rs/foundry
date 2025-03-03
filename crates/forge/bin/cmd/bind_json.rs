@@ -395,7 +395,7 @@ impl StructsState {
         for (name, paths) in names_to_paths {
             if paths.len() <= 1 {
                 // no alias needed
-                continue
+                continue;
             }
 
             for (i, path) in paths.into_iter().enumerate() {

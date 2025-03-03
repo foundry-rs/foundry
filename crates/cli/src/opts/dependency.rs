@@ -68,7 +68,7 @@ impl FromStr for Dependency {
             for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
                 if dependency.starts_with(alias) {
                     dependency = dependency.replacen(alias, real_org, 1);
-                    break
+                    break;
                 }
             }
 

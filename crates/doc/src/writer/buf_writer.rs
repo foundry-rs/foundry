@@ -132,7 +132,7 @@ impl BufWriter {
 
         // There is nothing to write.
         if params.is_empty() || comments.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         self.write_bold(heading)?;

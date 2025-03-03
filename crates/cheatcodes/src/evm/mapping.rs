@@ -32,7 +32,7 @@ impl MappingSlots {
         match self.seen_sha3.get(&slot).copied() {
             Some((key, parent)) => {
                 if self.keys.contains_key(&slot) {
-                    return false
+                    return false;
                 }
                 self.keys.insert(slot, key);
                 self.parent_slots.insert(slot, parent);

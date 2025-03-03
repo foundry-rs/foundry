@@ -180,9 +180,9 @@ impl PreSimulationState {
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast() &&
-                        !self.args.non_interactive &&
-                        !Confirm::new()
+                    if self.args.should_broadcast()
+                        && !self.args.non_interactive
+                        && !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
                     {

@@ -87,8 +87,8 @@ pub fn transaction_request_to_typed(
         to,
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None, None, None, None, _) |
-        (None, Some(_), None, None, None, None, None, None, _) => {
+        (Some(0), _, None, None, None, None, None, None, _)
+        | (None, Some(_), None, None, None, None, None, None, _) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default(),
@@ -100,8 +100,8 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _, None, None, None, _) |
-        (None, _, None, None, Some(_), None, None, None, _) => {
+        (Some(1), _, None, None, _, None, None, None, _)
+        | (None, _, None, None, Some(_), None, None, None, _) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default(),
@@ -114,10 +114,10 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _, _, None, None, _) |
-        (None, None, Some(_), _, _, _, None, None, _) |
-        (None, None, _, Some(_), _, _, None, None, _) |
-        (None, None, None, None, None, _, None, None, _) => {
+        (Some(2), None, _, _, _, _, None, None, _)
+        | (None, None, Some(_), _, _, _, None, None, _)
+        | (None, None, _, Some(_), _, _, None, None, _)
+        | (None, None, None, None, None, _, None, None, _) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default(),
@@ -158,9 +158,9 @@ pub fn transaction_request_to_typed(
 }
 
 fn has_optimism_fields(other: &OtherFields) -> bool {
-    other.contains_key("sourceHash") &&
-        other.contains_key("mint") &&
-        other.contains_key("isSystemTx")
+    other.contains_key("sourceHash")
+        && other.contains_key("mint")
+        && other.contains_key("isSystemTx")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,7 +221,7 @@ impl MaybeImpersonatedTransaction {
     #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
         if let Some(sender) = self.impersonated_sender {
-            return self.transaction.impersonated_hash(sender)
+            return self.transaction.impersonated_hash(sender);
         }
         self.transaction.hash()
     }
@@ -1046,7 +1046,7 @@ impl Encodable2718 for TypedTransaction {
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositTransaction::decode(buf)?))
+            return Ok(Self::Deposit(DepositTransaction::decode(buf)?));
         }
         match TxEnvelope::typed_decode(ty, buf)? {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
@@ -1121,12 +1121,12 @@ pub struct DepositReceipt<T = Receipt<alloy_primitives::Log>> {
 
 impl DepositReceipt {
     fn payload_len(&self) -> usize {
-        self.inner.receipt.status.length() +
-            self.inner.receipt.cumulative_gas_used.length() +
-            self.inner.logs_bloom.length() +
-            self.inner.receipt.logs.length() +
-            self.deposit_nonce.map_or(0, |n| n.length()) +
-            self.deposit_receipt_version.map_or(0, |n| n.length())
+        self.inner.receipt.status.length()
+            + self.inner.receipt.cumulative_gas_used.length()
+            + self.inner.logs_bloom.length()
+            + self.inner.receipt.logs.length()
+            + self.deposit_nonce.map_or(0, |n| n.length())
+            + self.deposit_receipt_version.map_or(0, |n| n.length())
     }
 
     /// Returns the rlp header for the receipt payload.
@@ -1226,11 +1226,11 @@ pub enum TypedReceipt<T = Receipt<alloy_primitives::Log>> {
 impl<T> TypedReceipt<T> {
     pub fn as_receipt_with_bloom(&self) -> &ReceiptWithBloom<T> {
         match self {
-            Self::Legacy(r) |
-            Self::EIP1559(r) |
-            Self::EIP2930(r) |
-            Self::EIP4844(r) |
-            Self::EIP7702(r) => r,
+            Self::Legacy(r)
+            | Self::EIP1559(r)
+            | Self::EIP2930(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => r,
             Self::Deposit(r) => &r.inner,
         }
     }
@@ -1239,11 +1239,11 @@ impl<T> TypedReceipt<T> {
 impl<T> From<TypedReceipt<T>> for ReceiptWithBloom<T> {
     fn from(value: TypedReceipt<T>) -> Self {
         match value {
-            TypedReceipt::Legacy(r) |
-            TypedReceipt::EIP1559(r) |
-            TypedReceipt::EIP2930(r) |
-            TypedReceipt::EIP4844(r) |
-            TypedReceipt::EIP7702(r) => r,
+            TypedReceipt::Legacy(r)
+            | TypedReceipt::EIP1559(r)
+            | TypedReceipt::EIP2930(r)
+            | TypedReceipt::EIP4844(r)
+            | TypedReceipt::EIP7702(r) => r,
             TypedReceipt::Deposit(r) => r.inner,
         }
     }
@@ -1411,11 +1411,11 @@ impl Encodable2718 for TypedReceipt {
             out.put_u8(ty);
         }
         match self {
-            Self::Legacy(r) |
-            Self::EIP2930(r) |
-            Self::EIP1559(r) |
-            Self::EIP4844(r) |
-            Self::EIP7702(r) => r.encode(out),
+            Self::Legacy(r)
+            | Self::EIP2930(r)
+            | Self::EIP1559(r)
+            | Self::EIP4844(r)
+            | Self::EIP7702(r) => r.encode(out),
             Self::Deposit(r) => r.encode(out),
         }
     }

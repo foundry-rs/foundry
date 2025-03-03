@@ -89,11 +89,11 @@ impl DispatchResult {
     pub fn is_error(&self) -> bool {
         matches!(
             self,
-            Self::Failure(_) |
-                Self::CommandFailed(_) |
-                Self::UnrecognizedCommand(_) |
-                Self::SolangParserFailed(_) |
-                Self::FileIoError(_)
+            Self::Failure(_)
+                | Self::CommandFailed(_)
+                | Self::UnrecognizedCommand(_)
+                | Self::SolangParserFailed(_)
+                | Self::FileIoError(_)
         )
     }
 }
@@ -251,7 +251,7 @@ impl ChiselDispatcher {
                     }
 
                     if let Err(e) = self.session.write() {
-                        return DispatchResult::FileIoError(e.into())
+                        return DispatchResult::FileIoError(e.into());
                     }
                     DispatchResult::CommandSuccess(Some(format!(
                         "Saved session to cache with ID = {}",
@@ -266,7 +266,7 @@ impl ChiselDispatcher {
                     // Must supply a session ID as the argument.
                     return DispatchResult::CommandFailed(Self::make_error(
                         "Must supply a session ID as the argument.",
-                    ))
+                    ));
                 }
 
                 // Use args as the name
@@ -275,7 +275,7 @@ impl ChiselDispatcher {
                 // Don't save an empty session
                 if !self.source().run_code.is_empty() {
                     if let Err(e) = self.session.write() {
-                        return DispatchResult::FileIoError(e.into())
+                        return DispatchResult::FileIoError(e.into());
                     }
                     let _ = sh_println!("{}", "Saved current session!".green());
                 }
@@ -340,12 +340,12 @@ impl ChiselDispatcher {
                     self.source_mut().config.evm_opts.fork_url = None;
                     return DispatchResult::CommandSuccess(Some(
                         "Now using local environment.".to_string(),
-                    ))
+                    ));
                 }
                 if args.len() != 1 {
                     return DispatchResult::CommandFailed(Self::make_error(
                         "Must supply a session ID as the argument.",
-                    ))
+                    ));
                 }
                 let arg = *args.first().unwrap();
 
@@ -371,7 +371,7 @@ impl ChiselDispatcher {
 
                 // Check validity of URL
                 if Url::parse(&fork_url).is_err() {
-                    return DispatchResult::CommandFailed(Self::make_error("Invalid fork URL!"))
+                    return DispatchResult::CommandFailed(Self::make_error("Invalid fork URL!"));
                 }
 
                 // Create success message before moving the fork_url
@@ -404,7 +404,7 @@ impl ChiselDispatcher {
 
                 if arg.is_empty() {
                     self.source_mut().config.calldata = None;
-                    return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()))
+                    return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()));
                 }
 
                 let calldata = hex::decode(arg);
@@ -467,7 +467,7 @@ impl ChiselDispatcher {
                 // Create "script" dir if it does not already exist.
                 if !Path::new("script").exists() {
                     if let Err(e) = std::fs::create_dir_all("script") {
-                        return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                        return DispatchResult::CommandFailed(Self::make_error(e.to_string()));
                     }
                 }
 
@@ -477,7 +477,7 @@ impl ChiselDispatcher {
                         if let Err(e) =
                             std::fs::write(PathBuf::from("script/REPL.s.sol"), formatted_source)
                         {
-                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()));
                         }
 
                         DispatchResult::CommandSuccess(Some(String::from(
@@ -493,7 +493,7 @@ impl ChiselDispatcher {
                 if args.len() != 2 {
                     return DispatchResult::CommandFailed(Self::make_error(
                         "Incorrect number of arguments supplied. Expected: <address> <name>",
-                    ))
+                    ));
                 }
 
                 let request_url = format!(
@@ -536,9 +536,9 @@ impl ChiselDispatcher {
                                                 // see <https://github.com/foundry-rs/foundry/issues/6618>.
                                                 if input.is_complex_type() {
                                                     if let Some(
-                                                        InternalType::Enum { contract: _, ty } |
-                                                        InternalType::Struct { contract: _, ty } |
-                                                        InternalType::Other { contract: _, ty },
+                                                        InternalType::Enum { contract: _, ty }
+                                                        | InternalType::Struct { contract: _, ty }
+                                                        | InternalType::Other { contract: _, ty },
                                                     ) = &input.internal_type
                                                     {
                                                         param_type = ty;
@@ -634,7 +634,7 @@ impl ChiselDispatcher {
             }
             ChiselCommand::Exec => {
                 if args.is_empty() {
-                    return DispatchResult::CommandFailed(Self::make_error("No command supplied!"))
+                    return DispatchResult::CommandFailed(Self::make_error("No command supplied!"));
                 }
 
                 let mut cmd = Command::new(args[0]);
@@ -660,7 +660,7 @@ impl ChiselDispatcher {
                 if let Err(e) = result {
                     return DispatchResult::CommandFailed(format!(
                         "Could not write to a temporary file: {e}"
-                    ))
+                    ));
                 }
 
                 // open the temp file with the editor
@@ -674,11 +674,11 @@ impl ChiselDispatcher {
                             if let Some(status_code) = status.code() {
                                 return DispatchResult::CommandFailed(format!(
                                     "Editor exited with status {status_code}"
-                                ))
+                                ));
                             } else {
                                 return DispatchResult::CommandFailed(
                                     "Editor exited without a status code".to_string(),
-                                )
+                                );
                             }
                         }
                     }
@@ -696,7 +696,7 @@ impl ChiselDispatcher {
                 } else {
                     return DispatchResult::CommandFailed(
                         "Could not read the edited file".to_string(),
-                    )
+                    );
                 }
 
                 // if the editor exited successfully, try to compile the new code
@@ -708,7 +708,7 @@ impl ChiselDispatcher {
                                 Self::decode_traces(&new_session_source.config, &mut res).await
                             {
                                 if let Err(e) = Self::show_traces(&decoder, &mut res).await {
-                                    return DispatchResult::CommandFailed(e.to_string())
+                                    return DispatchResult::CommandFailed(e.to_string());
                                 };
 
                                 // Show console logs, if there are any
@@ -748,7 +748,7 @@ impl ChiselDispatcher {
                         0 => "No variable supplied!",
                         _ => "!rawstack only takes one argument.",
                     };
-                    return DispatchResult::CommandFailed(Self::make_error(msg))
+                    return DispatchResult::CommandFailed(Self::make_error(msg));
                 }
 
                 // Store the variable that we want to inspect
@@ -786,11 +786,11 @@ impl ChiselDispatcher {
             return match raw_cmd.parse::<ChiselCommand>() {
                 Ok(cmd) => self.dispatch_command(cmd, &split[1..]).await,
                 Err(e) => DispatchResult::UnrecognizedCommand(e),
-            }
+            };
         }
         if input.trim().is_empty() {
             debug!("empty dispatch input");
-            return DispatchResult::Success(None)
+            return DispatchResult::Success(None);
         }
 
         // Get a mutable reference to the session source
@@ -800,7 +800,7 @@ impl ChiselDispatcher {
         if COMMENT_RE.is_match(input) {
             debug!(%input, "matched comment");
             source.with_run_code(input);
-            return DispatchResult::Success(None)
+            return DispatchResult::Success(None);
         }
 
         // If there is an address (or multiple addresses) in the input, ensure that they are
@@ -839,7 +839,7 @@ impl ChiselDispatcher {
             // Return successfully
             Ok((false, res)) => {
                 debug!(%input, ?res, "inspect success");
-                return DispatchResult::Success(res)
+                return DispatchResult::Success(res);
             }
 
             // Return with the error
@@ -857,7 +857,7 @@ impl ChiselDispatcher {
                         if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
                         {
                             if let Err(e) = Self::show_traces(&decoder, &mut res).await {
-                                return DispatchResult::CommandFailed(e.to_string())
+                                return DispatchResult::CommandFailed(e.to_string());
                             };
 
                             // Show console logs, if there are any
@@ -874,7 +874,7 @@ impl ChiselDispatcher {
                             if failed {
                                 return DispatchResult::Failure(Some(Self::make_error(
                                     "Failed to execute REPL contract!",
-                                )))
+                                )));
                             }
                         }
                     }

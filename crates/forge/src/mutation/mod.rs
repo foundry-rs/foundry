@@ -2,23 +2,24 @@ mod mutation;
 mod visitor;
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
-// Use Solar: 
+// Use Solar:
 use solar_parse::{
     ast::{
-        interface::{self, Session, source_map::FileName},
-        Arena, Span, Item, ItemContract, ItemKind, SourceUnit, ContractKind, ExprKind, ItemFunction, Stmt, StmtKind, Expr, VariableDefinition
+        interface::{self, source_map::FileName, Session},
+        Arena, ContractKind, Expr, ExprKind, Item, ItemContract, ItemFunction, ItemKind,
+        SourceUnit, Span, Stmt, StmtKind, VariableDefinition,
     },
     token::{Token, TokenKind},
-    Lexer, Parser
+    Lexer, Parser,
 };
 use std::{hash::Hash, sync::Arc};
 
 use std::path::PathBuf;
 
-use tempfile::SpooledTempFile;
 use rayon::prelude::*;
-use std::io::{Write, Seek};
 use std::collections::HashMap;
+use std::io::{Seek, Write};
+use tempfile::SpooledTempFile;
 
 use crate::mutation::visitor::Visitor;
 
@@ -26,28 +27,27 @@ pub struct MutationCampaign<'a> {
     contracts_to_mutate: Vec<PathBuf>,
     src: HashMap<PathBuf, Arc<String>>,
     config: Arc<foundry_config::Config>,
-    evm_opts: &'a crate::opts::EvmOpts
+    evm_opts: &'a crate::opts::EvmOpts,
 }
 
 impl<'a> MutationCampaign<'a> {
-    pub fn new(files: Vec<PathBuf>, config: Arc<foundry_config::Config>, evm_opts: &'a crate::opts::EvmOpts) -> MutationCampaign<'a> {
-        MutationCampaign {
-            contracts_to_mutate: files,
-            src: HashMap::new(),
-            config,
-            evm_opts
-        }
+    pub fn new(
+        files: Vec<PathBuf>,
+        config: Arc<foundry_config::Config>,
+        evm_opts: &'a crate::opts::EvmOpts,
+    ) -> MutationCampaign<'a> {
+        MutationCampaign { contracts_to_mutate: files, src: HashMap::new(), config, evm_opts }
     }
-    
+
     // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
     pub fn run(&mut self) {
         sh_println!("Running mutation tests...").unwrap();
-        
+
         if let Err(e) = self.load_sources() {
             eprintln!("Failed to load sources: {}", e);
             return;
         }
-        
+
         // Iterate over all contract in contracts_to_mutate
         for contract_path in &self.contracts_to_mutate {
             // Rayon from here (enter_parallel)
@@ -70,13 +70,18 @@ impl<'a> MutationCampaign<'a> {
         let target_content = Arc::clone(self.src.get(target).unwrap());
 
         let sess = Session::builder().with_silent_emitter(None).build();
-        
+
         let _ = sess.enter(|| -> solar_parse::interface::Result<_> {
             let arena = solar_parse::ast::Arena::new();
 
             // @todo UGLY CLONE needs to be fixed - not really using the arc in get_src closure...
             // @todo at least, we clone to string only when needed (ie if the file hasn't been parsed before -> can it happen tho?)
-            let mut parser = Parser::from_lazy_source_code(&sess, &arena, FileName::from(target.clone()), || Ok((*target_content).to_string()))?;
+            let mut parser = Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::from(target.clone()),
+                || Ok((*target_content).to_string()),
+            )?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
@@ -84,7 +89,7 @@ impl<'a> MutationCampaign<'a> {
             self.process_ast_contract(ast, &target_content);
 
             Ok(())
-            });
+        });
     }
 
     fn process_ast_contract(&self, ast: SourceUnit<'_>, source_content: &Arc<String>) {
@@ -94,7 +99,8 @@ impl<'a> MutationCampaign<'a> {
                 ItemKind::Contract(contract) => {
                     match contract.kind {
                         ContractKind::Contract | ContractKind::AbstractContract => {
-                            let mutation_handler = Visitor::new(contract, Arc::clone(&source_content));    
+                            let mutation_handler =
+                                Visitor::new(contract, Arc::clone(&source_content));
 
                             mutation_handler.mutate_and_test();
 

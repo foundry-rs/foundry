@@ -68,7 +68,7 @@ impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
         let mut subscriptions = self.subscriptions.lock();
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
             trace!(target: "rpc", ?id,  "removed subscription");
-            return Some(subscriptions.swap_remove(idx).1)
+            return Some(subscriptions.swap_remove(idx).1);
         }
         None
     }
@@ -174,7 +174,7 @@ where
                         error!(target: "rpc", ?err, "Failed to send message");
                     }
                 } else {
-                    break
+                    break;
                 }
             }
 
@@ -183,7 +183,7 @@ where
             if let Poll::Ready(Err(err)) = pin.connection.poll_flush_unpin(cx) {
                 trace!(target: "rpc", ?err, "websocket err");
                 // close the connection
-                return Poll::Ready(())
+                return Poll::Ready(());
             }
 
             loop {
@@ -195,25 +195,25 @@ where
                         Err(err) => match err {
                             RequestError::Axum(err) => {
                                 trace!(target: "rpc", ?err, "client disconnected");
-                                return Poll::Ready(())
+                                return Poll::Ready(());
                             }
                             RequestError::Io(err) => {
                                 trace!(target: "rpc", ?err, "client disconnected");
-                                return Poll::Ready(())
+                                return Poll::Ready(());
                             }
                             RequestError::Serde(err) => {
                                 pin.process_request(Err(err));
                             }
                             RequestError::Disconnect => {
                                 trace!(target: "rpc", "client disconnected");
-                                return Poll::Ready(())
+                                return Poll::Ready(());
                             }
                         },
                         _ => {}
                     },
                     Poll::Ready(None) => {
                         trace!(target: "rpc", "socket connection finished");
-                        return Poll::Ready(())
+                        return Poll::Ready(());
                     }
                     Poll::Pending => break,
                 }
@@ -256,7 +256,7 @@ where
             }
 
             if !progress {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }

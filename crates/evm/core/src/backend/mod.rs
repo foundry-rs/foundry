@@ -820,7 +820,7 @@ impl Backend {
                 // created account takes precedence: for example contract creation in setups
                 if init_account.is_created() {
                     trace!(?loaded_account, "skipping created account");
-                    continue
+                    continue;
                 }
 
                 // otherwise we need to replace the account's info with the one from the fork's
@@ -882,8 +882,8 @@ impl Backend {
         for tx in full_block.inner.transactions.into_transactions() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from) ||
-                tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+            if is_known_system_sender(tx.from)
+                || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
             {
                 trace!(tx=?tx.tx_hash(), "skipping system transaction");
                 continue;
@@ -891,7 +891,7 @@ impl Backend {
 
             if tx.tx_hash() == tx_hash {
                 // found the target transaction
-                return Ok(Some(tx.inner))
+                return Ok(Some(tx.inner));
             }
             trace!(tx=?tx.tx_hash(), "committing transaction");
 

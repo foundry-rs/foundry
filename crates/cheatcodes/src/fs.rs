@@ -400,9 +400,9 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         }
                     }
                     if let Some(ref version) = version {
-                        if id.version.minor != version.minor ||
-                            id.version.major != version.major ||
-                            id.version.patch != version.patch
+                        if id.version.minor != version.minor
+                            || id.version.major != version.major
+                            || id.version.patch != version.patch
                         {
                             return false;
                         }
@@ -427,7 +427,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
 
                             // Return artifact if only one matched
                             if filtered.len() == 1 {
-                                return Some(filtered[0])
+                                return Some(filtered[0]);
                             }
 
                             // Try filtering by profile as well

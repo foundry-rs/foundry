@@ -301,17 +301,17 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            Self::OkNoEndpoint |
-            Self::OkSimulation |
-            Self::OkBroadcast |
-            Self::WarnSpecifyDeployer |
-            Self::OkRun => false,
-            Self::MissingSender |
-            Self::MissingWallet |
-            Self::StaticCallNotAllowed |
-            Self::UnsupportedLibraries |
-            Self::ErrorSelectForkOnBroadcast |
-            Self::ScriptFailed => true,
+            Self::OkNoEndpoint
+            | Self::OkSimulation
+            | Self::OkBroadcast
+            | Self::WarnSpecifyDeployer
+            | Self::OkRun => false,
+            Self::MissingSender
+            | Self::MissingWallet
+            | Self::StaticCallNotAllowed
+            | Self::UnsupportedLibraries
+            | Self::ErrorSelectForkOnBroadcast
+            | Self::ScriptFailed => true,
         }
     }
 }

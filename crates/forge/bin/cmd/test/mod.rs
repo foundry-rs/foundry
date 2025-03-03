@@ -15,12 +15,12 @@ use forge::{
         identifier::SignaturesIdentifier,
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
-    utils::{self, LoadConfig, FoundryPathExt},
+    utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
@@ -349,7 +349,7 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
-        let config = Arc::new(config);        
+        let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -362,7 +362,8 @@ impl TestArgs {
             .build::<MultiCompiler>(project_root, &output, env, evm_opts.clone())?;
 
         let libraries = runner.libraries.clone();
-        let mut outcome = self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
+        let mut outcome =
+            self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -442,25 +443,23 @@ impl TestArgs {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
-            let mutate_paths =
-                if self.mutate.as_ref().unwrap().is_empty() {
-                    // If --mutate is passed without arguments, list all non-test contracts
-                    source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
-                        .filter(|entry| {
-                            entry.is_sol() && !entry.is_sol_test() // @todo filter out interfaces here?
-                        })
-                        .collect()
-                } else {
-                    // If --mutate is passed with arguments, use those paths
-                    self.mutate.unwrap().clone()
-                };
+            let mutate_paths = if self.mutate.as_ref().unwrap().is_empty() {
+                // If --mutate is passed without arguments, list all non-test contracts
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| {
+                        entry.is_sol() && !entry.is_sol_test() // @todo filter out interfaces here?
+                    })
+                    .collect()
+            } else {
+                // If --mutate is passed with arguments, use those paths
+                self.mutate.unwrap().clone()
+            };
 
             let mut campaign = MutationCampaign::new(mutate_paths, config.clone(), &evm_opts);
 
             // Result should then be stored into the outcome (with the src contract name as test name?)
             campaign.run();
         }
-
 
         Ok(outcome)
     }
@@ -594,11 +593,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 ||
-                self.gas_report ||
-                self.debug ||
-                self.flamegraph ||
-                self.flamechart;
+            let identify_addresses = verbosity >= 3
+                || self.gas_report
+                || self.debug
+                || self.flamegraph
+                || self.flamechart;
 
             // Print suite header.
             if !silent {

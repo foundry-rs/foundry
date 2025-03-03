@@ -41,7 +41,7 @@ impl IntValueTree {
 
     fn magnitude_greater(lhs: I256, rhs: I256) -> bool {
         if lhs.is_zero() {
-            return false
+            return false;
         }
         (lhs > rhs) ^ (lhs.is_negative())
     }
@@ -56,7 +56,7 @@ impl ValueTree for IntValueTree {
 
     fn simplify(&mut self) -> bool {
         if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
-            return false
+            return false;
         }
         self.hi = self.curr;
         self.reposition()
@@ -64,7 +64,7 @@ impl ValueTree for IntValueTree {
 
     fn complicate(&mut self) -> bool {
         if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
-            return false
+            return false;
         }
 
         self.lo = if self.curr != I256::MIN && self.curr != I256::MAX {
@@ -142,7 +142,7 @@ impl IntStrategy {
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         // generate random cases if there's no fixtures
         if self.fixtures.is_empty() {
-            return self.generate_random_tree(runner)
+            return self.generate_random_tree(runner);
         }
 
         // Generate value tree from fixture.
@@ -165,7 +165,7 @@ impl IntStrategy {
         let bits = rng.gen_range(0..=self.bits);
 
         if bits == 0 {
-            return Ok(IntValueTree::new(I256::ZERO, false))
+            return Ok(IntValueTree::new(I256::ZERO, false));
         }
 
         // init 2 128-bit randoms

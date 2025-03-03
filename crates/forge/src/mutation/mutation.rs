@@ -1,24 +1,23 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
-// Use Solar: 
-use solar_parse::
-    ast::{
-        Span, Expr, VariableDefinition
-    };
+// Use Solar:
+use solar_parse::ast::{Expr, ExprKind, LitKind, Span, TypeKind, VariableDefinition, BinOpKind, IndexKind};
 use std::hash::Hash;
 
 /// Kinds of mutations (taken from Certora's Gambit)
-#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+// #[derive(Hash, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug)]
 pub enum MutationType {
+    // @todo Solar doesn't differentiate numeric type -> for now, planket and let solc filter out the invalid mutants
     /// For an initializer x, of type
     /// - bool: replace x with !x
     /// - uint: replace x with 0
-    /// - int: replace x with 0; replace x with -x
+    /// - int: replace x with 0; replace x with -x (temp: this is mutated for uint as well)
     /// For a binary op y: apply BinaryOpMutation(y)
-    AssignmentMutation,
+    AssignmentMutation(LitKind),
 
     /// For a binary op y in op=["+", "-", "*", "/", "%", "**"]:
     /// replace y with each non-y in op
-    BinaryOpMutation,
+    BinaryOpMutation(BinOpKind),
 
     /// For a delete expr x `delete foo`, replace x with `assert(true)`
     DeleteExpressionMutation,
@@ -48,7 +47,7 @@ pub enum MutationType {
     /// For an expr taking 2 expression x, y (x+y, x-y, x = x + ...):
     /// swap(x, y)
     SwapArgumentsOperatorMutation,
-    
+
     // @todo pre and post-op should be different (and mutation would switch pre/post too)
     //       AST itself doesn't store this -> should be based on span (ie UnOp.span > Expr.span?)
     /// For an unary operator x in op=["++", "--", "~", "!"]:
@@ -59,14 +58,14 @@ pub enum MutationType {
 enum MutationResult {
     Dead,
     Alive,
-    Invalid
+    Invalid,
 }
 
-/// A given mutant and its faith
+/// A given mutation
+#[derive(Debug)]
 pub struct Mutant {
     mutation: MutationType,
     span: Span,
-    outcome: MutationResult
 }
 
 pub trait Mutate {
@@ -76,15 +75,56 @@ pub trait Mutate {
 
 impl<'ast> Mutate for Expr<'ast> {
     fn get_all_mutations(&self) -> Option<Vec<Mutant>> {
-        dbg!(&self.kind);
-        None
-    }
+        let mut mutants = Vec::new();
 
+        dbg!(&self.kind);
+        let _ = match &self.kind {
+            // Array skipped for now (swap could be mutating it, cf above for rational)
+            ExprKind::Assign(_, bin_op, rhs) => {
+                // mutants.push(create_assignement_mutation(rhs.span, rhs.kind));
+
+                if let ExprKind::Lit(kind, _) = &rhs.kind {
+                    mutants.push(create_assignement_mutation(rhs.span, kind.kind.clone()));
+                }
+                
+                // @todo I think we should match other ones here too, for x = y++; for instance
+                // match &rhs.kind {
+                //     ExprKind::Lit(kind, _) => match &kind.kind {
+                //         _ => { mutants.push(create_assignement_mutation(rhs.span, kind.kind.clone())) }
+                //     },
+                //     _ => {}
+                // }
+                
+                if let Some(op) = &bin_op {
+                    mutants.push(create_binary_op_mutation(op.span, op.kind));
+                }
+
+            },
+            ExprKind::Binary(_, op, _) => {
+                // @todo is a >> b++ a thing (ie parse lhs and rhs too?)
+                mutants.push(create_binary_op_mutation(op.span, op.kind));
+            },
+            // Call
+            // CallOptions
+            ExprKind::Delete(_) => mutants.push(create_delete_mutation(self.span)),
+            // Indet
+            // Index -> mutable? 0 it? idx should be a regular expression?
+
+            _ => {}
+        };
+
+        (!mutants.is_empty()).then_some(mutants)
+    }
 }
 
-impl<'ast> Mutate for VariableDefinition<'ast> {
-    fn get_all_mutations(&self) -> Option<Vec<Mutant>> {
-        dbg!(self.name);
-        None
-    }
+fn create_assignement_mutation(span: Span, var_type: LitKind) -> Mutant {
+    Mutant { mutation: MutationType::AssignmentMutation(var_type), span }
+}
+
+fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Mutant {
+    Mutant { mutation: MutationType::BinaryOpMutation(op), span }
+}
+
+fn create_delete_mutation(span: Span) -> Mutant {
+    Mutant { mutation: MutationType::DeleteExpressionMutation, span}
 }

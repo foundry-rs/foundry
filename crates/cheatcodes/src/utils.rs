@@ -155,12 +155,12 @@ impl Cheatcode for pauseTracingCall {
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to pause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         // If paused earlier, ignore the call
         if ccx.state.ignored_traces.last_pause_call.is_some() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         }
 
         let cur_node = &tracer.traces().nodes().last().expect("no trace nodes");
@@ -178,12 +178,12 @@ impl Cheatcode for resumeTracingCall {
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
             // No tracer -> nothing to unpause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         let Some(start) = ccx.state.ignored_traces.last_pause_call.take() else {
             // Nothing to unpause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         let node = &tracer.traces().nodes().last().expect("no trace nodes");
@@ -235,7 +235,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
             .new_tree(state.test_runner())
             .unwrap()
             .current()
-            .abi_encode())
+            .abi_encode());
     }
 
     if let Some((min, max)) = bounds {
@@ -248,7 +248,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
             random_number %= inclusive_modulo;
         }
         random_number += min;
-        return Ok(random_number.abi_encode())
+        return Ok(random_number.abi_encode());
     }
 
     // Generate random `uint256` value.

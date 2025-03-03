@@ -106,7 +106,7 @@ impl DocBuilder {
 
         if sources.is_empty() {
             sh_println!("No sources detected at {}", self.sources.display())?;
-            return Ok(())
+            return Ok(());
         }
 
         let library_sources = self
@@ -385,7 +385,7 @@ impl DocBuilder {
         depth: usize,
     ) -> eyre::Result<()> {
         if files.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         if let Some(path) = base_path {

@@ -37,9 +37,9 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
-            estimate_multiplier /
-            100,
+        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")?
+            * estimate_multiplier
+            / 100,
     );
     Ok(())
 }
@@ -348,10 +348,10 @@ impl BundledState {
                 // their order otherwise.
                 // Or if the chain does not support batched transactions (eg. Arbitrum).
                 // Or if we need to invoke eth_estimateGas before sending transactions.
-                let sequential_broadcast = estimate_via_rpc ||
-                    self.args.slow ||
-                    required_addresses.len() != 1 ||
-                    !has_batch_support(sequence.chain);
+                let sequential_broadcast = estimate_via_rpc
+                    || self.args.slow
+                    || required_addresses.len() != 1
+                    || !has_batch_support(sequence.chain);
 
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
@@ -445,8 +445,9 @@ impl BundledState {
 
     pub fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
-            if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
-                self.script_config
+            if self.args.verifier.verifier == VerificationProviderType::Etherscan
+                && self
+                    .script_config
                     .config
                     .get_etherscan_api_key(Some(sequence.chain.into()))
                     .is_none()
