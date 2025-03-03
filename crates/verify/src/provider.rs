@@ -170,25 +170,35 @@ pub enum VerificationProviderType {
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
     pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
-        if key.as_ref().is_some_and(|k| !k.is_empty()) && matches!(self, Self::Sourcify) {
+        // 1. If `--verifier sourcify` is set, always use Sourcify.
+        if matches!(self, Self::Sourcify) {
+            sh_println!(
+            "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
+            or use the --verifier flag to verify on another provider."
+        )?;
+            return Ok(Box::<SourcifyVerificationProvider>::default());
+        }
+
+        // 2. If `--verifier etherscan` is explicitly set, enforce the API key requirement.
+        if matches!(self, Self::Etherscan) {
+            if key.as_ref().is_none_or(|key| key.is_empty()) {
+                eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")
+            }
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
-        match self {
-            Self::Etherscan => {
-                if key.as_ref().is_none_or(|key| key.is_empty()) {
-                    eyre::bail!("ETHERSCAN_API_KEY must be set")
-                }
-                Ok(Box::<EtherscanVerificationProvider>::default())
-            }
-            Self::Sourcify => {
-                sh_println!(
-                    "Attempting to verify on Sourcify, pass the --etherscan-api-key <API_KEY> to verify on Etherscan OR use the --verifier flag to verify on any other provider"
-                )?;
-                Ok(Box::<SourcifyVerificationProvider>::default())
-            }
-            Self::Blockscout => Ok(Box::<EtherscanVerificationProvider>::default()),
-            Self::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
-            Self::Custom => Ok(Box::<EtherscanVerificationProvider>::default()),
+
+        // 3. If `--verifier blockscout | oklink | custom` is explicitly set, use the chosen
+        //    verifier.
+        if matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
         }
+
+        // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
+        if key.as_ref().is_some_and(|k| !k.is_empty()) {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
+
+        // 5. If no valid provider is specified, bail.
+        eyre::bail!("No valid verification provider specified")
     }
 }
