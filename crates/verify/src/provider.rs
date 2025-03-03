@@ -199,6 +199,6 @@ impl VerificationProviderType {
         }
 
         // 5. If no valid provider is specified, bail.
-        eyre::bail!("No valid verification provider specified")
+        eyre::bail!("No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier.")
     }
 }
