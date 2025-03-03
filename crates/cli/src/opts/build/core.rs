@@ -193,9 +193,9 @@ impl<'a> From<&'a BuildOpts> for Figment {
         };
 
         let revive = args
-        .compiler
-        .revive_opts
-        .apply_overrides(figment.extract_inner("revive").unwrap_or_default());
+            .compiler
+            .revive_opts
+            .apply_overrides(figment.extract_inner("revive").unwrap_or_default());
 
         figment.merge(("revive", revive))
     }

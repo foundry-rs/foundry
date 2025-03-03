@@ -32,9 +32,9 @@ use foundry_compilers::{
         vyper::{Vyper, VyperSettings},
         Compiler,
     },
-    resolc::Resolc,
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    resolc::Resolc,
     solc::{CliSettings, SolcSettings},
     ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
     RestrictionsWithVersion, VyperLanguage,
@@ -1252,7 +1252,7 @@ impl Config {
     /// Returns the [Revive] compiler.
     pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
         Resolc::new(
-            self.revive.revive_path.clone().unwrap_or_default(),
+            self.revive.revive_path.clone().unwrap_or("resolc".into()),
             self.solc_compiler()?,
         )
     }
@@ -1260,7 +1260,11 @@ impl Config {
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
         Ok(MultiCompiler {
-            solidity: if self.revive.revive_compile { SolidityCompiler::Resolc(self.revive_compiler()?) } else { SolidityCompiler::Solc(self.solc_compiler()?) },
+            solidity: if self.revive.revive_compile {
+                SolidityCompiler::Resolc(self.revive_compiler()?)
+            } else {
+                SolidityCompiler::Solc(self.solc_compiler()?)
+            },
             vyper: self.vyper_compiler()?,
         })
     }
