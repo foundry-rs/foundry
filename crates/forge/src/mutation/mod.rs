@@ -20,7 +20,7 @@ use rayon::prelude::*;
 use std::io::{Write, Seek};
 use std::collections::HashMap;
 
-use crate::mutation::visitor::MutationHandler;
+use crate::mutation::visitor::Visitor;
 
 pub struct MutationCampaign<'a> {
     contracts_to_mutate: Vec<PathBuf>,
@@ -38,31 +38,31 @@ impl<'a> MutationCampaign<'a> {
             evm_opts
         }
     }
+    
+    // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
+    pub fn run(&mut self) {
+        sh_println!("Running mutation tests...").unwrap();
+        
+        if let Err(e) = self.load_sources() {
+            eprintln!("Failed to load sources: {}", e);
+            return;
+        }
+        
+        // Iterate over all contract in contracts_to_mutate
+        for contract_path in &self.contracts_to_mutate {
+            // Rayon from here (enter_parallel)
+            // Parse and get the ast
+            self.process_contract(contract_path);
+        }
+    }
 
     /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants in spooled tmp files
-    pub fn load_sources(&mut self) -> Result<(), std::io::Error> {
+    fn load_sources(&mut self) -> Result<(), std::io::Error> {
         for path in &self.contracts_to_mutate {
             let content = std::fs::read_to_string(path)?;
             self.src.insert(path.clone(), Arc::new(content));
         }
         Ok(())
-    }
-
-    // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
-    pub fn run(&mut self) {
-        sh_println!("Running mutation tests...").unwrap();
-
-        if let Err(e) = self.load_sources() {
-            eprintln!("Failed to load sources: {}", e);
-            return;
-        }
-
-        // Iterate over all contract in contracts_to_mutate
-        for contract_path in &self.contracts_to_mutate {
-                // Rayon from here (enter_parallel)
-                // Parse and get the ast
-                self.process_contract(contract_path);
-        }
     }
 
     fn process_contract(&self, target: &PathBuf) {
@@ -94,7 +94,7 @@ impl<'a> MutationCampaign<'a> {
                 ItemKind::Contract(contract) => {
                     match contract.kind {
                         ContractKind::Contract | ContractKind::AbstractContract => {
-                            let mutation_handler = MutationHandler::new(contract, Arc::clone(&source_content));    
+                            let mutation_handler = Visitor::new(contract, Arc::clone(&source_content));    
 
                             mutation_handler.mutate_and_test();
 

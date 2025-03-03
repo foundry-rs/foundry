@@ -8,14 +8,14 @@ use rayon::prelude::*;
 
 use crate::mutation::mutation::{Mutant, Mutate};
 
-pub struct MutationHandler<'ast> {
+pub struct Visitor<'ast> {
     contract_ast: &'ast ItemContract<'ast>,
     content: Arc<String>
 }
 
-impl <'ast> MutationHandler<'ast> {
+impl <'ast> Visitor<'ast> {
     pub fn new(contract_ast: &'ast ItemContract<'ast>, content: Arc<String>) -> Self {
-        MutationHandler { contract_ast, content }
+        Visitor { contract_ast, content }
     }
 
     pub fn mutate_and_test(&self) {
