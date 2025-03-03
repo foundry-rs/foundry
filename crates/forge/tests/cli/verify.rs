@@ -283,9 +283,12 @@ forgetest!(can_create_verify_random_contract_sepolia_sourcify, |prj, cmd| {
 
 // tests `create --verify --verifier sourcify` with etherscan api key set
 // <https://github.com/foundry-rs/foundry/issues/10000>
-forgetest!(can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
-});
+forgetest!(
+    can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
+    }
+);
 
 // tests `create --verify --verifier blockscout` on Sepolia testnet
 forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
@@ -293,9 +296,16 @@ forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
 });
 
 // tests `create --verify --verifier blockscout` on Sepolia testnet with etherscan api key set
-forgetest!(can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(), prj, cmd);
-});
+forgetest!(
+    can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(
+            EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(),
+            prj,
+            cmd,
+        );
+    }
+);
 
 // tests `create && contract-verify --guess-constructor-args && verify-check` on Goerli testnet if
 // correct env vars are set
