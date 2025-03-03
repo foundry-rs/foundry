@@ -9,7 +9,7 @@ use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
-use foundry_compilers::{info::ContractInfo, Project};
+use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
 
@@ -108,6 +108,7 @@ impl VerifyBundle {
         create2_offset: usize,
         data: &[u8],
         libraries: &[String],
+        evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
@@ -157,7 +158,7 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
-                    evm_version: None,
+                    evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
                     compilation_profile: Some(artifact.profile.to_string()),
@@ -202,7 +203,13 @@ async fn verify_contracts(
 
             // Verify contract created directly from the transaction
             if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
-                match verify.get_verify_args(address, offset, data, &sequence.libraries) {
+                match verify.get_verify_args(
+                    address,
+                    offset,
+                    data,
+                    &sequence.libraries,
+                    config.evm_version,
+                ) {
                     Some(verify) => future_verifications.push(verify.run()),
                     None => unverifiable_contracts.push(address),
                 };
@@ -210,7 +217,13 @@ async fn verify_contracts(
 
             // Verify potential contracts created during the transaction execution
             for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                match verify.get_verify_args(*address, 0, init_code.as_ref(), &sequence.libraries) {
+                match verify.get_verify_args(
+                    *address,
+                    0,
+                    init_code.as_ref(),
+                    &sequence.libraries,
+                    config.evm_version,
+                ) {
                     Some(verify) => future_verifications.push(verify.run()),
                     None => unverifiable_contracts.push(*address),
                 };

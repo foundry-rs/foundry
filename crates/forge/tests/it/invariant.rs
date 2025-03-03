@@ -1066,6 +1066,7 @@ contract InvariantSelectorsWeightTest is Test {
 });
 
 // Tests original and new counterexample lengths are displayed on failure.
+// Tests switch from regular sequence output to solidity.
 forgetest_init!(invariant_sequence_len, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
@@ -1097,6 +1098,172 @@ contract InvariantSequenceLenTest is Test {
 ...
 [FAIL: revert: invariant increment failure]
 	[Sequence] (original: 4, shrunk: 1)
+...
+"#]]);
+
+    // Check regular sequence output. Shrink disabled to show several lines.
+    cmd.forge_fuse().arg("clean").assert_success();
+    prj.update_config(|config| {
+        config.invariant.shrink_run_limit = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
+[FAIL: revert: invariant increment failure]
+	[Sequence] (original: 4, shrunk: 4)
+		sender=0x00000000000000000000000000000000000018dE addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[1931387396117645594923 [1.931e21]]
+		sender=0x00000000000000000000000000000000000009d5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x0000000000000000000000000000000000000105 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000009B2 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[996881781832960761274744263729582347 [9.968e35]]
+ invariant_increment() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]],
+    );
+
+    // Check solidity sequence output on same failure.
+    cmd.forge_fuse().arg("clean").assert_success();
+    prj.update_config(|config| {
+        config.invariant.show_solidity = true;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
+[FAIL: revert: invariant increment failure]
+	[Sequence] (original: 4, shrunk: 4)
+		vm.prank(0x00000000000000000000000000000000000018dE);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(1931387396117645594923);
+		vm.prank(0x00000000000000000000000000000000000009d5);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.prank(0x0000000000000000000000000000000000000105);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.prank(0x00000000000000000000000000000000000009B2);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(996881781832960761274744263729582347);
+ invariant_increment() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]],
+    );
+
+    // Persisted failures should be able to switch output.
+    prj.update_config(|config| {
+        config.invariant.show_solidity = false;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
+[FAIL: invariant_increment replay failure]
+	[Sequence] (original: 4, shrunk: 4)
+		sender=0x00000000000000000000000000000000000018dE addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[1931387396117645594923 [1.931e21]]
+		sender=0x00000000000000000000000000000000000009d5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x0000000000000000000000000000000000000105 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000009B2 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[996881781832960761274744263729582347 [9.968e35]]
+ invariant_increment() (runs: 1, calls: 1, reverts: 1)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]],
+    );
+});
+
+// Tests that persisted failure is discarded if test contract was modified.
+// <https://github.com/foundry-rs/foundry/issues/9965>
+forgetest_init!(invariant_replay_with_different_bytecode, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+    });
+    prj.add_source(
+        "Ownable.sol",
+        r#"
+contract Ownable {
+    address public owner = address(777);
+
+    function backdoor(address _owner) external {
+        owner = address(888);
+    }
+
+    function changeOwner(address _owner) external {
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_test(
+        "OwnableTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Ownable.sol";
+
+contract OwnableTest is Test {
+    Ownable ownable;
+
+    function setUp() public {
+        ownable = new Ownable();
+    }
+
+    function invariant_never_owner() public {
+        require(ownable.owner() != address(888), "never owner");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: revert: never owner]
+...
+"#]]);
+
+    // Should replay failure if same test.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: invariant_never_owner replay failure]
+...
+"#]]);
+
+    // Different test driver that should not fail the invariant.
+    prj.add_test(
+        "OwnableTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Ownable.sol";
+
+contract OwnableTest is Test {
+    Ownable ownable;
+
+    function setUp() public {
+        ownable = new Ownable();
+        // Ignore selector that fails invariant.
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Ownable.changeOwner.selector;
+        targetSelector(FuzzSelector({addr: address(ownable), selectors: selectors}));
+    }
+
+    function invariant_never_owner() public {
+        require(ownable.owner() != address(888), "never owner");
+    }
+}
+   "#,
+    )
+    .unwrap();
+    cmd.assert_success().stderr_eq(str![[r#"
+...
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
+...
+"#]])
+    .stdout_eq(str![[r#"
+...
+[PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
 ...
 "#]]);
 });

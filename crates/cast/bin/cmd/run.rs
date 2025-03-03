@@ -1,9 +1,11 @@
 use alloy_consensus::Transaction;
-use alloy_network::TransactionResponse;
+use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::revm::primitives::EnvWithHandlerCfg;
+use cast::{
+    revm::primitives::EnvWithHandlerCfg, utils::apply_chain_and_block_specific_env_changes,
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -140,7 +142,6 @@ impl RunArgs {
         let create2_deployer = evm_opts.create2_deployer;
         let (mut env, fork, chain, odyssey) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
-
         let mut evm_version = self.evm_version;
 
         env.block.number = U256::from(tx_block_number);
@@ -161,6 +162,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, block);
         }
 
         let trace_mode = TraceMode::Call

@@ -130,7 +130,7 @@ impl CloneArgs {
         Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
 
         // step 5. git add and commit the changes if needed
-        if !install.no_commit {
+        if install.commit {
             let git = Git::new(&root);
             git.add(Some("--all"))?;
             let msg = format!("chore: forge clone {address}");
