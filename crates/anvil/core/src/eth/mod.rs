@@ -43,6 +43,7 @@ pub struct Params<T: Default> {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
+#[allow(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "web3_clientVersion", with = "empty_params"))]
     Web3ClientVersion(()),
