@@ -1,24 +1,27 @@
-# This is a starter workflow to help you get started with APIsec-Scan Actions
 name: APIsec
 
-on: [push, pull_request]
+on:
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  Trigger_APIsec_scan:
+  scan:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v2
 
     - name: Run APIsec scan
       uses: apisec-inc/apisec-run-scan@025432089674a28ba8fb55f8ab06c10215e772ea
       with:
+        apisec-username: ${{ secrets.APISEC_USERNAME }}
+        apisec-password: ${{ secrets.APISEC_PASSWORD }}
         apisec-project: VAmPI
-        sarif-result-file: apisec-results.sarif
         apisec-profile: Master
+        apisec-region: us-east-1
+        sarif-result-file: apisec-results.sarif
+        apisec-email-report: true
+        apisec-fail-on-vuln-severity: critical
         apisec-oas: false
-        # Ensure you provide valid credentials and host details
-        username: ${{ secrets.APISEC_USERNAME }}
-        password: ${{ secrets.APISEC_PASSWORD }}
-        host: ${{ secrets.APISEC_HOST }}
-        scanner: "default-scanner"
+        apisec-openapi-spec-url: "https://example.com/openapi.json"
