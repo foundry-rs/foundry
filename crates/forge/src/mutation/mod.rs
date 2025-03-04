@@ -108,7 +108,7 @@ impl<'a> MutationCampaign<'a> {
                         }
                         _ => {} // Not the interfaces or libs
                     }
-                }
+                },
                 _ => {} // we'll probably never mutate pragma directives or imports / consider for free function maybe?
             }
         }

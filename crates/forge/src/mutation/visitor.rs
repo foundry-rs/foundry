@@ -1,12 +1,12 @@
 use solar_parse::ast::{
-    Expr, Item, ItemContract, ItemFunction, ItemKind, Stmt, StmtKind, VariableDefinition,
+    Expr, ExprKind, Item, ItemContract, ItemFunction, ItemKind, Stmt, StmtKind, VariableDefinition
 };
 use std::sync::Arc;
 
 use rayon::prelude::*;
 use tempfile::SpooledTempFile;
 
-use crate::mutation::mutation::{Mutant, Mutate};
+use crate::mutation::mutation::{Mutant, Mutate, MutationType};
 
 pub struct Visitor<'ast> {
     contract_ast: &'ast ItemContract<'ast>,
@@ -36,12 +36,23 @@ impl<'ast> Visitor<'ast> {
             })
             .collect();
 
-        dbg!(results);
+        // config.cache == true
+        // config.cache_path == path
+        
+        // Copy cache and out folder in spooled temp files
+
+
         // Multithread: iterate over all mutants collected, for each:
+        
+        // - create a spooled directory
+
         // - SpooledTempFile of the contract
-        // - Mutate
-        // - Compile re-using the artifact (already built before)
-        // - Test (using artifacts)
+        
+        // - Mutate this file
+        
+        // - Make a new copy of cache + out in the spooled directory
+                
+        // - Run the test using the spooled dir as folder
     }
 
     fn process_mutant(&self, mutant: &mut Mutant) {
@@ -60,14 +71,26 @@ impl<'ast> Visitor<'ast> {
         }
     }
 
-    /// We only visit function and function declaration (only mutable items)
-    fn visit_item(&self, item: &Item<'_>, mutants: &mut Vec<Mutant>) {
+    /// We only visit global var/constant, function and function declaration (only mutable items)
+    fn visit_item(&self, item: &Item<'_>, mutants: &mut Vec<Mutant>) {        
         match &item.kind {
             ItemKind::Function(function) => self.visit_function(function, mutants),
 
             ItemKind::Variable(variable) => {
                 if let Some(init_expr) = &variable.initializer {
                     self.visit_expression(init_expr, mutants);
+
+                    
+                }
+
+                match &variable.initializer {
+                    None => {},
+                    Some(exp) => {
+                        match &exp.kind {
+                            ExprKind::Lit(val, _) => mutants.push(Mutant::new(exp.span, MutationType::AssignmentMutation(val.kind.clone()))),
+                            _ => {}
+                        }
+                    }
                 }
             }
             _ => {} // Skip other item types for now

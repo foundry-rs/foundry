@@ -1,6 +1,6 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
 // Use Solar:
-use solar_parse::ast::{Expr, ExprKind, LitKind, Span, TypeKind, VariableDefinition, BinOpKind, IndexKind};
+use solar_parse::{ast::{BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition}, interface::BytePos};
 use std::hash::Hash;
 
 /// Kinds of mutations (taken from Certora's Gambit)
@@ -15,7 +15,7 @@ pub enum MutationType {
     /// For a binary op y: apply BinaryOpMutation(y)
     AssignmentMutation(LitKind),
 
-    /// For a binary op y in op=["+", "-", "*", "/", "%", "**"]:
+    /// For a binary op y in BinOpKind ("+", "-", ">=", etc)
     /// replace y with each non-y in op
     BinaryOpMutation(BinOpKind),
 
@@ -30,10 +30,14 @@ pub enum MutationType {
 
     /// For a if(x) condition x:
     /// replace x with true; replace x with false
-    IfStatementMutation,
+    // This mutation is not used anymore, as we mutate the condition as an expression,
+    // which will creates true/false mutant as well as more complex conditions (eg if(foo++ > --bar) )
+    // IfStatementMutation,
 
     /// For a require(x) condition:
     /// replace x with true; replace x with false
+    // same as IfStatementMutation, the expression inside the require is mutated as an expression
+    // to handle increment etc
     RequireMutation,
 
     // @todo review if needed -> this might creates *a lot* of combinations for super-polyadic fn tho
@@ -48,11 +52,10 @@ pub enum MutationType {
     /// swap(x, y)
     SwapArgumentsOperatorMutation,
 
-    // @todo pre and post-op should be different (and mutation would switch pre/post too)
-    //       AST itself doesn't store this -> should be based on span (ie UnOp.span > Expr.span?)
-    /// For an unary operator x in op=["++", "--", "~", "!"]:
+    /// For an unary operator x in UnOpKind (eg "++", "--", "~", "!"):
     /// replace x with all other operator in op
-    UnaryOperatorMutation,
+    /// Pre or post- are different UnOp
+    UnaryOperatorMutation(UnOpKind),
 }
 
 enum MutationResult {
@@ -64,8 +67,14 @@ enum MutationResult {
 /// A given mutation
 #[derive(Debug)]
 pub struct Mutant {
-    mutation: MutationType,
     span: Span,
+    mutation: MutationType,
+}
+
+impl Mutant {
+    pub fn new(span: Span, mutation: MutationType) -> Mutant {
+        Mutant { span, mutation }
+    }
 }
 
 pub trait Mutate {
@@ -77,12 +86,9 @@ impl<'ast> Mutate for Expr<'ast> {
     fn get_all_mutations(&self) -> Option<Vec<Mutant>> {
         let mut mutants = Vec::new();
 
-        dbg!(&self.kind);
         let _ = match &self.kind {
             // Array skipped for now (swap could be mutating it, cf above for rational)
             ExprKind::Assign(_, bin_op, rhs) => {
-                // mutants.push(create_assignement_mutation(rhs.span, rhs.kind));
-
                 if let ExprKind::Lit(kind, _) = &rhs.kind {
                     mutants.push(create_assignement_mutation(rhs.span, kind.kind.clone()));
                 }
@@ -104,11 +110,29 @@ impl<'ast> Mutate for Expr<'ast> {
                 // @todo is a >> b++ a thing (ie parse lhs and rhs too?)
                 mutants.push(create_binary_op_mutation(op.span, op.kind));
             },
-            // Call
+            ExprKind::Call(expr, args) => {
+                if let ExprKind::Member(expr, ident) = &expr.kind {
+                    if ident.to_string() == "delegatecall" {                    
+                        mutants.push(create_delegatecall_mutation(ident.span));
+                    }
+                }
+            }
             // CallOptions
             ExprKind::Delete(_) => mutants.push(create_delete_mutation(self.span)),
-            // Indet
+            // Indent
             // Index -> mutable? 0 it? idx should be a regular expression?
+            // Lit -> global/constant are using Lit as initializer
+
+            // Member
+            // New
+            // Payable -> compilation error
+            // Ternary -> swap them?
+            // Tuple -> swap if same type?
+            // TypeCall -> compilation error
+            // Type -> compilation error, most likely
+            ExprKind::Unary(op, expr) => {
+                mutants.push(create_unary_mutation(op.span, op.kind));
+            }
 
             _ => {}
         };
@@ -117,14 +141,24 @@ impl<'ast> Mutate for Expr<'ast> {
     }
 }
 
+// @todo refactor:
+
 fn create_assignement_mutation(span: Span, var_type: LitKind) -> Mutant {
-    Mutant { mutation: MutationType::AssignmentMutation(var_type), span }
+    Mutant { span, mutation: MutationType::AssignmentMutation(var_type) }
 }
 
 fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Mutant {
-    Mutant { mutation: MutationType::BinaryOpMutation(op), span }
+    Mutant { span, mutation: MutationType::BinaryOpMutation(op) }
 }
 
 fn create_delete_mutation(span: Span) -> Mutant {
-    Mutant { mutation: MutationType::DeleteExpressionMutation, span}
+    Mutant { span, mutation: MutationType::DeleteExpressionMutation}
+}
+
+fn create_unary_mutation(span: Span, op: UnOpKind) -> Mutant {
+    Mutant { span, mutation: MutationType::UnaryOperatorMutation(op)}
+}
+
+fn create_delegatecall_mutation(span: Span) -> Mutant {
+    Mutant { span, mutation: MutationType::ElimDelegateMutation }
 }
