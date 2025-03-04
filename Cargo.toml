@@ -316,6 +316,11 @@ vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 [patch.crates-io]
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "4342f82" }
+
+solar-parse  = { git = "https://github.com/paradigmxyz/solar", rev = "964b054" }
+solar-sema  = { git = "https://github.com/paradigmxyz/solar", rev = "964b054" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
