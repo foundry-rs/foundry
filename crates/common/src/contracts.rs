@@ -147,7 +147,7 @@ impl ContractsByArtifact {
                     None
                 }
             })
-            .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
+            .min_by(|(score1, _), (score2, _)| score1.partial_cmp(score2).unwrap())
             .map(|(_, data)| data)
     }
 

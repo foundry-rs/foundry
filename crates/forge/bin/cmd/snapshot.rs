@@ -373,7 +373,9 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>) -> Result<()>
     let mut overall_gas_change = 0i128;
     let mut overall_gas_used = 0i128;
 
-    diffs.sort_by(|a, b| a.gas_diff().abs().total_cmp(&b.gas_diff().abs()));
+    diffs.sort_by(|a, b| {
+        a.gas_diff().abs().partial_cmp(&b.gas_diff().abs()).unwrap_or(Ordering::Equal)
+    });
 
     for diff in diffs {
         let gas_change = diff.gas_change();
@@ -399,7 +401,7 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>) -> Result<()>
 
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
-    match change.total_cmp(&0.0) {
+    match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
         Ordering::Less => format!("{change_pct:.3}%").green().to_string(),
         Ordering::Equal => {
             format!("{change_pct:.3}%")
