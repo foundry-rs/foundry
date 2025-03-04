@@ -6,18 +6,18 @@ use alloy_consensus::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
         TxEip7702,
     },
-    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559,
-    TxEip2930, TxEnvelope, TxLegacy, TxReceipt,
+    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
+    TxReceipt, Typed2718,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
-use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
+use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
 use alloy_primitives::{
     Address, Bloom, Bytes, Log, PrimitiveSignature, TxHash, TxKind, B256, U256, U64,
 };
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, AnyTransactionReceipt,
-    ConversionError, Transaction as RpcTransaction, TransactionReceipt,
+    request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, ConversionError,
+    Transaction as RpcTransaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
@@ -619,7 +619,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                 TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
                 TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-                _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
             },
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
@@ -1012,11 +1011,13 @@ impl Decodable for TypedTransaction {
     }
 }
 
-impl Encodable2718 for TypedTransaction {
-    fn type_flag(&self) -> Option<u8> {
-        self.r#type()
+impl Typed2718 for TypedTransaction {
+    fn ty(&self) -> u8 {
+        self.r#type().unwrap_or(0)
     }
+}
 
+impl Encodable2718 for TypedTransaction {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
@@ -1109,7 +1110,7 @@ pub struct TransactionInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct DepositReceipt<T = alloy_primitives::Log> {
+pub struct DepositReceipt<T = Receipt<alloy_primitives::Log>> {
     #[serde(flatten)]
     pub inner: ReceiptWithBloom<T>,
     #[serde(default, with = "alloy_serde::quantity::opt")]
@@ -1136,7 +1137,7 @@ impl DepositReceipt {
     /// Encodes the receipt data.
     fn encode_fields(&self, out: &mut dyn BufMut) {
         self.receipt_rlp_header().encode(out);
-        self.inner.receipt.status.encode(out);
+        self.inner.status().encode(out);
         self.inner.receipt.cumulative_gas_used.encode(out);
         self.inner.logs_bloom.encode(out);
         self.inner.receipt.logs.encode(out);
@@ -1161,7 +1162,7 @@ impl DepositReceipt {
         let status = Decodable::decode(b)?;
         let cumulative_gas_used = Decodable::decode(b)?;
         let logs_bloom = Decodable::decode(b)?;
-        let logs = Decodable::decode(b)?;
+        let logs: Vec<Log> = Decodable::decode(b)?;
         let deposit_nonce = remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
         let deposit_nonce_version =
             remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
@@ -1207,7 +1208,7 @@ impl alloy_rlp::Decodable for DepositReceipt {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum TypedReceipt<T = alloy_primitives::Log> {
+pub enum TypedReceipt<T = Receipt<alloy_primitives::Log>> {
     #[serde(rename = "0x0", alias = "0x00")]
     Legacy(ReceiptWithBloom<T>),
     #[serde(rename = "0x1", alias = "0x01")]
@@ -1248,8 +1249,8 @@ impl<T> From<TypedReceipt<T>> for ReceiptWithBloom<T> {
     }
 }
 
-impl From<TypedReceipt<alloy_rpc_types::Log>> for OtsReceipt {
-    fn from(value: TypedReceipt<alloy_rpc_types::Log>) -> Self {
+impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
+    fn from(value: TypedReceipt<Receipt<alloy_rpc_types::Log>>) -> Self {
         let r#type = match value {
             TypedReceipt::Legacy(_) => 0x00,
             TypedReceipt::EIP2930(_) => 0x01,
@@ -1258,9 +1259,9 @@ impl From<TypedReceipt<alloy_rpc_types::Log>> for OtsReceipt {
             TypedReceipt::EIP7702(_) => 0x04,
             TypedReceipt::Deposit(_) => 0x7E,
         } as u8;
-        let receipt = ReceiptWithBloom::<alloy_rpc_types::Log>::from(value);
+        let receipt = ReceiptWithBloom::<Receipt<alloy_rpc_types::Log>>::from(value);
         let status = receipt.status();
-        let cumulative_gas_used = receipt.cumulative_gas_used() as u64;
+        let cumulative_gas_used = receipt.cumulative_gas_used();
         let logs = receipt.logs().to_vec();
         let logs_bloom = receipt.logs_bloom;
 
@@ -1269,7 +1270,7 @@ impl From<TypedReceipt<alloy_rpc_types::Log>> for OtsReceipt {
 }
 
 impl TypedReceipt {
-    pub fn cumulative_gas_used(&self) -> u128 {
+    pub fn cumulative_gas_used(&self) -> u64 {
         self.as_receipt_with_bloom().cumulative_gas_used()
     }
 
@@ -1282,7 +1283,7 @@ impl TypedReceipt {
     }
 }
 
-impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<alloy_rpc_types::Log> {
+impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<Receipt<alloy_rpc_types::Log>> {
     fn from(value: ReceiptEnvelope<alloy_rpc_types::Log>) -> Self {
         match value {
             ReceiptEnvelope::Legacy(r) => Self::Legacy(r),
@@ -1380,18 +1381,20 @@ impl Decodable for TypedReceipt {
     }
 }
 
-impl Encodable2718 for TypedReceipt {
-    fn type_flag(&self) -> Option<u8> {
+impl Typed2718 for TypedReceipt {
+    fn ty(&self) -> u8 {
         match self {
-            Self::Legacy(_) => None,
-            Self::EIP2930(_) => Some(1),
-            Self::EIP1559(_) => Some(2),
-            Self::EIP4844(_) => Some(3),
-            Self::EIP7702(_) => Some(4),
-            Self::Deposit(_) => Some(0x7E),
+            Self::Legacy(_) => alloy_consensus::constants::LEGACY_TX_TYPE_ID,
+            Self::EIP2930(_) => alloy_consensus::constants::EIP2930_TX_TYPE_ID,
+            Self::EIP1559(_) => alloy_consensus::constants::EIP1559_TX_TYPE_ID,
+            Self::EIP4844(_) => alloy_consensus::constants::EIP4844_TX_TYPE_ID,
+            Self::EIP7702(_) => alloy_consensus::constants::EIP7702_TX_TYPE_ID,
+            Self::Deposit(_) => DEPOSIT_TX_TYPE_ID,
         }
     }
+}
 
+impl Encodable2718 for TypedReceipt {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
@@ -1439,7 +1442,7 @@ impl Decodable2718 for TypedReceipt {
     }
 }
 
-pub type ReceiptResponse = TransactionReceipt<TypedReceipt<alloy_rpc_types::Log>>;
+pub type ReceiptResponse = TransactionReceipt<TypedReceipt<Receipt<alloy_rpc_types::Log>>>;
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
     let WithOtherFields {
@@ -1457,7 +1460,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                 blob_gas_price,
                 blob_gas_used,
                 inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
-                authorization_list,
             },
         other,
     } = receipt;
@@ -1474,7 +1476,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         to,
         blob_gas_price,
         blob_gas_used,
-        authorization_list,
         inner: match r#type {
             0x00 => TypedReceipt::Legacy(receipt_with_bloom),
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),
@@ -1653,7 +1654,7 @@ mod tests {
         let receipt = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false.into(),
-                cumulative_gas_used: 0x1u128,
+                cumulative_gas_used: 0x1,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(
@@ -1688,7 +1689,7 @@ mod tests {
         let expected = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false.into(),
-                cumulative_gas_used: 0x1u128,
+                cumulative_gas_used: 0x1,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(

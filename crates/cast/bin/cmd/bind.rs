@@ -57,7 +57,7 @@ impl BindArgs {
     pub async fn run(self) -> Result<()> {
         Err(eyre::eyre!(
             "`cast bind` has been removed.\n\
-             Please use `cast etherscan-source` to create a Forge project from an Etherscan source\n\
+             Please use `cast source` to create a Forge project from a block explorer source\n\
              and `forge bind` to generate the bindings to it instead."
         ))
     }

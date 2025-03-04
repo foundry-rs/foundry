@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
 use eyre::{Ok, OptionExt, Result};
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::artifacts::{
     output_selection::OutputSelection,
@@ -9,7 +9,7 @@ use foundry_compilers::artifacts::{
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
 
-foundry_config::impl_figment_convert!(Eip712Args, opts);
+foundry_config::impl_figment_convert!(Eip712Args, build);
 
 /// CLI arguments for `forge eip712`.
 #[derive(Clone, Debug, Parser)]
@@ -19,13 +19,13 @@ pub struct Eip712Args {
     pub target_path: PathBuf,
 
     #[command(flatten)]
-    opts: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
-        let mut project = config.create_project(false, true)?;
+        let config = self.load_config()?;
+        let mut project = config.ephemeral_project()?;
         let target_path = dunce::canonicalize(self.target_path)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::ast_output_selection();
@@ -57,8 +57,8 @@ impl Eip712Args {
             collector.0
         };
 
-        for (id, _) in structs_in_target {
-            if let Some(resolved) = resolver.resolve_struct_eip712(id)? {
+        for id in structs_in_target.keys() {
+            if let Some(resolved) = resolver.resolve_struct_eip712(*id)? {
                 sh_println!("{resolved}\n")?;
             }
         }

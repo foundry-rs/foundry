@@ -4,9 +4,9 @@ use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
+use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{hex, map::Entry, Bytes, U256};
 use alloy_provider::network::ReceiptResponse;
-use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -413,19 +413,31 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
 
             let artifact = match &filtered[..] {
                 [] => Err(fmt_err!("no matching artifact found")),
-                [artifact] => Ok(artifact),
+                [artifact] => Ok(*artifact),
                 filtered => {
+                    let mut filtered = filtered.to_vec();
                     // If we know the current script/test contract solc version, try to filter by it
                     state
                         .config
-                        .running_version
+                        .running_artifact
                         .as_ref()
-                        .and_then(|version| {
-                            let filtered = filtered
-                                .iter()
-                                .filter(|(id, _)| id.version == *version)
-                                .collect::<Vec<_>>();
-                            (filtered.len() == 1).then(|| filtered[0])
+                        .and_then(|running| {
+                            // Firstly filter by version
+                            filtered.retain(|(id, _)| id.version == running.version);
+
+                            // Return artifact if only one matched
+                            if filtered.len() == 1 {
+                                return Some(filtered[0])
+                            }
+
+                            // Try filtering by profile as well
+                            filtered.retain(|(id, _)| id.profile == running.profile);
+
+                            if filtered.len() == 1 {
+                                Some(filtered[0])
+                            } else {
+                                None
+                            }
                         })
                         .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }

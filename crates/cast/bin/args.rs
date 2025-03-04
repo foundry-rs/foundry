@@ -9,31 +9,26 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, GlobalOpts, RpcOpts};
-use foundry_common::ens::NameOrAddress;
+use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
+use foundry_common::{
+    ens::NameOrAddress,
+    version::{LONG_VERSION, SHORT_VERSION},
+};
 use std::{path::PathBuf, str::FromStr};
 
-const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
-
-/// Perform Ethereum RPC calls from the comfort of your command line.
+/// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
     name = "cast",
-    version = VERSION_MESSAGE,
+    version = SHORT_VERSION,
+    long_version = LONG_VERSION,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
     next_display_order = None,
 )]
 pub struct Cast {
-    /// Include the global options.
+    /// Include the global arguments.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     #[command(subcommand)]
     pub cmd: CastSubcommand,
@@ -422,7 +417,7 @@ pub enum CastSubcommand {
     #[command(visible_alias = "ca")]
     ComputeAddress {
         /// The deployer address.
-        address: Option<String>,
+        address: Option<Address>,
 
         /// The nonce of the deployer address.
         #[arg(long)]
@@ -432,11 +427,11 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Disassembles hex encoded bytecode into individual / human readable opcodes
+    /// Disassembles a hex-encoded bytecode into a human-readable representation.
     #[command(visible_alias = "da")]
     Disassemble {
-        /// The hex encoded bytecode.
-        bytecode: String,
+        /// The hex-encoded bytecode.
+        bytecode: Option<String>,
     },
 
     /// Build and sign a transaction.
@@ -606,7 +601,8 @@ pub enum CastSubcommand {
         formula_id: String,
     },
 
-    /// Fetch the EIP-1967 implementation account
+    /// Fetch the EIP-1967 implementation for a contract
+    /// Can read from the implementation slot or the beacon slot.
     #[command(visible_alias = "impl")]
     Implementation {
         /// The block height to query at.
@@ -615,7 +611,13 @@ pub enum CastSubcommand {
         #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
-        /// The address to get the nonce for.
+        /// Fetch the implementation from the beacon slot.
+        ///
+        /// If not specified, the implementation slot is used.
+        #[arg(long)]
+        beacon: bool,
+
+        /// The address for which the implementation will be fetched.
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
@@ -632,7 +634,7 @@ pub enum CastSubcommand {
         #[arg(long, short = 'B')]
         block: Option<BlockId>,
 
-        /// The address to get the nonce for.
+        /// The address from which the admin account will be fetched.
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
@@ -648,8 +650,8 @@ pub enum CastSubcommand {
     },
 
     /// Decode ABI-encoded calldata using https://openchain.xyz.
-    #[command(name = "4byte-decode", visible_aliases = &["4d", "4bd"])]
-    FourByteDecode {
+    #[command(name = "4byte-calldata", aliases = &["4byte-decode", "4d", "4bd"], visible_aliases = &["4c", "4bc"])]
+    FourByteCalldata {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
@@ -754,7 +756,7 @@ pub enum CastSubcommand {
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
-        /// Disassemble bytecodes into individual opcodes.
+        /// Disassemble bytecodes.
         #[arg(long, short)]
         disassemble: bool,
 
@@ -919,9 +921,9 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the source code of a contract from Etherscan.
+    /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
-    EtherscanSource {
+    Source {
         /// The contract's address.
         address: String,
 
@@ -935,6 +937,15 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         etherscan: EtherscanOpts,
+
+        /// Alternative explorer API URL to use that adheres to the Etherscan API. If not provided,
+        /// defaults to Etherscan.
+        #[arg(long, env = "EXPLORER_API_URL")]
+        explorer_api_url: Option<String>,
+
+        /// Alternative explorer browser URL.
+        #[arg(long, env = "EXPLORER_URL")]
+        explorer_url: Option<String>,
     },
 
     /// Wallet management utilities.
@@ -1030,8 +1041,8 @@ pub enum CastSubcommand {
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]
     Selectors {
-        /// The hex encoded bytecode.
-        bytecode: String,
+        /// The hex-encoded bytecode.
+        bytecode: Option<String>,
 
         /// Resolve the function signatures for the extracted selectors using https://openchain.xyz
         #[arg(long, short)]

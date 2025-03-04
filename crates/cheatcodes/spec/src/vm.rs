@@ -324,6 +324,18 @@ interface Vm {
         address implementation;
     }
 
+    /// Represents a "potential" revert reason from a single subsequent call when using `vm.assumeNoReverts`.
+    /// Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced
+    /// as normal.
+    struct PotentialRevert {
+        /// The allowed origin of the revert opcode; address(0) allows reverts from any address
+        address reverter;
+        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        bool partialMatch;
+        /// The data to use to match encountered reverts
+        bytes revertData;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -383,6 +395,14 @@ interface Vm {
     /// Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.
     #[cheatcode(group = Evm, safety = Safe)]
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
+
+    /// Returns state diffs from current `vm.startStateDiffRecording` session.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStateDiff() external view returns (string memory diff);
+
+    /// Returns state diffs from current `vm.startStateDiffRecording` session, in json format.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getStateDiffJson() external view returns (string memory diff);
 
     // -------- Recording Map Writes --------
 
@@ -886,6 +906,14 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assumeNoRevert() external pure;
 
+    /// Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverts with the any of the potential revert parameters.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
+
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
     function breakpoint(string calldata char) external pure;
@@ -895,10 +923,10 @@ interface Vm {
     function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
-    /// Format: <cargo_version>+<git_sha>+<build_timestamp>
-    /// Sample output: 0.2.0+faa94c384+202407110019
+    /// Format: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>
+    /// Sample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug
     /// Note: Build timestamps may vary slightly across platforms due to separate CI jobs.
-    /// For reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)
+    /// For reliable version comparisons, use UNIX format (e.g., >= 1700000000)
     /// to compare timestamps while ignoring minor time differences.
     #[cheatcode(group = Testing, safety = Safe)]
     function getFoundryVersion() external view returns (string memory version);
@@ -974,6 +1002,23 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit(address emitter) external;
 
+    /// Expect a given number of logs with the provided topics.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, uint64 count) external;
+
+    /// Expect a given number of logs from a specific emitter with the provided topics.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count)
+        external;
+
+    /// Expect a given number of logs with all topic and data checks enabled.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmit(uint64 count) external;
+
+    /// Expect a given number of logs from a specific emitter with all topic and data checks enabled.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmit(address emitter, uint64 count) external;
+
     /// Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).
     /// Call this function, then emit an anonymous event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
@@ -994,6 +1039,14 @@ interface Vm {
     /// Same as the previous method, but also checks supplied address against emitting contract.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmitAnonymous(address emitter) external;
+
+    /// Expects the deployment of the specified bytecode by the specified address using the CREATE opcode
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectCreate(bytes calldata bytecode, address deployer) external;
+
+    /// Expects the deployment of the specified bytecode by the specified address using the CREATE2 opcode
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectCreate2(bytes calldata bytecode, address deployer) external;
 
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
@@ -1018,6 +1071,30 @@ interface Vm {
     /// Expects an error from reverter address on next call, that exactly matches the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls with any revert data or reverter.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls that match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls that exactly match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(address reverter, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
+
+    /// Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;
 
     /// Expects an error on next call that starts with the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
@@ -1607,6 +1684,27 @@ interface Vm {
         uint256 decimals,
         string calldata error
     ) external pure;
+
+    /// Returns true if the current Foundry version is greater than or equal to the given version.
+    /// The given version string must be in the format `major.minor.patch`.
+    ///
+    /// This is equivalent to `foundryVersionCmp(version) >= 0`.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function foundryVersionAtLeast(string calldata version) external view returns (bool);
+
+    /// Compares the current Foundry version with the given version string.
+    /// The given version string must be in the format `major.minor.patch`.
+    ///
+    /// Returns:
+    /// -1 if current Foundry version is less than the given version
+    /// 0 if current Foundry version equals the given version
+    /// 1 if current Foundry version is greater than the given version
+    ///
+    /// This result can then be used with a comparison operator against `0`.
+    /// For example, to check if the current Foundry version is greater than or equal to `1.0.0`:
+    /// `if (foundryVersionCmp("1.0.0") >= 0) { ... }`
+    #[cheatcode(group = Testing, safety = Safe)]
+    function foundryVersionCmp(string calldata version) external view returns (int256);
 
     // ======== OS and Filesystem ========
 

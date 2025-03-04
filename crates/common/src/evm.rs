@@ -140,10 +140,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
-    /// Whether to enable Alphanet features.
-    #[arg(long, alias = "odyssey")]
+    /// Whether to enable Odyssey features.
+    #[arg(long, alias = "alphanet")]
     #[serde(skip)]
-    pub alphanet: bool,
+    pub odyssey: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -170,8 +170,8 @@ impl Provider for EvmArgs {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
-        if self.alphanet {
-            dict.insert("alphanet".to_string(), self.alphanet.into());
+        if self.odyssey {
+            dict.insert("odyssey".to_string(), self.odyssey.into());
         }
 
         if self.always_use_create_2_factory {
@@ -267,6 +267,7 @@ pub struct EnvArgs {
 
     /// Whether to disable the block gas limit checks.
     #[arg(long, visible_alias = "no-gas-limit")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub disable_block_gas_limit: bool,
 }
 
@@ -300,7 +301,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
@@ -313,7 +314,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.memory_limit, Config::default().memory_limit);
 
         let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
@@ -328,7 +329,7 @@ mod tests {
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
         assert_eq!(env.chain, Some(Chain::mainnet()));
         let args = EvmArgs { env, ..Default::default() };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 }

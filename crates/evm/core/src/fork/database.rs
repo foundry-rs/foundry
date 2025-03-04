@@ -262,7 +262,6 @@ impl DatabaseRef for ForkDbStateSnapshot {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use crate::backend::BlockchainDbMeta;

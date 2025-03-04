@@ -1,0 +1,28 @@
+# This image is meant to enable cross-architecture builds.
+# It assumes the foundry binaries have already been compiled for `$TARGETPLATFORM` and are
+# locatable in `./dist/bin/$TARGETARCH`
+FROM ubuntu:22.04
+
+# Filled by docker buildx
+ARG TARGETARCH
+
+RUN apt update && apt install -y git
+
+COPY ./dist/bin/$TARGETARCH/* /usr/local/bin/
+
+RUN groupadd -g 1000 foundry && \
+    useradd -m -u 1000 -g foundry foundry
+
+USER foundry
+
+ENTRYPOINT ["/bin/sh", "-c"]
+
+LABEL org.label-schema.build-date=$BUILD_DATE \
+    org.label-schema.name="Foundry" \
+    org.label-schema.description="Foundry" \
+    org.label-schema.url="https://getfoundry.sh" \
+    org.label-schema.vcs-ref=$VCS_REF \
+    org.label-schema.vcs-url="https://github.com/foundry-rs/foundry.git" \
+    org.label-schema.vendor="Foundry-rs" \
+    org.label-schema.version=$VERSION \
+    org.label-schema.schema-version="1.0"

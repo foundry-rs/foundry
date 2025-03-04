@@ -43,6 +43,7 @@ pub struct Params<T: Default> {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
+#[allow(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "web3_clientVersion", with = "empty_params"))]
     Web3ClientVersion(()),
@@ -321,7 +322,7 @@ pub enum EthRequest {
     TraceBlock(BlockNumber),
 
     // Return filtered traces over blocks
-    #[cfg_attr(feature = "serde", serde(rename = "trace_filter",))]
+    #[cfg_attr(feature = "serde", serde(rename = "trace_filter", with = "sequence"))]
     TraceFilter(TraceFilter),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
@@ -776,6 +777,10 @@ pub enum EthRequest {
     /// Reorg the chain
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
     Reorg(ReorgOptions),
+
+    /// Rollback the chain
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_rollback", with = "sequence"))]
+    Rollback(Option<u64>),
 
     /// Wallet
     #[cfg_attr(feature = "serde", serde(rename = "wallet_getCapabilities", with = "empty_params"))]

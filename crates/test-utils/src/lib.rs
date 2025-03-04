@@ -4,9 +4,8 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-
-#[macro_use]
-extern crate foundry_common;
+// Shouldn't use sh_* macros here, as they don't get captured by the test runner.
+#![allow(clippy::disallowed_macros)]
 
 #[macro_use]
 extern crate tracing;

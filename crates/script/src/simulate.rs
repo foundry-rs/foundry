@@ -427,7 +427,7 @@ impl FilledTransactionsState {
             )?)
         };
 
-        let commit = get_commit_hash(&self.script_config.config.root.0);
+        let commit = get_commit_hash(&self.script_config.config.root);
 
         let libraries = self
             .build_data

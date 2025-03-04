@@ -3,10 +3,12 @@ use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_block_explorers::Client;
-use foundry_cli::opts::EtherscanOpts;
-use foundry_common::{compile::ProjectCompiler, fs, shell};
-use foundry_compilers::{info::ContractInfo, utils::canonicalize};
-use foundry_config::{load_config_with_root, try_find_project_root, Config};
+use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
+use foundry_common::{
+    compile::{PathOrContractInfo, ProjectCompiler},
+    find_target_path, fs, shell, ContractsByArtifact,
+};
+use foundry_config::load_config;
 use itertools::Itertools;
 use serde_json::Value;
 use std::{
@@ -114,24 +116,24 @@ pub fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonA
 
 /// Load the ABI from the artifact of a locally compiled contract.
 fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String)>> {
-    let root = try_find_project_root(None)?;
-    let config = load_config_with_root(Some(&root));
+    let config = load_config()?;
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
 
-    let contract = ContractInfo::new(path_or_contract);
-    let target_path = if let Some(path) = &contract.path {
-        canonicalize(project.root().join(path))?
-    } else {
-        project.find_contract_path(&contract.name)?
-    };
-    let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+    let contract = PathOrContractInfo::from_str(path_or_contract)?;
 
-    let artifact = output.remove(&target_path, &contract.name).ok_or_else(|| {
-        eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
-    })?;
-    let abi = artifact.abi.as_ref().ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-    Ok(vec![(abi.clone(), contract.name)])
+    let target_path = find_target_path(&project, &contract)?;
+    let output = compiler.files([target_path.clone()]).compile(&project)?;
+
+    let contracts_by_artifact = ContractsByArtifact::from(output);
+
+    let maybe_abi = contracts_by_artifact
+        .find_abi_by_name_or_src_path(contract.name().unwrap_or(&target_path.to_string_lossy()));
+
+    let (abi, name) =
+        maybe_abi.as_ref().ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+
+    Ok(vec![(abi.clone(), contract.name().unwrap_or(name).to_string())])
 }
 
 /// Fetches the ABI of a contract from Etherscan.
@@ -139,7 +141,7 @@ pub async fn fetch_abi_from_etherscan(
     address: Address,
     etherscan: &EtherscanOpts,
 ) -> Result<Vec<(JsonAbi, String)>> {
-    let config = Config::from(etherscan);
+    let config = etherscan.load_config()?;
     let chain = config.chain.unwrap_or_default();
     let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
     let client = Client::new(chain, api_key)?;

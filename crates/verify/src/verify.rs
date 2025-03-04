@@ -20,6 +20,7 @@ use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, C
 use itertools::Itertools;
 use reqwest::Url;
 use revm_primitives::HashSet;
+use semver::BuildMetadata;
 use std::path::PathBuf;
 
 use crate::provider::VerificationContext;
@@ -28,7 +29,7 @@ use crate::provider::VerificationContext;
 #[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[arg(long, help_heading = "Verifier options", default_value = "etherscan", value_enum)]
+    #[arg(long, help_heading = "Verifier options", default_value = "sourcify", value_enum)]
     pub verifier: VerificationProviderType,
 
     /// The verifier API KEY, if using a custom provider.
@@ -43,14 +44,14 @@ pub struct VerifierArgs {
 impl Default for VerifierArgs {
     fn default() -> Self {
         Self {
-            verifier: VerificationProviderType::Etherscan,
+            verifier: VerificationProviderType::Sourcify,
             verifier_api_key: None,
             verifier_url: None,
         }
     }
 }
 
-/// CLI arguments for `forge verify`.
+/// CLI arguments for `forge verify-contract`.
 #[derive(Clone, Debug, Parser)]
 pub struct VerifyArgs {
     /// The address of the contract to verify.
@@ -186,7 +187,7 @@ impl figment::Provider for VerifyArgs {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
-        let config = self.load_config_emit_warnings();
+        let config = self.load_config()?;
 
         if self.guess_constructor_args && config.get_rpc_url().is_none() {
             eyre::bail!(
@@ -220,6 +221,9 @@ impl VerifyArgs {
 
         let verifier_url = self.verifier.verifier_url.clone();
         sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        if let Some(version) = &self.evm_version {
+            sh_println!("EVM version: {version}")?;
+        }
         if let Some(version) = &self.compiler_version {
             sh_println!("Compiler version: {version}")?;
         }
@@ -231,7 +235,7 @@ impl VerifyArgs {
                 sh_println!("Constructor args: {args}")?
             }
         }
-        self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
+        self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -255,13 +259,13 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(&self.etherscan.key())
+        self.verifier.verifier.client(self.etherscan.key().as_deref())
     }
 
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
-        let mut config = self.load_config_emit_warnings();
+        let mut config = self.load_config()?;
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;
@@ -275,7 +279,7 @@ impl VerifyArgs {
 
             let cache = project.read_cache_file().ok();
 
-            let version = if let Some(ref version) = self.compiler_version {
+            let mut version = if let Some(ref version) = self.compiler_version {
                 version.trim_start_matches('v').parse()?
             } else if let Some(ref solc) = config.solc {
                 match solc {
@@ -321,7 +325,21 @@ impl VerifyArgs {
                 let profiles = entry
                     .artifacts
                     .get(&contract.name)
-                    .and_then(|artifacts| artifacts.get(&version))
+                    .and_then(|artifacts| {
+                        let mut cached_artifacts = artifacts.get(&version);
+                        // If we try to verify with specific build version and no cached artifacts
+                        // found, then check if we have artifacts cached for same version but
+                        // without any build metadata.
+                        // This could happen when artifacts are built / cached
+                        // with a version like `0.8.20` but verify is using a compiler-version arg
+                        // as `0.8.20+commit.a1b79de6`.
+                        // See <https://github.com/foundry-rs/foundry/issues/9510>.
+                        if cached_artifacts.is_none() && version.build != BuildMetadata::EMPTY {
+                            version.build = BuildMetadata::EMPTY;
+                            cached_artifacts = artifacts.get(&version);
+                        }
+                        cached_artifacts
+                    })
                     .map(|artifacts| artifacts.keys().collect::<HashSet<_>>())
                     .unwrap_or_default();
 
@@ -414,7 +432,7 @@ impl VerifyCheckArgs {
             "Checking verification status on {}",
             self.etherscan.chain.unwrap_or_default()
         )?;
-        self.verifier.verifier.client(&self.etherscan.key())?.check(self).await
+        self.verifier.verifier.client(self.etherscan.key().as_deref())?.check(self).await
     }
 }
 

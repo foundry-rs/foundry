@@ -1,4 +1,5 @@
 use crate::opts::ChainValueParser;
+use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
 use foundry_config::{
@@ -17,7 +18,7 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 
 #[derive(Clone, Debug, Default, Parser)]
 pub struct RpcOpts {
-    /// The RPC endpoint.
+    /// The RPC endpoint, default value is http://localhost:8545.
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
@@ -154,7 +155,11 @@ impl EtherscanOpts {
             dict.insert("etherscan_api_key".into(), key.into());
         }
         if let Some(chain) = self.chain {
-            dict.insert("chain_id".into(), chain.to_string().into());
+            if let ChainKind::Id(id) = chain.kind() {
+                dict.insert("chain_id".into(), (*id).into());
+            } else {
+                dict.insert("chain_id".into(), chain.to_string().into());
+            }
         }
         dict
     }

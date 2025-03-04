@@ -25,9 +25,9 @@ use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
-use forge_verify::RetryArgs;
+use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{CoreBuildArgs, GlobalOpts},
+    opts::{BuildOpts, GlobalArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -72,14 +72,14 @@ mod transaction;
 mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_args);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
     // Include global options for users of this struct.
     #[command(flatten)]
-    pub global: GlobalOpts,
+    pub global: GlobalArgs,
 
     /// The contract you want to run. Either the file path or contract name.
     ///
@@ -203,16 +203,16 @@ pub struct ScriptArgs {
     pub timeout: Option<u64>,
 
     #[command(flatten)]
-    pub opts: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
     pub wallets: MultiWalletOpts,
 
     #[command(flatten)]
-    pub evm_args: EvmArgs,
+    pub evm: EvmArgs,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     pub retry: RetryArgs,
@@ -220,10 +220,9 @@ pub struct ScriptArgs {
 
 impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
-        let script_wallets =
-            Wallets::new(self.wallets.get_multi_wallet().await?, self.evm_args.sender);
+        let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
 
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
@@ -261,7 +260,7 @@ impl ScriptArgs {
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
-                    Some(ref path) => pre_simulation.run_debug_file_dumper(path),
+                    Some(path) => pre_simulation.dump_debugger(&path),
                     None => pre_simulation.run_debugger(),
                 };
             }
@@ -278,7 +277,7 @@ impl ScriptArgs {
                 .execution_result
                 .transactions
                 .as_ref()
-                .map_or(true, |txs| txs.is_empty())
+                .is_none_or(|txs| txs.is_empty())
             {
                 return Ok(());
             }
@@ -304,6 +303,11 @@ impl ScriptArgs {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
             if !shell::is_json() {
+                if shell::verbosity() >= 4 {
+                    sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+                    bundled.sequence.show_transactions()?;
+                }
+
                 sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             }
             return Ok(());
@@ -414,7 +418,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = match self.evm_args.env.code_size_limit {
+        let max_size = match self.evm.env.code_size_limit {
             Some(size) => size,
             None => CONTRACT_MAX_SIZE,
         };
@@ -551,7 +555,7 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url).await?
+            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
@@ -562,7 +566,7 @@ impl ScriptConfig {
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url).await?
+            next_nonce(sender, fork_url, None).await?
         } else {
             // dapptools compatibility
             1
@@ -615,10 +619,10 @@ impl ScriptConfig {
             .inspectors(|stack| {
                 stack
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
-                    .alphanet(self.evm_opts.alphanet)
+                    .odyssey(self.evm_opts.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec(self.config.evm_spec_id())
+            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 
@@ -630,8 +634,7 @@ impl ScriptConfig {
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),
-                            Some(target.name),
-                            Some(target.version),
+                            Some(target),
                         )
                         .into(),
                     )
@@ -690,7 +693,7 @@ mod tests {
             "--etherscan-api-key",
             "goerli",
         ]);
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
     }
 
@@ -728,7 +731,7 @@ mod tests {
             "--code-size-limit",
             "50000",
         ]);
-        assert_eq!(args.evm_args.env.code_size_limit, Some(50000));
+        assert_eq!(args.evm.env.code_size_limit, Some(50000));
     }
 
     #[test]
@@ -755,7 +758,7 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }

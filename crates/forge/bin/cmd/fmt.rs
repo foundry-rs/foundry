@@ -1,3 +1,4 @@
+use super::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use forge_fmt::{format_to, parse};
@@ -39,16 +40,19 @@ pub struct FmtArgs {
     /// In 'check' and stdin modes, outputs raw formatted code instead of the diff.
     #[arg(long, short)]
     raw: bool,
+
+    #[command(flatten)]
+    pub watch: WatchArgs,
 }
 
 impl_figment_convert_basic!(FmtArgs);
 
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
 
         // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.root.0, config.fmt.ignore.iter())?
+        let ignored = expand_globs(&config.root, config.fmt.ignore.iter())?
             .iter()
             .flat_map(foundry_common::fs::canonicalize_path)
             .collect::<Vec<_>>();
@@ -96,9 +100,7 @@ impl FmtArgs {
 
         let format = |source: String, path: Option<&Path>| -> Result<_> {
             let name = match path {
-                Some(path) => {
-                    path.strip_prefix(&config.root.0).unwrap_or(path).display().to_string()
-                }
+                Some(path) => path.strip_prefix(&config.root).unwrap_or(path).display().to_string(),
                 None => "stdin".to_string(),
             };
 
@@ -187,6 +189,11 @@ impl FmtArgs {
         }
 
         Ok(())
+    }
+
+    /// Returns whether `FmtArgs` was configured with `--watch`
+    pub fn is_watch(&self) -> bool {
+        self.watch.watch.is_some()
     }
 }
 

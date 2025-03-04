@@ -7,7 +7,10 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     Client,
 };
-use foundry_cli::{opts::EtherscanOpts, utils::Git};
+use foundry_cli::{
+    opts::EtherscanOpts,
+    utils::{Git, LoadConfig},
+};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{
@@ -87,16 +90,16 @@ pub struct CloneArgs {
     pub etherscan: EtherscanOpts,
 
     #[command(flatten)]
-    pub opts: DependencyInstallOpts,
+    pub install: DependencyInstallOpts,
 }
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { address, root, opts, etherscan, no_remappings_txt, keep_directory_structure } =
+        let Self { address, root, install, etherscan, no_remappings_txt, keep_directory_structure } =
             self;
 
         // step 0. get the chain and api key from the config
-        let config = Config::from(&etherscan);
+        let config = etherscan.load_config()?;
         let chain = config.chain.unwrap_or_default();
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, etherscan_api_key.clone())?;
@@ -107,7 +110,7 @@ impl CloneArgs {
         let meta = Self::collect_metadata_from_client(address, &client).await?;
 
         // step 2. initialize an empty project
-        Self::init_an_empty_project(&root, opts)?;
+        Self::init_an_empty_project(&root, install)?;
         // canonicalize the root path
         // note that at this point, the root directory must have been created
         let root = dunce::canonicalize(&root)?;
@@ -127,7 +130,7 @@ impl CloneArgs {
         Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
 
         // step 5. git add and commit the changes if needed
-        if !opts.no_commit {
+        if install.commit {
             let git = Git::new(&root);
             git.add(Some("--all"))?;
             let msg = format!("chore: forge clone {address}");
@@ -157,9 +160,9 @@ impl CloneArgs {
     /// * `root` - the root directory of the project.
     /// * `enable_git` - whether to enable git for the project.
     /// * `quiet` - whether to print messages.
-    pub(crate) fn init_an_empty_project(root: &Path, opts: DependencyInstallOpts) -> Result<()> {
+    pub(crate) fn init_an_empty_project(root: &Path, install: DependencyInstallOpts) -> Result<()> {
         // let's try to init the project with default init args
-        let init_args = InitArgs { root: root.to_path_buf(), opts, ..Default::default() };
+        let init_args = InitArgs { root: root.to_path_buf(), install, ..Default::default() };
         init_args.run().map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
 
         // remove the unnecessary example contracts
@@ -266,7 +269,7 @@ impl CloneArgs {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
                 if fs::write(&remappings_txt, remappings_txt_content).is_err() {
-                    return false
+                    return false;
                 }
 
                 let profile = config.profile.as_str().as_str();
@@ -547,7 +550,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
 /// Compile the project in the root directory, and return the compilation result.
 pub fn compile_project(root: &Path) -> Result<ProjectCompileOutput> {
-    let mut config = Config::load_with_root(root).sanitized();
+    let mut config = Config::load_with_root(root)?.sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
     let compiler = ProjectCompiler::new();
@@ -608,11 +611,10 @@ impl EtherscanClient for Client {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use alloy_primitives::hex;
-    use foundry_compilers::Artifact;
+    use foundry_compilers::CompilerContract;
     use foundry_test_utils::rpc::next_mainnet_etherscan_api_key;
     use std::collections::BTreeMap;
 
@@ -631,7 +633,7 @@ mod tests {
             contracts.iter().for_each(|(name, contract)| {
                 if name == contract_name {
                     let compiled_creation_code =
-                        contract.get_bytecode_object().expect("creation code not found");
+                        contract.bin_ref().expect("creation code not found");
                     assert!(
                         hex::encode(compiled_creation_code.as_ref())
                             .starts_with(stripped_creation_code),

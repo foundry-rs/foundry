@@ -1,42 +1,82 @@
-# Contributing Quick Start
+# Developer Docs
 
-The foundry Rust project is organized as a regular [Cargo workspace][cargo-workspace].
+The Foundry project is organized as a regular [Cargo workspace][cargo-workspace].
 
-Simply running
+## Installation requirements
 
+- [Rust](https://rustup.rs/)
+- Make
+
+We use `cargo-nextest` as test runner (both locally and in the [CI](#ci)):
+
+- [Nextest](https://nexte.st/docs/installation/pre-built-binaries/#with-cargo-binstall)
+
+## Recommended
+
+If you are working in VSCode, we recommend you install the [rust-analyzer](https://rust-analyzer.github.io/) extension, and use the following VSCode user settings:
+
+```json
+"editor.formatOnSave": true,
+"rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+"[rust]": {
+  "editor.defaultFormatter": "rust-lang.rust-analyzer"
+}
 ```
-$ cargo test
+
+Note that we use Rust's latest `nightly` for formatting. If you see `;` being inserted by your code editor it is a good indication you are on `stable`.
+
+## Getting started
+
+Build the project.
+
+```sh
+$ make build
 ```
 
-should be enough to get you started!
+Run all tests.
 
-To learn more about how foundry's tools works, see [./architecture.md](./architecture.md).
-It also explains the high-level layout of some aspects of the source code.
-To read more about how to use it, see [📖 Foundry Book][foundry-book]
-Note though, that the internal documentation is very incomplete.
+```sh
+$ make test
+```
 
-# Getting in Touch
+Run all tests and linters in preparation for a PR.
+
+```sh
+$ make pr
+```
+
+## Contents
+
+- [Architecture](./architecture.md)
+- [Cheatcodes](./cheatcodes.md)
+- [Debugging](./debugging.md)
+- [Scripting](./scripting.md)
+
+_Note: This is incomplete and possibly outdated_
+
+## Getting in Touch
 
 See also [Getting Help](../../README.md#getting-help)
 
-# Issue Labels
+## Issue Labels
 
--   [good-first-issue](https://github.com/foundry-rs/foundry/labels/good%20first%20issue)
-    are good issues to get into the project.
--   [D-easy](https://github.com/foundry-rs/foundry/issues?q=is%3Aopen+is%3Aissue+label%3AD-easy),
-    [D-average](https://github.com/foundry-rs/foundry/issues?q=is%3Aopen+is%3Aissue+label%3AD-medium),
-    [D-hard](https://github.com/foundry-rs/foundry/issues?q=is%3Aopen+is%3Aissue+label%3AD-hard),
-    [D-chore](https://github.com/foundry-rs/foundry/issues?q=is%3Aopen+is%3Aissue+label%3AD-chore),
-    labels indicate how hard it would be to write a fix or add a feature.
+Whenever a ticket is initially opened a [`T-needs-triage`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-needs-triage) label is assigned. This means that a member has yet to correctly label it.
 
-# CI
+If this is your first time contributing have a look at our [`first-issue`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3A%22first+issue%22) tickets. These are tickets we think are a good way to get familiar with the codebase.
 
-We use GitHub Actions for CI.
-We use [cargo-nextest][nextest] as the test runner
-If `cargo test` passes locally, that's a good sign that CI will be green as well.
-We also have tests that make use of forking mode which can be long running if the required state is not already cached locally.
-Forking-related tests are executed exclusively in a separate CI job, they are identified by `fork` in their name.
-So all of them can be easily skipped by `cargo t -- --skip fork`
+We classify the tickets in two major categories: [`T-feature`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-feature) and [`T-bug`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-bug). Additional labels are usually applied to help categorize the ticket for future reference.
+
+We also make use of [`T-meta`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-meta) aggregation tickets. These tickets are tickets to collect related features and bugs.
+
+We also have [`T-discuss`](https://github.com/foundry-rs/foundry/issues?q=is%3Aissue+is%3Aopen+label%3AT-to-discuss) tickets that require further discussion before proceeding on an implementation. Feel free to jump into the conversation!
+
+## CI
+
+We use GitHub Actions for continuous integration (CI).
+
+We use [cargo-nextest][nextest] as the test runner.
+
+If `make test` passes locally, that's a good sign that CI will be green as well.
 
 [foundry-book]: https://book.getfoundry.sh
 [cargo-workspace]: https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html

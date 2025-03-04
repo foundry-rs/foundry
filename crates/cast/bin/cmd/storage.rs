@@ -3,15 +3,15 @@ use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
-use comfy_table::{presets::ASCII_MARKDOWN, Table};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
-    opts::{CoreBuildArgs, EtherscanOpts, RpcOpts},
+    opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
+    utils::LoadConfig,
 };
 use foundry_common::{
     abi::find_source,
@@ -20,7 +20,7 @@ use foundry_common::{
     shell,
 };
 use foundry_compilers::{
-    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
     compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
@@ -64,7 +64,7 @@ pub struct StorageArgs {
     etherscan: EtherscanOpts,
 
     #[command(flatten)]
-    build: CoreBuildArgs,
+    build: BuildOpts,
 }
 
 impl_figment_convert_cast!(StorageArgs);
@@ -85,7 +85,7 @@ impl figment::Provider for StorageArgs {
 
 impl StorageArgs {
     pub async fn run(self) -> Result<()> {
-        let config = Config::from(&self);
+        let config = self.load_config()?;
 
         let Self { address, slot, block, build, .. } = self;
         let provider = utils::get_provider(&config)?;
@@ -228,7 +228,7 @@ struct StorageReport {
     values: Vec<B256>,
 }
 
-async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     provider: P,
     address: Address,
     block: Option<BlockId>,
@@ -245,7 +245,7 @@ async fn fetch_and_print_storage<P: Provider<T, AnyNetwork>, T: Transport + Clon
     }
 }
 
-async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn fetch_storage_slots<P: Provider<AnyNetwork>>(
     provider: P,
     address: Address,
     block: Option<BlockId>,
@@ -284,12 +284,22 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
             "{}",
             serde_json::to_string_pretty(&serde_json::to_value(StorageReport { layout, values })?)?
         )?;
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();
-    table.load_preset(ASCII_MARKDOWN);
-    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
+    table.apply_modifier(UTF8_ROUND_CORNERS);
+
+    table.set_header(vec![
+        Cell::new("Name"),
+        Cell::new("Type"),
+        Cell::new("Slot"),
+        Cell::new("Offset"),
+        Cell::new("Bytes"),
+        Cell::new("Value"),
+        Cell::new("Hex Value"),
+        Cell::new("Contract"),
+    ]);
 
     for (slot, storage_value) in layout.storage.into_iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
@@ -309,12 +319,12 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
         ]);
     }
 
-    sh_println!("{table}")?;
+    sh_println!("\n{table}\n")?;
 
     Ok(())
 }
 
-fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
+fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
     project.update_output_selection(|selection| {
         selection.0.values_mut().for_each(|contract_selection| {
@@ -340,11 +350,11 @@ mod tests {
     #[test]
     fn parse_storage_etherscan_api_key() {
         let args =
-            StorageArgs::parse_from(["foundry-cli", "addr", "--etherscan-api-key", "dummykey"]);
+            StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
         std::env::set_var("ETHERSCAN_API_KEY", "FXY");
-        let config = Config::from(&args);
+        let config = args.load_config().unwrap();
         std::env::remove_var("ETHERSCAN_API_KEY");
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
 

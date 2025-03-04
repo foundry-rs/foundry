@@ -5,7 +5,7 @@ use crate::{
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use eyre::Result;
-use foundry_common::{fs, retry::Retry};
+use foundry_common::fs;
 use futures::FutureExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -36,8 +36,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
         let client = reqwest::Client::new();
 
-        let retry: Retry = args.retry.into();
-        let resp = retry
+        let resp = args
+            .retry
+            .into_retry()
             .run_async(|| {
                 async {
                     sh_println!(
@@ -56,7 +57,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     if !status.is_success() {
                         let error: serde_json::Value = response.json().await?;
                         eyre::bail!(
-                            "Sourcify verification request for address ({}) failed with status code {status}\nDetails: {error:#}",
+                            "Sourcify verification request for address ({}) \
+                             failed with status code {status}\n\
+                             Details: {error:#}",
                             args.address,
                         );
                     }
@@ -72,8 +75,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let retry: Retry = args.retry.into();
-        let resp = retry
+        let resp = args
+            .retry
+            .into_retry()
             .run_async(|| {
                 async {
                     let url = Url::from_str(

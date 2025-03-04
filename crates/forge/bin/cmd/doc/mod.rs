@@ -6,7 +6,7 @@ use forge_doc::{
 };
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_common::compile::ProjectCompiler;
-use foundry_config::{find_project_root, load_config_with_root, Config};
+use foundry_config::{load_config_with_root, Config};
 use std::{path::PathBuf, process::Command};
 
 mod server;
@@ -68,7 +68,7 @@ pub struct DocArgs {
 impl DocArgs {
     pub async fn run(self) -> Result<()> {
         let config = self.config()?;
-        let root = &config.root.0;
+        let root = &config.root;
         let project = config.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
         let _output = compiler.compile(&project)?;
@@ -139,10 +139,6 @@ impl DocArgs {
     }
 
     pub fn config(&self) -> Result<Config> {
-        let root = match &self.root {
-            Some(root) => root,
-            None => &find_project_root(None),
-        };
-        Ok(load_config_with_root(Some(root)))
+        load_config_with_root(self.root.as_deref())
     }
 }

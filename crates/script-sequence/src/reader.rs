@@ -1,5 +1,5 @@
 use crate::{ScriptSequence, TransactionWithMetadata};
-use alloy_rpc_types::AnyTransactionReceipt;
+use alloy_network::AnyTransactionReceipt;
 use eyre::{bail, Result};
 use foundry_common::fs;
 use revm_inspectors::tracing::types::CallKind;
@@ -117,8 +117,7 @@ impl BroadcastReader {
                     let name_filter =
                         tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
 
-                    let type_filter = self.tx_type.is_empty() ||
-                        self.tx_type.iter().any(|kind| *kind == tx.opcode);
+                    let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
 
                     name_filter && type_filter
                 })
@@ -152,8 +151,7 @@ impl BroadcastReader {
                 let name_filter =
                     tx.contract_name.clone().is_some_and(|cn| cn == self.contract_name);
 
-                let type_filter =
-                    self.tx_type.is_empty() || self.tx_type.iter().any(|kind| *kind == tx.opcode);
+                let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
 
                 name_filter && type_filter
             })

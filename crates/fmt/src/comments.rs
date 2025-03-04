@@ -88,7 +88,7 @@ impl CommentWithMetadata {
             return Self::new(
                 comment,
                 CommentPosition::Prefix,
-                last_line.map_or(true, str::is_empty),
+                last_line.is_none_or(str::is_empty),
                 indent_len,
             )
         }

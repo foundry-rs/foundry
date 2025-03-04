@@ -284,7 +284,7 @@ async fn can_mine_manually() {
 
     let start_num = provider.get_block_number().await.unwrap();
 
-    for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
+    for (idx, _) in std::iter::repeat_n((), 10).enumerate() {
         api.evm_mine(None).await.unwrap();
         let num = provider.get_block_number().await.unwrap();
         assert_eq!(num, start_num + idx as u64 + 1);
@@ -805,10 +805,42 @@ async fn test_reorg() {
     assert!(res.is_err());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_rollback() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Mine 5 blocks
+    for _ in 0..5 {
+        api.mine_one().await;
+    }
+
+    // Get block 4 for later comparison
+    let block4 = provider.get_block(4.into(), false.into()).await.unwrap().unwrap();
+
+    // Rollback with None should rollback 1 block
+    api.anvil_rollback(None).await.unwrap();
+
+    // Assert we're at block 4 and the block contents are kept the same
+    let head = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    assert_eq!(head, block4);
+
+    // Get block 1 for comparison
+    let block1 = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+
+    // Rollback to block 1
+    let depth = 3; // from block 4 to block 1
+    api.anvil_rollback(Some(depth)).await.unwrap();
+
+    // Assert we're at block 1 and the block contents are kept the same
+    let head = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    assert_eq!(head, block1);
+}
+
 // === wallet endpoints === //
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_wallet_capabilities() {
-    let (api, handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+    let (api, handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
     let provider = handle.http_provider();
 
@@ -834,7 +866,7 @@ async fn can_get_wallet_capabilities() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_add_capability() {
-    let (api, _handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
     let init_capabilities = api.get_capabilities().unwrap();
 
@@ -864,7 +896,7 @@ async fn can_add_capability() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_executor() {
-    let (api, _handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+    let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
     let expected_addr = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();

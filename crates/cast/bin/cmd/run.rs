@@ -1,9 +1,11 @@
 use alloy_consensus::Transaction;
-use alloy_network::TransactionResponse;
+use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::revm::primitives::EnvWithHandlerCfg;
+use cast::{
+    revm::primitives::EnvWithHandlerCfg, utils::apply_chain_and_block_specific_env_changes,
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -85,13 +87,17 @@ pub struct RunArgs {
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 
-    /// Enables Alphanet features.
-    #[arg(long, alias = "odyssey")]
-    pub alphanet: bool,
+    /// Enables Odyssey features.
+    #[arg(long, alias = "alphanet")]
+    pub odyssey: bool,
 
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
+
+    /// Disable block gas limit check.
+    #[arg(long)]
+    pub disable_block_gas_limit: bool,
 }
 
 impl RunArgs {
@@ -103,7 +109,7 @@ impl RunArgs {
     pub async fn run(self) -> Result<()> {
         let figment = Into::<Figment>::into(&self.rpc).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let mut config = Config::try_from(figment)?.sanitized();
+        let mut config = Config::from_provider(figment)?.sanitized();
 
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
@@ -138,11 +144,11 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let (mut env, fork, chain, alphanet) =
+        let (mut env, fork, chain, odyssey) =
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
-
         let mut evm_version = self.evm_version;
 
+        env.cfg.disable_block_gas_limit = self.disable_block_gas_limit;
         env.block.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
@@ -161,6 +167,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, block);
         }
 
         let trace_mode = TraceMode::Call
@@ -176,7 +183,7 @@ impl RunArgs {
             fork,
             evm_version,
             trace_mode,
-            alphanet,
+            odyssey,
             create2_deployer,
         );
         let mut env =
@@ -283,8 +290,8 @@ impl figment::Provider for RunArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut map = Map::new();
 
-        if self.alphanet {
-            map.insert("alphanet".into(), self.alphanet.into());
+        if self.odyssey {
+            map.insert("odyssey".into(), self.odyssey.into());
         }
 
         if let Some(api_key) = &self.etherscan.key {

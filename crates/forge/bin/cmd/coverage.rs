@@ -1,31 +1,31 @@
-use super::{install, test::TestArgs};
+use super::{install, test::TestArgs, watch::WatchArgs};
 use alloy_primitives::{map::HashMap, Address, Bytes, U256};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
     coverage::{
-        analysis::{SourceAnalysis, SourceAnalyzer, SourceFile, SourceFiles},
+        analysis::{SourceAnalysis, SourceFile, SourceFiles},
         anchors::find_anchors,
-        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, DebugReporter, ItemAnchor,
-        LcovReporter, SummaryReporter,
+        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
+        DebugReporter, ItemAnchor, LcovReporter,
     },
     opts::EvmOpts,
     utils::IcPcMap,
-    MultiContractRunnerBuilder, TestOptions,
+    MultiContractRunnerBuilder,
 };
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{
         sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
     },
-    Artifact, ArtifactId, Project, ProjectCompileOutput,
+    compilers::multi::MultiCompiler,
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
 };
-use foundry_config::{Config, SolcReq};
+use foundry_config::Config;
 use rayon::prelude::*;
-use semver::Version;
+use semver::{Version, VersionReq};
 use std::{
-    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -34,13 +34,24 @@ use std::{
 foundry_config::impl_figment_convert!(CoverageArgs, test);
 
 /// CLI arguments for `forge coverage`.
-#[derive(Clone, Debug, Parser)]
+#[derive(Parser)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
     /// This flag can be used multiple times.
     #[arg(long, value_enum, default_value = "summary")]
     report: Vec<CoverageReportKind>,
+
+    /// The version of the LCOV "tracefile" format to use.
+    ///
+    /// Format: `MAJOR[.MINOR]`.
+    ///
+    /// Main differences:
+    /// - `1.x`: The original v1 format.
+    /// - `2.0`: Adds support for "line end" numbers for functions.
+    /// - `2.2`: Changes the format of functions.
+    #[arg(long, default_value = "1", value_parser = parse_lcov_version)]
+    lcov_version: Version,
 
     /// Enable viaIR with minimum optimization
     ///
@@ -64,18 +75,22 @@ pub struct CoverageArgs {
     #[arg(long)]
     include_libs: bool,
 
+    /// The coverage reporters to use. Constructed from the other fields.
+    #[arg(skip)]
+    reporters: Vec<Box<dyn CoverageReporter>>,
+
     #[command(flatten)]
     test: TestArgs,
 }
 
 impl CoverageArgs {
-    pub async fn run(self) -> Result<()> {
-        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+    pub async fn run(mut self) -> Result<()> {
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // install missing dependencies
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
-            config = self.load_config();
+            config = self.load_config()?;
         }
 
         // Set fuzz seed so coverage reports are deterministic
@@ -84,43 +99,74 @@ impl CoverageArgs {
         // Coverage analysis requires the Solc AST output.
         config.ast = true;
 
-        let (project, output) = self.build(&config)?;
+        let (paths, output) = {
+            let (project, output) = self.build(&config)?;
+            (project.paths, output)
+        };
+
+        self.populate_reporters(&paths.root);
+
         sh_println!("Analysing contracts...")?;
-        let report = self.prepare(&project, &output)?;
+        let report = self.prepare(&paths, &output)?;
 
         sh_println!("Running tests...")?;
-        self.collect(project, &output, report, Arc::new(config), evm_opts).await
+        self.collect(&paths.root, &output, report, Arc::new(config), evm_opts).await
+    }
+
+    fn populate_reporters(&mut self, root: &Path) {
+        self.reporters = self
+            .report
+            .iter()
+            .map(|report_kind| match report_kind {
+                CoverageReportKind::Summary => {
+                    Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
+                }
+                CoverageReportKind::Lcov => {
+                    let path =
+                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
+                }
+                CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
+                    root.to_path_buf(),
+                    root.join("bytecode-coverage"),
+                )),
+                CoverageReportKind::Debug => Box::new(DebugReporter),
+            })
+            .collect::<Vec<_>>();
     }
 
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
-        // Set up the project
-        let mut project = config.create_project(false, false)?;
+        let mut project = config.ephemeral_project()?;
+
         if self.ir_minimum {
             // print warning message
-            sh_warn!("{}", concat!(
-                "`--ir-minimum` enables viaIR with minimum optimization, \
-                 which can result in inaccurate source mappings.\n",
-                "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
-                "Note that \"viaIR\" is production ready since Solidity 0.8.13 and above.\n",
-                "See more: https://github.com/foundry-rs/foundry/issues/3357",
-            ))?;
+            sh_warn!(
+                "`--ir-minimum` enables `viaIR` with minimum optimization, \
+                 which can result in inaccurate source mappings.\n\
+                 Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
+                 Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
+                 See more: https://github.com/foundry-rs/foundry/issues/3357"
+            )?;
 
-            // Enable viaIR with minimum optimization
-            // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
-            // And also in new releases of solidity:
-            // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
+            // Enable viaIR with minimum optimization: https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
+            // And also in new releases of Solidity: https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
             project.settings.solc.settings =
                 project.settings.solc.settings.with_via_ir_minimum_optimization();
-            let version = if let Some(SolcReq::Version(version)) = &config.solc {
-                version
-            } else {
-                // Sanitize settings for solc 0.8.4 if version cannot be detected.
-                // See <https://github.com/foundry-rs/foundry/issues/9322>.
-                &Version::new(0, 8, 4)
-            };
-            project.settings.solc.settings.sanitize(version, SolcLanguage::Solidity);
+
+            // Sanitize settings for solc 0.8.4 if version cannot be detected: https://github.com/foundry-rs/foundry/issues/9322
+            // But keep the EVM version: https://github.com/ethereum/solidity/issues/15775
+            let evm_version = project.settings.solc.evm_version;
+            let version = config.solc_version().unwrap_or_else(|| Version::new(0, 8, 4));
+            project.settings.solc.settings.sanitize(&version, SolcLanguage::Solidity);
+            project.settings.solc.evm_version = evm_version;
         } else {
+            sh_warn!(
+                "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
+                 If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
+                 enables `viaIR` with minimum optimization resolving most of the errors"
+            )?;
+
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;
             project.settings.solc.optimizer.details = None;
@@ -136,16 +182,19 @@ impl CoverageArgs {
 
     /// Builds the coverage report.
     #[instrument(name = "prepare", skip_all)]
-    fn prepare(&self, project: &Project, output: &ProjectCompileOutput) -> Result<CoverageReport> {
+    fn prepare(
+        &self,
+        project_paths: &ProjectPathsConfig,
+        output: &ProjectCompileOutput,
+    ) -> Result<CoverageReport> {
         let mut report = CoverageReport::default();
 
         // Collect source files.
-        let project_paths = &project.paths;
         let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
-            // Filter out dependencies
+            // Filter out dependencies.
             if !self.include_libs && project_paths.has_library_ancestor(path) {
                 continue;
             }
@@ -167,63 +216,50 @@ impl CoverageArgs {
             }
         }
 
-        // Get source maps and bytecodes
+        // Get source maps and bytecodes.
         let artifacts: Vec<ArtifactData> = output
             .artifact_ids()
-            .par_bridge()
+            .par_bridge() // This parses source maps, so we want to run it in parallel.
             .filter_map(|(id, artifact)| {
                 let source_id = report.get_source_id(id.version.clone(), id.source.clone())?;
                 ArtifactData::new(&id, source_id, artifact)
             })
             .collect();
 
-        // Add coverage items
+        // Add coverage items.
         for (version, sources) in &versioned_sources {
-            let source_analysis = SourceAnalyzer::new(sources).analyze()?;
-
-            // Build helper mapping used by `find_anchors`
-            let mut items_by_source_id = HashMap::<_, Vec<_>>::with_capacity_and_hasher(
-                source_analysis.items.len(),
-                Default::default(),
-            );
-
-            for (item_id, item) in source_analysis.items.iter().enumerate() {
-                items_by_source_id.entry(item.loc.source_id).or_default().push(item_id);
-            }
-
+            let source_analysis = SourceAnalysis::new(sources)?;
             let anchors = artifacts
                 .par_iter()
                 .filter(|artifact| artifact.contract_id.version == *version)
                 .map(|artifact| {
-                    let creation_code_anchors =
-                        artifact.creation.find_anchors(&source_analysis, &items_by_source_id);
-                    let deployed_code_anchors =
-                        artifact.deployed.find_anchors(&source_analysis, &items_by_source_id);
+                    let creation_code_anchors = artifact.creation.find_anchors(&source_analysis);
+                    let deployed_code_anchors = artifact.deployed.find_anchors(&source_analysis);
                     (artifact.contract_id.clone(), (creation_code_anchors, deployed_code_anchors))
                 })
-                .collect::<Vec<_>>();
-
-            report.add_anchors(anchors);
-            report.add_items(version.clone(), source_analysis.items);
+                .collect_vec_list();
+            report.add_anchors(anchors.into_iter().flatten());
+            report.add_analysis(version.clone(), source_analysis);
         }
 
-        report.add_source_maps(artifacts.into_iter().map(|artifact| {
-            (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
-        }));
+        if self.reporters.iter().any(|reporter| reporter.needs_source_maps()) {
+            report.add_source_maps(artifacts.into_iter().map(|artifact| {
+                (artifact.contract_id, (artifact.creation.source_map, artifact.deployed.source_map))
+            }));
+        }
 
         Ok(report)
     }
 
     /// Runs tests, collects coverage data and generates the final report.
     async fn collect(
-        self,
-        project: Project,
+        mut self,
+        root: &Path,
         output: &ProjectCompileOutput,
         mut report: CoverageReport,
         config: Arc<Config>,
         evm_opts: EvmOpts,
     ) -> Result<()> {
-        let root = project.paths.root;
         let verbosity = evm_opts.verbosity;
 
         // Build the contract runner
@@ -233,15 +269,13 @@ impl CoverageArgs {
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_test_options(TestOptions::new(output, config.clone())?)
             .set_coverage(true)
-            .build(&root, output, env, evm_opts)?;
+            .build::<MultiCompiler>(root, output, env, evm_opts)?;
 
         let known_contracts = runner.known_contracts.clone();
 
         let filter = self.test.filter(&config);
-        let outcome =
-            self.test.run_tests(runner, config.clone(), verbosity, &filter, output).await?;
+        let outcome = self.test.run_tests(runner, config, verbosity, &filter, output).await?;
 
         outcome.ensure_ok(false)?;
 
@@ -251,10 +285,10 @@ impl CoverageArgs {
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.coverage.as_ref() else { continue };
                 for map in hit_maps.0.values() {
-                    if let Some((id, _)) = known_contracts.find_by_deployed_code(&map.bytecode) {
+                    if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
                         hits.push((id, map, true));
                     } else if let Some((id, _)) =
-                        known_contracts.find_by_creation_code(&map.bytecode)
+                        known_contracts.find_by_creation_code(map.bytecode())
                     {
                         hits.push((id, map, false));
                     }
@@ -279,40 +313,36 @@ impl CoverageArgs {
             }
         }
 
-        // Filter out ignored sources from the report
-        let file_pattern = filter.args().coverage_pattern_inverse.as_ref();
-        let file_root = &filter.paths().root;
-        report.filter_out_ignored_sources(|path: &Path| {
-            file_pattern.map_or(true, |re| {
-                !re.is_match(&path.strip_prefix(file_root).unwrap_or(path).to_string_lossy())
-            })
-        });
-
-        // Output final report
-        for report_kind in self.report {
-            match report_kind {
-                CoverageReportKind::Summary => SummaryReporter::default().report(&report),
-                CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
-                    let mut file = io::BufWriter::new(fs::create_file(path)?);
-                    LcovReporter::new(&mut file).report(&report)
-                }
-                CoverageReportKind::Bytecode => {
-                    let destdir = root.join("bytecode-coverage");
-                    fs::create_dir_all(&destdir)?;
-                    BytecodeReporter::new(root.clone(), destdir).report(&report)
-                }
-                CoverageReportKind::Debug => DebugReporter.report(&report),
-            }?;
+        // Filter out ignored sources from the report.
+        if let Some(not_re) = &filter.args().coverage_pattern_inverse {
+            let file_root = filter.paths().root.as_path();
+            report.retain_sources(|path: &Path| {
+                let path = path.strip_prefix(file_root).unwrap_or(path);
+                !not_re.is_match(&path.to_string_lossy())
+            });
         }
+
+        // Output final reports.
+        for reporter in &mut self.reporters {
+            reporter.report(&report)?;
+        }
+
         Ok(())
+    }
+
+    pub(crate) fn is_watch(&self) -> bool {
+        self.test.is_watch()
+    }
+
+    pub(crate) fn watch(&self) -> &WatchArgs {
+        &self.test.watch
     }
 }
 
-// TODO: HTML
-#[derive(Clone, Debug, ValueEnum)]
+/// Coverage reports to generate.
+#[derive(Clone, Debug, Default, ValueEnum)]
 pub enum CoverageReportKind {
+    #[default]
     Summary,
     Lcov,
     Debug,
@@ -390,17 +420,35 @@ impl BytecodeData {
         Self { source_map, bytecode, ic_pc_map }
     }
 
-    pub fn find_anchors(
-        &self,
-        source_analysis: &SourceAnalysis,
-        items_by_source_id: &HashMap<usize, Vec<usize>>,
-    ) -> Vec<ItemAnchor> {
-        find_anchors(
-            &self.bytecode,
-            &self.source_map,
-            &self.ic_pc_map,
-            &source_analysis.items,
-            items_by_source_id,
-        )
+    pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> Vec<ItemAnchor> {
+        find_anchors(&self.bytecode, &self.source_map, &self.ic_pc_map, source_analysis)
+    }
+}
+
+fn parse_lcov_version(s: &str) -> Result<Version, String> {
+    let vr = VersionReq::parse(&format!("={s}")).map_err(|e| e.to_string())?;
+    let [c] = &vr.comparators[..] else {
+        return Err("invalid version".to_string());
+    };
+    if c.op != semver::Op::Exact {
+        return Err("invalid version".to_string());
+    }
+    if !c.pre.is_empty() {
+        return Err("pre-releases are not supported".to_string());
+    }
+    Ok(Version::new(c.major, c.minor.unwrap_or(0), c.patch.unwrap_or(0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lcov_version() {
+        assert_eq!(parse_lcov_version("0").unwrap(), Version::new(0, 0, 0));
+        assert_eq!(parse_lcov_version("1").unwrap(), Version::new(1, 0, 0));
+        assert_eq!(parse_lcov_version("1.0").unwrap(), Version::new(1, 0, 0));
+        assert_eq!(parse_lcov_version("1.1").unwrap(), Version::new(1, 1, 0));
+        assert_eq!(parse_lcov_version("1.11").unwrap(), Version::new(1, 11, 0));
     }
 }

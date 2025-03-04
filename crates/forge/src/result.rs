@@ -446,10 +446,16 @@ impl fmt::Display for TestResult {
                             CounterExample::Single(ex) => {
                                 write!(s, "; counterexample: {ex}]").unwrap();
                             }
-                            CounterExample::Sequence(sequence) => {
-                                s.push_str("]\n\t[Sequence]\n");
+                            CounterExample::Sequence(original, sequence) => {
+                                s.push_str(
+                                    format!(
+                                        "]\n\t[Sequence] (original: {original}, shrunk: {})\n",
+                                        sequence.len()
+                                    )
+                                    .as_str(),
+                                );
                                 for ex in sequence {
-                                    writeln!(s, "\t\t{ex}").unwrap();
+                                    writeln!(s, "{ex}").unwrap();
                                 }
                             }
                         }
@@ -467,12 +473,12 @@ impl fmt::Display for TestResult {
 
 impl TestResult {
     /// Creates a new test result starting from test setup results.
-    pub fn new(setup: TestSetup) -> Self {
+    pub fn new(setup: &TestSetup) -> Self {
         Self {
-            labeled_addresses: setup.labels,
-            logs: setup.logs,
-            traces: setup.traces,
-            coverage: setup.coverage,
+            labeled_addresses: setup.labels.clone(),
+            logs: setup.logs.clone(),
+            traces: setup.traces.clone(),
+            coverage: setup.coverage.clone(),
             ..Default::default()
         }
     }
@@ -482,10 +488,10 @@ impl TestResult {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
-    /// Creates a failed test setup result.
-    pub fn setup_fail(setup: TestSetup) -> Self {
+    /// Creates a test setup result.
+    pub fn setup_result(setup: TestSetup) -> Self {
         Self {
-            status: TestStatus::Failure,
+            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
             reason: setup.reason,
             logs: setup.logs,
             traces: setup.traces,
@@ -496,27 +502,25 @@ impl TestResult {
     }
 
     /// Returns the skipped result for single test (used in skipped fuzz test too).
-    pub fn single_skip(mut self, reason: SkipReason) -> Self {
+    pub fn single_skip(&mut self, reason: SkipReason) {
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
-        self
     }
 
     /// Returns the failed result with reason for single test.
-    pub fn single_fail(mut self, reason: Option<String>) -> Self {
+    pub fn single_fail(&mut self, reason: Option<String>) {
         self.status = TestStatus::Failure;
         self.reason = reason;
-        self
     }
 
     /// Returns the result for single test. Merges execution results (logs, labeled addresses,
     /// traces and coverages) in initial setup results.
     pub fn single_result(
-        mut self,
+        &mut self,
         success: bool,
         reason: Option<String>,
         raw_call_result: RawCallResult,
-    ) -> Self {
+    ) {
         self.kind =
             TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
 
@@ -539,13 +543,11 @@ impl TestResult {
             self.gas_snapshots = cheatcodes.gas_snapshots;
             self.deprecated_cheatcodes = cheatcodes.deprecated;
         }
-
-        self
     }
 
     /// Returns the result for a fuzzed test. Merges fuzz execution results (logs, labeled
     /// addresses, traces and coverages) in initial setup results.
-    pub fn fuzz_result(mut self, result: FuzzTestResult) -> Self {
+    pub fn fuzz_result(&mut self, result: FuzzTestResult) {
         self.kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),
             mean_gas: result.mean_gas(false),
@@ -572,26 +574,23 @@ impl TestResult {
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
-
-        self
     }
 
     /// Returns the skipped result for invariant test.
-    pub fn invariant_skip(mut self, reason: SkipReason) -> Self {
+    pub fn invariant_skip(&mut self, reason: SkipReason) {
         self.kind =
             TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
-        self
     }
 
     /// Returns the fail result for replayed invariant test.
     pub fn invariant_replay_fail(
-        mut self,
+        &mut self,
         replayed_entirely: bool,
         invariant_name: &String,
         call_sequence: Vec<BaseCounterExample>,
-    ) -> Self {
+    ) {
         self.kind =
             TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
         self.status = TestStatus::Failure;
@@ -600,23 +599,21 @@ impl TestResult {
         } else {
             Some(format!("{invariant_name} persisted failure revert"))
         };
-        self.counterexample = Some(CounterExample::Sequence(call_sequence));
-        self
+        self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 
     /// Returns the fail result for invariant test setup.
-    pub fn invariant_setup_fail(mut self, e: Report) -> Self {
+    pub fn invariant_setup_fail(&mut self, e: Report) {
         self.kind =
             TestKind::Invariant { runs: 0, calls: 0, reverts: 0, metrics: HashMap::default() };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
-        self
     }
 
     /// Returns the invariant test result.
     #[allow(clippy::too_many_arguments)]
     pub fn invariant_result(
-        mut self,
+        &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         reason: Option<String>,
@@ -624,7 +621,7 @@ impl TestResult {
         cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
-    ) -> Self {
+    ) {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
@@ -638,7 +635,6 @@ impl TestResult {
         self.reason = reason;
         self.counterexample = counterexample;
         self.gas_report_traces = gas_report_traces;
-        self
     }
 
     /// Returns `true` if this is the result of a fuzz test
@@ -762,14 +758,24 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
+    /// Addresses of external libraries deployed during setup.
+    pub deployed_libs: Vec<Address>,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,
+    /// Whether setup and entire test suite is skipped.
+    pub skipped: bool,
+    /// Whether the test failed to deploy.
+    pub deployment_failure: bool,
 }
 
 impl TestSetup {
     pub fn failed(reason: String) -> Self {
         Self { reason: Some(reason), ..Default::default() }
+    }
+
+    pub fn skipped(reason: String) -> Self {
+        Self { reason: Some(reason), skipped: true, ..Default::default() }
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
