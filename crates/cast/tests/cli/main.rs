@@ -1521,6 +1521,28 @@ casttest!(block_number_hash, |_prj, cmd| {
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });
 
+// tests that `cast --disable-block-gas-limit` commands are working correctly for BSC
+// <https://github.com/foundry-rs/foundry/pull/9996>
+casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
+    let bsc_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChain);
+    cmd.args([
+        "run",
+        "-v",
+        "0x2362c464510d39247b0718d661224c5b5d369e543a88eefb260c798dcda2624e",
+        "--quick",
+        "--rpc-url",
+        bsc_rpc_url.as_str(),
+        "--disable-block-gas-limit",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
