@@ -75,90 +75,24 @@ impl Mutant {
     pub fn new(span: Span, mutation: MutationType) -> Mutant {
         Mutant { span, mutation }
     }
-}
 
-pub trait Mutate {
-    /// Return all the mutation which can be conducted against a given ExprKind
-    fn get_all_mutations(&self) -> Option<Vec<Mutant>>;
-}
+    pub fn create_assignement_mutation(span: Span, var_type: LitKind) -> Mutant {
+        Mutant { span, mutation: MutationType::AssignmentMutation(var_type) }
+    }
+    pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Mutant {
+        Mutant { span, mutation: MutationType::BinaryOpMutation(op) }
+    }
 
-impl<'ast> Mutate for Expr<'ast> {
-    fn get_all_mutations(&self) -> Option<Vec<Mutant>> {
-        let mut mutants = Vec::new();
+    pub fn create_delete_mutation(span: Span) -> Mutant {
+        Mutant { span, mutation: MutationType::DeleteExpressionMutation}
+    }
 
-        let _ = match &self.kind {
-            // Array skipped for now (swap could be mutating it, cf above for rational)
-            ExprKind::Assign(_, bin_op, rhs) => {
-                if let ExprKind::Lit(kind, _) = &rhs.kind {
-                    mutants.push(create_assignement_mutation(rhs.span, kind.kind.clone()));
-                }
-                
-                // @todo I think we should match other ones here too, for x = y++; for instance
-                // match &rhs.kind {
-                //     ExprKind::Lit(kind, _) => match &kind.kind {
-                //         _ => { mutants.push(create_assignement_mutation(rhs.span, kind.kind.clone())) }
-                //     },
-                //     _ => {}
-                // }
-                
-                if let Some(op) = &bin_op {
-                    mutants.push(create_binary_op_mutation(op.span, op.kind));
-                }
+    pub fn create_unary_mutation(span: Span, op: UnOpKind) -> Mutant {
+        Mutant { span, mutation: MutationType::UnaryOperatorMutation(op)}
+    }
 
-            },
-            ExprKind::Binary(_, op, _) => {
-                // @todo is a >> b++ a thing (ie parse lhs and rhs too?)
-                mutants.push(create_binary_op_mutation(op.span, op.kind));
-            },
-            ExprKind::Call(expr, args) => {
-                if let ExprKind::Member(expr, ident) = &expr.kind {
-                    if ident.to_string() == "delegatecall" {                    
-                        mutants.push(create_delegatecall_mutation(ident.span));
-                    }
-                }
-            }
-            // CallOptions
-            ExprKind::Delete(_) => mutants.push(create_delete_mutation(self.span)),
-            // Indent
-            // Index -> mutable? 0 it? idx should be a regular expression?
-            // Lit -> global/constant are using Lit as initializer
-
-            // Member
-            // New
-            // Payable -> compilation error
-            // Ternary -> swap them?
-            // Tuple -> swap if same type?
-            // TypeCall -> compilation error
-            // Type -> compilation error, most likely
-            ExprKind::Unary(op, expr) => {
-                mutants.push(create_unary_mutation(op.span, op.kind));
-            }
-
-            _ => {}
-        };
-
-        (!mutants.is_empty()).then_some(mutants)
+    pub fn create_delegatecall_mutation(span: Span) -> Mutant {
+        Mutant { span, mutation: MutationType::ElimDelegateMutation }
     }
 }
 
-// @todo refactor:
-
-fn create_assignement_mutation(span: Span, var_type: LitKind) -> Mutant {
-    Mutant { span, mutation: MutationType::AssignmentMutation(var_type) }
-}
-
-fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Mutant {
-    Mutant { span, mutation: MutationType::BinaryOpMutation(op) }
-}
-
-fn create_delete_mutation(span: Span) -> Mutant {
-    Mutant { span, mutation: MutationType::DeleteExpressionMutation}
-}
-
-fn create_unary_mutation(span: Span, op: UnOpKind) -> Mutant {
-    Mutant { span, mutation: MutationType::UnaryOperatorMutation(op)}
-}
-
-fn create_delegatecall_mutation(span: Span) -> Mutant {
-    Mutant { span, mutation: MutationType::ElimDelegateMutation }
-}

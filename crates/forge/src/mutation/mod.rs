@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use std::io::{Seek, Write};
 use tempfile::SpooledTempFile;
 
-use crate::mutation::visitor::Visitor;
+use solar_parse::ast::visit::Visit;
+use crate::mutation::visitor::MutantVisitor;
 
 pub struct MutationCampaign<'a> {
     contracts_to_mutate: Vec<PathBuf>,
@@ -99,10 +100,12 @@ impl<'a> MutationCampaign<'a> {
                 ItemKind::Contract(contract) => {
                     match contract.kind {
                         ContractKind::Contract | ContractKind::AbstractContract => {
-                            let mutation_handler =
-                                Visitor::new(contract, Arc::clone(&source_content));
+                            let mut mutation_handler = MutantVisitor { 
+                                mutation_to_conduct: Vec::new(),
+                                content: Arc::clone(&source_content) 
+                            };
 
-                            mutation_handler.mutate_and_test();
+                            mutation_handler.visit_item_contract(contract);
 
                             sh_println!("{} has been processed", contract.name);
                         }
