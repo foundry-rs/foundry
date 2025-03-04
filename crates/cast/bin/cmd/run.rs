@@ -94,6 +94,10 @@ pub struct RunArgs {
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
+
+    /// Disable block gas limit check.
+    #[arg(long)]
+    pub disable_block_gas_limit: bool,
 }
 
 impl RunArgs {
@@ -144,6 +148,7 @@ impl RunArgs {
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
         let mut evm_version = self.evm_version;
 
+        env.cfg.disable_block_gas_limit = self.disable_block_gas_limit;
         env.block.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
