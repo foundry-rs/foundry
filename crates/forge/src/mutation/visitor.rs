@@ -63,7 +63,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
                 self.mutation_to_conduct.push(Mutant::create_binary_op_mutation(op.span, op.kind));
             },
             ExprKind::Call(expr, args) => {
-                if let ExprKind::Member(expr, ident) = &expr.kind {
+                if let ExprKind::Member(_, ident) = &expr.kind {
                     if ident.to_string() == "delegatecall" {                    
                         self.mutation_to_conduct.push(Mutant::create_delegatecall_mutation(ident.span));
                     }
@@ -82,7 +82,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             // Tuple -> swap if same type?
             // TypeCall -> compilation error
             // Type -> compilation error, most likely
-            ExprKind::Unary(op, expr) => {
+            ExprKind::Unary(op, _) => {
                 self.mutation_to_conduct.push(Mutant::create_unary_mutation(op.span, op.kind));
             }
 
