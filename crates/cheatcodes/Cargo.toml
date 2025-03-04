@@ -14,13 +14,6 @@ exclude.workspace = true
 [lints]
 workspace = true
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
@@ -45,10 +38,10 @@ alloy-signer-local = { workspace = true, features = [
 ] }
 parking_lot.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-network.workspace = true
 alloy-rlp.workspace = true
 
 base64.workspace = true
-chrono.workspace = true
 dialoguer = "0.11"
 eyre.workspace = true
 itertools.workspace = true
@@ -67,3 +60,4 @@ toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
+serde.workspace = true

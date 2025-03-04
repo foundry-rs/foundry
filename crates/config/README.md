@@ -86,7 +86,7 @@ gas_reports_ignore = []
 # solc = '0.8.10'
 auto_detect_solc = true
 offline = false
-optimizer = true
+optimizer = false
 optimizer_runs = 200
 model_checker = { contracts = { 'a.sol' = [
     'A1',
@@ -159,7 +159,7 @@ use_literal_content = false
 # use ipfs method to generate the metadata hash, solc's default.
 # To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
 bytecode_hash = "ipfs"
-# Whether to append the metadata hash to the bytecode
+# Whether to append the CBOR-encoded metadata file.
 cbor_metadata = true
 # How to treat revert (and require) reason strings.
 # Possible values are: "default", "strip", "debug" and "verboseDebug".

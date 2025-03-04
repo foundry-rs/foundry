@@ -5,7 +5,7 @@ use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
-    rpc,
+    rpc::{self, next_http_rpc_endpoint},
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     ScriptOutcome, ScriptTester,
@@ -200,8 +200,7 @@ contract DeployScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-    let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
     let (_api, handle) = spawn(node_config).await;
     let dev = handle.dev_accounts().next().unwrap();
     cmd.set_current_dir(prj.root());
@@ -229,12 +228,12 @@ Compiler run successful!
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 221 bytes of code
+    │   └─ ← [Return] 415 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -243,11 +242,11 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [44291] → new GasWaster@[..]
-    └─ ← [Return] 221 bytes of code
+  [..] → new GasWaster@[..]
+    └─ ← [Return] 415 bytes of code
 
-  [224] GasWaster::wasteGas(200000 [2e5])
-    └─ ← [Stop] 
+  [..] GasWaster::wasteGas(200000 [2e5])
+    └─ ← [Stop]
 
 
 ==========================
@@ -302,8 +301,7 @@ contract DeployScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-    let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -336,12 +334,12 @@ Warning (2018): Function state mutability can be restricted to view
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new GasWaster@[..]
-    │   └─ ← [Return] 221 bytes of code
+    │   └─ ← [Return] 415 bytes of code
     ├─ [..] GasWaster::wasteGas(200000 [2e5])
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -350,11 +348,11 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [44291] → new GasWaster@[..]
-    └─ ← [Return] 221 bytes of code
+  [..] → new GasWaster@[..]
+    └─ ← [Return] 415 bytes of code
 
-  [224] GasWaster::wasteGas(200000 [2e5])
-    └─ ← [Stop] 
+  [..] GasWaster::wasteGas(200000 [2e5])
+    └─ ← [Stop]
 
 
 ==========================
@@ -492,8 +490,7 @@ contract DeployScript is Script {
 
     let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
 
-    let node_config =
-        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()));
+    let node_config = NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()));
     let (_api, handle) = spawn(node_config).await;
     let private_key =
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
@@ -521,10 +518,10 @@ Compiler run successful!
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] → new HashChecker@[..]
-    │   └─ ← [Return] 368 bytes of code
-    └─ ← [Stop] 
+    │   └─ ← [Return] 718 bytes of code
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -601,58 +598,58 @@ Compiler run successful!
 Traces:
   [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [..] [..]::update()
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -1955,9 +1952,9 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"0x6080604052600c805462ff00ff191662010001179055348015601f575f5ffd5b506101568061002d5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063c040622614610038578063f8ccbf4714610054575b5f5ffd5b610040610067565b604051901515815260200160405180910390f35b600c546100409062010000900460ff1681565b5f7f885cb69240a935d632d79c317109709ecfa91a80626ff3989d68f67f5b1dd12d5f1c6001600160a01b0316637fb5297f6040518163ffffffff1660e01b81526004015f604051808303815f87803b1580156100c2575f5ffd5b505af11580156100d4573d5f5f3e3d5ffd5b50506040515f925090508181818181805af19150503d805f8114610113576040519150601f19603f3d011682016040523d82523d5f602084013e610118565b606091505b50909291505056fea264697066735822122060ba6332e526de9b6bc731fb4682b44e42845196324ec33068982984d700cdd964736f6c634300081b0033","output":"0x608060405234801561000f575f5ffd5b5060043610610034575f3560e01c8063c040622614610038578063f8ccbf4714610054575b5f5ffd5b610040610067565b604051901515815260200160405180910390f35b600c546100409062010000900460ff1681565b5f7f885cb69240a935d632d79c317109709ecfa91a80626ff3989d68f67f5b1dd12d5f1c6001600160a01b0316637fb5297f6040518163ffffffff1660e01b81526004015f604051808303815f87803b1580156100c2575f5ffd5b505af11580156100d4573d5f5f3e3d5ffd5b50506040515f925090508181818181805af19150503d805f8114610113576040519150601f19603f3d011682016040523d82523d5f602084013e610118565b606091505b50909291505056fea264697066735822122060ba6332e526de9b6bc731fb4682b44e42845196324ec33068982984d700cdd964736f6c634300081b0033","gas_used":90639,"gas_limit":1073682810,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":3214,"gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":0,"gas_limit":1056940983,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":0,"gas_limit":1056940820,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":24278,"labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
-{"chain":31337,"estimated_gas_price":"2.000000001","estimated_total_gas_used":29005,"estimated_amount_required":"0.000058010000029005"}
-{"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":21000,"gas_price":1000000001}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940994,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940645,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}"}
+{"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
 "#]].is_jsonlines());
@@ -2367,16 +2364,16 @@ contract SimpleScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [103771] SimpleScript::run()
+  [..] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return] 
-    ├─ [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 116 bytes of code
-    ├─ [13162] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [145] A::getValue() [staticcall]
+    │   └─ ← [Return]
+    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    │   └─ ← [Return] 175 bytes of code
+    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [..] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 
 Script ran successfully.
@@ -2385,43 +2382,16 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [23273] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    └─ ← [Return] 116 bytes of code
+  [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    └─ ← [Return] 175 bytes of code
 
-  [15662] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [145] A::getValue() [staticcall]
+  [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [..] A::getValue() [staticcall]
     │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
 ...
 "#]]);
 });
-
-// Tests that chained errors are properly displayed.
-// <https://github.com/foundry-rs/foundry/issues/9161>
-forgetest_init!(
-    #[ignore]
-    should_display_evm_chained_error,
-    |prj, cmd| {
-        let script = prj
-            .add_source(
-                "Foo",
-                r#"
-import "forge-std/Script.sol";
-
-contract ContractScript is Script {
-    function run() public {
-    }
-}
-   "#,
-            )
-            .unwrap();
-        cmd.arg("script").arg(script).args(["--fork-url", "https://public-node.testnet.rsk.co"]).assert_failure().stderr_eq(str![[r#"
-Error: Failed to deploy script:
-backend: failed while inspecting; header validation error: `prevrandao` not set; `prevrandao` not set; 
-
-"#]]);
-    }
-);
 
 forgetest_async!(should_detect_additional_contracts, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -2468,4 +2438,181 @@ contract ContractScript is Script {
 
     assert_eq!(sequence.transactions.len(), 2);
     assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9661>
+forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "MyScript.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+    contract MyScript is Script {
+        function run() public view {
+            console.log("sender nonce", vm.getNonce(msg.sender));
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    let rpc_url = next_http_rpc_endpoint();
+
+    let fork_bn = 21614115;
+
+    cmd.forge_fuse()
+        .args([
+            "script",
+            "MyScript",
+            "--sender",
+            "0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97",
+            "--fork-block-number",
+            &fork_bn.to_string(),
+            "--rpc-url",
+            &rpc_url,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+== Logs ==
+  sender nonce 1124703[..]"#]]);
+});
+
+forgetest_async!(dryrun_without_broadcast, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract Called {
+    event log_string(string);
+    uint256 public x;
+    uint256 public y;
+    function run(uint256 _x, uint256 _y) external {
+        x = _x;
+        y = _y;
+        emit log_string("script ran");
+    }
+}
+
+contract DryRunTest is Script {
+    function run() external {
+        vm.startBroadcast();
+        Called called = new Called();
+        called.run(123, 456);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.arg("script")
+        .args([
+            "DryRunTest",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "-vvvv",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] DryRunTest::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    │   └─ ← [Return] 567 bytes of code
+    ├─ [..] Called::run(123, 456)
+    │   ├─ emit log_string(val: "script ran")
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+
+== Logs ==
+  script ran
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [113557] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 567 bytes of code
+
+  [46595] Called::run(123, 456)
+    ├─ emit log_string(val: "script ran")
+    └─ ← [Stop]
+
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+=== Transactions that will be broadcast ===
+
+
+Chain 31337
+
+### Transaction 1 ###
+
+accessList           []
+chainId              31337
+gasLimit             228247
+gasPrice             
+input                [..]
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
+nonce                0
+to                   
+type                 0
+value                0
+
+### Transaction 2 ###
+
+accessList           []
+chainId              31337
+gasLimit             93856
+gasPrice             
+input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
+nonce                1
+to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
+type                 0
+value                0
+contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+data (decoded): run(uint256,uint256)(
+  123,
+  456
+)
+
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
 });

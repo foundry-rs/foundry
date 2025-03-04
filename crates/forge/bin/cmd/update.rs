@@ -32,7 +32,7 @@ impl_figment_convert_basic!(UpdateArgs);
 
 impl UpdateArgs {
     pub fn run(self) -> Result<()> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         let (root, paths) = dependencies_paths(&self.dependencies, &config)?;
         // fetch the latest changes for each submodule (recursively if flag is set)
         let git = Git::new(&root);
@@ -52,7 +52,7 @@ impl UpdateArgs {
 /// Returns `(root, paths)` where `root` is the root of the Git repository and `paths` are the
 /// relative paths of the dependencies.
 pub fn dependencies_paths(deps: &[Dependency], config: &Config) -> Result<(PathBuf, Vec<PathBuf>)> {
-    let git_root = Git::root_of(&config.root.0)?;
+    let git_root = Git::root_of(&config.root)?;
     let libs = config.install_lib_dir();
 
     let mut paths = Vec::with_capacity(deps.len());

@@ -5,10 +5,9 @@ use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils,
+    utils::{self, LoadConfig},
 };
 use foundry_common::fs;
-use foundry_config::Config;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -51,7 +50,7 @@ impl ArtifactArgs {
         let Self { contract, etherscan, rpc, output: output_location, abi_path } = self;
 
         let mut etherscan = etherscan;
-        let config = Config::from(&rpc);
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
         let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;

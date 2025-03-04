@@ -9,13 +9,13 @@ use crate::{
 };
 use rustyline::{
     completion::Completer,
-    highlight::Highlighter,
+    highlight::{CmdKind, Highlighter},
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
     Helper,
 };
 use solar_parse::{
-    interface::{Pos, Session, SessionGlobals},
+    interface::{Session, SessionGlobals},
     token::{Token, TokenKind},
     Lexer,
 };
@@ -188,7 +188,7 @@ impl Highlighter for SolidityHelper {
         self.highlight(line)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize, _forced: bool) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, _kind: CmdKind) -> bool {
         pos == line.len()
     }
 

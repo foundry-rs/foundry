@@ -161,6 +161,7 @@ async fn test_persist_fuzz_failure() {
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "FuzzerDict.sol",
         r#"
@@ -227,7 +228,7 @@ import {Test} from "forge-std/Test.sol";
 contract InlineMaxRejectsTest is Test {
     /// forge-config: default.fuzz.max-test-rejects = 1
     function test_fuzz_bound(uint256 a) public {
-        vm.assume(a == 0);
+        vm.assume(false);
     }
 }
    "#,

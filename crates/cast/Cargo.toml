@@ -20,13 +20,6 @@ name = "cast"
 name = "cast"
 path = "bin/main.rs"
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # lib
 foundry-block-explorers.workspace = true
@@ -100,9 +93,7 @@ async-trait.workspace = true
 divan.workspace = true
 
 [features]
-default = ["rustls", "jemalloc"]
-rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
-openssl = ["foundry-cli/openssl"]
+default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]

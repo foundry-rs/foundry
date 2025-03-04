@@ -201,10 +201,20 @@ pub fn render_trace_arena_inner(
     }
 
     let mut w = TraceWriter::new(Vec::<u8>::new())
+        .color_cheatcodes(true)
+        .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
     w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+}
+
+fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+    match choice {
+        shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
+        shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
+        shell::ColorChoice::Never => revm_inspectors::ColorChoice::Never,
+    }
 }
 
 /// Specifies the kind of trace.
@@ -349,8 +359,8 @@ impl TraceMode {
         }
     }
 
-    pub fn with_verbosity(self, verbosiy: u8) -> Self {
-        if verbosiy >= 3 {
+    pub fn with_verbosity(self, verbosity: u8) -> Self {
+        if verbosity >= 3 {
             std::cmp::max(self, Self::Call)
         } else {
             self

@@ -46,13 +46,13 @@ pub const PRECOMPILES: &[Address] = &[
     EC_PAIRING,
     BLAKE_2F,
     POINT_EVALUATION,
-    ALPHANET_P256_ADDRESS,
+    ODYSSEY_P256_ADDRESS,
 ];
 
-/// [EIP-7212](https://eips.ethereum.org/EIPS/eip-7212) secp256r1 precompile address on Alphanet.
+/// [EIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile address on Odyssey.
 ///
-/// <https://github.com/paradigmxyz/alphanet/blob/5b675ee2b5214f157a62aee2b28fc7ca73e23561/crates/precompile/src/addresses.rs#L3>
-pub const ALPHANET_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000014");
+/// <https://github.com/ithacaxyz/odyssey/blob/482f4547631ae5c64ebea6a4b4ef93184a4abfee/crates/node/src/evm.rs#L35-L35>
+pub const ODYSSEY_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000014");
 
 /// Wrapper around revm P256 precompile, matching EIP-7212 spec.
 ///
@@ -69,5 +69,5 @@ pub fn p256_verify(input: &Bytes, gas_limit: u64) -> PrecompileResult {
 }
 
 /// [EIP-7212](https://eips.ethereum.org/EIPS/eip-7212#specification) secp256r1 precompile.
-pub const ALPHANET_P256: PrecompileWithAddress =
-    PrecompileWithAddress(ALPHANET_P256_ADDRESS, Precompile::Standard(p256_verify));
+pub const ODYSSEY_P256: PrecompileWithAddress =
+    PrecompileWithAddress(ODYSSEY_P256_ADDRESS, Precompile::Standard(p256_verify));

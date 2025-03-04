@@ -24,6 +24,7 @@ interface Vm {
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
     struct BroadcastTxSummary { bytes32 txHash; BroadcastTxType txType; address contractAddress; uint64 blockNumber; bool success; }
     struct SignedDelegation { uint8 v; bytes32 r; bytes32 s; uint64 nonce; address implementation; }
+    struct PotentialRevert { address reverter; bool partialMatch; bytes revertData; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -149,6 +150,8 @@ interface Vm {
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
     function assumeNoRevert() external pure;
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+    function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
@@ -234,6 +237,8 @@ interface Vm {
     function expectCall(address callee, uint256 msgValue, bytes calldata data, uint64 count) external;
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data) external;
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
+    function expectCreate(bytes calldata bytecode, address deployer) external;
+    function expectCreate2(bytes calldata bytecode, address deployer) external;
     function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
     function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
     function expectEmitAnonymous() external;
@@ -242,18 +247,30 @@ interface Vm {
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
     function expectEmit() external;
     function expectEmit(address emitter) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, uint64 count) external;
+    function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count) external;
+    function expectEmit(uint64 count) external;
+    function expectEmit(address emitter, uint64 count) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
     function expectRevert() external;
     function expectRevert(bytes4 revertData) external;
+    function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
+    function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;
     function expectRevert(bytes calldata revertData) external;
     function expectRevert(address reverter) external;
     function expectRevert(bytes4 revertData, address reverter) external;
     function expectRevert(bytes calldata revertData, address reverter) external;
+    function expectRevert(uint64 count) external;
+    function expectRevert(bytes4 revertData, uint64 count) external;
+    function expectRevert(bytes calldata revertData, uint64 count) external;
+    function expectRevert(address reverter, uint64 count) external;
     function expectSafeMemory(uint64 min, uint64 max) external;
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+    function foundryVersionAtLeast(string calldata version) external view returns (bool);
+    function foundryVersionCmp(string calldata version) external view returns (int256);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
     function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);
     function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
@@ -277,6 +294,8 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
+    function getStateDiff() external view returns (string memory diff);
+    function getStateDiffJson() external view returns (string memory diff);
     function getWallets() external returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function isContext(ForgeContext context) external view returns (bool result);

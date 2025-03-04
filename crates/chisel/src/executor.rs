@@ -335,13 +335,12 @@ impl SessionSource {
                         self.config.evm_opts.clone(),
                         None,
                         None,
-                        Some(self.solc.version.clone()),
                     )
                     .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec(self.config.foundry_config.evm_spec_id())
+            .spec_id(self.config.foundry_config.evm_spec_id())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(env, backend);
 

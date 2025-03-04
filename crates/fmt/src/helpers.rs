@@ -97,20 +97,20 @@ pub fn format_diagnostics_report(
         path.map(|p| p.file_name().unwrap().to_string_lossy().to_string()).unwrap_or_default();
     let mut s = Vec::new();
     for diag in diagnostics {
-        let (start, end) = (diag.loc.start(), diag.loc.end());
-        let mut report = Report::build(ReportKind::Error, &filename, start)
+        let span = (filename.as_str(), diag.loc.start()..diag.loc.end());
+        let mut report = Report::build(ReportKind::Error, span.clone())
             .with_message(format!("{:?}", diag.ty))
             .with_label(
-                Label::new((&filename, start..end))
+                Label::new(span)
                     .with_color(Color::Red)
-                    .with_message(format!("{}", diag.message.as_str().fg(Color::Red))),
+                    .with_message(diag.message.as_str().fg(Color::Red)),
             );
 
         for note in &diag.notes {
             report = report.with_note(&note.message);
         }
 
-        report.finish().write((&filename, Source::from(content)), &mut s).unwrap();
+        report.finish().write((filename.as_str(), Source::from(content)), &mut s).unwrap();
     }
     String::from_utf8(s).unwrap()
 }

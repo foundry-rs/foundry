@@ -3,7 +3,7 @@ use foundry_common::compact_to_contract;
 use foundry_compilers::{
     artifacts::{
         sourcemap::{SourceElement, SourceMap},
-        Bytecode, ContractBytecodeSome, Libraries, Source,
+        Bytecode, Contract, ContractBytecodeSome, Libraries, Source,
     },
     multi::MultiCompilerLanguage,
     Artifact, Compiler, ProjectCompileOutput,
@@ -11,10 +11,7 @@ use foundry_compilers::{
 use foundry_evm_core::utils::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar_parse::{
-    interface::{Pos, Session},
-    Parser,
-};
+use solar_parse::{interface::Session, Parser};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
@@ -88,7 +85,7 @@ impl ArtifactData {
     fn new(bytecode: ContractBytecodeSome, build_id: String, file_id: u32) -> Result<Self> {
         let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
-            let source_map = if b.source_map.as_ref().map_or(true, |s| s.is_empty()) {
+            let source_map = if b.source_map.as_ref().is_none_or(|s| s.is_empty()) {
                 Ok(None)
             } else {
                 b.source_map().transpose().wrap_err_with(|| {
@@ -137,7 +134,7 @@ impl ContractSources {
         Ok(sources)
     }
 
-    pub fn insert<C: Compiler>(
+    pub fn insert<C: Compiler<CompilerContract = Contract>>(
         &mut self,
         output: &ProjectCompileOutput<C>,
         root: &Path,
@@ -248,7 +245,7 @@ impl ContractSources {
     pub fn find_source_mapping(
         &self,
         contract_name: &str,
-        pc: usize,
+        pc: u32,
         init_code: bool,
     ) -> Option<(SourceElement, &SourceData)> {
         self.get_sources(contract_name)?.find_map(|(artifact, source)| {
@@ -268,10 +265,10 @@ impl ContractSources {
                 }?;
                 let ic = pc_ic_map.get(pc)?;
 
-                source_map.get(ic)?
+                source_map.get(ic as usize)
             } else {
-                source_map.get(pc)?
-            };
+                source_map.get(pc as usize)
+            }?;
             // if the source element has an index, find the sourcemap for that index
             let res = source_element
                 .index()

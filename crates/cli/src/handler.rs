@@ -1,24 +1,55 @@
 use eyre::EyreHandler;
+use itertools::Itertools;
 use std::{error::Error, fmt};
 
-/// A custom context type for Foundry specific error reporting via `eyre`
-#[derive(Debug)]
-pub struct Handler;
+/// A custom context type for Foundry specific error reporting via `eyre`.
+pub struct Handler {
+    debug_handler: Option<Box<dyn EyreHandler>>,
+}
+
+impl Default for Handler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Handler {
+    /// Create a new instance of the `Handler`.
+    pub fn new() -> Self {
+        Self { debug_handler: None }
+    }
+
+    /// Override the debug handler with a custom one.
+    pub fn debug_handler(mut self, debug_handler: Option<Box<dyn EyreHandler>>) -> Self {
+        self.debug_handler = debug_handler;
+        self
+    }
+}
 
 impl EyreHandler for Handler {
+    fn display(&self, error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use fmt::Display;
+        foundry_common::errors::dedup_chain(error).into_iter().format("; ").fmt(f)
+    }
+
     fn debug(&self, error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(debug_handler) = &self.debug_handler {
+            return debug_handler.debug(error, f);
+        }
+
         if f.alternate() {
             return fmt::Debug::fmt(error, f)
         }
+        let errors = foundry_common::errors::dedup_chain(error);
+
+        let (error, sources) = errors.split_first().unwrap();
         write!(f, "{error}")?;
 
-        if let Some(cause) = error.source() {
+        if !sources.is_empty() {
             write!(f, "\n\nContext:")?;
 
-            let multiple = cause.source().is_some();
-            let errors = std::iter::successors(Some(cause), |e| (*e).source());
-
-            for (n, error) in errors.enumerate() {
+            let multiple = sources.len() > 1;
+            for (n, error) in sources.iter().enumerate() {
                 writeln!(f)?;
                 if multiple {
                     write!(f, "- Error #{n}: {error}")?;
@@ -30,9 +61,15 @@ impl EyreHandler for Handler {
 
         Ok(())
     }
+
+    fn track_caller(&mut self, location: &'static std::panic::Location<'static>) {
+        if let Some(debug_handler) = &mut self.debug_handler {
+            debug_handler.track_caller(location);
+        }
+    }
 }
 
-/// Installs the Foundry [eyre] and [panic](mod@std::panic) hooks as the global ones.
+/// Installs the Foundry [`eyre`] and [`panic`](mod@std::panic) hooks as the global ones.
 ///
 /// # Details
 ///
@@ -48,15 +85,14 @@ pub fn install() {
 
     let panic_section =
         "This is a bug. Consider reporting it at https://github.com/foundry-rs/foundry";
-    let (panic_hook, debug_eyre_hook) =
+    let (panic_hook, debug_hook) =
         color_eyre::config::HookBuilder::default().panic_section(panic_section).into_hooks();
     panic_hook.install();
-    let eyre_install_result = if std::env::var_os("FOUNDRY_DEBUG").is_some() {
-        debug_eyre_hook.install()
-    } else {
-        eyre::set_hook(Box::new(|_| Box::new(Handler)))
-    };
-    if let Err(e) = eyre_install_result {
+    let debug_hook = debug_hook.into_eyre_hook();
+    let debug = std::env::var_os("FOUNDRY_DEBUG").is_some();
+    if let Err(e) = eyre::set_hook(Box::new(move |e| {
+        Box::new(Handler::new().debug_handler(debug.then(|| debug_hook(e))))
+    })) {
         debug!("failed to install eyre error hook: {e}");
     }
 }

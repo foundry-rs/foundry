@@ -38,13 +38,13 @@ pub struct InitArgs {
     pub vscode: bool,
 
     #[command(flatten)]
-    pub opts: DependencyInstallOpts,
+    pub install: DependencyInstallOpts,
 }
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, template, branch, opts, offline, force, vscode } = self;
-        let DependencyInstallOpts { shallow, no_git, no_commit } = opts;
+        let Self { root, template, branch, install, offline, force, vscode } = self;
+        let DependencyInstallOpts { shallow, no_git, commit } = install;
 
         // create the root dir if it does not exist
         if !root.exists() {
@@ -69,6 +69,7 @@ impl InitArgs {
             // fetch the template - always fetch shallow for templates since git history will be
             // collapsed. gitmodules will be initialized after the template is fetched
             git.fetch(true, &template, branch)?;
+
             // reset git history to the head of the template
             // first get the commit hash that was fetched
             let commit_hash = git.commit_hash(true, "FETCH_HEAD")?;
@@ -99,7 +100,7 @@ impl InitArgs {
             }
 
             // ensure git status is clean before generating anything
-            if !no_git && !no_commit && !force && git.is_in_repo()? {
+            if !no_git && commit && !force && git.is_in_repo()? {
                 git.ensure_clean()?;
             }
 
@@ -130,25 +131,25 @@ impl InitArgs {
 
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
-            let mut config = Config::load_with_root(&root);
+            let mut config = Config::load_with_root(&root)?;
             if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
-            let git = self.opts.git(&config);
+            let git = self.install.git(&config);
 
             // set up the repo
             if !no_git {
-                init_git_repo(git, no_commit)?;
+                init_git_repo(git, commit)?;
             }
 
             // install forge-std
             if !offline {
                 if root.join("lib/forge-std").exists() {
                     sh_warn!("\"lib/forge-std\" already exists, skipping install...")?;
-                    self.opts.install(&mut config, vec![])?;
+                    self.install.install(&mut config, vec![])?;
                 } else {
                     let dep = "https://github.com/foundry-rs/forge-std".parse()?;
-                    self.opts.install(&mut config, vec![dep])?;
+                    self.install.install(&mut config, vec![dep])?;
                 }
             }
 
@@ -167,8 +168,8 @@ impl InitArgs {
 ///
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
 ///
-/// Commits everything in `root` if `no_commit` is false.
-fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
+/// Commits everything in `root` if `commit` is true.
+fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
     // git init
     if !git.is_in_repo()? {
         git.init()?;
@@ -188,7 +189,7 @@ fn init_git_repo(git: Git<'_>, no_commit: bool) -> Result<()> {
     }
 
     // commit everything
-    if !no_commit {
+    if commit {
         git.add(Some("--all"))?;
         git.commit("chore: forge init")?;
     }
