@@ -42,7 +42,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
-        optimize_tests: false,
+        cache_tests: false,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -960,7 +960,7 @@ remappings = ["forge-std/=lib/forge-std/src/"]
 auto_detect_remappings = true
 libraries = []
 cache = true
-optimize_tests = false
+cache_tests = false
 cache_path = "cache"
 snapshots = "snapshots"
 gas_snapshot_check = false
@@ -1118,7 +1118,7 @@ exclude = []
   "auto_detect_remappings": true,
   "libraries": [],
   "cache": true,
-  "optimize_tests": false,
+  "cache_tests": false,
   "cache_path": "cache",
   "snapshots": "snapshots",
   "gas_snapshot_check": false,

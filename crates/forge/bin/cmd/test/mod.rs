@@ -306,7 +306,7 @@ impl TestArgs {
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
         let compiler = ProjectCompiler::new()
-            .optimize_tests(config.optimize_tests)
+            .cache_tests(config.cache_tests)
             .quiet(shell::is_json() || self.junit)
             .files(sources_to_compile);
 

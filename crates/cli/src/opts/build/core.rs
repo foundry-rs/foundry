@@ -34,6 +34,11 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_cache: bool,
 
+    /// Enable preprocessed cache for tests.
+    #[arg(long, conflicts_with = "no_cache")]
+    #[serde(skip)]
+    pub cache_tests: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -238,6 +243,10 @@ impl Provider for BuildOpts {
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());
+        }
+
+        if self.cache_tests {
+            dict.insert("cache_tests".to_string(), true.into());
         }
 
         if self.build_info {

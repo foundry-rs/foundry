@@ -92,7 +92,7 @@ impl BuildArgs {
         let format_json = shell::is_json();
         let compiler = ProjectCompiler::new()
             .files(files)
-            .optimize_tests(config.optimize_tests)
+            .cache_tests(config.cache_tests)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
