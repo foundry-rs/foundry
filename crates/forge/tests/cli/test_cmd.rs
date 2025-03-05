@@ -3168,3 +3168,29 @@ Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFai
 [FAIL: EvmError: Revert] constructor() ([GAS])
 ..."#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10012>
+forgetest_init!(state_diff_recording_with_revert, |prj, cmd| {
+    prj.add_test(
+        "TestStateDiffRevertFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract StateDiffRevertAtSameDepthTest is Test {
+    function test_something() public {
+    	CounterTestA counter = new CounterTestA();
+        counter.doSomething();
+    }
+}
+
+contract CounterTestA is Test {
+    function doSomething() public {
+    	vm.startStateDiffRecording();
+    	require(1 > 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["t", "--mt", "test_something"]).assert_failure();
+});

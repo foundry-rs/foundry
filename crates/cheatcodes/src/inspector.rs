@@ -799,46 +799,53 @@ where {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if ecx.journaled_state.depth() > 0 {
-                let mut last_depth =
-                    recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
-                // Update the reverted status of all deeper calls if this call reverted, in
-                // accordance with EVM behavior
-                if outcome.result.is_revert() {
-                    last_depth.iter_mut().for_each(|element| {
-                        element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
-                }
-                let create_access = last_depth.first_mut().expect("empty AccountAccesses");
-                // Assert that we're at the correct depth before recording post-create state
-                // changes. Depending on what depth the cheat was called at, there
-                // may not be any pending calls to update if execution has
-                // percolated up to a higher depth.
-                if create_access.depth == ecx.journaled_state.depth() {
-                    debug_assert_eq!(
-                        create_access.kind as u8,
-                        crate::Vm::AccountAccessKind::Create as u8
-                    );
-                    if let Some(address) = outcome.address {
-                        if let Ok(created_acc) =
-                            ecx.journaled_state.load_account(address, &mut ecx.db)
-                        {
-                            create_access.newBalance = created_acc.info.balance;
-                            create_access.deployedCode =
-                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
+                if let Some(last_depth) = &mut recorded_account_diffs_stack.pop() {
+                    // Update the reverted status of all deeper calls if this call reverted, in
+                    // accordance with EVM behavior
+                    if outcome.result.is_revert() {
+                        last_depth.iter_mut().for_each(|element| {
+                            element.reverted = true;
+                            element
+                                .storageAccesses
+                                .iter_mut()
+                                .for_each(|storage_access| storage_access.reverted = true);
+                        })
+                    }
+
+                    if let Some(create_access) = last_depth.first_mut() {
+                        // Assert that we're at the correct depth before recording post-create state
+                        // changes. Depending on what depth the cheat was called at, there
+                        // may not be any pending calls to update if execution has
+                        // percolated up to a higher depth.
+                        if create_access.depth == ecx.journaled_state.depth() {
+                            debug_assert_eq!(
+                                create_access.kind as u8,
+                                crate::Vm::AccountAccessKind::Create as u8
+                            );
+                            if let Some(address) = outcome.address {
+                                if let Ok(created_acc) =
+                                    ecx.journaled_state.load_account(address, &mut ecx.db)
+                                {
+                                    create_access.newBalance = created_acc.info.balance;
+                                    create_access.deployedCode = created_acc
+                                        .info
+                                        .code
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .original_bytes();
+                                }
+                            }
+                        }
+                        // Merge the last depth's AccountAccesses into the AccountAccesses at the
+                        // current depth, or push them back onto the pending
+                        // vector if higher depths were not recorded. This
+                        // preserves ordering of accesses.
+                        if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                            last.append(last_depth);
+                        } else {
+                            recorded_account_diffs_stack.push(last_depth.clone());
                         }
                     }
-                }
-                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths were not
-                // recorded. This preserves ordering of accesses.
-                if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                    last.append(&mut last_depth);
-                } else {
-                    recorded_account_diffs_stack.push(last_depth);
                 }
             }
         }
@@ -1449,36 +1456,40 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
             if ecx.journaled_state.depth() > 0 {
-                let mut last_recorded_depth =
-                    recorded_account_diffs_stack.pop().expect("missing CALL account accesses");
-                // Update the reverted status of all deeper calls if this call reverted, in
-                // accordance with EVM behavior
-                if outcome.result.is_revert() {
-                    last_recorded_depth.iter_mut().for_each(|element| {
-                        element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
-                }
-                let call_access = last_recorded_depth.first_mut().expect("empty AccountAccesses");
-                // Assert that we're at the correct depth before recording post-call state changes.
-                // Depending on the depth the cheat was called at, there may not be any pending
-                // calls to update if execution has percolated up to a higher depth.
-                if call_access.depth == ecx.journaled_state.depth() {
-                    if let Ok(acc) = ecx.load_account(call.target_address) {
-                        debug_assert!(access_is_call(call_access.kind));
-                        call_access.newBalance = acc.info.balance;
+                if let Some(last_recorded_depth) = &mut recorded_account_diffs_stack.pop() {
+                    // Update the reverted status of all deeper calls if this call reverted, in
+                    // accordance with EVM behavior
+                    if outcome.result.is_revert() {
+                        last_recorded_depth.iter_mut().for_each(|element| {
+                            element.reverted = true;
+                            element
+                                .storageAccesses
+                                .iter_mut()
+                                .for_each(|storage_access| storage_access.reverted = true);
+                        })
                     }
-                }
-                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths were not
-                // recorded. This preserves ordering of accesses.
-                if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                    last.append(&mut last_recorded_depth);
-                } else {
-                    recorded_account_diffs_stack.push(last_recorded_depth);
+
+                    if let Some(call_access) = last_recorded_depth.first_mut() {
+                        // Assert that we're at the correct depth before recording post-call state
+                        // changes. Depending on the depth the cheat was
+                        // called at, there may not be any pending
+                        // calls to update if execution has percolated up to a higher depth.
+                        if call_access.depth == ecx.journaled_state.depth() {
+                            if let Ok(acc) = ecx.load_account(call.target_address) {
+                                debug_assert!(access_is_call(call_access.kind));
+                                call_access.newBalance = acc.info.balance;
+                            }
+                        }
+                        // Merge the last depth's AccountAccesses into the AccountAccesses at the
+                        // current depth, or push them back onto the pending
+                        // vector if higher depths were not recorded. This
+                        // preserves ordering of accesses.
+                        if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                            last.append(last_recorded_depth);
+                        } else {
+                            recorded_account_diffs_stack.push(last_recorded_depth.clone());
+                        }
+                    }
                 }
             }
         }
