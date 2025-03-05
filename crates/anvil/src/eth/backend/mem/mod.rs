@@ -529,19 +529,17 @@ impl Backend {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    // Set the fork block number
-                    let mut node_config = self.node_config.write().await;
-                    node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
-
-                    let mut env = self.env.read().clone();
-                    let (forked_db, client_fork_config) =
-                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
-
-                    *self.db.write().await = Box::new(forked_db);
-                    let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-                    *self.fork.write() = Some(fork);
-                    *self.env.write() = env;
+                    self.reset_block_number(fork_url, fork_block_number).await?;
                 } else {
+                    // If rpc url is unspecified, then update the fork with the new block number and
+                    // existing rpc url, this updates the cache path
+                    {
+                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        if let Some(fork_url) = maybe_fork_url {
+                            self.reset_block_number(fork_url, fork_block_number).await?;
+                        }
+                    }
+
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
 
@@ -590,6 +588,26 @@ impl Backend {
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
+    }
+
+    async fn reset_block_number(
+        &self,
+        fork_url: String,
+        fork_block_number: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut node_config = self.node_config.write().await;
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+
+        let mut env = self.env.read().clone();
+        let (forked_db, client_fork_config) =
+            node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
+
+        *self.db.write().await = Box::new(forked_db);
+        let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+        *self.fork.write() = Some(fork);
+        *self.env.write() = env;
+
+        Ok(())
     }
 
     /// Returns the `TimeManager` responsible for timestamps
@@ -2866,7 +2884,7 @@ pub fn transaction_build(
 ) -> AnyRpcTransaction {
     if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
         let DepositTransaction {
-            nonce: _,
+            nonce,
             source_hash,
             from,
             kind,
@@ -2892,7 +2910,17 @@ pub fn transaction_build(
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
-            Ok(fields) => {
+            Ok(mut fields) => {
+                // Add zeroed signature fields for backwards compatibility
+                // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
+                fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
+                fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+                fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
+                fields.insert(
+                    String::from("nonce"),
+                    serde_json::to_value(format!("0x{nonce}")).unwrap(),
+                );
+
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
                     fields,

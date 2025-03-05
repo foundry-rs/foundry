@@ -122,9 +122,17 @@ pub struct TestArgs {
     #[arg(long, env = "FORGE_SNAPSHOT_CHECK")]
     gas_snapshot_check: Option<bool>,
 
+    /// Enable/disable recording of gas snapshot results.
+    #[arg(long, env = "FORGE_SNAPSHOT_EMIT")]
+    gas_snapshot_emit: Option<bool>,
+
     /// Exit with code 0 even if a test fails.
     #[arg(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
+
+    /// Suppress successful test traces and show only traces for failures.
+    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Display options")]
+    suppress_successful_traces: bool,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -568,6 +576,8 @@ impl TestArgs {
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
+                let show_traces =
+                    !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
                     sh_println!("{}", result.short_result(name))?;
 
@@ -579,7 +589,7 @@ impl TestArgs {
                     }
 
                     // We only display logs at level 2 and above
-                    if verbosity >= 2 {
+                    if verbosity >= 2 && show_traces {
                         // We only decode logs from Hardhat and DS-style console events
                         let console_logs = decode_console_logs(&result.logs);
                         if !console_logs.is_empty() {
@@ -630,7 +640,7 @@ impl TestArgs {
                     }
                 }
 
-                if !silent && !decoded_traces.is_empty() {
+                if !silent && show_traces && !decoded_traces.is_empty() {
                     sh_println!("Traces:")?;
                     for trace in &decoded_traces {
                         sh_println!("{trace}")?;
@@ -732,17 +742,28 @@ impl TestArgs {
                     }
                 }
 
-                // Create `snapshots` directory if it doesn't exist.
-                fs::create_dir_all(&config.snapshots)?;
+                // By default `gas_snapshot_emit` is set to `true` in the config.
+                //
+                // The user can either:
+                // - Set `FORGE_SNAPSHOT_EMIT=false` in the environment.
+                // - Pass `--gas-snapshot-emit=false` as a CLI argument.
+                // - Set `gas_snapshot_emit = false` in the config.
+                //
+                // If the user passes `--gas-snapshot-emit=<bool>` then it will override the config
+                // and the environment variable, enabling the check if `true` is passed.
+                if self.gas_snapshot_emit.unwrap_or(config.gas_snapshot_emit) {
+                    // Create `snapshots` directory if it doesn't exist.
+                    fs::create_dir_all(&config.snapshots)?;
 
-                // Write gas snapshots to disk per group.
-                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
-                    fs::write_pretty_json_file(
-                        &config.snapshots.join(format!("{group}.json")),
-                        &snapshots,
-                    )
-                    .expect("Failed to write gas snapshots to disk");
-                });
+                    // Write gas snapshots to disk per group.
+                    gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                        fs::write_pretty_json_file(
+                            &config.snapshots.join(format!("{group}.json")),
+                            &snapshots,
+                        )
+                        .expect("Failed to write gas snapshots to disk");
+                    });
+                }
             }
 
             // Print suite summary.

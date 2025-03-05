@@ -221,6 +221,9 @@ impl VerifyArgs {
 
         let verifier_url = self.verifier.verifier_url.clone();
         sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        if let Some(version) = &self.evm_version {
+            sh_println!("EVM version: {version}")?;
+        }
         if let Some(version) = &self.compiler_version {
             sh_println!("Compiler version: {version}")?;
         }
@@ -232,7 +235,7 @@ impl VerifyArgs {
                 sh_println!("Constructor args: {args}")?
             }
         }
-        self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
+        self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -256,7 +259,7 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(&self.etherscan.key())
+        self.verifier.verifier.client(self.etherscan.key().as_deref())
     }
 
     /// Resolves [VerificationContext] object either from entered contract name or by trying to
@@ -429,7 +432,7 @@ impl VerifyCheckArgs {
             "Checking verification status on {}",
             self.etherscan.chain.unwrap_or_default()
         )?;
-        self.verifier.verifier.client(&self.etherscan.key())?.check(self).await
+        self.verifier.verifier.client(self.etherscan.key().as_deref())?.check(self).await
     }
 }
 
