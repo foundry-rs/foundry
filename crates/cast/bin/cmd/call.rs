@@ -38,7 +38,7 @@ pub struct CallArgs {
     /// The arguments of the function to call.
     args: Vec<String>,
 
-    /// Data for the transaction.
+    /// Raw hex-encoded data for the transaction. Used instead of [SIG] and [ARGS].
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"]
