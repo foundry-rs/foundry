@@ -197,7 +197,7 @@ pub struct Config {
     /// whether to enable cache
     pub cache: bool,
     /// whether to enable preprocessed cache for tests
-    pub preprocess_cache: bool,
+    pub optimize_tests: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
     /// where the gas snapshots are stored
@@ -2321,7 +2321,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
-            preprocess_cache: false,
+            optimize_tests: false,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),

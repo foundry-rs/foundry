@@ -63,7 +63,7 @@ pub struct ProjectCompiler {
     files: Vec<PathBuf>,
 
     /// Whether to compile with preprocessed cache for tests and scripts.
-    preprocess_cache: bool,
+    optimize_tests: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -86,7 +86,7 @@ impl ProjectCompiler {
             bail: None,
             ignore_eip_3860: false,
             files: Vec::new(),
-            preprocess_cache: false,
+            optimize_tests: false,
         }
     }
 
@@ -142,8 +142,8 @@ impl ProjectCompiler {
 
     /// Sets if compiler should use preprocessed cache.
     #[inline]
-    pub fn preprocess_cache(mut self, preprocess: bool) -> Self {
-        self.preprocess_cache = preprocess;
+    pub fn optimize_tests(mut self, preprocess: bool) -> Self {
+        self.optimize_tests = preprocess;
         self
     }
 
@@ -166,7 +166,7 @@ impl ProjectCompiler {
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
-        let preprocess = self.preprocess_cache;
+        let preprocess = self.optimize_tests;
         self.compile_with(|| {
             let sources = if !files.is_empty() {
                 Source::read_all(files)?
