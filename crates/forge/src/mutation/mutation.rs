@@ -1,7 +1,8 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
 // Use Solar:
 use solar_parse::{ast::{BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition}, interface::BytePos};
-use std::hash::Hash;
+use rand::{Rng, distributions::Alphanumeric};
+use rand::prelude::*;
 
 /// Kinds of mutations (taken from Certora's Gambit)
 // #[derive(Hash, Eq, PartialEq, Clone, Copy)]
@@ -36,7 +37,7 @@ pub enum MutationType {
 
     /// For a require(x) condition:
     /// replace x with true; replace x with false
-    // same as IfStatementMutation, the expression inside the require is mutated as an expression
+    // Same as for IfStatementMutation, the expression inside the require is mutated as an expression
     // to handle increment etc
     RequireMutation,
 
@@ -58,7 +59,23 @@ pub enum MutationType {
     UnaryOperatorMutation(UnOpKind),
 }
 
-enum MutationResult {
+impl MutationType {
+    fn get_name(&self) -> String {
+        match self {
+            MutationType::AssignmentMutation(kind) =>  format!("{}_{}", "AssignmentMutation".to_string(), kind.description()),
+            MutationType::BinaryOpMutation(kind) => format!("{}_{}", "BinaryOpMutation".to_string(), kind.to_str()),
+            MutationType::DeleteExpressionMutation => "DeleteExpressionMutation".to_string(),
+            MutationType::ElimDelegateMutation => "ElimDelegateMutation".to_string(),
+            MutationType::FunctionCallMutation => "FunctionCallMutation".to_string(),
+            MutationType::RequireMutation => "RequireMutation".to_string(),
+            MutationType::SwapArgumentsFunctionMutation => "SwapArgumentsFunctionMutation".to_string(),
+            MutationType::SwapArgumentsOperatorMutation => "SwapArgumentsOperatorMutation".to_string(),
+            MutationType::UnaryOperatorMutation(kind) => format!("{}_{}", "UnaryOperatorMutation".to_string(), kind.to_str())
+        }
+    }
+}
+
+pub enum MutationResult {
     Dead,
     Alive,
     Invalid,
@@ -93,6 +110,17 @@ impl Mutant {
 
     pub fn create_delegatecall_mutation(span: Span) -> Mutant {
         Mutant { span, mutation: MutationType::ElimDelegateMutation }
+    }
+    
+    /// Get a temp folder name based on the span, the mutation type and a random suffix
+    pub fn get_unique_id(&self) -> String {
+        let rand_string: String = thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(30)
+            .map(char::from)
+            .collect();
+
+        format!("{}_{}_{}_{}", self.span.hi().to_u32(), self.span.lo().to_u32(), self.mutation.get_name(), rand_string)
     }
 }
 

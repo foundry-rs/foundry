@@ -300,6 +300,13 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
+        let should_mutate = self.mutate.is_some();
+
+        // Mutation test uses cache to avoid recompiling non-mutated contracts -> force it
+        if should_mutate && !config.cache {
+            config.cache = true;
+        }
+
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
@@ -324,7 +331,6 @@ impl TestArgs {
 
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
-        let should_mutate = self.mutate.is_some();
 
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;

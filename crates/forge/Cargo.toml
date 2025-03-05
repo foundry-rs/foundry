@@ -74,6 +74,7 @@ indicatif = "0.17"
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
+rand.workspace = true
 regex = { workspace = true, default-features = false }
 reqwest = { workspace = true, features = ["json"] }
 semver.workspace = true
