@@ -24,6 +24,16 @@ use std::path::Path;
 use solar_parse::ast::visit::Visit;
 use crate::mutation::visitor::MutantVisitor;
 use crate::mutation::mutation::{Mutant, MutationResult};
+use foundry_compilers::project::ProjectCompiler;
+use foundry_compilers::{
+    artifacts::output_selection::OutputSelection,
+    compilers::{
+        multi::{MultiCompiler, MultiCompilerLanguage},
+        Language,
+    },
+    utils::source_files_iter,
+    ProjectCompileOutput,
+};
 
 pub struct MutationCampaign<'a> {
     contracts_to_mutate: Vec<PathBuf>,
@@ -135,6 +145,8 @@ impl<'a> MutationCampaign<'a> {
 
             self.generate_mutant(mutant, &mutation_dir, target_contract_path);
 
+            self.compile_mutant(&mutation_dir);
+
         // - create a new dir in the root temp dir
         // - copy the out and cache from the origin - @todo optim: use symlinks instead, BUT need to: alter the target hash in cache, make sure to not overwrite dependencies each time
         // (ie only symlink what we're sure will never be recompiled) 
@@ -147,8 +159,8 @@ impl<'a> MutationCampaign<'a> {
 
 
         // dbg:
-        dbg!(&temp_dir_root);
-        Self::copy_dir_except(temp_dir_root.path(), std::env::current_dir().unwrap(), &PathBuf::default());
+        // dbg!(&temp_dir_root);
+        // Self::copy_dir_except(temp_dir_root.path(), std::env::current_dir().unwrap(), &PathBuf::default());
 
 
     }
@@ -159,6 +171,7 @@ impl<'a> MutationCampaign<'a> {
         let cache_src = &config.cache_path;
         let out_src = &config.out;
         let contract_src = &config.src;
+        // let test_src = &config.test;
         
         let cache_dest = path.join("cache");
         let out_dest = path.join("out");
@@ -195,59 +208,54 @@ impl<'a> MutationCampaign<'a> {
     fn generate_mutant(&self, mutation: &Mutant, temp_dir_path: &PathBuf, src_contract_path: &PathBuf) {
         
         let span = mutation.span;
+        let mut replacement: &[u8];
         match mutation.mutation {
             _ => {
             }
         }
 
-        let replacement: &[u8] = b"hey";
+        let replacement: &[u8] = b"123";
     
-        // Get source and destination file paths
         let target_path = temp_dir_path.join("src").join(src_contract_path.file_name().unwrap());
-
         let src_content = Arc::clone(self.src.get(src_contract_path).unwrap());
 
-        // create new string, based on on src_content with the replacement at the correct index
-
-        // Create new string, based on src_content with the replacement at the correct index
         let start_pos = span.lo().0 as usize;
         let end_pos = span.hi().0 as usize;
 
-        // Create the mutated content by replacing the text at the span
         let before = &src_content[..start_pos];
         let after = &src_content[end_pos..];
 
-        // Build the new content with the replacement
         let mut new_content = String::with_capacity(before.len() + replacement.len() + after.len());
         new_content.push_str(before);
         new_content.push_str(std::str::from_utf8(replacement).expect("Replacement must be valid UTF-8"));
         new_content.push_str(after);
 
-        // Create necessary directories if they don't exist
         std::fs::create_dir_all(target_path.parent().unwrap())
             .expect("Failed to create parent directories");
 
-        // Write the modified content to the target file
         std::fs::write(&target_path, new_content)
             .expect(&format!("Failed to write to target file {:?}", &target_path));
 
     }
 
-// @todo instead, we should *not* copy the target contract and re-emit it when needed
+    fn compile_mutant(&self, temp_folder: &PathBuf) {
 
-    /// Overwrite a length <= span (and pad with whitespace, which doesn't fail to compile)
-    fn write_in_contract() {
-        // best case scenario, only a few bytes written to the existing contract
-    }
+        let mut config = (*self.config).clone();
+        config.src = temp_folder.clone();
+        config.cache_path = temp_folder.join("cache");
+        config.out = temp_folder.join("out");
 
+        let mut project = config.create_project(true, true).unwrap();
 
-    /// Overwrite a length > span and shift the rest of the contract to create enough space
-    fn write_and_translate() {
-        // less optimal, as we need to rewrite everything after the replaced part
-    }
+        let compiler = ProjectCompiler::new(&project).unwrap();
 
-    fn compile_mutant(&self, temp_folder: PathBuf) {
+        let output = compiler.compile().unwrap();
 
+        if output.has_compiler_errors() {
+            dbg!("Invalid mutant");
+        } else {
+            dbg!("Viable");
+        }
     }
 
     fn test_mutant(&self, mutated_code: String) -> MutationResult {
