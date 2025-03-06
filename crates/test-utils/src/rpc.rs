@@ -241,6 +241,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
             Optimism => "optimism",
             Arbitrum => "arbitrum",
             Polygon => "polygon",
+            BinanceSmartChain => "bsc",
             _ => "",
         }
     } else {
@@ -248,17 +249,18 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
             Optimism => "opt",
             Arbitrum => "arb",
             Polygon => "polygon",
+            BinanceSmartChain => "bnb",
             _ => "eth",
         }
     };
     let network = if is_infura {
         match chain {
-            Mainnet | Optimism | Arbitrum | Polygon => "mainnet",
+            Mainnet | Optimism | Arbitrum | Polygon | BinanceSmartChain => "mainnet",
             _ => chain.as_str(),
         }
     } else {
         match chain {
-            Mainnet | Optimism | Arbitrum | Polygon => "mainnet",
+            Mainnet | Optimism | Arbitrum | Polygon | BinanceSmartChain => "mainnet",
             _ => chain.as_str(),
         }
     };
