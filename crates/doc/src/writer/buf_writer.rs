@@ -23,7 +23,7 @@ static DEPLOYMENTS_TABLE_SEPARATOR: LazyLock<String> =
 
 /// Headers and separator for rendering the variants table.
 const VARIANTS_TABLE_HEADERS: &[&str] = &["Name", "Description"];
-const VARIANTS_TABLE_SEPARATOR: LazyLock<String> =
+static VARIANTS_TABLE_SEPARATOR: LazyLock<String> =
     LazyLock::new(|| VARIANTS_TABLE_HEADERS.iter().map(|h| "-".repeat(h.len())).join("|"));
 
 /// The buffered writer.

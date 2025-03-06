@@ -232,13 +232,13 @@ impl AsDoc for Document {
 
                                 let filtered_comments: Comments = (*comments)
                                     .iter()
-                                    .cloned()
                                     .filter(|c| c.tag != CommentTag::Custom("variant".to_string()))
+                                    .cloned()
                                     .collect::<Vec<_>>()
                                     .into();
 
                                 writer.write_section(&filtered_comments, code)?;
-                                writer.try_write_variant_table(&item, comments)
+                                writer.try_write_variant_table(item, comments)
                             })?;
                         }
                     }
