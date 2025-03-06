@@ -1492,13 +1492,15 @@ impl Backend {
                 pending_transaction: PendingTransaction::with_impersonated(
                                          build_typed_transaction(TypedTransactionRequest::EIP1559(TxEip1559 {
                                             nonce: t.nonce.unwrap_or_default(),
-                                            max_fee_per_gas: t.max_fee_per_gas.unwrap_or_default(),
+                                            // TODO: how to do gwei conversion? the number below
+                                            // for now should be 100 gwei
+                                            max_fee_per_gas: t.max_fee_per_gas.unwrap_or(100000000000),
                                             max_priority_fee_per_gas: t.max_priority_fee_per_gas.unwrap_or_default(),
-                                            gas_limit: t.gas.unwrap_or_default(),
-                                            value: t.value.unwrap_or(U256::ZERO),
+                                            gas_limit: t.gas.unwrap_or(30000000),
+                                            value: t.value.unwrap_or_default(),
                                             input: t.input.clone().into_input().unwrap_or_default(),
                                             to: t.to.unwrap_or_default(),
-                                            chain_id: 0,
+                                            chain_id: self.env.read().cfg.chain_id,
                                             access_list: t.access_list.clone().unwrap_or_default(),
                                          }), PrimitiveSignature::from_scalars_and_parity(
                 B256::with_last_byte(1),
