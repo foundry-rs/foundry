@@ -1,7 +1,7 @@
 //! RPC API keys utilities.
 
 use foundry_config::{NamedChain, NamedChain::Optimism};
-use rand::seq::SliceRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 use std::{
     env,
     sync::{
@@ -26,7 +26,7 @@ static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // "5c812e02193c4ba793f8c214317582bd",
     ];
 
-    keys.shuffle(&mut rand::thread_rng());
+    keys.shuffle(&mut rand::rng());
 
     keys
 });
@@ -62,7 +62,7 @@ static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // "UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE",
         "bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
     ];
-    keys.shuffle(&mut rand::thread_rng());
+    keys.shuffle(&mut rand::rng());
     keys
 });
 
@@ -82,7 +82,7 @@ static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // Optimism
         // "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
     ];
-    keys.shuffle(&mut rand::thread_rng());
+    keys.shuffle(&mut rand::rng());
     keys
 });
 
@@ -143,7 +143,7 @@ fn next_archive_url(is_ws: bool) -> String {
     let url = if env_archive_urls(is_ws).is_empty() {
         next(urls)
     } else {
-        urls.choose_weighted(&mut rand::thread_rng(), |url| {
+        urls.choose_weighted(&mut rand::rng(), |url| {
             if url.contains("reth") {
                 2usize
             } else {
@@ -164,7 +164,7 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
         let env_urls = env_archive_urls(is_ws);
         if !env_urls.is_empty() {
             let mut urls = env_urls.to_vec();
-            urls.shuffle(&mut rand::thread_rng());
+            urls.shuffle(&mut rand::rng());
             return urls;
         }
 

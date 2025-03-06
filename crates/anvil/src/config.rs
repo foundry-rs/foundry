@@ -42,7 +42,7 @@ use foundry_evm::{
 };
 use itertools::Itertools;
 use parking_lot::RwLock;
-use rand::thread_rng;
+use rand::rng;
 use revm::primitives::BlobExcessGasAndPrice;
 use serde_json::{json, Value};
 use std::{
@@ -1444,7 +1444,7 @@ impl AccountGenerator {
         Self {
             chain_id: CHAIN_ID,
             amount,
-            phrase: Mnemonic::<English>::new(&mut thread_rng()).to_phrase(),
+            phrase: Mnemonic::<English>::new(&mut rng()).to_phrase(),
             derivation_path: None,
         }
     }
