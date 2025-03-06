@@ -3,6 +3,7 @@
 use solar_parse::{ast::{BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition}, interface::BytePos};
 use rand::{Rng, distributions::Alphanumeric};
 use rand::prelude::*;
+use std::path::PathBuf;
 
 /// Kinds of mutations (taken from Certora's Gambit)
 // #[derive(Hash, Eq, PartialEq, Clone, Copy)]
@@ -84,8 +85,9 @@ pub enum MutationResult {
 /// A given mutation
 #[derive(Debug)]
 pub struct Mutant {
-    span: Span,
-    mutation: MutationType,
+    // pub path: PathBuf,
+    pub span: Span,
+    pub mutation: MutationType,
 }
 
 impl Mutant {
