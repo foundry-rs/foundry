@@ -229,7 +229,16 @@ impl AsDoc for Document {
                             writer.write_subtitle("Enums")?;
                             enums.into_iter().try_for_each(|(item, comments, code)| {
                                 writer.write_heading(&item.name.safe_unwrap().name)?;
-                                writer.write_section(comments, code)
+
+                                let filtered_comments: Comments = (*comments)
+                                    .iter()
+                                    .cloned()
+                                    .filter(|c| c.tag != CommentTag::Custom("variant".to_string()))
+                                    .collect::<Vec<_>>()
+                                    .into();
+
+                                writer.write_section(&filtered_comments, code)?;
+                                writer.try_write_variant_table(&item, comments)
                             })?;
                         }
                     }
