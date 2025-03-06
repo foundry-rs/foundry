@@ -1,7 +1,8 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::{db::SerializableBlock, executor::new_evm_with_inspector_ref};
+use super::super::sign::build_typed_transaction;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -22,7 +23,7 @@ use crate::{
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
-        pool::transactions::PoolTransaction,
+        pool::transactions::{PoolTransaction, TransactionPriority},
         util::get_precompiles_for,
     },
     inject_precompiles,
@@ -35,7 +36,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEip1559, TxEnvelope
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::{
@@ -43,12 +44,13 @@ use alloy_network::{
     UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
+    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, PrimitiveSignature, B256, U256, U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
+    simulate::{SimulatePayload, SimulatedBlock, SimCallResult},
     state::StateOverride,
     trace::{
         filter::TraceFilter,
@@ -69,7 +71,7 @@ use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
         optimism::DepositTransaction, DepositReceipt, MaybeImpersonatedTransaction,
-        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction,
+        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction, TypedTransactionRequest
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -1451,6 +1453,103 @@ impl Backend {
         }
 
         inspector
+    }
+
+    pub async fn simulate(
+        &self,
+        request: SimulatePayload,
+        block_request: Option<BlockRequest>,
+    ) -> Result<Vec<SimulatedBlock<SerializableBlock>>, BlockchainError> {
+        // first, snapshot the current state
+        let state_id = self.db.write().await.snapshot_state();
+        
+        // then, execute each block in the way that it is given
+        let mut simulated_blocks = Vec::new();
+        for block in request.block_state_calls {
+            // if the next block number is larger than the current next block height,
+            // we should mint an empty block and continue
+            /*if block.block_overrides.is_some() {
+                let overrides = block.block_overrides.unwrap();
+
+                if overrides.number.is_some() {
+                    let best_number = self.best_number();
+                    while 
+                        best_number < overrides.number.unwrap() {
+
+                        // mint an empty block per spec
+                        self.do_mine_block(Vec::new()).await;
+                        // TODO: add simulated block
+                        if simulated_blocks.len() > 256 {
+                            // exceeded block simulation limit
+                            return Err(RpcError::internal_error_with("exceeded block simulation limit").into());
+                        }
+                    }
+                }
+            }
+        */
+
+            let pool_transactions = block.calls.iter().enumerate().map(|(i, t)| Arc::new(PoolTransaction {
+                pending_transaction: PendingTransaction::with_impersonated(
+                                         build_typed_transaction(TypedTransactionRequest::EIP1559(TxEip1559 {
+                                            nonce: t.nonce.unwrap_or_default(),
+                                            max_fee_per_gas: t.max_fee_per_gas.unwrap_or_default(),
+                                            max_priority_fee_per_gas: t.max_priority_fee_per_gas.unwrap_or_default(),
+                                            gas_limit: t.gas.unwrap_or_default(),
+                                            value: t.value.unwrap_or(U256::ZERO),
+                                            input: t.input.clone().into_input().unwrap_or_default(),
+                                            to: t.to.unwrap_or_default(),
+                                            chain_id: 0,
+                                            access_list: t.access_list.clone().unwrap_or_default(),
+                                         }), PrimitiveSignature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                false,
+            )).unwrap(), 
+                                         t.from.unwrap_or(Address::default())
+                                         ),
+                requires: Vec::new(),
+                provides: Vec::new(),
+                priority: TransactionPriority(i.try_into().unwrap())
+            })).collect();
+
+            // TODO: it may be possible to be more lightweight with our handling of blot.ck mining
+            // here, but for now this should be pretty foolproof (in theory)
+            let outcome = self.do_mine_block(pool_transactions).await;
+            if outcome.invalid.len() > 0 {
+                return Err(RpcError::internal_error_with("txn was invalid").into());
+            }
+
+            let mut simulated_block = SimulatedBlock {
+                inner: self.get_block(outcome.block_number).unwrap().into(),
+                calls: Vec::new()
+            };
+
+            for tx in outcome.included {
+                let receipt = self.mined_transaction_receipt(tx.hash()).unwrap();
+                let status = receipt.out.is_some();
+                simulated_block.calls.push(SimCallResult {
+                    return_data: receipt.out.unwrap_or_default(),
+                    // TODO: fill actual error
+                    error: None,
+                    gas_used: receipt.inner.gas_used,
+                    // TODO: fill actual logs
+                    logs: Vec::new(),
+                    status
+                });
+            }
+
+            simulated_blocks.push(simulated_block);
+
+            if simulated_blocks.len() >= 256 {
+                // exceeded block simulation limit
+                return Err(RpcError::internal_error_with("exceeded block simulation limit").into());
+            }
+        }
+
+        // finally, revert back to the previous state
+        self.db.write().await.revert_state(state_id, RevertStateSnapshotAction::RevertRemove);
+
+        Ok(simulated_blocks)
     }
 
     pub fn call_with_state(
