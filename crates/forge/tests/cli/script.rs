@@ -2633,7 +2633,8 @@ Script ran successfully.
     .unwrap();
     cmd.forge_fuse().args(["script", "script/Counter1.s.sol"]).assert_success().stderr_eq(str![[r#"
 ...
-Warning: Detected artifacts built from source file [..]script/Counter.s.sol that no longer exists. Run `forge clean` to make sure builds are in sync with project files.
+Warning: Detected artifacts built from source files that no longer exist. Run `forge clean` to make sure builds are in sync with project files.
+ - [..]script/Counter.s.sol
 ...
 
 "#]])
