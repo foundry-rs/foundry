@@ -336,8 +336,8 @@ impl VerifyBytecodeArgs {
             );
         };
 
-        let mut transaction: TransactionRequest = match transaction.inner.inner.clone_inner() {
-            AnyTxEnvelope::Ethereum(tx) => tx.into(),
+        let mut transaction: TransactionRequest = match transaction.inner.inner.inner() {
+            AnyTxEnvelope::Ethereum(tx) => tx.clone().into(),
             AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
         };
 
