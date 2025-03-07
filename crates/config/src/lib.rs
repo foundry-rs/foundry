@@ -1251,10 +1251,21 @@ impl Config {
 
     /// Returns the [Revive] compiler.
     pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
-        Resolc::new(
+        if let Some(path) = &self.revive.solc_path {
+            if !path.is_file() {
+                return Err(SolcError::msg(format!("`solc` {} does not exist", path.display())));
+            }
+            let solc =
+                Solc::new(path)?;
+            Resolc::new(self.revive.revive_path.clone().unwrap_or("resolc".into()),
+            SolcCompiler::Specific(solc))
+        }
+        else{
+            Resolc::new(
             self.revive.revive_path.clone().unwrap_or("resolc".into()),
             self.solc_compiler()?,
         )
+        }
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].

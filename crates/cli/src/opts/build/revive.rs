@@ -11,21 +11,40 @@ pub struct ReviveOpts {
         value_name = "REVIVE_COMPILE",
         help = "Enable compiling with revive",
         long = "revive-compile",
-        action = clap::ArgAction::SetTrue,
-        default_value_t = false,
-        env = "REVIVE_COMPILE" 
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
     )]
-    pub revive_compile: bool,
+    pub revive_compile: Option<bool>,
 
     #[clap(
         long = "revive-path",
         visible_alias = "revive",
         help = "Specify a revive path to be used",
         value_name = "REVIVE_PATH",
-        env = "REVIVE_PATH"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revive_path: Option<PathBuf>,
+
+    #[clap(
+        help = "Solc compiler path to use when compiling with revive",
+        long = "revive-solc-path",
+        value_name = "REVIVE_SOLC_PATH"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solc_path: Option<PathBuf>,
+
+    /// A flag indicating whether to forcibly switch to the EVM legacy assembly pipeline.
+    #[clap(
+        help = "Forcibly switch to the EVM legacy assembly pipeline.",
+        long = "force-evmla",
+        value_name = "FORCE_EVMLA",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force_evmla: Option<bool>,
 }
 
 impl ReviveOpts {
@@ -38,15 +57,11 @@ impl ReviveOpts {
             };
         }
 
+        set_if_some!(self.revive_compile, revive.revive_compile);
         set_if_some!(self.revive_path.clone(), revive.revive_path);
-        revive.revive_compile = self.revive_compile;
+        set_if_some!(self.solc_path.clone(), revive.solc_path);
+        set_if_some!(self.force_evmla, revive.force_evmla);
 
         revive
-    }
-}
-
-impl From<ReviveOpts> for ReviveConfig {
-    fn from(args: ReviveOpts) -> Self {
-        Self { revive_compile: args.revive_compile, revive_path: args.revive_path }
     }
 }

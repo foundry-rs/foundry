@@ -14,8 +14,7 @@ use foundry_config::{
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
-    },
-    Config,
+    }, revive::revive_project_paths, Config
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -74,7 +73,10 @@ impl BuildArgs {
             config = self.load_config()?;
         }
 
-        let project = config.project()?;
+        let mut project = config.project()?;
+        if config.revive.revive_compile {
+            project.paths = revive_project_paths(&config);
+        }
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
