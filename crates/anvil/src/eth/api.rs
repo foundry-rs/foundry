@@ -30,7 +30,11 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, Header};
+use alloy_consensus::{
+    transaction::{eip4844::TxEip4844Variant, Recovered},
+    Account,
+    Header,
+};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
@@ -101,7 +105,7 @@ pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 #[serde(untagged)]
 pub enum SimulatedBlockResponse {
     AnvilInternal(Vec<SimulatedBlock<alloy_rpc_types::Block<alloy_rpc_types::Transaction, Header>>>),
-    Forked(Vec<SimulatedBlock<WithOtherFields<alloy_rpc_types::Block<WithOtherFields<alloy_rpc_types::Transaction<alloy_network::AnyTxEnvelope>>, alloy_rpc_types::Header<alloy_network::AnyHeader>>>>>)
+    Forked(Vec<SimulatedBlock<AnyRpcBlock>>)
 }
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
@@ -1231,17 +1235,20 @@ impl EthApi {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
-            let mut tx = transaction_build(
+            let tx = transaction_build(
                 Some(*pending.hash()),
                 pending.transaction,
                 None,
                 None,
                 Some(self.backend.base_fee()),
             );
+
+            let WithOtherFields { inner: mut tx, other } = tx.0;
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from;
-            tx
+            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
+
+            AnyRpcTransaction(WithOtherFields { inner: tx, other })
         });
         if tx.is_none() {
             tx = self.backend.transaction_by_hash(hash).await?
@@ -2430,7 +2437,7 @@ impl EthApi {
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
-            let mut tx = transaction_build(
+            let tx = transaction_build(
                 Some(tx.hash()),
                 tx.pending_transaction.transaction.clone(),
                 None,
@@ -2438,9 +2445,13 @@ impl EthApi {
                 None,
             );
 
+            let WithOtherFields { inner: mut tx, other } = tx.0;
+
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from;
+            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
+
+            let tx = AnyRpcTransaction(WithOtherFields { inner: tx, other });
 
             Ok(tx)
         }

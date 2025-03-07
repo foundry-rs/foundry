@@ -303,7 +303,7 @@ impl EthApi {
         for n in (from..=to).rev() {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
-                    if U256::from(tx.nonce()) == nonce && tx.from == address {
+                    if U256::from(tx.nonce()) == nonce && tx.from() == address {
                         return Ok(Some(tx.tx_hash()));
                     }
                 }
@@ -386,7 +386,7 @@ impl EthApi {
             .iter()
             .fold(0, |acc, receipt| acc + (receipt.gas_used as u128) * receipt.effective_gas_price);
 
-        let Block { header, uncles, transactions, withdrawals } = block.inner;
+        let Block { header, uncles, transactions, withdrawals } = block.into_inner();
 
         let block =
             OtsSlimBlock { header, uncles, transaction_count: transactions.len(), withdrawals };
@@ -440,7 +440,7 @@ impl EthApi {
         .collect::<Result<Vec<_>>>()?;
 
         let transaction_count = block.transactions().len();
-        let fullblock = OtsBlock { block: block.inner, transaction_count };
+        let fullblock = OtsBlock { block: block.inner.clone(), transaction_count };
 
         let ots_block_txs = OtsBlockTransactions { fullblock, receipts };
 
@@ -459,7 +459,7 @@ impl EthApi {
             .await
             .into_iter()
             .map(|t| match t {
-                Ok(Some(t)) => Ok(t.inner),
+                Ok(Some(t)) => Ok(t.into_inner()),
                 _ => Err(BlockchainError::DataUnavailable),
             })
             .collect::<Result<Vec<_>>>()?;
