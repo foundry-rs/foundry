@@ -309,7 +309,7 @@ impl CreateArgs {
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
-            provider.estimate_gas(&deployer.tx).await
+            provider.estimate_gas(deployer.tx.clone()).await
         }?);
 
         if is_legacy {
@@ -320,7 +320,7 @@ impl CreateArgs {
             };
             deployer.tx.set_gas_price(gas_price);
         } else {
-            let estimate = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+            let estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
                 priority_fee.to()
             } else {

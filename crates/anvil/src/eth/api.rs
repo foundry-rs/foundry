@@ -1198,7 +1198,7 @@ impl EthApi {
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from;
+            tx.0.inner.inner_mut() = from; // TODO: Needs new alloy 0.13
             tx
         });
         if tx.is_none() {
@@ -2398,7 +2398,7 @@ impl EthApi {
 
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from;
+            tx.0.inner.inner_mut() = from;
 
             Ok(tx)
         }

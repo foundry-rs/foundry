@@ -515,7 +515,7 @@ type                 {}
 }
 impl UIfmt for Transaction {
     fn pretty(&self) -> String {
-        match &self.inner {
+        match &self.inner.inner() {
             TxEnvelope::Eip2930(tx) => format!(
                 "
 accessList           {}
@@ -543,7 +543,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 self.gas_price().pretty(),
                 self.inner.tx_hash().pretty(),
@@ -585,7 +585,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 tx.hash().pretty(),
                 self.input().pretty(),
@@ -631,7 +631,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 tx.hash().pretty(),
                 self.input().pretty(),
@@ -680,7 +680,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 tx.hash().pretty(),
                 self.input().pretty(),
@@ -713,7 +713,7 @@ v                    {}
 value                {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 self.gas_price().pretty(),
                 self.inner.tx_hash().pretty(),
@@ -752,7 +752,7 @@ effectiveGasPrice    {}
             ",
             self.block_hash.pretty(),
             self.block_number.pretty(),
-            self.from.pretty(),
+            self.inner.signer().pretty(),
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
             self.inner.pretty(),
@@ -798,7 +798,7 @@ impl UIfmt for EthValue {
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) -> Option<String> {
-    let sig = match &transaction.inner {
+    let sig = match &transaction.inner.inner() {
         AnyTxEnvelope::Ethereum(envelope) => match &envelope {
             TxEnvelope::Eip2930(tx) => Some(tx.signature()),
             TxEnvelope::Eip1559(tx) => Some(tx.signature()),
@@ -811,7 +811,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) 
     match attr {
         "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
         "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
-        "from" => Some(transaction.from.pretty()),
+        "from" => Some(transaction.pretty()),
         "gas" => Some(transaction.gas_limit().pretty()),
         "gasPrice" | "gas_price" => Some(Transaction::gas_price(transaction).pretty()),
         "hash" => Some(alloy_network::TransactionResponse::tx_hash(transaction).pretty()),
