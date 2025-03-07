@@ -12,7 +12,7 @@ use foundry_test_utils::{
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, path::PathBuf, str::FromStr};
+use std::{env, fs, path::PathBuf, str::FromStr};
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
@@ -2613,6 +2613,34 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]);
+});
+
+// Tests warn when artifact source file no longer exists.
+// <https://github.com/foundry-rs/foundry/issues/9068>
+forgetest_init!(should_warn_if_artifact_source_no_longer_exists, |prj, cmd| {
+    cmd.args(["script", "script/Counter.s.sol"]).assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
+    fs::rename(
+        prj.paths().scripts.join("Counter.s.sol"),
+        prj.paths().scripts.join("Counter1.s.sol"),
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["script", "script/Counter1.s.sol"]).assert_success().stderr_eq(str![[r#"
+...
+Warning: Detected artifacts built from source file [..]script/Counter.s.sol that no longer exists. Run `forge clean` to make sure builds are in sync with project files.
+...
+
+"#]])
+        .stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
 
 "#]]);
 });
