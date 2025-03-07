@@ -43,7 +43,7 @@ async fn test_basefee_full_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -54,7 +54,7 @@ async fn test_basefee_full_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -93,7 +93,7 @@ async fn test_basefee_half_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -120,7 +120,7 @@ async fn test_basefee_empty_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -132,7 +132,7 @@ async fn test_basefee_empty_block() {
     api.mine_one().await;
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false.into())
+        .get_block(BlockId::latest())
         .await
         .unwrap()
         .unwrap()
@@ -209,8 +209,7 @@ async fn test_can_use_fee_history() {
 
         let fee_history_after = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
         let latest_fee_history_fee = *fee_history_after.base_fee_per_gas.first().unwrap() as u64;
-        let latest_block =
-            provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+        let latest_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);

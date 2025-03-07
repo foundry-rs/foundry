@@ -338,7 +338,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let number = match block {
                 Some(id) => {
                     provider
-                        .get_block(id, false.into())
+                        .get_block(id)
                         .await?
                         .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
                         .header

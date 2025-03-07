@@ -4,7 +4,7 @@ use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockTransactionsKind, TransactionRequest};
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 
@@ -18,7 +18,7 @@ async fn can_send_eip4844_transaction() {
     let to = wallets[1].address();
     let provider = http_provider(&handle.http_endpoint());
 
-    let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
@@ -56,7 +56,7 @@ async fn can_send_multiple_blobs_in_one_tx() {
 
     let provider = http_provider(&handle.http_endpoint());
 
-    let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
     let large_data = vec![1u8; DATA_GAS_PER_BLOB as usize * 5]; // 131072 is DATA_GAS_PER_BLOB and also BYTE_PER_BLOB
@@ -94,7 +94,7 @@ async fn cannot_exceed_six_blobs() {
 
     let provider = http_provider(&handle.http_endpoint());
 
-    let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
     let large_data = vec![1u8; DATA_GAS_PER_BLOB as usize * 6]; // 131072 is DATA_GAS_PER_BLOB and also BYTE_PER_BLOB
@@ -132,7 +132,7 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
 
     let provider = http_provider(&handle.http_endpoint());
 
-    let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
     let first_batch = vec![1u8; DATA_GAS_PER_BLOB as usize * 3];
@@ -176,14 +176,8 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     let second_receipt = second_tx.get_receipt().await.unwrap();
 
     let (first_block, second_block) = tokio::join!(
-        provider.get_block_by_number(
-            first_receipt.block_number.unwrap().into(),
-            BlockTransactionsKind::Hashes
-        ),
-        provider.get_block_by_number(
-            second_receipt.block_number.unwrap().into(),
-            BlockTransactionsKind::Hashes
-        )
+        provider.get_block_by_number(first_receipt.block_number.unwrap().into()),
+        provider.get_block_by_number(second_receipt.block_number.unwrap().into())
     );
     assert_eq!(
         first_block.unwrap().unwrap().header.blob_gas_used,
@@ -205,7 +199,7 @@ async fn can_check_blob_fields_on_genesis() {
 
     let provider = http_provider(&handle.http_endpoint());
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     assert_eq!(block.header.blob_gas_used, Some(0));
     assert_eq!(block.header.excess_blob_gas, Some(0));

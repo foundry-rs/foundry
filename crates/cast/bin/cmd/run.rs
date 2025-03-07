@@ -126,7 +126,8 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+        if is_known_system_sender(tx.from()) ||
+            tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
         {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
@@ -138,7 +139,7 @@ impl RunArgs {
             tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // fetch the block the transaction was mined in
-        let block = provider.get_block(tx_block_number.into(), true.into()).await?;
+        let block = provider.get_block(tx_block_number.into()).full().await?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
@@ -207,7 +208,7 @@ impl RunArgs {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
-                    if is_known_system_sender(tx.from) ||
+                    if is_known_system_sender(tx.from()) ||
                         tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         pb.set_position((index + 1) as u64);
