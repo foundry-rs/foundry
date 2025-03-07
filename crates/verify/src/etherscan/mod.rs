@@ -102,9 +102,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         return Ok(None)
                     }
 
-                    if resp.result.starts_with("Unable to locate ContractCode at") {
+                    if resp.result.starts_with("Unable to locate ContractCode at") ||
+                        resp.result.starts_with("The address is not a smart contract")
+                    {
                         warn!("{}", resp.result);
-                        return Err(eyre!("Etherscan could not detect the deployment."))
+                        return Err(eyre!("Could not detect the deployment."))
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
