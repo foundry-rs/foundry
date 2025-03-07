@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::{db::SerializableBlock, executor::new_evm_with_inspector_ref};
+use super::executor::new_evm_with_inspector_ref;
 use super::super::sign::build_typed_transaction;
 use crate::{
     config::PruneStateHistoryConfig,
@@ -1459,7 +1459,7 @@ impl Backend {
         &self,
         request: SimulatePayload,
         block_request: Option<BlockRequest>,
-    ) -> Result<Vec<SimulatedBlock<Header>>, BlockchainError> {
+    ) -> Result<Vec<SimulatedBlock<alloy_rpc_types::Block<Transaction, alloy_consensus::Header>>>, BlockchainError> {
         // first, snapshot the current state
         let state_id = self.db.write().await.snapshot_state();
 
@@ -1509,7 +1509,7 @@ impl Backend {
                 }
             }
 
-            let pool_transactions = block.calls.iter().enumerate().map(|(i, t)| Arc::new(PoolTransaction {
+            let pool_transactions = block.calls.iter().map(|t| Arc::new(PoolTransaction {
                 pending_transaction: PendingTransaction::with_impersonated(
                                          build_typed_transaction(TypedTransactionRequest::EIP1559(TxEip1559 {
                                             nonce: t.nonce.unwrap_or_default(),
@@ -1517,7 +1517,11 @@ impl Backend {
                                             // for now should be 100 gwei
                                             max_fee_per_gas: t.max_fee_per_gas.unwrap_or(100000000000),
                                             max_priority_fee_per_gas: t.max_priority_fee_per_gas.unwrap_or_default(),
-                                            gas_limit: t.gas.unwrap_or(30000000),
+                                            // TODO: seems like it would be best to estimate the
+                                            // amount of gas needed here if not provided? or
+                                            // otherwise, not bound the block by the total required
+                                            // gas. for now I set to 1 million for testing
+                                            gas_limit: t.gas.unwrap_or(1000000),
                                             value: t.value.unwrap_or_default(),
                                             input: t.input.clone().into_input().unwrap_or_default(),
                                             to: t.to.unwrap_or_default(),
@@ -1532,7 +1536,9 @@ impl Backend {
                                          ),
                 requires: Vec::new(),
                 provides: Vec::new(),
-                priority: TransactionPriority(i.try_into().unwrap())
+                priority: TransactionPriority(0)
+                // TODO: priority is by highest first, so just doing a sort of reverse here
+                //priority: TransactionPriority((1000000000 - i).try_into().unwrap())
             })).collect();
 
             // TODO: it may be possible to be more lightweight with our handling of blot.ck mining
@@ -1542,19 +1548,25 @@ impl Backend {
                 return Err(RpcError::internal_error_with("txn was invalid").into());
             }
 
+            let executed_block = self.get_block(outcome.block_number).unwrap();
+
             let mut simulated_block = SimulatedBlock {
-                inner: self.get_block(outcome.block_number).unwrap().header,
+                inner: alloy_rpc_types::Block { header: executed_block.header, transactions: BlockTransactions::Hashes(outcome.included.iter().map(|t| t.hash()).collect()), uncles: Vec::new(), withdrawals: Some(alloy_rpc_types::Withdrawals(Vec::new())) },
                 calls: Vec::new()
             };
 
             for tx in outcome.included {
-                let receipt = self.mined_transaction_receipt(tx.hash()).unwrap();
-                let status = receipt.out.is_some();
+                let MinedTransaction { info, receipt: raw_receipt, .. } =
+                    self.blockchain.get_transaction_by_hash(&tx.hash()).unwrap();
+                let receipt = raw_receipt.as_receipt_with_bloom().receipt.clone();
+
+                let status = match receipt.status { alloy_consensus::Eip658Value::Eip658(true) => true, _ => false};
+
                 simulated_block.calls.push(SimCallResult {
-                    return_data: receipt.out.unwrap_or_default(),
+                    return_data: info.out.unwrap_or_default(),
                     // TODO: fill actual error
-                    error: None,
-                    gas_used: receipt.inner.gas_used,
+                    error: match status { false => Some(alloy_rpc_types::simulate::SimulateError { code: -3200, message: "execution failed".to_string() }), true => None },
+                    gas_used: receipt.cumulative_gas_used,
                     // TODO: fill actual logs
                     logs: Vec::new(),
                     status

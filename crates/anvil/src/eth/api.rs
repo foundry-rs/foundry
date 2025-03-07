@@ -1,5 +1,5 @@
 use super::{
-    backend::{db::SerializableBlock, mem::{state, BlockRequest, State}},
+    backend::mem::{state, BlockRequest, State},
     sign::build_typed_transaction,
 };
 use crate::{
@@ -30,7 +30,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, Header};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
@@ -100,7 +100,7 @@ pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum SimulatedBlockResponse {
-    AnvilInternal(Vec<SimulatedBlock<alloy_consensus::Header>>),
+    AnvilInternal(Vec<SimulatedBlock<alloy_rpc_types::Block<alloy_rpc_types::Transaction, Header>>>),
     Forked(Vec<SimulatedBlock<WithOtherFields<alloy_rpc_types::Block<WithOtherFields<alloy_rpc_types::Transaction<alloy_network::AnyTxEnvelope>>, alloy_rpc_types::Header<alloy_network::AnyHeader>>>>>)
 }
 
