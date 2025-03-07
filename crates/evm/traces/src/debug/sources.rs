@@ -183,6 +183,15 @@ impl ContractSources {
         let mut files: BTreeMap<PathBuf, Arc<SourceData>> = BTreeMap::new();
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
+                if !path.exists() {
+                    let _ = sh_warn!(
+                        "Detected artifacts built from source file {} that no longer exists. \
+                        Run `forge clean` to make sure builds are in sync with project files.",
+                        path.display()
+                    );
+                    continue;
+                }
+
                 let source_data = match files.entry(path.clone()) {
                     std::collections::btree_map::Entry::Vacant(entry) => {
                         let source = Source::read(path).wrap_err_with(|| {
