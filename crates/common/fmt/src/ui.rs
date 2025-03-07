@@ -823,7 +823,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) 
     match attr {
         "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
         "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
-        "from" => Some(transaction.pretty()),
+        "from" => Some(transaction.inner.signer().pretty()),
         "gas" => Some(transaction.gas_limit().pretty()),
         "gasPrice" | "gas_price" => Some(Transaction::gas_price(transaction).pretty()),
         "hash" => Some(alloy_network::TransactionResponse::tx_hash(transaction).pretty()),

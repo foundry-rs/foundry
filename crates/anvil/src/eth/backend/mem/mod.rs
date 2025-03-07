@@ -2978,7 +2978,7 @@ pub fn transaction_build(
     // there's // no `info` yet.
     let hash = tx_hash.unwrap_or(*envelope.tx_hash());
 
-    let envelope = match envelope {
+    let envelope = match envelope.into_inner() {
         TxEnvelope::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
@@ -3007,17 +3007,19 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: envelope,
+        inner: Recovered::new_unchecked(
+            envelope,
+            eth_transaction.recover().expect("can recover signed tx"),
+        ),
         block_hash: block
             .as_ref()
             .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
-        from: eth_transaction.recover().expect("can recover signed tx"),
         // deprecated
         effective_gas_price: Some(effective_gas_price),
     };
-    WithOtherFields::new(tx)
+    AnyRpcTransaction::from(WithOtherFields::new(tx))
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.
