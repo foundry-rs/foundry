@@ -96,9 +96,11 @@ use serde::Serialize;
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 
+// TODO: I feel like this enum should go somewhere more proper. Where would be best?
 #[derive(Serialize)]
+#[serde(untagged)]
 pub enum SimulatedBlockResponse {
-    AnvilInternal(Vec<SimulatedBlock<SerializableBlock>>),
+    AnvilInternal(Vec<SimulatedBlock<alloy_consensus::Header>>),
     Forked(Vec<SimulatedBlock<WithOtherFields<alloy_rpc_types::Block<WithOtherFields<alloy_rpc_types::Transaction<alloy_network::AnyTxEnvelope>>, alloy_rpc_types::Header<alloy_network::AnyHeader>>>>>)
 }
 

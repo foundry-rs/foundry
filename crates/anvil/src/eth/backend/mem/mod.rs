@@ -1459,22 +1459,25 @@ impl Backend {
         &self,
         request: SimulatePayload,
         block_request: Option<BlockRequest>,
-    ) -> Result<Vec<SimulatedBlock<SerializableBlock>>, BlockchainError> {
+    ) -> Result<Vec<SimulatedBlock<Header>>, BlockchainError> {
         // first, snapshot the current state
         let state_id = self.db.write().await.snapshot_state();
+
+        // set zero address to have a balance so that read calls dont fail
+        // (this seems to be part of the standard)
+        self.set_balance(Address::ZERO, U256::MAX).await?;
         
         // then, execute each block in the way that it is given
         let mut simulated_blocks = Vec::new();
         for block in request.block_state_calls {
             // if the next block number is larger than the current next block height,
             // we should mint an empty block and continue
-            /*if block.block_overrides.is_some() {
-                let overrides = block.block_overrides.unwrap();
+            if let Some(overrides) = block.block_overrides {
 
-                if overrides.number.is_some() {
+                if let Some(needed_number) = overrides.number {
                     let best_number = self.best_number();
                     while 
-                        best_number < overrides.number.unwrap() {
+                        best_number < needed_number.to() {
 
                         // mint an empty block per spec
                         self.do_mine_block(Vec::new()).await;
@@ -1486,7 +1489,25 @@ impl Backend {
                     }
                 }
             }
-        */
+
+            if let Some(state_overrides) = block.state_overrides {
+                for (addr, addr_overrides) in state_overrides {
+                    if let Some(new_balance) = addr_overrides.balance {
+                        self.set_balance(addr, new_balance).await?;
+                    }
+                    if let Some(new_code) = addr_overrides.code {
+                        self.set_code(addr, new_code).await?;
+                    }
+                    if let Some(new_nonce) = addr_overrides.nonce {
+                        self.set_nonce(addr, U256::from(new_nonce)).await?;
+                    }
+                    if let Some(new_state) = addr_overrides.state {
+                        for (k,v) in new_state {
+                            self.set_storage_at(addr, k.into(), v).await?;
+                        }
+                    }
+                }
+            }
 
             let pool_transactions = block.calls.iter().enumerate().map(|(i, t)| Arc::new(PoolTransaction {
                 pending_transaction: PendingTransaction::with_impersonated(
@@ -1522,7 +1543,7 @@ impl Backend {
             }
 
             let mut simulated_block = SimulatedBlock {
-                inner: self.get_block(outcome.block_number).unwrap().into(),
+                inner: self.get_block(outcome.block_number).unwrap().header,
                 calls: Vec::new()
             };
 
