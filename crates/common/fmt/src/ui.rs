@@ -4,8 +4,8 @@ use alloy_consensus::{
     Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope, TxType, Typed2718,
 };
 use alloy_network::{
-    AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyTransactionReceipt, AnyTxEnvelope,
-    ReceiptResponse,
+    AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt,
+    AnyTxEnvelope, ReceiptResponse,
 };
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64, U8};
 use alloy_rpc_types::{
@@ -757,6 +757,18 @@ effectiveGasPrice    {}
             self.effective_gas_price.pretty(),
             self.inner.pretty(),
         )
+    }
+}
+
+impl UIfmt for AnyRpcBlock {
+    fn pretty(&self) -> String {
+        format!("{}", self.0.pretty())
+    }
+}
+
+impl UIfmt for AnyRpcTransaction {
+    fn pretty(&self) -> String {
+        format!("{}", self.0.pretty())
     }
 }
 

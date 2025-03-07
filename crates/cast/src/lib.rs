@@ -352,7 +352,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
-            block.as_ref().pretty()
+            block.pretty()
         };
 
         Ok(block)
