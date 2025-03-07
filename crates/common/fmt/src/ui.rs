@@ -762,13 +762,13 @@ effectiveGasPrice    {}
 
 impl UIfmt for AnyRpcBlock {
     fn pretty(&self) -> String {
-        format!("{}", self.0.pretty())
+        self.0.pretty()
     }
 }
 
 impl UIfmt for AnyRpcTransaction {
     fn pretty(&self) -> String {
-        format!("{}", self.0.pretty())
+        self.0.pretty()
     }
 }
 
