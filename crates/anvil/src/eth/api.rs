@@ -33,6 +33,7 @@ use crate::{
 use alloy_consensus::{
     transaction::{eip4844::TxEip4844Variant, Recovered},
     Account,
+    Header,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
@@ -59,6 +60,7 @@ use alloy_rpc_types::{
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
+    simulate::{SimulatePayload, SimulatedBlock},
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
@@ -93,8 +95,18 @@ use parking_lot::RwLock;
 use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
 
+use serde::Serialize;
+
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
+// TODO: I feel like this enum should go somewhere more proper. Where would be best?
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum SimulatedBlockResponse {
+    AnvilInternal(Vec<SimulatedBlock<alloy_rpc_types::Block<alloy_rpc_types::Transaction, Header>>>),
+    Forked(Vec<SimulatedBlock<AnyRpcBlock>>)
+}
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -248,6 +260,9 @@ impl EthApi {
             }
             EthRequest::EthCall(call, block, overrides) => {
                 self.call(call, block, overrides).await.to_rpc_result()
+            }
+            EthRequest::EthSimulateV1(simulation, block) => {
+                self.simulate_v1(simulation, block).await.to_rpc_result()
             }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
@@ -1099,6 +1114,34 @@ impl EthApi {
             trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
             ensure_return_ok(exit, &out)
+        })
+        .await
+    }
+
+    pub async fn simulate_v1(
+        &self,
+        request: SimulatePayload,
+        block_number: Option<BlockId>,
+    ) -> Result<SimulatedBlockResponse> {
+        node_info!("eth_simulateV1");
+        let block_request = self.block_request(block_number).await?;
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(SimulatedBlockResponse::Forked(fork.simulate_v1(&request, Some(number.into())).await?))
+                }
+            }
+        }
+
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            let simulated_blocks =
+                this.backend.simulate(request, Some(block_request)).await?;
+            trace!(target : "node", "Simulate status {:?}", simulated_blocks);
+
+            Ok(SimulatedBlockResponse::AnvilInternal(simulated_blocks))
         })
         .await
     }
