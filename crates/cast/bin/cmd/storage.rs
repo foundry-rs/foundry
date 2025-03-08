@@ -51,7 +51,7 @@ pub struct StorageArgs {
     #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
-    /// The proxy contract address. If provided, it gets the full storage layout from the proxy address.
+    /// The known proxy address. If provided, the storage layout is retrieved from this address.
     #[arg(long,value_parser = NameOrAddress::from_str)]
     proxy: Option<NameOrAddress>,
 
