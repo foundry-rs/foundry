@@ -235,14 +235,8 @@ impl AsDoc for Document {
                     }
 
                     ParseSource::Function(func) => {
-                        // TODO: cleanup
-                        // Write function docs
-                        writer.writeln_doc(
-                            &item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
-                        )?;
-
-                        // Write function header
-                        writer.write_code(&item.code)?;
+                        // Write function docs and code
+                        writer.write_section(&item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]), &item.code)?;
 
                         // Write function parameter comments in a table
                         let params =
