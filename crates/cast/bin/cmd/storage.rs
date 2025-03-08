@@ -51,6 +51,10 @@ pub struct StorageArgs {
     #[arg(value_parser = parse_slot)]
     slot: Option<B256>,
 
+    /// The known proxy address. If provided, the storage layout is retrieved from this address.
+    #[arg(long,value_parser = NameOrAddress::from_str)]
+    proxy: Option<NameOrAddress>,
+
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
@@ -134,7 +138,11 @@ impl StorageArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
         let client = Client::new(chain, api_key)?;
-        let source = find_source(client, address).await?;
+        let source = if let Some(proxy) = self.proxy {
+            find_source(client, proxy.resolve(&provider).await?).await?
+        } else {
+            find_source(client, address).await?
+        };
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
