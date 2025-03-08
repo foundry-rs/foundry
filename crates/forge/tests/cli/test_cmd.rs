@@ -3245,31 +3245,31 @@ Compiler run successful!
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_stackPrank() ([GAS])
 Traces:
-  [237176] CounterTest::test_stackPrank()
-    ├─ [0] VM::addr(<pk>) [staticcall]
+  [..] CounterTest::test_stackPrank()
+    ├─ [..] VM::addr(<pk>) [staticcall]
     │   └─ ← [Return] player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C]
-    ├─ [0] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
+    ├─ [..] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
     │   └─ ← [Return]
-    ├─ [51097] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [..] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 255 bytes of code
-    ├─ [108551] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [..] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 542 bytes of code
-    ├─ [1761] SenderLogger::log()
+    ├─ [..] SenderLogger::log()
     │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])
     │   └─ ← [Stop]
-    ├─ [0] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Return]
-    ├─ [1761] SenderLogger::log()
+    ├─ [..] SenderLogger::log()
     │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Stop]
-    ├─ [674] Contract::f()
-    │   ├─ [0] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    ├─ [..] Contract::f()
+    │   ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   │   └─ ← [Return]
     │   └─ ← [Stop]
-    ├─ [1761] SenderLogger::log()
+    ├─ [..] SenderLogger::log()
     │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Stop]
-    ├─ [0] VM::stopPrank()
+    ├─ [..] VM::stopPrank()
     │   └─ ← [Return]
     └─ ← [Stop]
 
