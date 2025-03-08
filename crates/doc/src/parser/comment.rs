@@ -46,7 +46,7 @@ impl CommentTag {
             }
             _ => {
                 warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
-                return None
+                return None;
             }
         };
         Some(tag)
@@ -154,6 +154,12 @@ impl Comments {
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
         Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+    }
+}
+
+impl From<Vec<Comment>> for Comments {
+    fn from(value: Vec<Comment>) -> Self {
+        Self(value)
     }
 }
 

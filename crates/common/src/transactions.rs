@@ -58,9 +58,9 @@ impl TransactionReceiptWithRevertReason {
 
         if let Some(block_hash) = self.receipt.block_hash {
             let mut call_request: WithOtherFields<TransactionRequest> =
-                transaction.inner.inner.clone().into();
-            call_request.set_from(transaction.inner.from);
-            match provider.call(&call_request).block(BlockId::Hash(block_hash.into())).await {
+                transaction.inner.inner.clone_inner().into();
+            call_request.set_from(transaction.inner.inner.signer());
+            match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }

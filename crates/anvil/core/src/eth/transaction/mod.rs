@@ -4,7 +4,7 @@ use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-        TxEip7702,
+        Recovered, TxEip7702,
     },
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
     TxReceipt, Typed2718,
@@ -285,9 +285,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP2930(t) => {
@@ -296,9 +298,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP1559(t) => {
@@ -307,9 +311,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP4844(t) => {
@@ -318,9 +324,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP7702(t) => {
@@ -329,9 +337,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::Deposit(_t) => {
@@ -610,9 +620,9 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
     type Error = ConversionError;
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let AnyRpcTransaction { inner, .. } = value;
-        let from = inner.from;
-        match inner.inner {
+        let WithOtherFields { inner, .. } = value.0;
+        let from = inner.inner.signer();
+        match inner.inner.into_inner() {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
                 TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),

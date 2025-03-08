@@ -1149,7 +1149,7 @@ impl NodeConfig {
         };
 
         let block = provider
-            .get_block(BlockNumberOrTag::Number(fork_block_number).into(), false.into())
+            .get_block(BlockNumberOrTag::Number(fork_block_number).into())
             .await
             .wrap_err("failed to get fork block")?;
 
@@ -1340,10 +1340,8 @@ async fn derive_block_and_transactions(
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
-                .get_block_by_number(
-                    transaction_block_number.into(),
-                    alloy_rpc_types::BlockTransactionsKind::Full,
-                )
+                .get_block_by_number(transaction_block_number.into())
+                .full()
                 .await?
                 .ok_or_else(|| eyre::eyre!("failed to get fork block by number"))?;
 
@@ -1520,7 +1518,7 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num.into(), false.into()).await? {
+        if let Some(block) = provider.get_block(num.into()).await? {
             if !block.header.hash.is_zero() {
                 break;
             }
