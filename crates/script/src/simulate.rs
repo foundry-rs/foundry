@@ -467,7 +467,7 @@ fn get_native_token_symbol(chain_id: u64) -> &'static str {
         1 | 5 | 11155111 | 10 | 420 | 42161 | 421613 | 8453 | 84531 | 324 | 59144 | 534352 => "ETH",
 
         // Polygon networks
-        137 | 80001 | 80002 => "MATIC",
+        137 | 80001 | 80002 => "POL",
 
         // Binance Smart Chain
         56 | 97 => "BNB",
