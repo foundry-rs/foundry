@@ -1,11 +1,6 @@
 name: docker
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-  schedule:
-    - cron: "0 0 * * *"
   # Trigger without any parameters a proactive rebuild
   workflow_dispatch: {}
   workflow_call:
@@ -22,7 +17,7 @@ env:
 jobs:
   build:
     name: build and push
-    runs-on: Linux-20.04
+    runs-on: Linux-22.04
     permissions:
       id-token: write
       packages: write
@@ -34,7 +29,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - uses: taiki-e/install-action@cross
+      - name: Install cross main
+        id: cross_main
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Login into registry ${{ env.REGISTRY }}
