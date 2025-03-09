@@ -85,7 +85,7 @@ impl LogsArgs {
         // the builtin transport here for now
         let url = config.get_rpc_url_or_localhost_http()?;
         let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
-            .on_builtin(url.as_ref())
+            .connect(url.as_ref())
             .await?;
         let cast = Cast::new(&provider);
         let mut stdout = io::stdout();

@@ -3168,3 +3168,114 @@ Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFai
 [FAIL: EvmError: Revert] constructor() ([GAS])
 ..."#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10012>
+forgetest_init!(state_diff_recording_with_revert, |prj, cmd| {
+    prj.add_test(
+        "TestStateDiffRevertFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract StateDiffRevertAtSameDepthTest is Test {
+    function test_something() public {
+        CounterTestA counter = new CounterTestA();
+        counter.doSomething();
+    }
+}
+
+contract CounterTestA is Test {
+    function doSomething() public {
+        vm.startStateDiffRecording();
+        require(1 > 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["t", "--mt", "test_something"]).assert_failure();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/5521>
+forgetest_init!(should_apply_pranks_per_recorded_depth, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract CounterTest is Test {
+    function test_stackPrank() public {
+        address player = makeAddr("player");
+        SenderLogger senderLogger = new SenderLogger();
+        Contract c = new Contract();
+
+        senderLogger.log(); // Log(ContractTest, DefaultSender)
+        vm.startPrank(player, player);
+        senderLogger.log(); // Log(player, player)
+        c.f(); // vm.startPrank(player)
+        senderLogger.log(); // Log(ContractTest, player) <- ContractTest should be player
+        vm.stopPrank();
+    }
+}
+
+contract Contract {
+    Vm public constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function f() public {
+        vm.startPrank(msg.sender);
+    }
+}
+
+contract SenderLogger {
+    event Log(address, address);
+
+    function log() public {
+        emit Log(msg.sender, tx.origin);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Emits
+    // Log(: player: [], : player: []) instead
+    // Log(: ContractTest: [], : player: [])
+    cmd.args(["test", "--mt", "test_stackPrank", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_stackPrank() ([GAS])
+Traces:
+  [..] CounterTest::test_stackPrank()
+    ├─ [..] VM::addr(<pk>) [staticcall]
+    │   └─ ← [Return] player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C]
+    ├─ [..] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
+    │   └─ ← [Return]
+    ├─ [..] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 255 bytes of code
+    ├─ [..] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 542 bytes of code
+    ├─ [..] SenderLogger::log()
+    │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])
+    │   └─ ← [Stop]
+    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Return]
+    ├─ [..] SenderLogger::log()
+    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Stop]
+    ├─ [..] Contract::f()
+    │   ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   │   └─ ← [Return]
+    │   └─ ← [Stop]
+    ├─ [..] SenderLogger::log()
+    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Stop]
+    ├─ [..] VM::stopPrank()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
