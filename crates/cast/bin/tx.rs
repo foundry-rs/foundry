@@ -343,7 +343,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         if !self.legacy &&
             (self.tx.max_fee_per_gas.is_none() || self.tx.max_priority_fee_per_gas.is_none())
         {
-            let estimate = self.provider.estimate_eip1559_fees(None).await?;
+            let estimate = self.provider.estimate_eip1559_fees().await?;
 
             if !self.legacy {
                 if self.tx.max_fee_per_gas.is_none() {
@@ -365,7 +365,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
     /// Estimate tx gas from provider call. Tries to decode custom error if execution reverted.
     async fn estimate_gas(&mut self) -> Result<()> {
-        match self.provider.estimate_gas(&self.tx).await {
+        match self.provider.estimate_gas(self.tx.clone()).await {
             Ok(estimated) => {
                 self.tx.gas = Some(estimated);
                 Ok(())
