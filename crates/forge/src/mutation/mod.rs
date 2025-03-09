@@ -35,10 +35,14 @@ use foundry_compilers::{
     ProjectCompileOutput,
 };
 
+use revm::primitives::Env;
+
+use crate::MultiContractRunnerBuilder;
 pub struct MutationCampaign<'a> {
     contracts_to_mutate: Vec<PathBuf>,
     src: HashMap<PathBuf, Arc<String>>,
     config: Arc<foundry_config::Config>,
+    env: &'a Env,
     evm_opts: &'a crate::opts::EvmOpts,
 }
 
@@ -46,13 +50,14 @@ impl<'a> MutationCampaign<'a> {
     pub fn new(
         files: Vec<PathBuf>,
         config: Arc<foundry_config::Config>,
+        env: &'a Env,
         evm_opts: &'a crate::opts::EvmOpts,
     ) -> MutationCampaign<'a> {
-        MutationCampaign { contracts_to_mutate: files, src: HashMap::new(), config, evm_opts }
+        MutationCampaign { contracts_to_mutate: files, src: HashMap::new(), config, env, evm_opts }
     }
 
     // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
-    pub fn run(&mut self) {
+    pub async fn run(&mut self) {
         sh_println!("Running mutation tests...").unwrap();
 
         if let Err(e) = self.load_sources() {
@@ -64,7 +69,7 @@ impl<'a> MutationCampaign<'a> {
         for contract_path in &self.contracts_to_mutate {
             // Rayon from here (enter_parallel)
             // Parse and get the ast
-            self.process_contract(contract_path);
+            self.process_contract(contract_path).await;
         }
     }
 
@@ -77,13 +82,12 @@ impl<'a> MutationCampaign<'a> {
         Ok(())
     }
 
-    fn process_contract(&self, path: &PathBuf) {
-
+    async fn process_contract(&self, path: &PathBuf) {
         let target_content = Arc::clone(self.src.get(path).unwrap());
 
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        let _ = sess.enter(|| -> solar_parse::interface::Result<_> {
+        let _ = sess.enter_parallel(async || -> solar_parse::interface::Result<_> {
             let arena = solar_parse::ast::Arena::new();
 
             // @todo UGLY CLONE needs to be fixed - not really using the arc in get_src closure...
@@ -98,13 +102,13 @@ impl<'a> MutationCampaign<'a> {
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             // @todo ast should probably a ref instead (or arc?), lifetime was a bit hell-ish tho -> review later on
-            self.process_ast_contract(ast, path);
+            self.process_ast_contract(ast, path).await;
 
             Ok(())
-        });
+        }).await;
     }
 
-    fn process_ast_contract(&self, ast: SourceUnit<'_>, path: &PathBuf) {
+    async fn process_ast_contract(&self, ast: SourceUnit<'_>, path: &PathBuf) {
         for node in ast.items.iter() {
             // @todo we should probable exclude interfaces before this point (even tho the overhead is minimal)
             match &node.kind {
@@ -117,7 +121,7 @@ impl<'a> MutationCampaign<'a> {
 
                             mutant_visitor.visit_item_contract(contract);
 
-                            self.generate_and_test_mutant(&mutant_visitor.mutation_to_conduct, path);
+                            self.generate_and_test_mutant(&mutant_visitor.mutation_to_conduct, path).await;
 
                             sh_println!("{} has been processed", contract.name).unwrap();
                         }
@@ -129,7 +133,7 @@ impl<'a> MutationCampaign<'a> {
         }
     }
 
-    fn generate_and_test_mutant(&self, mutations_list: &Vec<Mutant>, target_contract_path: &PathBuf) {
+    async fn generate_and_test_mutant(&self, mutations_list: &Vec<Mutant>, target_contract_path: &PathBuf) {
         dbg!(mutations_list);
         // for each mutation in mutations_list
         // @todo this must be in parallel (mutations_list.par_iter().for_each(|mutant|) .... instead)
@@ -145,8 +149,12 @@ impl<'a> MutationCampaign<'a> {
 
             self.generate_mutant(mutant, &mutation_dir, target_contract_path);
 
-            self.compile_mutant(&mutation_dir);
+            if let Some(compile_output) = self.compile_mutant(&mutation_dir) {
+                // let result = self.test_mutant(&mutation_dir, compile_output);
 
+                let result = self.test_mutant(&mutation_dir, compile_output).await;
+                dbg!(result);
+            }
         // - create a new dir in the root temp dir
         // - copy the out and cache from the origin - @todo optim: use symlinks instead, BUT need to: alter the target hash in cache, make sure to not overwrite dependencies each time
         // (ie only symlink what we're sure will never be recompiled) 
@@ -156,13 +164,6 @@ impl<'a> MutationCampaign<'a> {
         // - run the test -> if passes, return  MutationResult::Alive; if not, return MutationResult::Dead
         // - delete temp folder
         }
-
-
-        // dbg:
-        // dbg!(&temp_dir_root);
-        // Self::copy_dir_except(temp_dir_root.path(), std::env::current_dir().unwrap(), &PathBuf::default());
-
-
     }
 
     fn copy_origin(&self, path: &PathBuf, src_contract_path: &PathBuf ) {
@@ -238,14 +239,13 @@ impl<'a> MutationCampaign<'a> {
 
     }
 
-    fn compile_mutant(&self, temp_folder: &PathBuf) {
+    fn compile_mutant(&self, temp_folder: &PathBuf) -> Option<ProjectCompileOutput> {
 
         let mut config = (*self.config).clone();
         config.src = temp_folder.clone();
         config.cache_path = temp_folder.join("cache");
         config.out = temp_folder.join("out");
-
-        let mut project = config.create_project(true, true).unwrap();
+        let project = config.project().unwrap();
 
         let compiler = ProjectCompiler::new(&project).unwrap();
 
@@ -253,12 +253,35 @@ impl<'a> MutationCampaign<'a> {
 
         if output.has_compiler_errors() {
             dbg!("Invalid mutant");
+            None
         } else {
             dbg!("Viable");
+            Some(output)
         }
     }
 
-    fn test_mutant(&self, mutated_code: String) -> MutationResult {
+    async fn test_mutant(&self, mutated_dir: &PathBuf, compile_output: ProjectCompileOutput) -> MutationResult {
+
+            // let env = evm_opts.evm_env().await?;
+            // temp dbg:
+            // let env = tokio::runtime::Runtime::new().unwrap().block_on(self.evm_opts.evm_env()).unwrap();
+            // let env = self.evm_opts.evm_env().await.unwrap();
+
+            // let (test_outcome, output) =
+            // self.ensure_valid_project(&project, &config, &evm_opts, test_filter.clone()).await?;
+
+            let runner = MultiContractRunnerBuilder::new(self.config.clone())
+                .initial_balance(self.evm_opts.initial_balance)
+                .evm_spec(self.config.evm_spec_id())
+                .sender(self.evm_opts.sender)
+                .with_fork(self.evm_opts.get_fork(&self.config.clone(), self.env.clone()))
+                .enable_isolation(self.evm_opts.isolate)
+                .odyssey(self.evm_opts.odyssey)
+                .build::<MultiCompiler>(mutated_dir, &compile_output, self.env.clone(), self.evm_opts.clone()).unwrap();
+    
+            let libraries = runner.libraries.clone();
+            // let mut outcome =
+            //     self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
 
         MutationResult::Invalid
     }

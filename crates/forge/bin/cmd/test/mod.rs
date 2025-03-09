@@ -365,7 +365,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
             .odyssey(evm_opts.odyssey)
-            .build::<MultiCompiler>(project_root, &output, env, evm_opts.clone())?;
+            .build::<MultiCompiler>(project_root, &output, env.clone(), evm_opts.clone())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome =
@@ -461,10 +461,10 @@ impl TestArgs {
                 self.mutate.unwrap().clone()
             };
 
-            let mut campaign = MutationCampaign::new(mutate_paths, config.clone(), &evm_opts);
+            let mut campaign = MutationCampaign::new(mutate_paths, config.clone(), &env, &evm_opts);
 
             // Result should then be stored into the outcome (with the src contract name as test name?)
-            campaign.run();
+            campaign.run().await;
         }
 
         Ok(outcome)

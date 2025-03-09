@@ -76,6 +76,7 @@ impl MutationType {
     }
 }
 
+#[derive(Debug)]
 pub enum MutationResult {
     Dead,
     Alive,

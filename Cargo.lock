@@ -3407,6 +3407,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
+ "revm",
  "revm-inspectors",
  "semver 1.0.25",
  "serde",
