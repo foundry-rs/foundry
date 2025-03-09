@@ -9,6 +9,7 @@ use crate::{
     sequence::get_commit_hash,
     ScriptArgs, ScriptConfig, ScriptResult,
 };
+use alloy_chains::NamedChain;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
 use dialoguer::Confirm;
@@ -347,9 +348,11 @@ impl FilledTransactionsState {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
                 let chain_id = provider_info.chain;
 
-                // Get the native token symbol for the chain
-                let token_symbol = get_native_token_symbol(chain_id);
+                // Get the native token symbol for the chain using NamedChain
+                let named_chain =
+                    NamedChain::try_from(chain_id).map(|c| c).unwrap_or(NamedChain::default());
 
+                let token_symbol = named_chain.native_currency_symbol().unwrap_or_default();
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
@@ -457,56 +460,5 @@ impl FilledTransactionsState {
             commit,
         };
         Ok(sequence)
-    }
-}
-
-/// Returns the native token symbol for a given chain ID
-fn get_native_token_symbol(chain_id: u64) -> &'static str {
-    match chain_id {
-        // Ethereum and L2s that use ETH
-        1 | 5 | 11155111 | 10 | 420 | 42161 | 421613 | 8453 | 84531 | 324 | 59144 | 534352 => "ETH",
-
-        // Polygon networks
-        137 | 80001 | 80002 => "POL",
-
-        // Binance Smart Chain
-        56 | 97 => "BNB",
-
-        // Avalanche
-        43114 | 43113 => "AVAX",
-
-        // Fantom
-        250 | 4002 => "FTM",
-
-        // Gnosis Chain (formerly xDai)
-        100 => "XDAI",
-
-        // Celo
-        42220 | 44787 => "CELO",
-
-        // Moonbeam and Moonriver
-        1284 => "GLMR",
-        1285 => "MOVR",
-
-        // Harmony
-        1666600000 => "ONE",
-
-        // Cronos
-        25 => "CRO",
-
-        // Arbitrum Nova
-        42170 => "ETH",
-
-        // Metis
-        1088 => "METIS",
-
-        // Klaytn
-        8217 => "KLAY",
-
-        // Aurora
-        1313161554 => "ETH",
-
-        // Default to ETH for unknown chains
-        _ => "ETH",
     }
 }
