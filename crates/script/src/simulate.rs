@@ -180,9 +180,9 @@ impl PreSimulationState {
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast() &&
-                        !self.args.non_interactive &&
-                        !Confirm::new()
+                    if self.args.should_broadcast()
+                        && !self.args.non_interactive
+                        && !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
                     {
@@ -345,6 +345,10 @@ impl FilledTransactionsState {
             // Present gas information on a per RPC basis.
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
+                let chain_id = provider_info.chain;
+
+                // Get the native token symbol for the chain
+                let token_symbol = get_native_token_symbol(chain_id);
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
@@ -369,13 +373,14 @@ impl FilledTransactionsState {
 
                     sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
                     sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                    sh_println!("\nEstimated amount required: {estimated_amount} ETH",)?;
+                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
                     sh_println!("\n==========================")?;
                 } else {
                     sh_println!(
                         "{}",
                         serde_json::json!({
                             "chain": provider_info.chain,
+                            "token_symbol": token_symbol,
                             "estimated_gas_price": estimated_gas_price,
                             "estimated_total_gas_used": total_gas,
                             "estimated_amount_required": estimated_amount,
@@ -452,5 +457,56 @@ impl FilledTransactionsState {
             commit,
         };
         Ok(sequence)
+    }
+}
+
+/// Returns the native token symbol for a given chain ID
+fn get_native_token_symbol(chain_id: u64) -> &'static str {
+    match chain_id {
+        // Ethereum and L2s that use ETH
+        1 | 5 | 11155111 | 10 | 420 | 42161 | 421613 | 8453 | 84531 | 324 | 59144 | 534352 => "ETH",
+
+        // Polygon networks
+        137 | 80001 | 80002 => "MATIC",
+
+        // Binance Smart Chain
+        56 | 97 => "BNB",
+
+        // Avalanche
+        43114 | 43113 => "AVAX",
+
+        // Fantom
+        250 | 4002 => "FTM",
+
+        // Gnosis Chain (formerly xDai)
+        100 => "XDAI",
+
+        // Celo
+        42220 | 44787 => "CELO",
+
+        // Moonbeam and Moonriver
+        1284 => "GLMR",
+        1285 => "MOVR",
+
+        // Harmony
+        1666600000 => "ONE",
+
+        // Cronos
+        25 => "CRO",
+
+        // Arbitrum Nova
+        42170 => "ETH",
+
+        // Metis
+        1088 => "METIS",
+
+        // Klaytn
+        8217 => "KLAY",
+
+        // Aurora
+        1313161554 => "ETH",
+
+        // Default to ETH for unknown chains
+        _ => "ETH",
     }
 }
