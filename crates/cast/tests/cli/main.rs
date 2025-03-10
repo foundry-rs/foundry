@@ -88,7 +88,7 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
-Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
+Find more information in the book: https://book.getfoundry.sh/reference/cast/cast
 
 "#]]);
 });

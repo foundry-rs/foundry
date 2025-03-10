@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "Cheatcodes",
   "description": "Foundry cheatcodes. Learn more: <https://book.getfoundry.sh/cheatcodes/>",
   "type": "object",
