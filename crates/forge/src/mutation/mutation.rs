@@ -57,7 +57,7 @@ pub enum MutationType {
     /// For an unary operator x in UnOpKind (eg "++", "--", "~", "!"):
     /// replace x with all other operator in op
     /// Pre or post- are different UnOp
-    UnaryOperatorMutation(UnOpKind),
+    UnaryOperatorMutation(UnOpKind, Span),
 }
 
 impl MutationType {
@@ -71,7 +71,7 @@ impl MutationType {
             MutationType::RequireMutation => "RequireMutation".to_string(),
             MutationType::SwapArgumentsFunctionMutation => "SwapArgumentsFunctionMutation".to_string(),
             MutationType::SwapArgumentsOperatorMutation => "SwapArgumentsOperatorMutation".to_string(),
-            MutationType::UnaryOperatorMutation(kind) => format!("{}_{}", "UnaryOperatorMutation".to_string(), kind.to_str())
+            MutationType::UnaryOperatorMutation(kind, _) => format!("{}_{}", "UnaryOperatorMutation".to_string(), kind.to_str())
         }
     }
 }
@@ -92,23 +92,70 @@ pub struct Mutant {
 }
 
 impl Mutant {
-    pub fn new(span: Span, mutation: MutationType) -> Mutant {
-        Mutant { span, mutation }
+    pub fn create_assignement_mutation(span: Span, var_type: LitKind) -> Vec<Mutant> {
+        match var_type {
+            LitKind::Bool(val) => vec![Mutant { span, mutation: MutationType::AssignmentMutation(LitKind::Bool(!val)) }],
+            LitKind::Number(val) => {
+                vec![
+                    Mutant { span, mutation: MutationType::AssignmentMutation(LitKind::Number(num_bigint::BigInt::ZERO)) },
+                    Mutant { span, mutation: MutationType::AssignmentMutation(LitKind::Number(-val)) }
+                ]
+            },
+            _ => {vec![]}
+        }
     }
 
-    pub fn create_assignement_mutation(span: Span, var_type: LitKind) -> Mutant {
-        Mutant { span, mutation: MutationType::AssignmentMutation(var_type) }
-    }
-    pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Mutant {
-        Mutant { span, mutation: MutationType::BinaryOpMutation(op) }
+    pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Vec<Mutant> {
+        let operations = vec![
+            BinOpKind::Lt,
+            BinOpKind::Le,
+            BinOpKind::Gt,
+            BinOpKind::Ge,
+            BinOpKind::Eq,
+            BinOpKind::Ne,
+            BinOpKind::Or,
+            BinOpKind::And,
+            BinOpKind::Shr,
+            BinOpKind::Shl,
+            BinOpKind::Sar,
+            BinOpKind::BitAnd,
+            BinOpKind::BitOr,
+            BinOpKind::BitXor,
+            BinOpKind::Add,
+            BinOpKind::Sub,
+            BinOpKind::Pow,
+            BinOpKind::Mul,
+            BinOpKind::Div,
+            BinOpKind::Rem,
+        ];
+
+        operations.into_iter()
+            .filter(|&kind| kind != op)
+            .map(|kind| Mutant { span, mutation: MutationType::BinaryOpMutation(kind)})
+            .collect()
     }
 
     pub fn create_delete_mutation(span: Span) -> Mutant {
         Mutant { span, mutation: MutationType::DeleteExpressionMutation}
     }
 
-    pub fn create_unary_mutation(span: Span, op: UnOpKind) -> Mutant {
-        Mutant { span, mutation: MutationType::UnaryOperatorMutation(op)}
+    /// @dev the emitter will have to put pre and post-op before or after the target span
+    /// eg ++a -> preInc, so should have --a as mut, but a++ as well (target_span is `a` span)
+    pub fn create_unary_mutation(span: Span, op: UnOpKind, target_span: Span) -> Vec<Mutant> {
+        let operations = vec![
+            UnOpKind::PreInc,
+            UnOpKind::PreDec,
+            UnOpKind::PostInc,
+            UnOpKind::PostDec,
+            UnOpKind::Not,
+            UnOpKind::Neg,
+            UnOpKind::BitNot
+        ];
+
+        operations.into_iter()
+            .filter(|&kind| kind != op)
+            .map(|kind| Mutant { span, mutation: MutationType::UnaryOperatorMutation( kind, target_span)})
+            .collect()
     }
 
     pub fn create_delegatecall_mutation(span: Span) -> Mutant {

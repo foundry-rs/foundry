@@ -22,8 +22,8 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             None => {},
             Some(exp) => {
                 match &exp.kind {
-                    ExprKind::Lit(val, _) => self.mutation_to_conduct.push(Mutant::new(exp.span, MutationType::AssignmentMutation(val.kind.clone()))),
-                    ExprKind::Unary(op, _) => self.mutation_to_conduct.push(Mutant::new(op.span, MutationType::UnaryOperatorMutation(op.kind))),
+                    ExprKind::Lit(val, _) => self.mutation_to_conduct.extend(Mutant::create_assignement_mutation(exp.span, val.kind.clone())),
+                    ExprKind::Unary(op, var) => self.mutation_to_conduct.extend(Mutant::create_unary_mutation(op.span, op.kind, var.span)),
                     _ => {}
                 }
             }
@@ -61,16 +61,16 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             // Array skipped for now (swap could be mutating it, cf above for rational)
             ExprKind::Assign(_, bin_op, rhs) => {
                 if let ExprKind::Lit(kind, _) = &rhs.kind {
-                    self.mutation_to_conduct.push(Mutant::create_assignement_mutation(rhs.span, kind.kind.clone()));
+                    self.mutation_to_conduct.extend(Mutant::create_assignement_mutation(rhs.span, kind.kind.clone()));
                 }
                 
                 if let Some(op) = &bin_op {
-                    self.mutation_to_conduct.push(Mutant::create_binary_op_mutation(op.span, op.kind));
+                    self.mutation_to_conduct.extend(Mutant::create_binary_op_mutation(op.span, op.kind));
                 }
             },
             ExprKind::Binary(_, op, _) => {
                 // @todo is a >> b++ a thing (ie parse lhs and rhs too?)
-                self.mutation_to_conduct.push(Mutant::create_binary_op_mutation(op.span, op.kind));
+                self.mutation_to_conduct.extend(Mutant::create_binary_op_mutation(op.span, op.kind));
             },
             ExprKind::Call(expr, args) => {
                 if let ExprKind::Member(_, ident) = &expr.kind {
@@ -91,8 +91,8 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             // Tuple -> swap if same type?
             // TypeCall -> compilation error
             // Type -> compilation error, most likely
-            ExprKind::Unary(op, _) => {
-                self.mutation_to_conduct.push(Mutant::create_unary_mutation(op.span, op.kind));
+            ExprKind::Unary(op, var) => {
+                self.mutation_to_conduct.extend(Mutant::create_unary_mutation(op.span, op.kind, var.span));
             }
             _ => {}
         };

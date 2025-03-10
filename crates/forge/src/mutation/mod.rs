@@ -84,14 +84,10 @@ impl<'a> MutationCampaign<'a> {
 
     async fn process_contract(&self, path: &PathBuf) {
         let target_content = Arc::clone(self.src.get(path).unwrap());
-
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        let _ = sess.enter_parallel(async || -> solar_parse::interface::Result<_> {
+        let mutations = sess.enter(|| -> solar_parse::interface::Result<Vec<(Vec<Mutant>, PathBuf)>> {
             let arena = solar_parse::ast::Arena::new();
-
-            // @todo UGLY CLONE needs to be fixed - not really using the arc in get_src closure...
-            // @todo at least, we clone to string only when needed (ie if the file hasn't been parsed before -> can it happen tho?)
             let mut parser = Parser::from_lazy_source_code(
                 &sess,
                 &arena,
@@ -100,44 +96,34 @@ impl<'a> MutationCampaign<'a> {
             )?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let mut mutations = Vec::new();
 
-            // @todo ast should probably a ref instead (or arc?), lifetime was a bit hell-ish tho -> review later on
-            self.process_ast_contract(ast, path).await;
-
-            Ok(())
-        }).await;
-    }
-
-    async fn process_ast_contract(&self, ast: SourceUnit<'_>, path: &PathBuf) {
-        for node in ast.items.iter() {
-            // @todo we should probable exclude interfaces before this point (even tho the overhead is minimal)
-            match &node.kind {
-                ItemKind::Contract(contract) => {
-                    match contract.kind {
-                        ContractKind::Contract | ContractKind::AbstractContract => {
-                            let mut mutant_visitor: MutantVisitor = MutantVisitor { 
-                                mutation_to_conduct: Vec::new(),
-                            };
-
-                            mutant_visitor.visit_item_contract(contract);
-
-                            self.generate_and_test_mutant(&mutant_visitor.mutation_to_conduct, path).await;
-
-                            sh_println!("{} has been processed", contract.name).unwrap();
-                        }
-                        _ => {} // Not the interfaces or libs
+            for node in ast.items.iter() {
+                if let ItemKind::Contract(contract) = &node.kind {
+                    // @todo include library too?
+                    if matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
+                        let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new() };
+                        mutant_visitor.visit_item_contract(contract);
+                        mutations.push((mutant_visitor.mutation_to_conduct, path.clone()));
                     }
-                },
-                _ => {} // we'll probably never mutate pragma directives or imports / consider for free function maybe?
+                }
+            }
+            dbg!(&mutations);
+            Ok(mutations)
+        });
+
+        if let Ok(mutations) = mutations {
+            // @todo multithread here?
+            for (mutation_list, path) in mutations {
+                self.generate_and_test_mutant(&mutation_list, &path).await;
             }
         }
     }
 
     async fn generate_and_test_mutant(&self, mutations_list: &Vec<Mutant>, target_contract_path: &PathBuf) {
-        dbg!(mutations_list);
         // for each mutation in mutations_list
         // @todo this must be in parallel (mutations_list.par_iter().for_each(|mutant|) .... instead)
-        // but first need to settle cache/out access then
+        // -> temp folder creation should be done before, then rayon to compile -> extra hashmap?
 
         let temp_dir_root = tempfile::tempdir().unwrap();
         
@@ -209,7 +195,6 @@ impl<'a> MutationCampaign<'a> {
     fn generate_mutant(&self, mutation: &Mutant, temp_dir_path: &PathBuf, src_contract_path: &PathBuf) {
         
         let span = mutation.span;
-        let mut replacement: &[u8];
         match mutation.mutation {
             _ => {
             }
