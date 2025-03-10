@@ -21,7 +21,7 @@ pub struct ReviveOpts {
         long = "revive-path",
         visible_alias = "revive",
         help = "Specify a revive path to be used",
-        value_name = "REVIVE_PATH",
+        value_name = "REVIVE_PATH"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revive_path: Option<PathBuf>,

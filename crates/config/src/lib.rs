@@ -1028,7 +1028,11 @@ impl Config {
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
-        let paths = self.project_paths();
+        let paths = if self.revive.revive_compile {
+            ReviveConfig::project_paths(self)
+        } else {
+            self.project_paths()
+        };
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
@@ -1249,22 +1253,22 @@ impl Config {
         Ok(vyper)
     }
 
-    /// Returns the [Revive] compiler.
+    /// Returns the Revive [Resolc] compiler.
     pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
         if let Some(path) = &self.revive.solc_path {
             if !path.is_file() {
                 return Err(SolcError::msg(format!("`solc` {} does not exist", path.display())));
             }
-            let solc =
-                Solc::new(path)?;
-            Resolc::new(self.revive.revive_path.clone().unwrap_or("resolc".into()),
-            SolcCompiler::Specific(solc))
-        }
-        else{
+            let solc = Solc::new(path)?;
             Resolc::new(
-            self.revive.revive_path.clone().unwrap_or("resolc".into()),
-            self.solc_compiler()?,
-        )
+                self.revive.revive_path.clone().unwrap_or("resolc".into()),
+                SolcCompiler::Specific(solc),
+            )
+        } else {
+            Resolc::new(
+                self.revive.revive_path.clone().unwrap_or("resolc".into()),
+                self.solc_compiler()?,
+            )
         }
     }
 

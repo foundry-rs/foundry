@@ -23,20 +23,22 @@ pub struct ReviveConfig {
     pub force_evmla: bool,
 }
 
-/// Returns the `ProjectPathsConfig` sub set of the config.
-pub fn revive_project_paths(config: &Config) -> ProjectPathsConfig<MultiCompilerLanguage> {
-    let builder = ProjectPathsConfig::builder()
-        .cache(config.cache_path.join(REVIVE_SOLIDITY_FILES_CACHE_FILENAME))
-        .sources(&config.src)
-        .tests(&config.test)
-        .scripts(&config.script)
-        .artifacts(config.root.join(REVIVE_ARTIFACTS_DIR))
-        .libs(config.libs.iter())
-        .remappings(config.get_all_remappings())
-        .allowed_path(&config.root)
-        .allowed_paths(&config.libs)
-        .allowed_paths(&config.allow_paths)
-        .include_paths(&config.include_paths);
+impl ReviveConfig {
+    /// Returns the `ProjectPathsConfig` sub set of the config.
+    pub fn project_paths(config: &Config) -> ProjectPathsConfig<MultiCompilerLanguage> {
+        let builder = ProjectPathsConfig::builder()
+            .cache(config.cache_path.join(REVIVE_SOLIDITY_FILES_CACHE_FILENAME))
+            .sources(&config.src)
+            .tests(&config.test)
+            .scripts(&config.script)
+            .artifacts(config.root.join(REVIVE_ARTIFACTS_DIR))
+            .libs(config.libs.iter())
+            .remappings(config.get_all_remappings())
+            .allowed_path(&config.root)
+            .allowed_paths(&config.libs)
+            .allowed_paths(&config.allow_paths)
+            .include_paths(&config.include_paths);
 
-    builder.build_with_root(&config.root)
+        builder.build_with_root(&config.root)
+    }
 }
