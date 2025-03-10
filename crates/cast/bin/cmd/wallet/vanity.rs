@@ -221,7 +221,7 @@ pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, impl Fn(()) -> Generate
 
 /// Generates a random K-256 signing key and derives its Ethereum address.
 pub fn generate_wallet() -> GeneratedWallet {
-    let key = SigningKey::random(&mut rand::thread_rng());
+    let key = SigningKey::random(&mut rand::rng());
     let address = secret_key_to_address(&key);
     (key, address)
 }
