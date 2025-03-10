@@ -138,6 +138,7 @@ impl VerifyBytecodeArgs {
         // Etherscan client
         let etherscan = EtherscanVerificationProvider.client(
             self.etherscan.chain.unwrap_or_default(),
+            &self.verifier.verifier,
             self.verifier.verifier_url.as_deref(),
             self.etherscan.key().as_deref(),
             &config,
