@@ -4,7 +4,9 @@ use super::{BackendError, JournaledState};
 use crate::{
     backend::{
         diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertStateSnapshotAction,
-    }, fork::{CreateFork, ForkId}, AsEnvMut, Env, EnvMut, InspectorExt
+    },
+    fork::{CreateFork, ForkId},
+    AsEnvMut, Env, EnvMut, InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
@@ -176,7 +178,12 @@ impl DatabaseExt for CowBackend<'_> {
         mut env: EnvMut<'_>,
         journaled_state: &mut JournaledState<'_>,
     ) -> eyre::Result<()> {
-        self.backend_mut(env.as_env_mut()).roll_fork_to_transaction(id, transaction, env, journaled_state)
+        self.backend_mut(env.as_env_mut()).roll_fork_to_transaction(
+            id,
+            transaction,
+            env,
+            journaled_state,
+        )
     }
 
     fn transact(

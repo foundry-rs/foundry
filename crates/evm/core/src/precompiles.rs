@@ -1,5 +1,7 @@
 use alloy_primitives::{address, Address, Bytes, B256};
-use revm::precompile::{secp256r1::p256_verify as revm_p256_verify, PrecompileResult, PrecompileWithAddress};
+use revm::precompile::{
+    secp256r1::p256_verify as revm_p256_verify, PrecompileResult, PrecompileWithAddress,
+};
 
 /// The ECRecover precompile address.
 pub const EC_RECOVER: Address = address!("0000000000000000000000000000000000000001");

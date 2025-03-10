@@ -1,6 +1,8 @@
 pub use crate::ic::*;
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
+    backend::DatabaseExt,
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    precompiles::{ODYSSEY_P256, ODYSSEY_P256_ADDRESS},
     AsEnvMut, Env, EnvMut, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
@@ -110,7 +112,8 @@ pub fn get_function<'a>(
 pub fn configure_tx_env(mut env: impl AsEnvMut, tx: &Transaction<AnyTxEnvelope>) {
     let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from());
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(env.as_env_mut(), &tx.clone().into(), impersonated_from).expect("cannot fail");
+        configure_tx_req_env(env.as_env_mut(), &tx.clone().into(), impersonated_from)
+            .expect("cannot fail");
     }
 }
 
@@ -339,14 +342,14 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for MaybeOdysseyPrecompiles {
         bytes: &Bytes,
         gas_limit: u64,
     ) -> Result<Option<Self::Output>, revm::precompile::PrecompileError> {
-        if self.odyssey && address == P256VERIFY {
+        if self.odyssey && address == ODYSSEY_P256.address() {
             let mut result = InterpreterResult {
                 result: InstructionResult::Return,
                 gas: Gas::new(gas_limit),
                 output: Bytes::new(),
             };
 
-            match P256VERIFY.precompile()(bytes, gas_limit) {
+            match ODYSSEY_P256.precompile()(bytes, gas_limit) {
                 Ok(output) => {
                     let underflow = result.gas.record_cost(output.gas_used);
                     result.result = InstructionResult::Return;
@@ -370,14 +373,14 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for MaybeOdysseyPrecompiles {
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
         if self.odyssey {
-            Box::new(*self.inner.warm_addresses().chain(core::iter::once(P256VERIFY.address())))
+            Box::new(*self.inner.warm_addresses().chain(core::iter::once(ODYSSEY_P256.address())))
         } else {
             self.inner.warm_addresses()
         }
     }
 
     fn contains(&self, address: &Address) -> bool {
-        if self.odyssey && address == P256VERIFY {
+        if self.odyssey && address == ODYSSEY_P256.address() {
             true
         } else {
             self.inner.contains(address)

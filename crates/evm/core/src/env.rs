@@ -34,11 +34,7 @@ pub trait AsEnvMut {
 
 impl AsEnvMut for EnvMut<'_> {
     fn as_env_mut(&mut self) -> EnvMut<'_> {
-        EnvMut {
-            block: self.block,
-            cfg: self.cfg,
-            tx: self.tx,
-        }
+        EnvMut { block: self.block, cfg: self.cfg, tx: self.tx }
     }
 }
 

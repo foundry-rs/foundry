@@ -1,5 +1,5 @@
-use crate::Env;
 use super::opts::EvmOpts;
+use crate::Env;
 
 mod init;
 pub use init::environment;

@@ -117,10 +117,7 @@ impl EvmOpts {
 
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
     /// And the block that was used to configure the environment.
-    pub async fn fork_evm_env(
-        &self,
-        fork_url: &str,
-    ) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
+    pub async fn fork_evm_env(&self, fork_url: &str) -> eyre::Result<(crate::Env, AnyRpcBlock)> {
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
             .build()?;
