@@ -47,7 +47,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     env:
-      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
+      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/${{ secrets.ALCHEMY_API_KEY }}
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
