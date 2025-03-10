@@ -1,8 +1,5 @@
 use alloy_primitives::{address, Address, Bytes, B256};
-use revm::{
-    precompile::{secp256r1::p256_verify as revm_p256_verify, PrecompileWithAddress},
-    primitives::{Precompile, PrecompileResult},
-};
+use revm::precompile::{secp256r1::p256_verify as revm_p256_verify, PrecompileResult, PrecompileWithAddress};
 
 /// The ECRecover precompile address.
 pub const EC_RECOVER: Address = address!("0000000000000000000000000000000000000001");
@@ -70,4 +67,4 @@ pub fn p256_verify(input: &Bytes, gas_limit: u64) -> PrecompileResult {
 
 /// [EIP-7212](https://eips.ethereum.org/EIPS/eip-7212#specification) secp256r1 precompile.
 pub const ODYSSEY_P256: PrecompileWithAddress =
-    PrecompileWithAddress(ODYSSEY_P256_ADDRESS, Precompile::Standard(p256_verify));
+    PrecompileWithAddress(ODYSSEY_P256_ADDRESS, p256_verify);

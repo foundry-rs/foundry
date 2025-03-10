@@ -9,8 +9,8 @@ use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
-    db::{CacheDB, DatabaseRef},
-    primitives::{Account, AccountInfo, Bytecode},
+    database::{CacheDB, DatabaseRef},
+    state::{Account, AccountInfo, Bytecode},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;
@@ -209,7 +209,12 @@ pub struct ForkDbStateSnapshot {
 
 impl ForkDbStateSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.local.accounts.get(&address).and_then(|account| account.storage.get(&index)).copied()
+        self.local
+            .cache
+            .accounts
+            .get(&address)
+            .and_then(|account| account.storage.get(&index))
+            .copied()
     }
 }
 
@@ -220,7 +225,7 @@ impl DatabaseRef for ForkDbStateSnapshot {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        match self.local.accounts.get(&address) {
+        match self.local.cache.accounts.get(&address) {
             Some(account) => Ok(Some(account.info.clone())),
             None => {
                 let mut acc = self.state_snapshot.accounts.get(&address).cloned();
@@ -238,7 +243,7 @@ impl DatabaseRef for ForkDbStateSnapshot {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        match self.local.accounts.get(&address) {
+        match self.local.cache.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => Ok(*entry),
                 None => match self.get_storage(address, index) {
