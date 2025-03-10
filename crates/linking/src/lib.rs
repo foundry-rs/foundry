@@ -312,7 +312,10 @@ mod tests {
                 .paths(paths)
                 .ephemeral()
                 .no_artifacts()
-                .build(MultiCompiler { solidity: SolidityCompiler::Solc(SolcCompiler::Specific(solc)), vyper: None })
+                .build(MultiCompiler {
+                    solidity: SolidityCompiler::Solc(SolcCompiler::Specific(solc)),
+                    vyper: None,
+                })
                 .unwrap();
 
             let mut output = project.compile().unwrap();
