@@ -187,7 +187,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.11.0", default-features = false }
-foundry-compilers = { version = "0.13.3", default-features = false }
+foundry-compilers = { version = "0.13.2", default-features = false }
 foundry-fork-db = "0.11.0"
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.1", default-features = false }
@@ -236,7 +236,7 @@ alloy-sol-macro-input = "0.8.18"
 alloy-sol-types = "0.8.18"
 syn-solidity = "0.8.18"
 
-alloy-chains = "0.1"
+alloy-chains = "=0.1.61"
 alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 
