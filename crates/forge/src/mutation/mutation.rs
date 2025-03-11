@@ -1,15 +1,21 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
 // Use Solar:
-use solar_parse::{ast::{BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition}, interface::BytePos};
-use rand::{Rng, distributions::Alphanumeric};
 use rand::prelude::*;
+use rand::{distributions::Alphanumeric, Rng};
+use solar_parse::{
+    ast::{
+        BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition,
+    },
+    interface::BytePos,
+};
 use std::path::PathBuf;
 
 /// Kinds of mutations (taken from Certora's Gambit)
 // #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 #[derive(Debug)]
 pub enum MutationType {
-    // @todo Solar doesn't differentiate numeric type -> for now, planket and let solc filter out the invalid mutants
+    // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for now, planket and let solc filter out the invalid mutants
+    // -> we might/should add a hashtable of the var to their underlying type (signed or not) so we avoid *a lot* of invalid mutants
     /// For an initializer x, of type
     /// - bool: replace x with !x
     /// - uint: replace x with 0
@@ -63,15 +69,25 @@ pub enum MutationType {
 impl MutationType {
     fn get_name(&self) -> String {
         match self {
-            MutationType::AssignmentMutation(kind) =>  format!("{}_{}", "AssignmentMutation".to_string(), kind.description()),
-            MutationType::BinaryOpMutation(kind) => format!("{}_{}", "BinaryOpMutation".to_string(), kind.to_str()),
+            MutationType::AssignmentMutation(kind) => {
+                format!("{}_{}", "AssignmentMutation".to_string(), kind.description())
+            }
+            MutationType::BinaryOpMutation(kind) => {
+                format!("{}_{:?}", "BinaryOpMutation".to_string(), kind)
+            }
             MutationType::DeleteExpressionMutation => "DeleteExpressionMutation".to_string(),
             MutationType::ElimDelegateMutation => "ElimDelegateMutation".to_string(),
             MutationType::FunctionCallMutation => "FunctionCallMutation".to_string(),
             MutationType::RequireMutation => "RequireMutation".to_string(),
-            MutationType::SwapArgumentsFunctionMutation => "SwapArgumentsFunctionMutation".to_string(),
-            MutationType::SwapArgumentsOperatorMutation => "SwapArgumentsOperatorMutation".to_string(),
-            MutationType::UnaryOperatorMutation(kind, _) => format!("{}_{}", "UnaryOperatorMutation".to_string(), kind.to_str())
+            MutationType::SwapArgumentsFunctionMutation => {
+                "SwapArgumentsFunctionMutation".to_string()
+            }
+            MutationType::SwapArgumentsOperatorMutation => {
+                "SwapArgumentsOperatorMutation".to_string()
+            }
+            MutationType::UnaryOperatorMutation(kind, _) => {
+                format!("{}_{:?}", "UnaryOperatorMutation".to_string(), kind)
+            }
         }
     }
 }
@@ -86,7 +102,8 @@ pub enum MutationResult {
 /// A given mutation
 #[derive(Debug)]
 pub struct Mutant {
-    // pub path: PathBuf,
+    /// The path to the project root where this mutant (tries to) live
+    pub path: PathBuf,
     pub span: Span,
     pub mutation: MutationType,
 }
@@ -94,14 +111,30 @@ pub struct Mutant {
 impl Mutant {
     pub fn create_assignement_mutation(span: Span, var_type: LitKind) -> Vec<Mutant> {
         match var_type {
-            LitKind::Bool(val) => vec![Mutant { span, mutation: MutationType::AssignmentMutation(LitKind::Bool(!val)) }],
+            LitKind::Bool(val) => vec![Mutant {
+                span,
+                mutation: MutationType::AssignmentMutation(LitKind::Bool(!val)),
+                path: PathBuf::default(),
+            }],
             LitKind::Number(val) => {
                 vec![
-                    Mutant { span, mutation: MutationType::AssignmentMutation(LitKind::Number(num_bigint::BigInt::ZERO)) },
-                    Mutant { span, mutation: MutationType::AssignmentMutation(LitKind::Number(-val)) }
+                    Mutant {
+                        span,
+                        mutation: MutationType::AssignmentMutation(LitKind::Number(
+                            num_bigint::BigInt::ZERO,
+                        )),
+                        path: PathBuf::default(),
+                    },
+                    Mutant {
+                        span,
+                        mutation: MutationType::AssignmentMutation(LitKind::Number(-val)),
+                        path: PathBuf::default(),
+                    },
                 ]
-            },
-            _ => {vec![]}
+            }
+            _ => {
+                vec![]
+            }
         }
     }
 
@@ -129,18 +162,23 @@ impl Mutant {
             BinOpKind::Rem,
         ];
 
-        operations.into_iter()
+        operations
+            .into_iter()
             .filter(|&kind| kind != op)
-            .map(|kind| Mutant { span, mutation: MutationType::BinaryOpMutation(kind)})
+            .map(|kind| Mutant {
+                span,
+                mutation: MutationType::BinaryOpMutation(kind),
+                path: PathBuf::default(),
+            })
             .collect()
     }
 
     pub fn create_delete_mutation(span: Span) -> Mutant {
-        Mutant { span, mutation: MutationType::DeleteExpressionMutation}
+        Mutant { span, mutation: MutationType::DeleteExpressionMutation, path: PathBuf::default() }
     }
 
     /// @dev the emitter will have to put pre and post-op before or after the target span
-    /// eg ++a -> preInc, so should have --a as mut, but a++ as well (target_span is `a` span)
+    /// eg ++a -> preInc, so should have --a as mutant, but a++ as well (target_span is the span for `a`)
     pub fn create_unary_mutation(span: Span, op: UnOpKind, target_span: Span) -> Vec<Mutant> {
         let operations = vec![
             UnOpKind::PreInc,
@@ -149,28 +187,31 @@ impl Mutant {
             UnOpKind::PostDec,
             UnOpKind::Not,
             UnOpKind::Neg,
-            UnOpKind::BitNot
+            UnOpKind::BitNot,
         ];
 
-        operations.into_iter()
+        operations
+            .into_iter()
             .filter(|&kind| kind != op)
-            .map(|kind| Mutant { span, mutation: MutationType::UnaryOperatorMutation( kind, target_span)})
+            .map(|kind| Mutant {
+                span,
+                mutation: MutationType::UnaryOperatorMutation(kind, target_span),
+                path: PathBuf::default(),
+            })
             .collect()
     }
 
     pub fn create_delegatecall_mutation(span: Span) -> Mutant {
-        Mutant { span, mutation: MutationType::ElimDelegateMutation }
+        Mutant { span, mutation: MutationType::ElimDelegateMutation, path: PathBuf::default() }
     }
-    
-    /// Get a temp folder name based on the span, the mutation type and a random suffix
-    pub fn get_unique_id(&self) -> String {
-        let rand_string: String = thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(30)
-            .map(char::from)
-            .collect();
 
-        format!("{}_{}_{}_{}", self.span.hi().to_u32(), self.span.lo().to_u32(), self.mutation.get_name(), rand_string)
+    /// Get a temp folder name based on the span and the mutation to conduct
+    pub fn get_unique_id(&self) -> String {
+        format!(
+            "{}_{}_{}",
+            self.span.hi().to_u32(),
+            self.span.lo().to_u32(),
+            self.mutation.get_name()
+        )
     }
 }
-
