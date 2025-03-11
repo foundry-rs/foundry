@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
-use revm::primitives::EVMError;
-use std::convert::Infallible;
+use revm::context::result::EVMError;
+use std::{convert::Infallible, fmt::Display};
 
 pub type BackendResult<T> = Result<T, BackendError>;
 
@@ -53,8 +53,8 @@ impl From<Infallible> for BackendError {
 }
 
 // Note: this is mostly necessary to use some revm internals that return an [EVMError]
-impl<T: Into<Self>> From<EVMError<T>> for BackendError {
-    fn from(err: EVMError<T>) -> Self {
+impl<T: Into<Self>, TxError: Display> From<EVMError<T, TxError>> for BackendError {
+    fn from(err: EVMError<T, TxError>) -> Self {
         match err {
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::msg(err),

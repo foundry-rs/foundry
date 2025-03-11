@@ -189,16 +189,17 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.11.0", default-features = false }
 foundry-compilers = { version = "0.13.3", default-features = false }
-foundry-fork-db = "0.12"
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "e60b89c" }
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.1", default-features = false }
 
 ## revm
-revm = { version = "19.4.0", default-features = false }
+revm = { version = "20.0.0-alpha.3", default-features = false }
 revm-primitives = { version = "15.1.0", default-features = false }
 revm-inspectors = { version = "0.16.0", features = ["serde"] }
 
 ## alloy
+alloy-evm = { path = "../evm/crates/evm" }
 alloy-consensus = { version = "0.12.1", default-features = false }
 alloy-contract = { version = "0.12.1", default-features = false }
 alloy-eips = { version = "0.12.1", default-features = false }
@@ -316,6 +317,8 @@ vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 [patch.crates-io]
+revm = { git = "https://github.com/bluealloy/revm", rev = "9e39df5" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "2a365e3" }
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

@@ -33,7 +33,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    utils::new_evm_with_existing_context,
+    utils::new_evm_with_context,
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -161,7 +161,7 @@ where
         l1_block_info,
     };
 
-    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
+    let mut evm = new_evm_with_context(inner, &mut *inspector);
 
     let res = f(&mut evm)?;
 
@@ -1368,7 +1368,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             outcome.result.output = error.abi_encode().into();
                             outcome
                         }
-                    }
+                    };
                 } else {
                     // Call didn't revert, reset `assume_no_revert` state.
                     self.assume_no_revert = None;
@@ -1820,7 +1820,7 @@ impl Cheatcodes {
         let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
         } else {
-            return
+            return;
         };
 
         let Ok(value) = ecx.sload(target_address, key) else {
