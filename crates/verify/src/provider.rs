@@ -171,8 +171,8 @@ impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
     pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
         let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
-        // 1. If `--verifier sourcify` is set and no API key provided, use Sourcify.
-        if !has_key && matches!(self, Self::Sourcify) {
+        // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
+        if !has_key && self.is_sourcify() {
             sh_println!(
             "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
@@ -181,7 +181,7 @@ impl VerificationProviderType {
         }
 
         // 2. If `--verifier etherscan` is explicitly set, enforce the API key requirement.
-        if matches!(self, Self::Etherscan) {
+        if self.is_etherscan() {
             if !has_key {
                 eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")
             }
@@ -201,5 +201,13 @@ impl VerificationProviderType {
 
         // 5. If no valid provider is specified, bail.
         eyre::bail!("No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier.")
+    }
+
+    pub fn is_sourcify(&self) -> bool {
+        matches!(self, Self::Sourcify)
+    }
+
+    pub fn is_etherscan(&self) -> bool {
+        matches!(self, Self::Etherscan)
     }
 }

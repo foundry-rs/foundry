@@ -281,9 +281,8 @@ impl EtherscanVerificationProvider {
 
             // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
             // API key passed.
-            let is_etherscan = matches!(verifier_type, VerificationProviderType::Etherscan) ||
-                (matches!(verifier_type, VerificationProviderType::Sourcify) &&
-                    etherscan_key.is_some());
+            let is_etherscan = verifier_type.is_etherscan() ||
+                (verifier_type.is_sourcify() && etherscan_key.is_some());
             let base_url = if !is_etherscan {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_prefix("/api").unwrap_or(api_url)
