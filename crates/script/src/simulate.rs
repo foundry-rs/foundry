@@ -181,9 +181,9 @@ impl PreSimulationState {
                     )?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
-                    if self.args.should_broadcast()
-                        && !self.args.non_interactive
-                        && !Confirm::new()
+                    if self.args.should_broadcast() &&
+                        !self.args.non_interactive &&
+                        !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?
                     {
@@ -346,13 +346,13 @@ impl FilledTransactionsState {
             // Present gas information on a per RPC basis.
             for (rpc, total_gas) in total_gas_per_rpc {
                 let provider_info = manager.get(&rpc).expect("provider is set.");
-                let chain_id = provider_info.chain;
 
                 // Get the native token symbol for the chain using NamedChain
-                let named_chain =
-                    NamedChain::try_from(chain_id).map(|c| c).unwrap_or(NamedChain::default());
+                let token_symbol = NamedChain::try_from(provider_info.chain)
+                    .unwrap_or_default()
+                    .native_currency_symbol()
+                    .unwrap_or("ETH");
 
-                let token_symbol = named_chain.native_currency_symbol().unwrap_or_default();
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
@@ -383,10 +383,10 @@ impl FilledTransactionsState {
                         "{}",
                         serde_json::json!({
                             "chain": provider_info.chain,
-                            "token_symbol": token_symbol,
                             "estimated_gas_price": estimated_gas_price,
                             "estimated_total_gas_used": total_gas,
                             "estimated_amount_required": estimated_amount,
+                            "token_symbol": token_symbol,
                         })
                     )?;
                 }
