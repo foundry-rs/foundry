@@ -89,9 +89,9 @@ pub trait CheatcodesExecutor {
             evm.context.evm.inner.journaled_state.depth += 1;
 
             // Handle EOF bytecode
-            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA)
-                && inputs.scheme == CreateScheme::Create
-                && inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA) &&
+                inputs.scheme == CreateScheme::Create &&
+                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
@@ -655,8 +655,8 @@ impl Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if ecx.journaled_state.depth() >= broadcast.depth
-                && input.caller() == broadcast.original_caller
+            if ecx.journaled_state.depth() >= broadcast.depth &&
+                input.caller() == broadcast.original_caller
             {
                 if let Err(err) =
                     ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
@@ -761,8 +761,8 @@ where {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if ecx.journaled_state.depth() <= expected_revert.depth
-                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            if ecx.journaled_state.depth() <= expected_revert.depth &&
+                matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match revert_handlers::handle_expect_revert(
@@ -851,9 +851,9 @@ where {
                         created_acc.info.code.clone().unwrap_or_default().original_bytes();
                     if let Some((index, _)) =
                         self.expected_creates.iter().find_position(|expected_create| {
-                            expected_create.deployer == call.caller
-                                && expected_create.create_scheme.eq(call.scheme)
-                                && expected_create.bytecode == bytecode
+                            expected_create.deployer == call.caller &&
+                                expected_create.create_scheme.eq(call.scheme) &&
+                                expected_create.bytecode == bytecode
                         })
                     {
                         self.expected_creates.swap_remove(index);
@@ -959,8 +959,8 @@ where {
                 None => mocks
                     .iter_mut()
                     .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
+                            mock.value.is_none_or(|value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v),
             } {
@@ -1028,8 +1028,8 @@ where {
             //
             // We do this because any subsequent contract calls *must* exist on chain and
             // we only want to grab *this* call, not internal ones
-            if ecx.journaled_state.depth() == broadcast.depth
-                && call.caller == broadcast.original_caller
+            if ecx.journaled_state.depth() == broadcast.depth &&
+                call.caller == broadcast.original_caller
             {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
@@ -1289,8 +1289,8 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
     fn call_end(&mut self, ecx: Ecx, call: &CallInputs, mut outcome: CallOutcome) -> CallOutcome {
         let ecx = &mut ecx.inner;
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
-            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
+            call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
@@ -1371,8 +1371,8 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
                 // revert.
-                if expected_revert.reverter.is_some()
-                    && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                if expected_revert.reverter.is_some() &&
+                    (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
                 {
                     expected_revert.reverted_by = Some(call.target_address);
                 }
@@ -1574,9 +1574,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         if let TxKind::Call(test_contract) = ecx.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.db.is_forked_mode()
-                && outcome.result.result == InstructionResult::Stop
-                && call.target_address != test_contract
+            if ecx.db.is_forked_mode() &&
+                outcome.result.result == InstructionResult::Stop &&
+                call.target_address != test_contract
             {
                 self.fork_revert_diagnostic =
                     ecx.db.diagnose_revert(call.target_address, &ecx.journaled_state);
@@ -1716,8 +1716,8 @@ impl InspectorExt for Cheatcodes {
                 1
             };
 
-            ecx.journaled_state.depth() == target_depth
-                && (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+            ecx.journaled_state.depth() == target_depth &&
+                (self.broadcast.is_some() || self.config.always_use_create_2_factory)
         } else {
             false
         }
@@ -1781,8 +1781,8 @@ impl Cheatcodes {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.gas.spent()
-                < u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
+            if interpreter.gas.spent() <
+                u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());
             }
@@ -2210,10 +2210,10 @@ fn check_if_fixed_gas_limit(ecx: InnerEcx, call_gas_limit: u64) -> bool {
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
-        crate::Vm::AccountAccessKind::Call
-            | crate::Vm::AccountAccessKind::StaticCall
-            | crate::Vm::AccountAccessKind::CallCode
-            | crate::Vm::AccountAccessKind::DelegateCall
+        crate::Vm::AccountAccessKind::Call |
+            crate::Vm::AccountAccessKind::StaticCall |
+            crate::Vm::AccountAccessKind::CallCode |
+            crate::Vm::AccountAccessKind::DelegateCall
     )
 }
 

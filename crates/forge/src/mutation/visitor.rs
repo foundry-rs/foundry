@@ -30,8 +30,8 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             },
         }
 
-        // @todo this is taken from the Visit trait -> commented line (original trait implementation)
-        // infinitely recurse and don't see why rn
+        // @todo this is taken from the Visit trait -> commented line (original trait
+        // implementation) infinitely recurse and don't see why rn
         // <Self as solar_parse::ast::visit::Visit<'ast>>::visit_variable_definition(self, var)
 
         let VariableDefinition {

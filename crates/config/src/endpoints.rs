@@ -340,10 +340,10 @@ impl Serialize for RpcEndpoint {
     where
         S: Serializer,
     {
-        if self.config.retries.is_none()
-            && self.config.retry_backoff.is_none()
-            && self.config.compute_units_per_second.is_none()
-            && self.auth.is_none()
+        if self.config.retries.is_none() &&
+            self.config.retry_backoff.is_none() &&
+            self.config.compute_units_per_second.is_none() &&
+            self.auth.is_none()
         {
             // serialize as endpoint if there's no additional config
             self.endpoint.serialize(serializer)

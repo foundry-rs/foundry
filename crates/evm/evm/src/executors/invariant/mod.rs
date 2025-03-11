@@ -634,13 +634,13 @@ impl<'a> InvariantExecutor<'a> {
                 .filter(|func| {
                     !matches!(
                         func.state_mutability,
-                        alloy_json_abi::StateMutability::Pure
-                            | alloy_json_abi::StateMutability::View
+                        alloy_json_abi::StateMutability::Pure |
+                            alloy_json_abi::StateMutability::View
                     )
                 })
-                .count()
-                == 0
-                && !self.artifact_filters.excluded.contains(&artifact.identifier())
+                .count() ==
+                0 &&
+                !self.artifact_filters.excluded.contains(&artifact.identifier())
             {
                 self.artifact_filters.excluded.push(artifact.identifier());
             }
@@ -651,8 +651,8 @@ impl<'a> InvariantExecutor<'a> {
         for contract in selected.targetedArtifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
-            if !self.artifact_filters.targeted.contains_key(&identifier)
-                && !self.artifact_filters.excluded.contains(&identifier)
+            if !self.artifact_filters.targeted.contains_key(&identifier) &&
+                !self.artifact_filters.excluded.contains(&identifier)
             {
                 self.artifact_filters.targeted.insert(identifier, vec![]);
             }
@@ -721,12 +721,12 @@ impl<'a> InvariantExecutor<'a> {
             .setup_contracts
             .iter()
             .filter(|&(addr, (identifier, _))| {
-                *addr != to
-                    && *addr != CHEATCODE_ADDRESS
-                    && *addr != HARDHAT_CONSOLE_ADDRESS
-                    && (selected.is_empty() || selected.contains(addr))
-                    && (excluded.is_empty() || !excluded.contains(addr))
-                    && self.artifact_filters.matches(identifier)
+                *addr != to &&
+                    *addr != CHEATCODE_ADDRESS &&
+                    *addr != HARDHAT_CONSOLE_ADDRESS &&
+                    (selected.is_empty() || selected.contains(addr)) &&
+                    (excluded.is_empty() || !excluded.contains(addr)) &&
+                    self.artifact_filters.matches(identifier)
             })
             .map(|(addr, (identifier, abi))| {
                 (*addr, TargetedContract::new(identifier.clone(), abi.clone()))

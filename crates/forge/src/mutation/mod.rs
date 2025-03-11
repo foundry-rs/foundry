@@ -1,8 +1,8 @@
 mod mutation;
 mod visitor;
 
-// Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
-// Use Solar:
+// Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
+// select mutants) Use Solar:
 use solar_parse::{
     ast::{
         interface::{self, source_map::FileName, Session, SessionGlobals},
@@ -14,24 +14,27 @@ use solar_parse::{
 };
 use std::{hash::Hash, sync::Arc};
 
-use crate::mutation::mutation::{Mutant, MutationResult};
-use crate::mutation::visitor::MutantVisitor;
-use foundry_compilers::project::ProjectCompiler;
+use crate::mutation::{
+    mutation::{Mutant, MutationResult},
+    visitor::MutantVisitor,
+};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{
         multi::{MultiCompiler, MultiCompilerLanguage},
         Language,
     },
+    project::ProjectCompiler,
     utils::source_files_iter,
     ProjectCompileOutput,
 };
 use rayon::prelude::*;
 use solar_parse::ast::visit::Visit;
-use std::collections::HashMap;
-use std::io::{Seek, Write};
-use std::path::Path;
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    io::{Seek, Write},
+    path::{Path, PathBuf},
+};
 use tempfile::{SpooledTempFile, TempDir};
 
 use revm::primitives::Env;
@@ -43,6 +46,7 @@ pub struct MutationCampaign<'a> {
     config: Arc<foundry_config::Config>,
     env: &'a Env,
     evm_opts: &'a crate::opts::EvmOpts,
+    // Ensure we don't clean it between creation and mutant generation (been there, done that)
     temp_dir: Option<TempDir>,
 }
 
@@ -53,7 +57,14 @@ impl<'a> MutationCampaign<'a> {
         env: &'a Env,
         evm_opts: &'a crate::opts::EvmOpts,
     ) -> MutationCampaign<'a> {
-        MutationCampaign { contracts_to_mutate: files, src: HashMap::new(), config, env, evm_opts, temp_dir: None }
+        MutationCampaign {
+            contracts_to_mutate: files,
+            src: HashMap::new(),
+            config,
+            env,
+            evm_opts,
+            temp_dir: None,
+        }
     }
 
     // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
@@ -70,7 +81,8 @@ impl<'a> MutationCampaign<'a> {
         }
     }
 
-    /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants in spooled tmp files
+    /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants
+    /// in spooled tmp files
     fn load_sources(&mut self) -> Result<(), std::io::Error> {
         for path in &self.contracts_to_mutate {
             let content = std::fs::read_to_string(path)?;
@@ -151,10 +163,6 @@ impl<'a> MutationCampaign<'a> {
     }
 
     async fn test_mutant(&self, mutations_list: &mut Vec<Mutant>, src_path: &PathBuf) {
-        // for each mutation in mutations_list
-        // @todo this must be in parallel (mutations_list.par_iter().for_each(|mutant|) .... instead)
-        // -> temp folder creation should be done before, then rayon to compile -> extra hashmap?
-
         mutations_list.par_iter_mut().for_each(|mutant| {
             self.generate_mutant(mutant, src_path);
 
@@ -221,16 +229,15 @@ impl<'a> MutationCampaign<'a> {
     fn generate_mutant(&self, mutation: &Mutant, src_contract_path: &PathBuf) {
         let temp_dir_path = &mutation.path;
 
-        dbg!(&mutation.path);
-
         let span = mutation.span;
-        match mutation.mutation {
-            _ => {}
-        }
+        let replacement = mutation.mutation.to_str();
 
-        let replacement: &[u8] = b"123";
-
-        let target_path = temp_dir_path.ancestors().next().unwrap().join("src").join(src_contract_path.file_name().unwrap());
+        let target_path = temp_dir_path
+            .ancestors()
+            .next()
+            .unwrap()
+            .join("src")
+            .join(src_contract_path.file_name().unwrap());
         let src_content = Arc::clone(self.src.get(src_contract_path).unwrap());
 
         let start_pos = span.lo().0 as usize;
@@ -241,8 +248,7 @@ impl<'a> MutationCampaign<'a> {
 
         let mut new_content = String::with_capacity(before.len() + replacement.len() + after.len());
         new_content.push_str(before);
-        new_content
-            .push_str(std::str::from_utf8(replacement).expect("Replacement must be valid UTF-8"));
+        new_content.push_str(replacement);
         new_content.push_str(after);
 
         std::fs::write(&target_path, new_content)
@@ -262,11 +268,11 @@ impl<'a> MutationCampaign<'a> {
 
         let output = compiler.compile().unwrap();
 
+        dbg!(&mutant.mutation);
+        dbg!(temp_folder);
+
         if output.has_compiler_errors() {
             dbg!("Invalid mutant");
-            // dbg!(output.is_unchanged());
-            dbg!(temp_folder);
-            dbg!(&mutant.mutation);
             None
         } else {
             dbg!("Viable");
@@ -281,8 +287,8 @@ impl<'a> MutationCampaign<'a> {
     ) -> MutationResult {
         // let env = evm_opts.evm_env().await?;
         // temp dbg:
-        // let env = tokio::runtime::Runtime::new().unwrap().block_on(self.evm_opts.evm_env()).unwrap();
-        // let env = self.evm_opts.evm_env().await.unwrap();
+        // let env = tokio::runtime::Runtime::new().unwrap().block_on(self.evm_opts.evm_env()).
+        // unwrap(); let env = self.evm_opts.evm_env().await.unwrap();
 
         // let (test_outcome, output) =
         // self.ensure_valid_project(&project, &config, &evm_opts, test_filter.clone()).await?;

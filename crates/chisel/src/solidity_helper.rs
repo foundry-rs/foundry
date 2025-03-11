@@ -254,9 +254,9 @@ fn token_style(token: &Token) -> Style {
         Literal(..) => Color::Yellow.foreground(),
 
         Ident(
-            Memory | Storage | Calldata | Public | Private | Internal | External | Constant | Pure
-            | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override | Modifier
-            | Immutable | Unchecked,
+            Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
+            Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
+            Modifier | Immutable | Unchecked,
         ) => Color::Cyan.foreground(),
 
         Ident(s) if s.is_elementary_type() => Color::Blue.foreground(),

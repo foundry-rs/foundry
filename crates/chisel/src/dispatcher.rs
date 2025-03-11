@@ -89,11 +89,11 @@ impl DispatchResult {
     pub fn is_error(&self) -> bool {
         matches!(
             self,
-            Self::Failure(_)
-                | Self::CommandFailed(_)
-                | Self::UnrecognizedCommand(_)
-                | Self::SolangParserFailed(_)
-                | Self::FileIoError(_)
+            Self::Failure(_) |
+                Self::CommandFailed(_) |
+                Self::UnrecognizedCommand(_) |
+                Self::SolangParserFailed(_) |
+                Self::FileIoError(_)
         )
     }
 }
@@ -536,9 +536,9 @@ impl ChiselDispatcher {
                                                 // see <https://github.com/foundry-rs/foundry/issues/6618>.
                                                 if input.is_complex_type() {
                                                     if let Some(
-                                                        InternalType::Enum { contract: _, ty }
-                                                        | InternalType::Struct { contract: _, ty }
-                                                        | InternalType::Other { contract: _, ty },
+                                                        InternalType::Enum { contract: _, ty } |
+                                                        InternalType::Struct { contract: _, ty } |
+                                                        InternalType::Other { contract: _, ty },
                                                     ) = &input.internal_type
                                                     {
                                                         param_type = ty;

@@ -78,9 +78,9 @@ impl Remappings {
         if self.remappings.iter().any(|existing| {
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
-                return existing.name == remapping.name
-                    && existing.context == remapping.context
-                    && existing.path == remapping.path;
+                return existing.name == remapping.name &&
+                    existing.context == remapping.context &&
+                    existing.path == remapping.path;
             }
 
             // What we're doing here is filtering for ambiguous paths. For example, if we have
@@ -97,8 +97,8 @@ impl Remappings {
             if !existing_name_path.ends_with('/') {
                 existing_name_path.push('/')
             }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path)
-                || existing.name.starts_with(&remapping.name);
+            let is_conflicting = remapping.name.starts_with(&existing_name_path) ||
+                existing.name.starts_with(&remapping.name);
             is_conflicting && existing.context == remapping.context
         }) {
             return;

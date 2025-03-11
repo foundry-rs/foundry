@@ -1174,9 +1174,9 @@ impl Config {
 
     /// Whether caching should be enabled for the given chain id
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
-        !self.no_storage_caching
-            && self.rpc_storage_caching.enable_for_chain_id(chain_id.into())
-            && self.rpc_storage_caching.enable_for_endpoint(endpoint)
+        !self.no_storage_caching &&
+            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
+            self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig` sub set of the config.
@@ -2046,8 +2046,8 @@ impl Config {
             let file_name = block.file_name();
             let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else if file_type.is_file()
-                && file_name.to_string_lossy().chars().all(char::is_numeric)
+            } else if file_type.is_file() &&
+                file_name.to_string_lossy().chars().all(char::is_numeric)
             {
                 block.path()
             } else {

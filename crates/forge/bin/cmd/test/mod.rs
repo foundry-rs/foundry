@@ -463,7 +463,8 @@ impl TestArgs {
 
             let mut campaign = MutationCampaign::new(mutate_paths, config.clone(), &env, &evm_opts);
 
-            // Result should then be stored into the outcome (with the src contract name as test name?)
+            // Result should then be stored into the outcome (with the src contract name as test
+            // name?)
             campaign.run().await;
         }
 
@@ -599,11 +600,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3
-                || self.gas_report
-                || self.debug
-                || self.flamegraph
-                || self.flamechart;
+            let identify_addresses = verbosity >= 3 ||
+                self.gas_report ||
+                self.debug ||
+                self.flamegraph ||
+                self.flamechart;
 
             // Print suite header.
             if !silent {

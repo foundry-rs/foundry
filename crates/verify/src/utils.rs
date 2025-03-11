@@ -123,9 +123,9 @@ pub fn build_using_cache(
 
                 // Check if Solidity version matches
                 if let Ok(version) = Version::parse(&version) {
-                    if !(artifact.version.major == version.major
-                        && artifact.version.minor == version.minor
-                        && artifact.version.patch == version.patch)
+                    if !(artifact.version.major == version.major &&
+                        artifact.version.minor == version.minor &&
+                        artifact.version.patch == version.patch)
                     {
                         continue;
                     }
@@ -246,8 +246,8 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64)
-        || (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64) ||
+        (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
     {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",

@@ -1,7 +1,6 @@
-// Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to select mutants)
-// Use Solar:
-use rand::prelude::*;
-use rand::{distributions::Alphanumeric, Rng};
+// Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
+// select mutants) Use Solar:
+use rand::{distributions::Alphanumeric, prelude::*, Rng};
 use solar_parse::{
     ast::{
         BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition,
@@ -14,8 +13,10 @@ use std::path::PathBuf;
 // #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 #[derive(Debug)]
 pub enum MutationType {
-    // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for now, planket and let solc filter out the invalid mutants
-    // -> we might/should add a hashtable of the var to their underlying type (signed or not) so we avoid *a lot* of invalid mutants
+    // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
+    // now, planket and let solc filter out the invalid mutants -> we might/should add a
+    // hashtable of the var to their underlying type (signed or not) so we avoid *a lot* of
+    // invalid mutants
     /// For an initializer x, of type
     /// - bool: replace x with !x
     /// - uint: replace x with 0
@@ -39,23 +40,24 @@ pub enum MutationType {
     /// For a if(x) condition x:
     /// replace x with true; replace x with false
     // This mutation is not used anymore, as we mutate the condition as an expression,
-    // which will creates true/false mutant as well as more complex conditions (eg if(foo++ > --bar) )
-    // IfStatementMutation,
+    // which will creates true/false mutant as well as more complex conditions (eg if(foo++ > --bar)
+    // ) IfStatementMutation,
 
     /// For a require(x) condition:
     /// replace x with true; replace x with false
-    // Same as for IfStatementMutation, the expression inside the require is mutated as an expression
-    // to handle increment etc
+    // Same as for IfStatementMutation, the expression inside the require is mutated as an
+    // expression to handle increment etc
     RequireMutation,
 
-    // @todo review if needed -> this might creates *a lot* of combinations for super-polyadic fn tho
-    //       only swapping same type (to avoid obvious compilation failure), but should take into account
-    //       implicit casting too...
+    // @todo review if needed -> this might creates *a lot* of combinations for super-polyadic fn
+    // tho       only swapping same type (to avoid obvious compilation failure), but should
+    // take into account       implicit casting too...
     /// For 2 args of the same type x,y in a function args:
     /// swap(x, y)
     SwapArgumentsFunctionMutation,
 
-    // @todo same remark as above, might end up in a space too big to explore + filtering out based on type
+    // @todo same remark as above, might end up in a space too big to explore + filtering out
+    // based on type
     /// For an expr taking 2 expression x, y (x+y, x-y, x = x + ...):
     /// swap(x, y)
     SwapArgumentsOperatorMutation,
@@ -88,6 +90,17 @@ impl MutationType {
             MutationType::UnaryOperatorMutation(kind, _) => {
                 format!("{}_{:?}", "UnaryOperatorMutation".to_string(), kind)
             }
+        }
+    }
+
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            MutationType::AssignmentMutation(kind) => match kind {
+                _ => "",
+            },
+            MutationType::BinaryOpMutation(kind) => kind.to_str(),
+            MutationType::UnaryOperatorMutation(kind, _) => kind.to_str(),
+            _ => "",
         }
     }
 }
@@ -178,7 +191,8 @@ impl Mutant {
     }
 
     /// @dev the emitter will have to put pre and post-op before or after the target span
-    /// eg ++a -> preInc, so should have --a as mutant, but a++ as well (target_span is the span for `a`)
+    /// eg ++a -> preInc, so should have --a as mutant, but a++ as well (target_span is the span for
+    /// `a`)
     pub fn create_unary_mutation(span: Span, op: UnOpKind, target_span: Span) -> Vec<Mutant> {
         let operations = vec![
             UnOpKind::PreInc,

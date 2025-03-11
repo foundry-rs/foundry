@@ -492,23 +492,23 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, Cos::Abi)
-                | (Self::Errors, Cos::Abi)
-                | (Self::Bytecode, Cos::Evm(Eos::ByteCode(_)))
-                | (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_)))
-                | (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly))
-                | (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly))
-                | (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers))
-                | (Self::GasEstimates, Cos::Evm(Eos::GasEstimates))
-                | (Self::StorageLayout, Cos::StorageLayout)
-                | (Self::DevDoc, Cos::DevDoc)
-                | (Self::Ir, Cos::Ir)
-                | (Self::IrOptimized, Cos::IrOptimized)
-                | (Self::Metadata, Cos::Metadata)
-                | (Self::UserDoc, Cos::UserDoc)
-                | (Self::Ewasm, Cos::Ewasm(_))
-                | (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_)))
-                | (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
+            (Self::Abi | Self::Events, Cos::Abi) |
+                (Self::Errors, Cos::Abi) |
+                (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
+                (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
+                (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
+                (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly)) |
+                (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers)) |
+                (Self::GasEstimates, Cos::Evm(Eos::GasEstimates)) |
+                (Self::StorageLayout, Cos::StorageLayout) |
+                (Self::DevDoc, Cos::DevDoc) |
+                (Self::Ir, Cos::Ir) |
+                (Self::IrOptimized, Cos::IrOptimized) |
+                (Self::Metadata, Cos::Metadata) |
+                (Self::UserDoc, Cos::UserDoc) |
+                (Self::Ewasm, Cos::Ewasm(_)) |
+                (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_))) |
+                (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
         )
     }
 }

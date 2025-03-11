@@ -672,8 +672,8 @@ impl<'a> FunctionRunner<'a> {
         match invariant_result.error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error) => match error {
-                InvariantFuzzError::BrokenInvariant(case_data)
-                | InvariantFuzzError::Revert(case_data) => {
+                InvariantFuzzError::BrokenInvariant(case_data) |
+                InvariantFuzzError::Revert(case_data) => {
                     // Replay error to create counterexample and to collect logs, traces and
                     // coverage.
                     match replay_error(
@@ -801,8 +801,8 @@ impl<'a> FunctionRunner<'a> {
         let address = self.setup.address;
 
         // Apply before test configured functions (if any).
-        if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count()
-            == 1
+        if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
+            1
         {
             for calldata in self
                 .executor

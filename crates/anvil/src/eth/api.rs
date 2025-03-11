@@ -2480,8 +2480,8 @@ impl EthApi {
                     .unwrap_or_default();
 
                 // not a whitelisted address, or not an eip-7702 bytecode
-                if delegated_address == Address::ZERO
-                    || !valid_delegations.contains(&delegated_address)
+                if delegated_address == Address::ZERO ||
+                    !valid_delegations.contains(&delegated_address)
                 {
                     return Err(WalletError::IllegalDestination.into());
                 }
@@ -2645,9 +2645,9 @@ impl EthApi {
         let to = request.to.as_ref().and_then(TxKind::to);
 
         // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = request.input.input().is_none()
-            && request.access_list.is_none()
-            && request.blob_versioned_hashes.is_none();
+        let maybe_transfer = request.input.input().is_none() &&
+            request.access_list.is_none() &&
+            request.blob_versioned_hashes.is_none();
 
         if maybe_transfer {
             if let Some(to) = to {
@@ -2741,9 +2741,9 @@ impl EthApi {
                     // make no sense (as the TX would still succeed).
                     highest_gas_limit = mid_gas_limit;
                 }
-                GasEstimationCallResult::OutOfGas
-                | GasEstimationCallResult::Revert(_)
-                | GasEstimationCallResult::EvmError(_) => {
+                GasEstimationCallResult::OutOfGas |
+                GasEstimationCallResult::Revert(_) |
+                GasEstimationCallResult::EvmError(_) => {
                     // If the transaction failed, we can set a floor for the lowest gas limit at the
                     // current midpoint, as spending any less gas would make no
                     // sense (as the TX would still revert due to lack of gas).
@@ -2952,10 +2952,10 @@ impl EthApi {
                 B256::with_last_byte(1),
                 false,
             ),
-            TypedTransactionRequest::EIP2930(_)
-            | TypedTransactionRequest::EIP1559(_)
-            | TypedTransactionRequest::EIP4844(_)
-            | TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
+            TypedTransactionRequest::EIP2930(_) |
+            TypedTransactionRequest::EIP1559(_) |
+            TypedTransactionRequest::EIP4844(_) |
+            TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
                 false,
@@ -3117,42 +3117,42 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
 
                 InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
 
-                InstructionResult::OutOfGas
-                | InstructionResult::MemoryOOG
-                | InstructionResult::MemoryLimitOOG
-                | InstructionResult::PrecompileOOG
-                | InstructionResult::InvalidOperandOOG => Ok(Self::OutOfGas),
+                InstructionResult::OutOfGas |
+                InstructionResult::MemoryOOG |
+                InstructionResult::MemoryLimitOOG |
+                InstructionResult::PrecompileOOG |
+                InstructionResult::InvalidOperandOOG => Ok(Self::OutOfGas),
 
-                InstructionResult::OpcodeNotFound
-                | InstructionResult::CallNotAllowedInsideStatic
-                | InstructionResult::StateChangeDuringStaticCall
-                | InstructionResult::InvalidExtDelegateCallTarget
-                | InstructionResult::InvalidEXTCALLTarget
-                | InstructionResult::InvalidFEOpcode
-                | InstructionResult::InvalidJump
-                | InstructionResult::NotActivated
-                | InstructionResult::StackUnderflow
-                | InstructionResult::StackOverflow
-                | InstructionResult::OutOfOffset
-                | InstructionResult::CreateCollision
-                | InstructionResult::OverflowPayment
-                | InstructionResult::PrecompileError
-                | InstructionResult::NonceOverflow
-                | InstructionResult::CreateContractSizeLimit
-                | InstructionResult::CreateContractStartingWithEF
-                | InstructionResult::CreateInitCodeSizeLimit
-                | InstructionResult::FatalExternalError
-                | InstructionResult::OutOfFunds
-                | InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
+                InstructionResult::OpcodeNotFound |
+                InstructionResult::CallNotAllowedInsideStatic |
+                InstructionResult::StateChangeDuringStaticCall |
+                InstructionResult::InvalidExtDelegateCallTarget |
+                InstructionResult::InvalidEXTCALLTarget |
+                InstructionResult::InvalidFEOpcode |
+                InstructionResult::InvalidJump |
+                InstructionResult::NotActivated |
+                InstructionResult::StackUnderflow |
+                InstructionResult::StackOverflow |
+                InstructionResult::OutOfOffset |
+                InstructionResult::CreateCollision |
+                InstructionResult::OverflowPayment |
+                InstructionResult::PrecompileError |
+                InstructionResult::NonceOverflow |
+                InstructionResult::CreateContractSizeLimit |
+                InstructionResult::CreateContractStartingWithEF |
+                InstructionResult::CreateInitCodeSizeLimit |
+                InstructionResult::FatalExternalError |
+                InstructionResult::OutOfFunds |
+                InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
 
                 // Handle Revm EOF InstructionResults: Not supported yet
-                InstructionResult::ReturnContractInNotInitEOF
-                | InstructionResult::EOFOpcodeDisabledInLegacy
-                | InstructionResult::EOFFunctionStackOverflow
-                | InstructionResult::CreateInitCodeStartingEF00
-                | InstructionResult::InvalidEOFInitCode
-                | InstructionResult::EofAuxDataOverflow
-                | InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
+                InstructionResult::ReturnContractInNotInitEOF |
+                InstructionResult::EOFOpcodeDisabledInLegacy |
+                InstructionResult::EOFFunctionStackOverflow |
+                InstructionResult::CreateInitCodeStartingEF00 |
+                InstructionResult::InvalidEOFInitCode |
+                InstructionResult::EofAuxDataOverflow |
+                InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
             },
         }
     }

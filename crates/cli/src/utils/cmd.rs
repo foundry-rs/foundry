@@ -159,24 +159,24 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum()
-            || matches!(
+        return chain.is_arbitrum() ||
+            matches!(
                 chain,
-                NamedChain::Acala
-                    | NamedChain::AcalaMandalaTestnet
-                    | NamedChain::AcalaTestnet
-                    | NamedChain::Etherlink
-                    | NamedChain::EtherlinkTestnet
-                    | NamedChain::Karura
-                    | NamedChain::KaruraTestnet
-                    | NamedChain::Mantle
-                    | NamedChain::MantleSepolia
-                    | NamedChain::MantleTestnet
-                    | NamedChain::Moonbase
-                    | NamedChain::Moonbeam
-                    | NamedChain::MoonbeamDev
-                    | NamedChain::Moonriver
-                    | NamedChain::Metis
+                NamedChain::Acala |
+                    NamedChain::AcalaMandalaTestnet |
+                    NamedChain::AcalaTestnet |
+                    NamedChain::Etherlink |
+                    NamedChain::EtherlinkTestnet |
+                    NamedChain::Karura |
+                    NamedChain::KaruraTestnet |
+                    NamedChain::Mantle |
+                    NamedChain::MantleSepolia |
+                    NamedChain::MantleTestnet |
+                    NamedChain::Moonbase |
+                    NamedChain::Moonbeam |
+                    NamedChain::MoonbeamDev |
+                    NamedChain::Moonriver |
+                    NamedChain::Metis
             );
     }
     false

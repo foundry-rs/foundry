@@ -18,8 +18,8 @@ pub struct ArtifactFilters {
 impl ArtifactFilters {
     /// Returns `true` if the given identifier matches this filter.
     pub fn matches(&self, identifier: &str) -> bool {
-        (self.targeted.is_empty() || self.targeted.contains_key(identifier))
-            && (self.excluded.is_empty() || !self.excluded.iter().any(|id| id == identifier))
+        (self.targeted.is_empty() || self.targeted.contains_key(identifier)) &&
+            (self.excluded.is_empty() || !self.excluded.iter().any(|id| id == identifier))
     }
 
     /// Gets all the targeted functions from `artifact`. Returns error, if selectors do not match
