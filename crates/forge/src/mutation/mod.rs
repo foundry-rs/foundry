@@ -169,8 +169,8 @@ impl<'a> MutationCampaign<'a> {
             if let Some(compile_output) = self.compile_mutant(&mutant) {
                 // let result = self.test_mutant(&mutant.path, &compile_output);
 
-                // let result = self.run_test_on_mutant(&mutant.path, compile_output);
-                // dbg!(result);
+                let result = self.run_test_on_mutant(&mutant.path, compile_output);
+                dbg!(result);
             }
         });
     }
@@ -280,7 +280,7 @@ impl<'a> MutationCampaign<'a> {
         }
     }
 
-    async fn run_test_on_mutant(
+    fn run_test_on_mutant(
         &self,
         mutated_dir: &PathBuf,
         compile_output: ProjectCompileOutput,
@@ -297,7 +297,6 @@ impl<'a> MutationCampaign<'a> {
             .initial_balance(self.evm_opts.initial_balance)
             .evm_spec(self.config.evm_spec_id())
             .sender(self.evm_opts.sender)
-            .with_fork(self.evm_opts.get_fork(&self.config.clone(), self.env.clone()))
             .enable_isolation(self.evm_opts.isolate)
             .odyssey(self.evm_opts.odyssey)
             .build::<MultiCompiler>(
