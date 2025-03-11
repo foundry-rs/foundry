@@ -466,6 +466,12 @@ impl TestArgs {
             // Result should then be stored into the outcome (with the src contract name as test
             // name?)
             campaign.run().await;
+
+            // @todo we should separate flow here:
+            // - parsing
+            // - folder creation
+            // - compilation
+            // - tests (reusing filters for tests)
         }
 
         Ok(outcome)

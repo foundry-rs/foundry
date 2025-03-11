@@ -307,7 +307,7 @@ impl<'a> MutationCampaign<'a> {
             )
             .unwrap();
 
-        runner.test(None, None, true);
+        // runner.test_iter
         // let mut outcome =
         //     self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
 
