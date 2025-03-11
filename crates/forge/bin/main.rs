@@ -92,9 +92,14 @@ fn run() -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
-            let config = utils::load_config_with_root(root.as_deref())?;
+            let mut config = utils::load_config_with_root(root.as_deref())?;
             let project = config.project()?;
             config.cleanup(&project)?;
+
+            config.revive.revive_compile = true;
+            let revive_project = config.project()?;
+            config.cleanup(&revive_project)?;
+
             Ok(())
         }
         ForgeSubcommand::Snapshot(cmd) => {
