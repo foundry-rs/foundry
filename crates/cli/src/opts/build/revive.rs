@@ -11,15 +11,13 @@ pub struct ReviveOpts {
         value_name = "REVIVE_COMPILE",
         help = "Enable compiling with revive",
         long = "revive-compile",
-        num_args = 0..=1,
-        require_equals = true,
-        default_missing_value = "true",
+        visible_alias = "revive",
+        action = clap::ArgAction::SetTrue,
     )]
     pub revive_compile: Option<bool>,
 
     #[clap(
         long = "revive-path",
-        visible_alias = "revive",
         help = "Specify a revive path to be used",
         value_name = "REVIVE_PATH"
     )]
@@ -39,9 +37,7 @@ pub struct ReviveOpts {
         help = "Forcibly switch to the EVM legacy assembly pipeline.",
         long = "force-evmla",
         value_name = "FORCE_EVMLA",
-        num_args = 0..=1,
-        require_equals = true,
-        default_missing_value = "true"
+        action = clap::ArgAction::SetTrue
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_evmla: Option<bool>,
