@@ -1,9 +1,14 @@
-use solar_parse::ast::{visit::Visit, Expr, ExprKind, IndexKind, VariableDefinition};
-use std::sync::Arc;
+use solar_parse::ast::{visit::Visit, Expr, ExprKind, IndexKind, VariableDefinition, LitKind, Ident};
 
 use std::ops::ControlFlow;
 
 use crate::mutation::mutation::{Mutant, MutationType};
+
+#[derive(Debug, Clone)]
+pub enum AssignVarTypes {
+    Literal(LitKind),
+    Identifier(String) // not using Ident as the symbol is slow to convert as to_str() <-- maybe will have to switch back if validating more aggressively
+}
 
 /// A visitor which collect all expression which will need to be mutated
 pub struct MutantVisitor {
@@ -22,7 +27,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             Some(exp) => match &exp.kind {
                 ExprKind::Lit(val, _) => self
                     .mutation_to_conduct
-                    .extend(Mutant::create_assignement_mutation(exp.span, val.kind.clone())),
+                    .extend(Mutant::create_assignement_mutation(exp.span, AssignVarTypes::Literal(val.kind.clone()))),
                 ExprKind::Unary(op, var) => self
                     .mutation_to_conduct
                     .extend(Mutant::create_unary_mutation(op.span, op.kind, var.span)),
@@ -61,10 +66,23 @@ impl<'ast> Visit<'ast> for MutantVisitor {
         match &expr.kind {
             // Array skipped for now (swap could be mutating it, cf above for rational)
             ExprKind::Assign(_, bin_op, rhs) => {
-                if let ExprKind::Lit(kind, _) = &rhs.kind {
-                    self.mutation_to_conduct
-                        .extend(Mutant::create_assignement_mutation(rhs.span, kind.kind.clone()));
+                
+                match &rhs.kind {
+                    ExprKind::Lit(kind, _) => self.mutation_to_conduct
+                        .extend(Mutant::create_assignement_mutation(rhs.span, AssignVarTypes::Literal(kind.kind.clone()))),
+
+                    ExprKind::Ident(val) => self.mutation_to_conduct
+                        .extend(Mutant::create_assignement_mutation(rhs.span, AssignVarTypes::Identifier(val.to_string()))),
+
+                    _ => {}
                 }
+                
+                // if let ExprKind::Lit(kind, _) = &rhs.kind {
+                //     self.mutation_to_conduct
+                //         .extend(Mutant::create_assignement_mutation(rhs.span, kind.kind.clone()));
+                // }
+
+
 
                 if let Some(op) = &bin_op {
                     self.mutation_to_conduct

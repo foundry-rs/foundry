@@ -36,7 +36,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::{SpooledTempFile, TempDir};
-
 use crate::MultiContractRunnerBuilder;
 use foundry_config::Config;
 use revm::primitives::Env;
@@ -110,7 +109,7 @@ impl<'a> MutationHandler<'a> {
                     }
                 }
                 Ok(())
-            });
+            });            
     }
 
     pub fn create_mutation_folders(
@@ -152,8 +151,6 @@ impl<'a> MutationHandler<'a> {
         self.mutations
             .par_iter()
             .map(|mutant| {
-                // let is_valid = self.compile_mutant(mutant).is_some();
-
                 if let Some(output) = self.compile_mutant(mutant) {
                     (mutant, Some(output))
                 } else {
@@ -190,6 +187,7 @@ impl<'a> MutationHandler<'a> {
     }
 
     /// Recursively copy all files except one (ie the contract we're mutating)
+    /// @todo Symlinks instead
     fn copy_dir_except(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
@@ -209,6 +207,7 @@ impl<'a> MutationHandler<'a> {
                 )?;
             } else {
                 if entry.file_name() != except.file_name().unwrap_or_default() {
+                    // std::os::unix::fs::symlink(entry.path(), &dst.as_ref().join(entry.file_name()))?; // and for windows, would be std::os::windows::fs::symlink_file
                     std::fs::copy(entry.path(), &dst.as_ref().join(entry.file_name()))?;
                 }
             }
@@ -238,8 +237,11 @@ impl<'a> MutationHandler<'a> {
 
         let mut new_content = String::with_capacity(before.len() + replacement.len() + after.len());
         new_content.push_str(before);
-        new_content.push_str(replacement);
+        new_content.push_str(&replacement);
         new_content.push_str(after);
+
+        dbg!(mutation);
+        dbg!(&new_content);
 
         std::fs::write(&target_path, new_content)
             .expect(&format!("Failed to write to target file {:?}", &target_path));

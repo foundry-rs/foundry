@@ -3,11 +3,14 @@
 use rand::{distributions::Alphanumeric, prelude::*, Rng};
 use solar_parse::{
     ast::{
-        BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition,
+        BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition, Ident
     },
     interface::BytePos,
 };
 use std::path::PathBuf;
+
+use super::visitor::AssignVarTypes;
+
 /// Kinds of mutations (taken from Certora's Gambit)
 // #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 #[derive(Debug)]
@@ -21,7 +24,7 @@ pub enum MutationType {
     /// - uint: replace x with 0
     /// - int: replace x with 0; replace x with -x (temp: this is mutated for uint as well)
     /// For a binary op y: apply BinaryOpMutation(y)
-    AssignmentMutation(LitKind),
+    AssignmentMutation(AssignVarTypes),
 
     /// For a binary op y in BinOpKind ("+", "-", ">=", etc)
     /// replace y with each non-y in op
@@ -70,8 +73,11 @@ pub enum MutationType {
 impl MutationType {
     fn get_name(&self) -> String {
         match self {
-            MutationType::AssignmentMutation(kind) => {
-                format!("{}_{}", "AssignmentMutation".to_string(), kind.description())
+            MutationType::AssignmentMutation(var_type) => {
+                match var_type {
+                    AssignVarTypes::Literal(kind) => format!("{}_{}", "AssignmentMutation".to_string(), kind.description()),
+                    AssignVarTypes::Identifier(ident) => format!("{}_{}", "AssignmentMutation".to_string(), ident)
+                }
             }
             MutationType::BinaryOpMutation(kind) => {
                 format!("{}_{:?}", "BinaryOpMutation".to_string(), kind)
@@ -92,14 +98,18 @@ impl MutationType {
         }
     }
 
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(&self) -> String {
         match self {
             MutationType::AssignmentMutation(kind) => match kind {
-                _ => "",
+                    AssignVarTypes::Literal(kind) => match kind {
+                        LitKind::Number(val) => val.to_string(),
+                        _ => todo!()
+                    },
+                    AssignVarTypes::Identifier(ident) => ident.as_str().to_string()
             },
-            MutationType::BinaryOpMutation(kind) => kind.to_str(),
-            MutationType::UnaryOperatorMutation(kind, _) => kind.to_str(),
-            _ => "",
+            MutationType::BinaryOpMutation(kind) => kind.to_str().to_string(),
+            MutationType::UnaryOperatorMutation(kind, _) => kind.to_str().to_string(),
+            _ => "".to_string(),
         }
     }
 }
@@ -121,31 +131,54 @@ pub struct Mutant {
 }
 
 impl Mutant {
-    pub fn create_assignement_mutation(span: Span, var_type: LitKind) -> Vec<Mutant> {
+    pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes ) -> Vec<Mutant> {
         match var_type {
-            LitKind::Bool(val) => vec![Mutant {
-                span,
-                mutation: MutationType::AssignmentMutation(LitKind::Bool(!val)),
-                path: PathBuf::default(),
-            }],
-            LitKind::Number(val) => {
+            AssignVarTypes::Literal(lit) => {
+                    match lit {
+                    LitKind::Bool(val) => vec![Mutant {
+                        span,
+                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Bool(!val))),
+                        path: PathBuf::default(),
+                    }],
+                    LitKind::Number(val) => {
+                        vec![
+                            Mutant {
+                                span,
+                                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Number(
+                                    num_bigint::BigInt::ZERO,
+                                ))),
+                                path: PathBuf::default(),
+                            },
+                            Mutant {
+                                span,
+                                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Number(-val))),
+                                path: PathBuf::default(),
+                            },
+                        ]
+                    },
+                    _ => {
+                        vec![]
+                    }
+                }
+            },
+            AssignVarTypes::Identifier(ident) => {
+                let inner = ident.to_string();
+
                 vec![
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(LitKind::Number(
+                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Number(
                             num_bigint::BigInt::ZERO,
-                        )),
+                        ))),
                         path: PathBuf::default(),
                     },
+
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(LitKind::Number(-val)),
+                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Identifier(format!("-{}", inner))),
                         path: PathBuf::default(),
                     },
                 ]
-            }
-            _ => {
-                vec![]
             }
         }
     }
