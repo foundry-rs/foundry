@@ -37,12 +37,13 @@ use std::{
 };
 use tempfile::{SpooledTempFile, TempDir};
 
-use revm::primitives::Env;
-
 use crate::MultiContractRunnerBuilder;
-pub struct MutationCampaign<'a> {
-    contracts_to_mutate: Vec<PathBuf>,
-    src: HashMap<PathBuf, Arc<String>>,
+use foundry_config::Config;
+use revm::primitives::Env;
+pub struct MutationHandler<'a> {
+    contract_to_mutate: PathBuf,
+    src: Arc<String>,
+    mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
     env: &'a Env,
     evm_opts: &'a crate::opts::EvmOpts,
@@ -50,16 +51,17 @@ pub struct MutationCampaign<'a> {
     temp_dir: Option<TempDir>,
 }
 
-impl<'a> MutationCampaign<'a> {
+impl<'a> MutationHandler<'a> {
     pub fn new(
-        files: Vec<PathBuf>,
+        contract_to_mutate: PathBuf,
         config: Arc<foundry_config::Config>,
         env: &'a Env,
         evm_opts: &'a crate::opts::EvmOpts,
-    ) -> MutationCampaign<'a> {
-        MutationCampaign {
-            contracts_to_mutate: files,
-            src: HashMap::new(),
+    ) -> MutationHandler<'a> {
+        MutationHandler {
+            contract_to_mutate,
+            src: Arc::default(),
+            mutations: vec![],
             config,
             env,
             evm_opts,
@@ -68,35 +70,31 @@ impl<'a> MutationCampaign<'a> {
     }
 
     // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
-    pub async fn run(&mut self) {
-        sh_println!("Running mutation tests...").unwrap();
+    // pub async fn run(&mut self) {
+    //     sh_println!("Running mutation tests...").unwrap();
 
-        if let Err(e) = self.load_sources() {
-            eprintln!("Failed to load sources: {}", e);
-            return;
-        }
-
-        for contract_path in self.contracts_to_mutate.clone() {
-            self.process_contract(&contract_path).await;
-        }
-    }
+    //     if let Err(e) = self.load_sources() {
+    //         eprintln!("Failed to load sources: {}", e);
+    //         return;
+    //     }
+    // }
 
     /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants
     /// in spooled tmp files
-    fn load_sources(&mut self) -> Result<(), std::io::Error> {
-        for path in &self.contracts_to_mutate {
-            let content = std::fs::read_to_string(path)?;
-            self.src.insert(path.clone(), Arc::new(content));
-        }
+    pub fn read_source_contract(&mut self) -> Result<(), std::io::Error> {
+        let content = std::fs::read_to_string(&self.contract_to_mutate)?;
+        self.src = Arc::new(content);
         Ok(())
     }
 
-    async fn process_contract(&mut self, path: &PathBuf) {
-        let target_content = Arc::clone(self.src.get(path).unwrap());
+    pub async fn generate_ast(&mut self) {
+        let path = &self.contract_to_mutate;
+        let target_content = Arc::clone(&self.src);
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        let mutations =
-            sess.enter(|| -> solar_parse::interface::Result<Vec<(Vec<Mutant>, PathBuf)>> {
+        let _ =
+            // sess.enter(|| -> solar_parse::interface::Result<Vec<(Vec<Mutant>, PathBuf)>> {
+            sess.enter(|| -> solar_parse::interface::Result<()> {
                 let arena = solar_parse::ast::Arena::new();
                 let mut parser = Parser::from_lazy_source_code(
                     &sess,
@@ -106,7 +104,7 @@ impl<'a> MutationCampaign<'a> {
                 )?;
 
                 let ast = parser.parse_file().map_err(|e| e.emit())?;
-                let mut mutations = Vec::new();
+                // let mut mutations = Vec::new();
 
                 for node in ast.items.iter() {
                     if let ItemKind::Contract(contract) = &node.kind {
@@ -118,30 +116,35 @@ impl<'a> MutationCampaign<'a> {
                             let mut mutant_visitor =
                                 MutantVisitor { mutation_to_conduct: Vec::new() };
                             mutant_visitor.visit_item_contract(contract);
-                            mutations.push((mutant_visitor.mutation_to_conduct, path.clone()));
+
+                            // mutations.push((mutant_visitor.mutation_to_conduct, path.clone()));
+
+                            self.mutations.extend(mutant_visitor.mutation_to_conduct);
                         }
                     }
                 }
-                Ok(mutations)
+                Ok(())
             });
 
-        if let Ok(mutations) = mutations {
-            // @todo multithread here?
-            for (mut mutation_list, path) in mutations {
-                self.create_mutation_folders(&mut mutation_list, &path);
-                self.test_mutant(&mut mutation_list, &path).await;
-            }
-        }
+        // if let Ok(mutations) = mutations {
+        //     // @todo multithread here?
+        //     for (mut mutation_list, path) in mutations {
+        //         self.create_mutation_folders( &path);
+        //         self.test_mutant(&mut mutation_list, &path).await;
+        //     }
+        // }
     }
 
-    fn create_mutation_folders(
+    pub fn create_mutation_folders(
         &mut self,
-        mutations_list: &mut Vec<Mutant>,
-        target_contract_path: &PathBuf,
+        // mutations_list: &mut Vec<Mutant>,
+        // target_contract_path: &PathBuf,
     ) {
         let temp_dir_root = tempfile::tempdir().unwrap();
+        let target_contract_path = &self.contract_to_mutate;
+        // let mut mutations_list = self.mutations;
 
-        for mutant in mutations_list {
+        for mutant in &mut self.mutations {
             let mutation_dir = temp_dir_root
                 .path()
                 .join(
@@ -154,7 +157,8 @@ impl<'a> MutationCampaign<'a> {
                 .join(format!("mutation_{}", mutant.get_unique_id()));
             std::fs::create_dir_all(&mutation_dir).expect("Failed to create mutation directory");
 
-            self.copy_origin(&mutation_dir, target_contract_path);
+            let config = Arc::clone(&self.config);
+            Self::copy_origin(&mutation_dir, target_contract_path, config);
 
             mutant.path = mutation_dir;
         }
@@ -162,22 +166,27 @@ impl<'a> MutationCampaign<'a> {
         self.temp_dir = Some(temp_dir_root);
     }
 
-    async fn test_mutant(&self, mutations_list: &mut Vec<Mutant>, src_path: &PathBuf) {
-        mutations_list.par_iter_mut().for_each(|mutant| {
-            self.generate_mutant(mutant, src_path);
+    pub async fn generate_and_compile(&self) -> Vec<(&Mutant, bool)> {
+        // pub async fn generate_and_compile(&mut self, mutations_list: Vec<Mutant>, src_path:
+        // &PathBuf) {
 
-            if let Some(compile_output) = self.compile_mutant(&mutant) {
-                // let result = self.test_mutant(&mutant.path, &compile_output);
+        // let mutations_list = &mut self.mutations;
+        let src_path = &self.contract_to_mutate;
 
-                let result = self.run_test_on_mutant(&mutant.path, compile_output);
-                dbg!(result);
-            }
+        self.mutations.iter().for_each(|mutant| {
+            self.generate_mutant(&mutant, src_path);
         });
+
+        self.mutations
+            .par_iter()
+            .map(|mutant| {
+                let is_valid = self.compile_mutant(mutant).is_some();
+                (mutant, is_valid)
+            })
+            .collect()
     }
 
-    fn copy_origin(&self, path: &PathBuf, src_contract_path: &PathBuf) {
-        let config = Arc::clone(&self.config);
-
+    fn copy_origin(path: &PathBuf, src_contract_path: &PathBuf, config: Arc<Config>) {
         let cache_src = &config.cache_path;
         let out_src = &config.out;
         let contract_src = &config.src;
@@ -238,7 +247,7 @@ impl<'a> MutationCampaign<'a> {
             .unwrap()
             .join("src")
             .join(src_contract_path.file_name().unwrap());
-        let src_content = Arc::clone(self.src.get(src_contract_path).unwrap());
+        let src_content = Arc::clone(&self.src);
 
         let start_pos = span.lo().0 as usize;
         let end_pos = span.hi().0 as usize;
@@ -268,15 +277,9 @@ impl<'a> MutationCampaign<'a> {
 
         let output = compiler.compile().unwrap();
 
-        dbg!(&mutant.mutation);
-        dbg!(temp_folder);
-
-        if output.has_compiler_errors() {
-            dbg!("Invalid mutant");
-            None
-        } else {
-            dbg!("Viable");
-            Some(output)
+        match output.has_compiler_errors() {
+            true => None,
+            false => Some(output),
         }
     }
 

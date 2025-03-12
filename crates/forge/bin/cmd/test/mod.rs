@@ -7,7 +7,7 @@ use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
-    mutation::MutationCampaign,
+    mutation::MutationHandler,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
@@ -461,17 +461,48 @@ impl TestArgs {
                 self.mutate.unwrap().clone()
             };
 
-            let mut campaign = MutationCampaign::new(mutate_paths, config.clone(), &env, &evm_opts);
+            sh_println!("Running mutation tests...").unwrap();
+            for path in mutate_paths {
+                let mut handler = MutationHandler::new(path, config.clone(), &env, &evm_opts);
 
-            // Result should then be stored into the outcome (with the src contract name as test
-            // name?)
-            campaign.run().await;
+                handler.read_source_contract()?;
+                handler.generate_ast().await;
+                handler.create_mutation_folders();
 
-            // @todo we should separate flow here:
-            // - parsing
-            // - folder creation
-            // - compilation
-            // - tests (reusing filters for tests)
+                let mutants = handler.generate_and_compile().await;
+
+                for mutant in mutants {
+                    if mutant.1 {
+                        let mutant_path = mutant.0.path.clone();
+
+                        // @todo the filter should now reflect the mutant folders
+                        // -> runner doesn't need to compile / find a "multiContractRunner" or
+                        // another way of running test_collect (without it)?
+                        let mut runner = MultiContractRunnerBuilder::new(config.clone())
+                            .set_debug(false)
+                            .initial_balance(evm_opts.initial_balance)
+                            .evm_spec(config.evm_spec_id())
+                            .sender(evm_opts.sender)
+                            .odyssey(evm_opts.odyssey)
+                            .build::<MultiCompiler>(
+                                &mutant_path,
+                                &output,
+                                env.clone(),
+                                evm_opts.clone(),
+                            )?;
+
+                        // let libraries = runner.libraries.clone();
+
+                        let results = runner.test_collect(&filter);
+
+                        // dbg!(TestOutcome::new(results, self.allow_failure));
+                        dbg!(results);
+                        dbg!(&filter);
+                    } else {
+                        dbg!("Invalid");
+                    }
+                }
+            }
         }
 
         Ok(outcome)
