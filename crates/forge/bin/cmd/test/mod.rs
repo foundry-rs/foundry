@@ -471,7 +471,7 @@ impl TestArgs {
 
                 let mutants = handler.generate_and_compile().await;
 
-                // @todo multithread here
+                // @todo multithread here? -> tests are async already
                 for mutant in mutants {
                     if let Some(compile_output) = mutant.1 {
                         let mutant_path = mutant.0.path.clone();
