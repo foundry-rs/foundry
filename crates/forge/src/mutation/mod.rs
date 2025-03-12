@@ -190,21 +190,25 @@ impl<'a> MutationHandler<'a> {
         let cache_src = &config.cache_path;
         let out_src = &config.out;
         let contract_src = &config.src;
-        // let test_src = &config.test;
+        let test_src = &config.test;
 
         let cache_dest = path.join("cache");
         let out_dest = path.join("out");
         let contract_dest = path.join("src");
+        let test_dest = path.join("test");
 
         std::fs::create_dir_all(&cache_dest).expect("Failed to create temp cache directory");
         std::fs::create_dir_all(&out_dest).expect("Failed to create temp out directory");
         std::fs::create_dir_all(&contract_dest).expect("Failed to create temp src directory");
+        std::fs::create_dir_all(&test_dest).expect("Failed to create temp src directory");
 
         Self::copy_dir_except(&cache_src, &cache_dest, src_contract_path)
             .expect("Failed to copy in temp cache");
         Self::copy_dir_except(&out_src, &out_dest, src_contract_path)
             .expect("Failed to copy in temp out directory");
         Self::copy_dir_except(&contract_src, &contract_dest, src_contract_path)
+            .expect("Failed to copy in temp src directory");
+        Self::copy_dir_except(&test_src, &test_dest, src_contract_path)
             .expect("Failed to copy in temp src directory");
     }
 
@@ -281,39 +285,5 @@ impl<'a> MutationHandler<'a> {
             true => None,
             false => Some(output),
         }
-    }
-
-    fn run_test_on_mutant(
-        &self,
-        mutated_dir: &PathBuf,
-        compile_output: ProjectCompileOutput,
-    ) -> MutationResult {
-        // let env = evm_opts.evm_env().await?;
-        // temp dbg:
-        // let env = tokio::runtime::Runtime::new().unwrap().block_on(self.evm_opts.evm_env()).
-        // unwrap(); let env = self.evm_opts.evm_env().await.unwrap();
-
-        // let (test_outcome, output) =
-        // self.ensure_valid_project(&project, &config, &evm_opts, test_filter.clone()).await?;
-
-        let runner = MultiContractRunnerBuilder::new(self.config.clone())
-            .initial_balance(self.evm_opts.initial_balance)
-            .evm_spec(self.config.evm_spec_id())
-            .sender(self.evm_opts.sender)
-            .enable_isolation(self.evm_opts.isolate)
-            .odyssey(self.evm_opts.odyssey)
-            .build::<MultiCompiler>(
-                mutated_dir,
-                &compile_output,
-                self.env.clone(),
-                self.evm_opts.clone(),
-            )
-            .unwrap();
-
-        // runner.test_iter
-        // let mut outcome =
-        //     self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
-
-        MutationResult::Invalid
     }
 }

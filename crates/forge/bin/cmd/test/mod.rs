@@ -433,7 +433,7 @@ impl TestArgs {
             }
 
             let mut debugger = builder.build();
-            if let Some(dump_path) = self.dump {
+            if let Some(dump_path) = self.dump.clone() {
                 debugger.dump_to_file(&dump_path)?;
             } else {
                 debugger.try_run_tui()?;
@@ -458,7 +458,7 @@ impl TestArgs {
                     .collect()
             } else {
                 // If --mutate is passed with arguments, use those paths
-                self.mutate.unwrap().clone()
+                self.mutate.as_ref().unwrap().clone()
             };
 
             sh_println!("Running mutation tests...").unwrap();
@@ -471,14 +471,24 @@ impl TestArgs {
 
                 let mutants = handler.generate_and_compile().await;
 
+                // @todo multithread here
                 for mutant in mutants {
                     if mutant.1 {
                         let mutant_path = mutant.0.path.clone();
 
-                        // @todo the filter should now reflect the mutant folders
-                        // -> runner doesn't need to compile / find a "multiContractRunner" or
-                        // another way of running test_collect (without it)?
-                        let mut runner = MultiContractRunnerBuilder::new(config.clone())
+                        let mut new_config = (*config).clone();
+
+                        new_config.root = mutant_path.clone();
+                        new_config.src = mutant_path.clone().join("src");
+                        new_config.out = mutant_path.clone().join("out");
+                        new_config.test = mutant_path.clone().join("test");
+
+                        new_config.cache_path = mutant_path.clone().join("cache");
+
+                        let new_config = Arc::new(new_config);
+                        let new_filter = self.filter(&new_config);
+
+                        let mut runner = MultiContractRunnerBuilder::new(new_config.clone())
                             .set_debug(false)
                             .initial_balance(evm_opts.initial_balance)
                             .evm_spec(config.evm_spec_id())
@@ -491,15 +501,19 @@ impl TestArgs {
                                 evm_opts.clone(),
                             )?;
 
-                        // let libraries = runner.libraries.clone();
+                        let results = runner.test_collect(&new_filter);
 
-                        let results = runner.test_collect(&filter);
+                        let outcome = TestOutcome::new(results, self.allow_failure);
 
-                        // dbg!(TestOutcome::new(results, self.allow_failure));
-                        dbg!(results);
-                        dbg!(&filter);
+                        if outcome.failed() != 0 {
+                            sh_println!("Mutation: Dead")?;
+                        } else {
+                            sh_println!("Mutation: Survived")?;
+                            // dbg!(new_filter);
+                            // dbg!(outcome);
+                        }
                     } else {
-                        dbg!("Invalid");
+                        sh_println!("Mutation: Invalid")?;
                     }
                 }
             }
