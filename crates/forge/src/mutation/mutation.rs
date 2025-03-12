@@ -8,7 +8,6 @@ use solar_parse::{
     interface::BytePos,
 };
 use std::path::PathBuf;
-
 /// Kinds of mutations (taken from Certora's Gambit)
 // #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 #[derive(Debug)]

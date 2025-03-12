@@ -166,7 +166,7 @@ impl<'a> MutationHandler<'a> {
         self.temp_dir = Some(temp_dir_root);
     }
 
-    pub async fn generate_and_compile(&self) -> Vec<(&Mutant, bool)> {
+    pub async fn generate_and_compile(&self) -> Vec<(&Mutant, Option<ProjectCompileOutput>)> {
         // pub async fn generate_and_compile(&mut self, mutations_list: Vec<Mutant>, src_path:
         // &PathBuf) {
 
@@ -180,8 +180,13 @@ impl<'a> MutationHandler<'a> {
         self.mutations
             .par_iter()
             .map(|mutant| {
-                let is_valid = self.compile_mutant(mutant).is_some();
-                (mutant, is_valid)
+                // let is_valid = self.compile_mutant(mutant).is_some();
+
+                if let Some(output) = self.compile_mutant(mutant) {
+                    (mutant, Some(output))
+                } else {
+                    (mutant, None)
+                }
             })
             .collect()
     }

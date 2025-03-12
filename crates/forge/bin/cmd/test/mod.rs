@@ -473,7 +473,7 @@ impl TestArgs {
 
                 // @todo multithread here
                 for mutant in mutants {
-                    if mutant.1 {
+                    if let Some(compile_output) = mutant.1 {
                         let mutant_path = mutant.0.path.clone();
 
                         let mut new_config = (*config).clone();
@@ -496,7 +496,7 @@ impl TestArgs {
                             .odyssey(evm_opts.odyssey)
                             .build::<MultiCompiler>(
                                 &mutant_path,
-                                &output,
+                                &compile_output,
                                 env.clone(),
                                 evm_opts.clone(),
                             )?;
@@ -509,8 +509,6 @@ impl TestArgs {
                             sh_println!("Mutation: Dead")?;
                         } else {
                             sh_println!("Mutation: Survived")?;
-                            // dbg!(new_filter);
-                            // dbg!(outcome);
                         }
                     } else {
                         sh_println!("Mutation: Invalid")?;
