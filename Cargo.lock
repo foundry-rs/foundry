@@ -2137,6 +2137,7 @@ dependencies = [
  "foundry-test-utils",
  "foundry-wallets",
  "futures",
+ "gcloud-sdk",
  "indicatif",
  "itertools 0.14.0",
  "rand 0.8.5",
