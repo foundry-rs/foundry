@@ -1354,7 +1354,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                             outcome.result.output = error.abi_encode().into();
                             outcome
                         }
-                    };
+                    }
                 } else {
                     // Call didn't revert, reset `assume_no_revert` state.
                     self.assume_no_revert = None;
@@ -1801,7 +1801,7 @@ impl Cheatcodes {
         let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
         } else {
-            return;
+            return
         };
 
         let Ok(value) = ecx.sload(target_address, key) else {

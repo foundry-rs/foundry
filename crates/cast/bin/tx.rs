@@ -448,7 +448,7 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
                     write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
                 }
             }
-            return Ok(Some(decoded_error));
+            return Ok(Some(decoded_error))
         }
     }
     Ok(None)

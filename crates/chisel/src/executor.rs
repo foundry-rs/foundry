@@ -57,7 +57,7 @@ impl SessionSource {
                     if let Some(statement) = block.statements.last() {
                         if let pt::YulStatement::FunctionCall(yul_call) = statement {
                             if yul_call.id.name == "return" {
-                                return Some(statement.loc());
+                                return Some(statement.loc())
                             }
                         }
                     }
@@ -163,7 +163,7 @@ impl SessionSource {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source");
-                return Ok((true, None));
+                return Ok((true, None))
             }
         };
 
@@ -181,7 +181,7 @@ impl SessionSource {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
                         }
-                        return Ok((true, None));
+                        return Ok((true, None))
                     }
                 }
             }
@@ -202,7 +202,7 @@ impl SessionSource {
 
             if let Some(event_definition) = intermediate_contract.event_definitions.get(input) {
                 let formatted = format_event_definition(event_definition)?;
-                return Ok((false, Some(formatted)));
+                return Ok((false, Some(formatted)))
             }
 
             // we were unable to check the event
@@ -211,7 +211,7 @@ impl SessionSource {
             }
 
             debug!(%err, %input, "failed abi encode input");
-            return Ok((false, None));
+            return Ok((false, None))
         }
 
         let Some((stack, memory, _)) = &res.state else {
@@ -227,7 +227,7 @@ impl SessionSource {
                 }
             }
 
-            return Err(eyre::eyre!("Failed to inspect expression"));
+            return Err(eyre::eyre!("Failed to inspect expression"))
         };
 
         let generated_output = source
@@ -788,7 +788,7 @@ impl Type {
     /// See: <https://github.com/ethereum/solidity/blob/81268e336573721819e39fbb3fefbc9344ad176c/libsolidity/ast/Types.cpp#L4106>
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
-            return self;
+            return self
         }
 
         let mut types = Vec::with_capacity(5);
@@ -797,7 +797,7 @@ impl Type {
 
         let len = types.len();
         if len == 0 {
-            return self;
+            return self
         }
 
         // Type members, like array, bytes etc
@@ -957,7 +957,7 @@ impl Type {
             custom_type.pop();
         }
         if custom_type.is_empty() {
-            return Ok(None);
+            return Ok(None)
         }
 
         // If a contract exists with the given name, check its definitions for a match.
@@ -972,7 +972,7 @@ impl Type {
             if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
                 // Check if the custom type is a function pointer member access
                 if let res @ Some(_) = func_members(func, custom_type) {
-                    return Ok(res);
+                    return Ok(res)
                 }
 
                 // Because tuple types cannot be passed to `abi.encode`, we will only be
@@ -993,7 +993,7 @@ impl Type {
                 // struct, array, etc.
                 if let pt::Expression::Variable(ident) = return_ty {
                     custom_type.push(ident.name.clone());
-                    return Self::infer_custom_type(intermediate, custom_type, Some(contract_name));
+                    return Self::infer_custom_type(intermediate, custom_type, Some(contract_name))
                 }
 
                 // Check if our final function call alters the state. If it does, we bail so that it
@@ -1032,7 +1032,7 @@ impl Type {
             // anything. If it is, we can stop here.
             if let Ok(res) = Self::infer_custom_type(intermediate, custom_type, Some("REPL".into()))
             {
-                return Ok(res);
+                return Ok(res)
             }
 
             // Check if the first element of the custom type is a known contract. If it is, begin
@@ -1041,13 +1041,13 @@ impl Type {
             let contract = intermediate.intermediate_contracts.get(name);
             if contract.is_some() {
                 let contract_name = custom_type.pop();
-                return Self::infer_custom_type(intermediate, custom_type, contract_name);
+                return Self::infer_custom_type(intermediate, custom_type, contract_name)
             }
 
             // See [`Type::infer_var_expr`]
             let name = custom_type.last().unwrap();
             if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
-                return Self::infer_var_expr(expr, Some(intermediate), custom_type);
+                return Self::infer_var_expr(expr, Some(intermediate), custom_type)
             }
 
             // The first element of our custom type was neither a variable or a function within the
@@ -1175,7 +1175,7 @@ impl Type {
         let pt::Expression::Variable(contract_name) =
             intermediate.repl_contract_expressions.get(&contract_name.name)?
         else {
-            return None;
+            return None
         };
 
         let contract = intermediate
@@ -1264,7 +1264,7 @@ impl Type {
 #[inline]
 fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option<DynSolType> {
     if !matches!(func.ty, pt::FunctionTy::Function) {
-        return None;
+        return None
     }
 
     let vis = func.attributes.iter().find_map(|attr| match attr {
@@ -1709,7 +1709,7 @@ mod tests {
                     Ok((v, solc)) => {
                         // successfully installed
                         let _ = sh_println!("found installed Solc v{v} @ {}", solc.solc.display());
-                        break;
+                        break
                     }
                     Err(e) => {
                         // try reinstalling
@@ -1717,7 +1717,7 @@ mod tests {
                         let solc = Solc::blocking_install(&version.parse().unwrap());
                         if solc.map_err(SolcError::from).is_ok() {
                             *is_preinstalled = true;
-                            break;
+                            break
                         }
                     }
                 }

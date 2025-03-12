@@ -27,7 +27,7 @@ impl LogCollector {
             return Some(CallOutcome {
                 result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
                 memory_offset: inputs.return_memory_offset.clone(),
-            });
+            })
         }
         None
     }

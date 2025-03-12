@@ -131,7 +131,7 @@ pub fn build_using_cache(
                     }
                 }
 
-                return Ok(artifact.artifact);
+                return Ok(artifact.artifact)
             }
         }
     }
@@ -186,7 +186,7 @@ fn is_partial_match(
     // 1. Check length of constructor args
     if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
-        return try_extract_and_compare_bytecode(local_bytecode, bytecode);
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode)
     }
 
     // If not runtime, extract constructor args from the end of the bytecode

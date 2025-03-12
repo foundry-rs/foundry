@@ -134,7 +134,7 @@ impl<'a> DebugStepsWalker<'a> {
             self.is_same_loc(*step_idx, self.current_step) ||
                 self.is_same_loc(step_idx + 1, self.current_step - 1)
         }) else {
-            return;
+            return
         };
         // We've found a match, remove all records between start and end, those
         // are considered invalid.

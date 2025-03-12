@@ -71,7 +71,7 @@ impl SolidityHelper {
     /// Highlights a Solidity source string.
     pub fn highlight<'a>(&self, input: &'a str) -> Cow<'a, str> {
         if !self.do_paint() {
-            return Cow::Borrowed(input);
+            return Cow::Borrowed(input)
         }
 
         // Highlight commands separately
@@ -198,7 +198,7 @@ impl Highlighter for SolidityHelper {
         _default: bool,
     ) -> Cow<'b, str> {
         if !self.do_paint() {
-            return Cow::Borrowed(prompt);
+            return Cow::Borrowed(prompt)
         }
 
         let mut out = prompt.to_string();

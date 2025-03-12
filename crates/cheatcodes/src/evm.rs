@@ -814,7 +814,7 @@ impl Cheatcode for setBlockhashCall {
 impl Cheatcode for startDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
         };
 
         let mut info = RecordDebugStepInfo {
@@ -845,11 +845,11 @@ impl Cheatcode for startDebugTraceRecordingCall {
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
         };
 
         let Some(record_info) = ccx.state.record_debug_steps_info else {
-            return Err(Error::from("nothing recorded"));
+            return Err(Error::from("nothing recorded"))
         };
 
         // Use the trace nodes to flatten the call trace

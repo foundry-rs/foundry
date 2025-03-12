@@ -392,7 +392,7 @@ pub async fn handle_traces(
                 .sources(sources)
                 .build();
             debugger.try_run_tui()?;
-            return Ok(());
+            return Ok(())
         }
 
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));

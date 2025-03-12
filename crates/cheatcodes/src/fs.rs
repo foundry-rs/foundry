@@ -427,7 +427,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
 
                             // Return artifact if only one matched
                             if filtered.len() == 1 {
-                                return Some(filtered[0]);
+                                return Some(filtered[0])
                             }
 
                             // Try filtering by profile as well

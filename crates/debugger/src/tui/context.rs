@@ -341,7 +341,7 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
             OpCode::CALLF |
             OpCode::RETF
     ) {
-        return false;
+        return false
     }
 
     let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());

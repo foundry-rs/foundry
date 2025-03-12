@@ -855,7 +855,7 @@ pub fn get_pretty_block_attr(block: &AnyRpcBlock, attr: &str) -> Option<String> 
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
-                return Some(val.pretty());
+                return Some(val.pretty())
             }
             None
         }

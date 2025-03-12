@@ -80,7 +80,7 @@ impl Remappings {
                 // For .sol files, only prevent duplicate source names in the same context
                 return existing.name == remapping.name &&
                     existing.context == remapping.context &&
-                    existing.path == remapping.path;
+                    existing.path == remapping.path
             }
 
             // What we're doing here is filtering for ambiguous paths. For example, if we have
@@ -228,7 +228,7 @@ impl RemappingsProvider<'_> {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
-                    continue;
+                    continue
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -311,7 +311,7 @@ impl Provider for RemappingsProvider<'_> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone());
+                    return Err(err.clone())
                 }
             }
         }?;

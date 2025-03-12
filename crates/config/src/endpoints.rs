@@ -438,7 +438,7 @@ impl ResolvedRpcEndpoint {
     // Attempts to resolve unresolved environment variables into a new instance
     pub fn try_resolve(mut self) -> Self {
         if !self.is_unresolved() {
-            return self;
+            return self
         }
         if let Err(err) = self.endpoint {
             self.endpoint = err.try_resolve()
