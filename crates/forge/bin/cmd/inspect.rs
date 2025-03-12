@@ -170,7 +170,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
         .iter()
         .map(|p| {
             if let Some(ty) = p.internal_type() {
-                return internal_ty(ty);
+                return internal_ty(ty)
             }
             p.ty.clone()
         })
@@ -180,7 +180,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
 
 fn print_abi(abi: &JsonAbi) -> Result<()> {
     if shell::is_json() {
-        return print_json(abi);
+        return print_json(abi)
     }
 
     let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
@@ -271,7 +271,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
     };
 
     if shell::is_json() {
-        return print_json(&storage_layout);
+        return print_json(&storage_layout)
     }
 
     let headers = vec![
@@ -304,7 +304,7 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
     };
 
     if shell::is_json() {
-        return print_json(method_identifiers);
+        return print_json(method_identifiers)
     }
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
