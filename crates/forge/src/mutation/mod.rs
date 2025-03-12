@@ -69,16 +69,6 @@ impl<'a> MutationHandler<'a> {
         }
     }
 
-    // @todo: return MutationTestOutcome and use it in result.rs / dirty logging for now
-    // pub async fn run(&mut self) {
-    //     sh_println!("Running mutation tests...").unwrap();
-
-    //     if let Err(e) = self.load_sources() {
-    //         eprintln!("Failed to load sources: {}", e);
-    //         return;
-    //     }
-    // }
-
     /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants
     /// in spooled tmp files
     pub fn read_source_contract(&mut self) -> Result<(), std::io::Error> {
@@ -93,7 +83,6 @@ impl<'a> MutationHandler<'a> {
         let sess = Session::builder().with_silent_emitter(None).build();
 
         let _ =
-            // sess.enter(|| -> solar_parse::interface::Result<Vec<(Vec<Mutant>, PathBuf)>> {
             sess.enter(|| -> solar_parse::interface::Result<()> {
                 let arena = solar_parse::ast::Arena::new();
                 let mut parser = Parser::from_lazy_source_code(
@@ -104,7 +93,6 @@ impl<'a> MutationHandler<'a> {
                 )?;
 
                 let ast = parser.parse_file().map_err(|e| e.emit())?;
-                // let mut mutations = Vec::new();
 
                 for node in ast.items.iter() {
                     if let ItemKind::Contract(contract) = &node.kind {
@@ -117,28 +105,16 @@ impl<'a> MutationHandler<'a> {
                                 MutantVisitor { mutation_to_conduct: Vec::new() };
                             mutant_visitor.visit_item_contract(contract);
 
-                            // mutations.push((mutant_visitor.mutation_to_conduct, path.clone()));
-
                             self.mutations.extend(mutant_visitor.mutation_to_conduct);
                         }
                     }
                 }
                 Ok(())
             });
-
-        // if let Ok(mutations) = mutations {
-        //     // @todo multithread here?
-        //     for (mut mutation_list, path) in mutations {
-        //         self.create_mutation_folders( &path);
-        //         self.test_mutant(&mut mutation_list, &path).await;
-        //     }
-        // }
     }
 
     pub fn create_mutation_folders(
         &mut self,
-        // mutations_list: &mut Vec<Mutant>,
-        // target_contract_path: &PathBuf,
     ) {
         let temp_dir_root = tempfile::tempdir().unwrap();
         let target_contract_path = &self.contract_to_mutate;
@@ -167,10 +143,6 @@ impl<'a> MutationHandler<'a> {
     }
 
     pub async fn generate_and_compile(&self) -> Vec<(&Mutant, Option<ProjectCompileOutput>)> {
-        // pub async fn generate_and_compile(&mut self, mutations_list: Vec<Mutant>, src_path:
-        // &PathBuf) {
-
-        // let mutations_list = &mut self.mutations;
         let src_path = &self.contract_to_mutate;
 
         self.mutations.iter().for_each(|mutant| {
