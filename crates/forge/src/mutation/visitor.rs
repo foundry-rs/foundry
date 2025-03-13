@@ -97,13 +97,12 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
                 if let Some(op) = &bin_op {
                     self.mutation_to_conduct
-                        .extend(Mutant::create_binary_op_mutation(op.span, op.kind));
+                        .extend(Mutant::create_binary_op_mutation(op.span, op.kind, expr.span));
                 }
             }
             ExprKind::Binary(_, op, _) => {
-                // @todo is a >> b++ a thing (ie parse lhs and rhs too?)
                 self.mutation_to_conduct
-                    .extend(Mutant::create_binary_op_mutation(op.span, op.kind));
+                    .extend(Mutant::create_binary_op_mutation(op.span, op.kind, expr.span));
             }
             ExprKind::Call(expr, args) => {
                 if let ExprKind::Member(_, ident) = &expr.kind {
