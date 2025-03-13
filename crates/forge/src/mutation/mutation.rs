@@ -218,7 +218,8 @@ impl Mutant {
     }
 
     pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Vec<Mutant> {
-        let operations = vec![
+        let operations_bools = vec![
+            // Bool
             BinOpKind::Lt,
             BinOpKind::Le,
             BinOpKind::Gt,
@@ -227,6 +228,10 @@ impl Mutant {
             BinOpKind::Ne,
             BinOpKind::Or,
             BinOpKind::And,
+        ];
+
+        let operations_num_bitwise = vec![
+            // Arithm
             BinOpKind::Shr,
             BinOpKind::Shl,
             BinOpKind::Sar,
@@ -240,6 +245,9 @@ impl Mutant {
             BinOpKind::Div,
             BinOpKind::Rem,
         ];
+
+        let operations =
+            if operations_bools.contains(&op) { operations_bools } else { operations_num_bitwise };
 
         operations
             .into_iter()
@@ -265,20 +273,14 @@ impl Mutant {
         target_expr: &Expr<'_>,
     ) -> Vec<Mutant> {
         let operations = vec![
-            UnOpKind::PreInc,
-            UnOpKind::PreDec,
-            UnOpKind::Not,
-            UnOpKind::Neg,
-            UnOpKind::BitNot,
+            UnOpKind::PreInc, // number
+            UnOpKind::PreDec, // n
+            UnOpKind::Not,    // b
+            UnOpKind::Neg,    // n
+            UnOpKind::BitNot, // n
         ];
 
         let post_fixed_operations = vec![UnOpKind::PostInc, UnOpKind::PostDec];
-
-        // let original_span =
-        //     Span::new(
-        //         std::cmp::min(target_expr.span.lo(), span.lo()),
-        //         std::cmp::max(target_expr.span.hi(), span.hi())
-        //     );
 
         let target_kind = &target_expr.kind;
 
