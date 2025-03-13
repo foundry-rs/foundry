@@ -275,8 +275,8 @@ impl Mutant {
         let operations = vec![
             UnOpKind::PreInc, // number
             UnOpKind::PreDec, // n
-            UnOpKind::Not,    // b
-            UnOpKind::Neg,    // n
+            UnOpKind::Not,    // b @todo filter this one only for bool
+            UnOpKind::Neg,    // n @todo filter this one only for int
             UnOpKind::BitNot, // n
         ];
 
@@ -292,7 +292,12 @@ impl Mutant {
             },
             ExprKind::Ident(inner) => inner.to_string(),
             ExprKind::Member(expr, ident) => {
-                todo!()
+                match expr.kind {
+                    ExprKind::Ident(inner) => {
+                        format!("{}{}", ident.as_str(), inner.to_string())
+                    } // @todo not supporting something like a.b[0]++
+                    _ => "".to_string(),
+                }
             }
             _ => "".to_string(),
         };
