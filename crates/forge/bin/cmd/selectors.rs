@@ -12,7 +12,7 @@ use foundry_common::{
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use foundry_config::Config;
-use std::fs::canonicalize;
+use std::{fs::canonicalize, path::PathBuf};
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -36,6 +36,7 @@ pub enum SelectorsSubcommands {
     #[command(visible_alias = "up")]
     Upload {
         /// The name of the contract to upload selectors for.
+        /// Can also be in form of `path:contract name`.
         #[arg(required_unless_present = "all")]
         contract: Option<String>,
 
@@ -108,7 +109,11 @@ impl SelectorsSubcommands {
 
                 let project = build_args.project()?;
                 let output = if let Some(name) = &contract {
-                    let target_path = project.find_contract_path(name)?;
+                    let target_path = if let Some((path, _)) = name.split_once(':') {
+                        PathBuf::from(path)
+                    } else {
+                        project.find_contract_path(name)?
+                    };
                     compile_target(&target_path, &project, false)?
                 } else {
                     ProjectCompiler::new().compile(&project)?
@@ -126,7 +131,12 @@ impl SelectorsSubcommands {
                         .collect()
                 } else {
                     let contract = contract.unwrap();
-                    let found_artifact = output.find_first(&contract);
+                    let found_artifact = if let Some((path, contract)) = contract.split_once(':') {
+                        output.find(project.root().join(path).as_path(), contract)
+                    } else {
+                        output.find_first(&contract)
+                    };
+
                     let artifact = found_artifact
                         .ok_or_else(|| {
                             eyre::eyre!(
