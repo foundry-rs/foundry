@@ -463,7 +463,7 @@ impl TestArgs {
 
             sh_println!("Running mutation tests...").unwrap();
             for path in mutate_paths {
-                let mut handler = MutationHandler::new(path, config.clone(), &env, &evm_opts);
+                let mut handler = MutationHandler::new(path, config.clone());
 
                 handler.read_source_contract()?;
                 handler.generate_ast().await;

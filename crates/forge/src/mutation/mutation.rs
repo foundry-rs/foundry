@@ -1,16 +1,27 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
-use rand::{distributions::Alphanumeric, prelude::*, Rng};
-use solar_parse::{
-    ast::{
-        BinOpKind, Expr, ExprKind, Ident, IndexKind, LitKind, Span, TypeKind, UnOp, UnOpKind,
-        VariableDefinition,
-    },
-    interface::BytePos,
-};
+use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
 use std::path::PathBuf;
 
 use super::visitor::AssignVarTypes;
+
+pub struct MutationContext<'a> {
+    pub span: Span,
+    /// The expression to mutate
+    pub expr: Option<&'a Expr<'a>>,
+    /// The operation (in unary or binary-op mutations)
+    pub op_kind: Option<UnOpKind>, 
+}
+
+pub trait Mutator {
+    /// Generate all mutant corresponding to a given context
+    fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant>;
+    /// True if a mutator can be applied to an expression/node
+    fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool;
+    fn name(&self) -> &'static str;
+}
+
+
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
 #[derive(Debug)]
@@ -19,17 +30,13 @@ struct UnaryOpMutated {
     /// eg `a++`
     new_expression: String,
 
-    /// Span covering the whole non-mutated expression to cover (we might need to shrink or
-    /// enlarge) eg from `a` to after the second `+` in `a++`
-    span: Span,
-
     /// The underlying operator used by this mutant
     resulting_op_kind: UnOpKind,
 }
 
 impl UnaryOpMutated {
-    fn new(new_expression: String, span: Span, resulting_op_kind: UnOpKind) -> Self {
-        UnaryOpMutated { new_expression, span, resulting_op_kind }
+    fn new(new_expression: String, resulting_op_kind: UnOpKind) -> Self {
+        UnaryOpMutated { new_expression, resulting_op_kind }
     }
 }
 
@@ -139,9 +146,14 @@ impl ToString for MutationType {
                 AssignVarTypes::Identifier(ident) => ident.as_str().to_owned(),
             },
             MutationType::BinaryOpMutation(kind) => kind.to_str().to_owned(),
-            MutationType::UnaryOperatorMutation(mutated) => mutated.to_string(),
+            MutationType::DeleteExpressionMutation => "assert(true)".to_string(),
             MutationType::ElimDelegateMutation => "call".to_string(),
-            _ => "".to_string(),
+            MutationType::UnaryOperatorMutation(mutated) => mutated.to_string(),
+
+            MutationType::FunctionCallMutation |
+            MutationType::RequireMutation |
+            MutationType::SwapArgumentsFunctionMutation |
+            MutationType::SwapArgumentsOperatorMutation => "".to_string(),
         }
     }
 }
@@ -163,41 +175,28 @@ pub struct Mutant {
 }
 
 impl Mutant {
-    pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes) -> Vec<Mutant> {
-        match var_type {
-            AssignVarTypes::Literal(lit) => match lit {
-                LitKind::Bool(val) => vec![Mutant {
-                    span,
-                    mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
-                        LitKind::Bool(!val),
-                    )),
-                    path: PathBuf::default(),
-                }],
-                LitKind::Number(val) => {
-                    vec![
-                        Mutant {
-                            span,
-                            mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
-                                LitKind::Number(num_bigint::BigInt::ZERO),
-                            )),
-                            path: PathBuf::default(),
-                        },
-                        Mutant {
-                            span,
-                            mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
-                                LitKind::Number(-val),
-                            )),
-                            path: PathBuf::default(),
-                        },
-                    ]
-                }
-                _ => {
-                    vec![]
-                }
-            },
-            AssignVarTypes::Identifier(ident) => {
-                let inner = ident.to_string();
+    /// Get a temp folder name based on the span and the mutation to conduct
+    pub fn get_unique_id(&self) -> String {
+        format!(
+            "{}_{}_{}",
+            self.span.hi().to_u32(),
+            self.span.lo().to_u32(),
+            self.mutation.get_name()
+        )
+    }
+}
 
+pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes) -> Vec<Mutant> {
+    match var_type {
+        AssignVarTypes::Literal(lit) => match lit {
+            LitKind::Bool(val) => vec![Mutant {
+                span,
+                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                    LitKind::Bool(!val),
+                )),
+                path: PathBuf::default(),
+            }],
+            LitKind::Number(val) => {
                 vec![
                     Mutant {
                         span,
@@ -208,150 +207,163 @@ impl Mutant {
                     },
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Identifier(
-                            format!("-{}", inner),
+                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                            LitKind::Number(-val),
                         )),
                         path: PathBuf::default(),
                     },
                 ]
             }
+            _ => {
+                vec![]
+            }
+        },
+        AssignVarTypes::Identifier(ident) => {
+            let inner = ident.to_string();
+
+            vec![
+                Mutant {
+                    span,
+                    mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                        LitKind::Number(num_bigint::BigInt::ZERO),
+                    )),
+                    path: PathBuf::default(),
+                },
+                Mutant {
+                    span,
+                    mutation: MutationType::AssignmentMutation(AssignVarTypes::Identifier(
+                        format!("-{}", inner),
+                    )),
+                    path: PathBuf::default(),
+                },
+            ]
         }
     }
+}
 
-    pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Vec<Mutant> {
-        let operations_bools = vec![
-            // Bool
-            BinOpKind::Lt,
-            BinOpKind::Le,
-            BinOpKind::Gt,
-            BinOpKind::Ge,
-            BinOpKind::Eq,
-            BinOpKind::Ne,
-            BinOpKind::Or,
-            BinOpKind::And,
-        ]; // this cover the "if" mutations, as every other mutant is tested, at least once
-           // @todo to optimize -> replace whole stmt (need new visitor override for visit_stmt tho)
-           // with true/false and skip operations_bools here (mayve some "level"/depth of
-           // mutation as param?)
+pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Vec<Mutant> {
+    let operations_bools = vec![
+        // Bool
+        BinOpKind::Lt,
+        BinOpKind::Le,
+        BinOpKind::Gt,
+        BinOpKind::Ge,
+        BinOpKind::Eq,
+        BinOpKind::Ne,
+        BinOpKind::Or,
+        BinOpKind::And,
+    ]; // this cover the "if" mutations, as every other mutant is tested, at least once
+       // @todo to optimize -> replace whole stmt (need new visitor override for visit_stmt tho)
+       // with true/false and skip operations_bools here (mayve some "level"/depth of
+       // mutation as param?)
 
-        let operations_num_bitwise = vec![
-            // Arithm
-            BinOpKind::Shr,
-            BinOpKind::Shl,
-            BinOpKind::Sar,
-            BinOpKind::BitAnd,
-            BinOpKind::BitOr,
-            BinOpKind::BitXor,
-            BinOpKind::Add,
-            BinOpKind::Sub,
-            BinOpKind::Pow,
-            BinOpKind::Mul,
-            BinOpKind::Div,
-            BinOpKind::Rem,
-        ];
+    let operations_num_bitwise = vec![
+        // Arithm
+        BinOpKind::Shr,
+        BinOpKind::Shl,
+        BinOpKind::Sar,
+        BinOpKind::BitAnd,
+        BinOpKind::BitOr,
+        BinOpKind::BitXor,
+        BinOpKind::Add,
+        BinOpKind::Sub,
+        BinOpKind::Pow,
+        BinOpKind::Mul,
+        BinOpKind::Div,
+        BinOpKind::Rem,
+    ];
 
-        let operations =
-            if operations_bools.contains(&op) { operations_bools } else { operations_num_bitwise };
+    let operations =
+        if operations_bools.contains(&op) { operations_bools } else { operations_num_bitwise };
 
-        operations
-            .into_iter()
-            .filter(|&kind| kind != op)
-            .map(|kind| Mutant {
-                span,
-                mutation: MutationType::BinaryOpMutation(kind),
-                path: PathBuf::default(),
-            })
-            .collect()
-    }
+    operations
+        .into_iter()
+        .filter(|&kind| kind != op)
+        .map(|kind| Mutant {
+            span,
+            mutation: MutationType::BinaryOpMutation(kind),
+            path: PathBuf::default(),
+        })
+        .collect()
+}
 
-    pub fn create_delete_mutation(span: Span) -> Mutant {
-        Mutant { span, mutation: MutationType::DeleteExpressionMutation, path: PathBuf::default() }
-    }
+pub fn create_delete_mutation(span: Span) -> Mutant {
+    Mutant { span, mutation: MutationType::DeleteExpressionMutation, path: PathBuf::default() }
+}
 
-    /// The `target_expr` is the expresion the unary operator is modifying (ie `a` in `a++`)
-    /// We only mutate where target_expr.kind is either a literal (123), an ident (foo) or a member
-    /// (foo.x) original_span is the whole span (expr and op)
-    pub fn create_unary_mutation(
-        original_span: Span,
-        op: UnOpKind,
-        target_expr: &Expr<'_>,
-    ) -> Vec<Mutant> {
-        let operations = vec![
-            UnOpKind::PreInc, // number
-            UnOpKind::PreDec, // n
-            UnOpKind::Not,    // b @todo filter this one only for bool
-            UnOpKind::Neg,    // n @todo filter this one only for int
-            UnOpKind::BitNot, // n
-        ];
+/// The `target_expr` is the expresion the unary operator is modifying (ie `a` in `a++`)
+/// We only mutate where target_expr.kind is either a literal (123), an ident (foo) or a member
+/// (foo.x) original_span is the whole span (expr and op)
+pub fn create_unary_mutation(
+    original_span: Span,
+    op: UnOpKind,
+    target_expr: &Expr<'_>,
+) -> Vec<Mutant> {
+    let operations = vec![
+        UnOpKind::PreInc, // number
+        UnOpKind::PreDec, // n
+        UnOpKind::Not,    // b @todo filter this one only for bool
+        UnOpKind::Neg,    // n @todo filter this one only for int
+        UnOpKind::BitNot, // n
+    ];
 
-        let post_fixed_operations = vec![UnOpKind::PostInc, UnOpKind::PostDec];
+    let post_fixed_operations = vec![UnOpKind::PostInc, UnOpKind::PostDec];
 
-        let target_kind = &target_expr.kind;
+    let target_kind = &target_expr.kind;
 
-        let target_content = match target_kind {
-            ExprKind::Lit(lit, _) => match &lit.kind {
-                LitKind::Bool(val) => val.to_string(),
-                LitKind::Number(val) => val.to_string(),
-                _ => "".to_string(),
-            },
-            ExprKind::Ident(inner) => inner.to_string(),
-            ExprKind::Member(expr, ident) => {
-                match expr.kind {
-                    ExprKind::Ident(inner) => {
-                        format!("{}{}", ident.as_str(), inner.to_string())
-                    } // @todo not supporting something like a.b[0]++
-                    _ => "".to_string(),
-                }
-            }
+    let target_content = match target_kind {
+        ExprKind::Lit(lit, _) => match &lit.kind {
+            LitKind::Bool(val) => val.to_string(),
+            LitKind::Number(val) => val.to_string(),
             _ => "".to_string(),
-        };
+        },
+        ExprKind::Ident(inner) => inner.to_string(),
+        ExprKind::Member(expr, ident) => {
+            match expr.kind {
+                ExprKind::Ident(inner) => {
+                    format!("{}{}", ident.as_str(), inner.to_string())
+                } // @todo not supporting something like a.b[0]++
+                _ => "".to_string(),
+            }
+        }
+        _ => "".to_string(),
+    };
 
-        let mut mutations: Vec<Mutant>;
+    let mut mutations: Vec<Mutant>;
 
-        mutations = operations
-            .into_iter()
-            .filter(|&kind| kind != op)
-            .map(|kind| {
-                let new_expression = format!("{}{}", kind.to_str(), target_content);
+    mutations = operations
+        .into_iter()
+        .filter(|&kind| kind != op)
+        .map(|kind| {
+            let new_expression = format!("{}{}", kind.to_str(), target_content);
 
-                let mutated = UnaryOpMutated::new(new_expression, original_span, kind);
+            let mutated = UnaryOpMutated::new(new_expression, kind);
 
-                Mutant {
-                    span: original_span,
-                    mutation: MutationType::UnaryOperatorMutation(mutated),
-                    path: PathBuf::default(),
-                }
-            })
-            .collect();
+            Mutant {
+                span: original_span,
+                mutation: MutationType::UnaryOperatorMutation(mutated),
+                path: PathBuf::default(),
+            }
+        })
+        .collect();
 
-        mutations.extend(post_fixed_operations.into_iter().filter(|&kind| kind != op).map(
-            |kind| {
-                let new_expression = format!("{}{}", target_content, kind.to_str());
+    mutations.extend(post_fixed_operations.into_iter().filter(|&kind| kind != op).map(
+        |kind| {
+            let new_expression = format!("{}{}", target_content, kind.to_str());
 
-                let mutated = UnaryOpMutated::new(new_expression, original_span, kind);
+            let mutated = UnaryOpMutated::new(new_expression, kind);
 
-                Mutant {
-                    span: original_span,
-                    mutation: MutationType::UnaryOperatorMutation(mutated),
-                    path: PathBuf::default(),
-                }
-            },
-        ));
+            Mutant {
+                span: original_span,
+                mutation: MutationType::UnaryOperatorMutation(mutated),
+                path: PathBuf::default(),
+            }
+        },
+    ));
 
-        return mutations;
-    }
+    return mutations;
+}
 
-    pub fn create_delegatecall_mutation(span: Span) -> Mutant {
-        Mutant { span, mutation: MutationType::ElimDelegateMutation, path: PathBuf::default() }
-    }
-
-    /// Get a temp folder name based on the span and the mutation to conduct
-    pub fn get_unique_id(&self) -> String {
-        format!(
-            "{}_{}_{}",
-            self.span.hi().to_u32(),
-            self.span.lo().to_u32(),
-            self.mutation.get_name()
-        )
-    }
+pub fn create_delegatecall_mutation(span: Span) -> Mutant {
+    Mutant { span, mutation: MutationType::ElimDelegateMutation, path: PathBuf::default() }
 }

@@ -1,70 +1,48 @@
 mod mutation;
-mod visitor;
+mod visitor; 
+mod mutators;
+mod mutator_registry;
+
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use solar_parse::{
     ast::{
-        interface::{self, source_map::FileName, Session, SessionGlobals},
-        Arena, ContractKind, Expr, ExprKind, Item, ItemContract, ItemFunction, ItemKind,
-        SourceUnit, Span, Stmt, StmtKind, VariableDefinition,
+        interface::{source_map::FileName, Session},
+        ContractKind, ItemKind
     },
-    token::{Token, TokenKind},
-    Lexer, Parser,
+    Parser,
 };
-use std::{hash::Hash, sync::Arc};
+use std::sync::Arc;
 
-use crate::{
-    mutation::{mutation::Mutant, visitor::MutantVisitor},
-    MultiContractRunnerBuilder,
-};
+use crate::mutation::{mutation::Mutant, visitor::MutantVisitor};
 
 pub use crate::mutation::mutation::MutationResult;
-use foundry_compilers::{
-    artifacts::output_selection::OutputSelection,
-    compilers::{
-        multi::{MultiCompiler, MultiCompilerLanguage},
-        Language,
-    },
-    project::ProjectCompiler,
-    utils::source_files_iter,
-    ProjectCompileOutput,
-};
+use foundry_compilers::{project::ProjectCompiler, ProjectCompileOutput};
 use foundry_config::Config;
 use rayon::prelude::*;
-use revm::primitives::Env;
 use solar_parse::ast::visit::Visit;
-use std::{
-    collections::HashMap,
-    io::{Seek, Write},
-    path::{Path, PathBuf},
-};
-use tempfile::{SpooledTempFile, TempDir};
-pub struct MutationHandler<'a> {
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
+pub struct MutationHandler {
     contract_to_mutate: PathBuf,
     src: Arc<String>,
     mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
-    env: &'a Env,
-    evm_opts: &'a crate::opts::EvmOpts,
     // Ensure we don't clean it between creation and mutant generation (been there, done that)
     temp_dir: Option<TempDir>,
 }
 
-impl<'a> MutationHandler<'a> {
+impl MutationHandler {
     pub fn new(
         contract_to_mutate: PathBuf,
         config: Arc<foundry_config::Config>,
-        env: &'a Env,
-        evm_opts: &'a crate::opts::EvmOpts,
-    ) -> MutationHandler<'a> {
+    ) -> MutationHandler {
         MutationHandler {
             contract_to_mutate,
             src: Arc::default(),
             mutations: vec![],
             config,
-            env,
-            evm_opts,
             temp_dir: None,
         }
     }
