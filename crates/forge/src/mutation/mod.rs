@@ -14,9 +14,12 @@ use solar_parse::{
 };
 use std::{hash::Hash, sync::Arc};
 
-use crate::mutation::{
-    mutation::{Mutant, MutationResult},
-    visitor::MutantVisitor,
+use crate::{
+    mutation::{
+        mutation::{Mutant, MutationResult},
+        visitor::MutantVisitor,
+    },
+    MultiContractRunnerBuilder,
 };
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
@@ -28,7 +31,9 @@ use foundry_compilers::{
     utils::source_files_iter,
     ProjectCompileOutput,
 };
+use foundry_config::Config;
 use rayon::prelude::*;
+use revm::primitives::Env;
 use solar_parse::ast::visit::Visit;
 use std::{
     collections::HashMap,
@@ -36,9 +41,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::{SpooledTempFile, TempDir};
-use crate::MultiContractRunnerBuilder;
-use foundry_config::Config;
-use revm::primitives::Env;
 pub struct MutationHandler<'a> {
     contract_to_mutate: PathBuf,
     src: Arc<String>,
@@ -81,40 +83,34 @@ impl<'a> MutationHandler<'a> {
         let target_content = Arc::clone(&self.src);
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        let _ =
-            sess.enter(|| -> solar_parse::interface::Result<()> {
-                let arena = solar_parse::ast::Arena::new();
-                let mut parser = Parser::from_lazy_source_code(
-                    &sess,
-                    &arena,
-                    FileName::from(path.clone()),
-                    || Ok((*target_content).to_string()),
-                )?;
+        let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
+            let arena = solar_parse::ast::Arena::new();
+            let mut parser =
+                Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
+                    Ok((*target_content).to_string())
+                })?;
 
-                let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-                for node in ast.items.iter() {
-                    if let ItemKind::Contract(contract) = &node.kind {
-                        // @todo include library too?
-                        if matches!(
-                            contract.kind,
-                            ContractKind::Contract | ContractKind::AbstractContract
-                        ) {
-                            let mut mutant_visitor =
-                                MutantVisitor { mutation_to_conduct: Vec::new() };
-                            mutant_visitor.visit_item_contract(contract);
+            for node in ast.items.iter() {
+                if let ItemKind::Contract(contract) = &node.kind {
+                    // @todo include library too?
+                    if matches!(
+                        contract.kind,
+                        ContractKind::Contract | ContractKind::AbstractContract
+                    ) {
+                        let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new() };
+                        mutant_visitor.visit_item_contract(contract);
 
-                            self.mutations.extend(mutant_visitor.mutation_to_conduct);
-                        }
+                        self.mutations.extend(mutant_visitor.mutation_to_conduct);
                     }
                 }
-                Ok(())
-            });            
+            }
+            Ok(())
+        });
     }
 
-    pub fn create_mutation_folders(
-        &mut self,
-    ) {
+    pub fn create_mutation_folders(&mut self) {
         let temp_dir_root = tempfile::tempdir().unwrap();
         let target_contract_path = &self.contract_to_mutate;
         // let mut mutations_list = self.mutations;
@@ -207,7 +203,9 @@ impl<'a> MutationHandler<'a> {
                 )?;
             } else {
                 if entry.file_name() != except.file_name().unwrap_or_default() {
-                    // std::os::unix::fs::symlink(entry.path(), &dst.as_ref().join(entry.file_name()))?; // and for windows, would be std::os::windows::fs::symlink_file
+                    // std::os::unix::fs::symlink(entry.path(),
+                    // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
+                    // std::os::windows::fs::symlink_file
                     std::fs::copy(entry.path(), &dst.as_ref().join(entry.file_name()))?;
                 }
             }
@@ -219,7 +217,7 @@ impl<'a> MutationHandler<'a> {
         let temp_dir_path = &mutation.path;
 
         let span = mutation.span;
-        let replacement = mutation.mutation.to_str();
+        let replacement = mutation.mutation.to_string();
 
         let target_path = temp_dir_path
             .ancestors()
@@ -241,6 +239,8 @@ impl<'a> MutationHandler<'a> {
         new_content.push_str(after);
 
         dbg!(mutation);
+        dbg!(span);
+        dbg!(replacement);
         dbg!(&new_content);
 
         std::fs::write(&target_path, new_content)

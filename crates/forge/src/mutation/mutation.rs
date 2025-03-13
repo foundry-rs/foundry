@@ -3,7 +3,8 @@
 use rand::{distributions::Alphanumeric, prelude::*, Rng};
 use solar_parse::{
     ast::{
-        BinOpKind, Expr, ExprKind, IndexKind, LitKind, Span, TypeKind, UnOpKind, VariableDefinition, Ident
+        BinOpKind, Expr, ExprKind, Ident, IndexKind, LitKind, Span, TypeKind, UnOp, UnOpKind,
+        VariableDefinition,
     },
     interface::BytePos,
 };
@@ -11,8 +12,33 @@ use std::path::PathBuf;
 
 use super::visitor::AssignVarTypes;
 
-/// Kinds of mutations (taken from Certora's Gambit)
-// #[derive(Hash, Eq, PartialEq, Clone, Copy)]
+/// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
+#[derive(Debug)]
+struct UnaryOpMutated {
+    /// String containing the whole new expression (operator and its target)
+    /// eg `a++`
+    new_expression: String,
+
+    /// Span covering the whole non-mutated expression to cover (we might need to shrink or
+    /// enlarge) eg from `a` to after the second `+` in `a++`
+    span: Span,
+
+    /// The underlying operator used by this mutant
+    resulting_op_kind: UnOpKind,
+}
+
+impl UnaryOpMutated {
+    fn new(new_expression: String, span: Span, resulting_op_kind: UnOpKind) -> Self {
+        UnaryOpMutated { new_expression, span, resulting_op_kind }
+    }
+}
+
+impl ToString for UnaryOpMutated {
+    fn to_string(&self) -> String {
+        self.new_expression.clone()
+    }
+}
+
 #[derive(Debug)]
 pub enum MutationType {
     // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
@@ -67,18 +93,20 @@ pub enum MutationType {
     /// For an unary operator x in UnOpKind (eg "++", "--", "~", "!"):
     /// replace x with all other operator in op
     /// Pre or post- are different UnOp
-    UnaryOperatorMutation(UnOpKind, Span),
+    UnaryOperatorMutation(UnaryOpMutated),
 }
 
 impl MutationType {
     fn get_name(&self) -> String {
         match self {
-            MutationType::AssignmentMutation(var_type) => {
-                match var_type {
-                    AssignVarTypes::Literal(kind) => format!("{}_{}", "AssignmentMutation".to_string(), kind.description()),
-                    AssignVarTypes::Identifier(ident) => format!("{}_{}", "AssignmentMutation".to_string(), ident)
+            MutationType::AssignmentMutation(var_type) => match var_type {
+                AssignVarTypes::Literal(kind) => {
+                    format!("{}_{}", "AssignmentMutation".to_string(), kind.description())
                 }
-            }
+                AssignVarTypes::Identifier(ident) => {
+                    format!("{}_{}", "AssignmentMutation".to_string(), ident)
+                }
+            },
             MutationType::BinaryOpMutation(kind) => {
                 format!("{}_{:?}", "BinaryOpMutation".to_string(), kind)
             }
@@ -92,23 +120,26 @@ impl MutationType {
             MutationType::SwapArgumentsOperatorMutation => {
                 "SwapArgumentsOperatorMutation".to_string()
             }
-            MutationType::UnaryOperatorMutation(kind, _) => {
-                format!("{}_{:?}", "UnaryOperatorMutation".to_string(), kind)
+            MutationType::UnaryOperatorMutation(mutated) => {
+                // avoid operator in tmp dir name
+                format!("{}_{:?}", "UnaryOperatorMutation".to_string(), mutated.resulting_op_kind)
             }
         }
     }
+}
 
-    pub fn to_str(&self) -> String {
+impl ToString for MutationType {
+    fn to_string(&self) -> String {
         match self {
             MutationType::AssignmentMutation(kind) => match kind {
-                    AssignVarTypes::Literal(kind) => match kind {
-                        LitKind::Number(val) => val.to_string(),
-                        _ => todo!()
-                    },
-                    AssignVarTypes::Identifier(ident) => ident.as_str().to_string()
+                AssignVarTypes::Literal(kind) => match kind {
+                    LitKind::Number(val) => val.to_string(),
+                    _ => todo!(),
+                },
+                AssignVarTypes::Identifier(ident) => ident.as_str().to_owned(),
             },
-            MutationType::BinaryOpMutation(kind) => kind.to_str().to_string(),
-            MutationType::UnaryOperatorMutation(kind, _) => kind.to_str().to_string(),
+            MutationType::BinaryOpMutation(kind) => kind.to_str().to_owned(),
+            MutationType::UnaryOperatorMutation(mutated) => mutated.to_string(),
             _ => "".to_string(),
         }
     }
@@ -131,34 +162,36 @@ pub struct Mutant {
 }
 
 impl Mutant {
-    pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes ) -> Vec<Mutant> {
+    pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes) -> Vec<Mutant> {
         match var_type {
-            AssignVarTypes::Literal(lit) => {
-                    match lit {
-                    LitKind::Bool(val) => vec![Mutant {
-                        span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Bool(!val))),
-                        path: PathBuf::default(),
-                    }],
-                    LitKind::Number(val) => {
-                        vec![
-                            Mutant {
-                                span,
-                                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Number(
-                                    num_bigint::BigInt::ZERO,
-                                ))),
-                                path: PathBuf::default(),
-                            },
-                            Mutant {
-                                span,
-                                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Number(-val))),
-                                path: PathBuf::default(),
-                            },
-                        ]
-                    },
-                    _ => {
-                        vec![]
-                    }
+            AssignVarTypes::Literal(lit) => match lit {
+                LitKind::Bool(val) => vec![Mutant {
+                    span,
+                    mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                        LitKind::Bool(!val),
+                    )),
+                    path: PathBuf::default(),
+                }],
+                LitKind::Number(val) => {
+                    vec![
+                        Mutant {
+                            span,
+                            mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                                LitKind::Number(num_bigint::BigInt::ZERO),
+                            )),
+                            path: PathBuf::default(),
+                        },
+                        Mutant {
+                            span,
+                            mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                                LitKind::Number(-val),
+                            )),
+                            path: PathBuf::default(),
+                        },
+                    ]
+                }
+                _ => {
+                    vec![]
                 }
             },
             AssignVarTypes::Identifier(ident) => {
@@ -167,15 +200,16 @@ impl Mutant {
                 vec![
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Number(
-                            num_bigint::BigInt::ZERO,
-                        ))),
+                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                            LitKind::Number(num_bigint::BigInt::ZERO),
+                        )),
                         path: PathBuf::default(),
                     },
-
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Identifier(format!("-{}", inner))),
+                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Identifier(
+                            format!("-{}", inner),
+                        )),
                         path: PathBuf::default(),
                     },
                 ]
@@ -222,29 +256,78 @@ impl Mutant {
         Mutant { span, mutation: MutationType::DeleteExpressionMutation, path: PathBuf::default() }
     }
 
-    /// @dev the emitter will have to put pre and post-op before or after the target span
-    /// eg ++a -> preInc, so should have --a as mutant, but a++ as well (target_span is the span for
-    /// `a`)
-    pub fn create_unary_mutation(span: Span, op: UnOpKind, target_span: Span) -> Vec<Mutant> {
+    /// The `target_expr` is the expresion the unary operator is modifying (ie `a` in `a++`)
+    /// We only mutate where target_expr.kind is either a literal (123), an ident (foo) or a member
+    /// (foo.x) original_span is the whole span (expr and op)
+    pub fn create_unary_mutation(
+        original_span: Span,
+        op: UnOpKind,
+        target_expr: &Expr<'_>,
+    ) -> Vec<Mutant> {
         let operations = vec![
             UnOpKind::PreInc,
             UnOpKind::PreDec,
-            UnOpKind::PostInc,
-            UnOpKind::PostDec,
             UnOpKind::Not,
             UnOpKind::Neg,
             UnOpKind::BitNot,
         ];
 
-        operations
+        let post_fixed_operations = vec![UnOpKind::PostInc, UnOpKind::PostDec];
+
+        // let original_span =
+        //     Span::new(
+        //         std::cmp::min(target_expr.span.lo(), span.lo()),
+        //         std::cmp::max(target_expr.span.hi(), span.hi())
+        //     );
+
+        let target_kind = &target_expr.kind;
+
+        let target_content = match target_kind {
+            ExprKind::Lit(lit, _) => match &lit.kind {
+                LitKind::Bool(val) => val.to_string(),
+                LitKind::Number(val) => val.to_string(),
+                _ => "".to_string(),
+            },
+            ExprKind::Ident(inner) => inner.to_string(),
+            ExprKind::Member(expr, ident) => {
+                todo!()
+            }
+            _ => "".to_string(),
+        };
+
+        let mut mutations: Vec<Mutant>;
+
+        mutations = operations
             .into_iter()
             .filter(|&kind| kind != op)
-            .map(|kind| Mutant {
-                span,
-                mutation: MutationType::UnaryOperatorMutation(kind, target_span),
-                path: PathBuf::default(),
+            .map(|kind| {
+                let new_expression = format!("{}{}", kind.to_str(), target_content);
+
+                let mutated = UnaryOpMutated::new(new_expression, original_span, kind);
+
+                Mutant {
+                    span: original_span,
+                    mutation: MutationType::UnaryOperatorMutation(mutated),
+                    path: PathBuf::default(),
+                }
             })
-            .collect()
+            .collect();
+
+        mutations.extend(post_fixed_operations.into_iter().filter(|&kind| kind != op).map(
+            |kind| {
+                let new_expression = format!("{}{}", target_content, kind.to_str());
+
+                let mutated = UnaryOpMutated::new(new_expression, original_span, kind);
+
+                Mutant {
+                    span: original_span,
+                    mutation: MutationType::UnaryOperatorMutation(mutated),
+                    path: PathBuf::default(),
+                }
+            },
+        ));
+
+        return mutations;
     }
 
     pub fn create_delegatecall_mutation(span: Span) -> Mutant {
