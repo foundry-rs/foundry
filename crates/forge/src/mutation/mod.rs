@@ -15,12 +15,11 @@ use solar_parse::{
 use std::{hash::Hash, sync::Arc};
 
 use crate::{
-    mutation::{
-        mutation::{Mutant, MutationResult},
-        visitor::MutantVisitor,
-    },
+    mutation::{mutation::Mutant, visitor::MutantVisitor},
     MultiContractRunnerBuilder,
 };
+
+pub use crate::mutation::mutation::MutationResult;
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{

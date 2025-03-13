@@ -54,7 +54,7 @@ pub enum MutationType {
 
     /// For a binary op y in BinOpKind ("+", "-", ">=", etc)
     /// replace y with each non-y in op
-    BinaryOpMutation(UnaryOpMutated),
+    BinaryOpMutation(BinOpKind),
 
     /// For a delete expr x `delete foo`, replace x with `assert(true)`
     DeleteExpressionMutation,
@@ -138,8 +138,9 @@ impl ToString for MutationType {
                 },
                 AssignVarTypes::Identifier(ident) => ident.as_str().to_owned(),
             },
-            MutationType::BinaryOpMutation(mutated) => mutated.to_string(),
+            MutationType::BinaryOpMutation(kind) => kind.to_str().to_owned(),
             MutationType::UnaryOperatorMutation(mutated) => mutated.to_string(),
+            MutationType::ElimDelegateMutation => "call".to_string(),
             _ => "".to_string(),
         }
     }
@@ -217,7 +218,7 @@ impl Mutant {
         }
     }
 
-    pub fn create_binary_op_mutation(span: Span, op: BinOpKind, target_span: Span) -> Vec<Mutant> {
+    pub fn create_binary_op_mutation(span: Span, op: BinOpKind) -> Vec<Mutant> {
         let operations_bools = vec![
             // Bool
             BinOpKind::Lt,
@@ -228,7 +229,10 @@ impl Mutant {
             BinOpKind::Ne,
             BinOpKind::Or,
             BinOpKind::And,
-        ];
+        ]; // this cover the "if" mutations, as every other mutant is tested, at least once
+           // @todo to optimize -> replace whole stmt (need new visitor override for visit_stmt tho)
+           // with true/false and skip operations_bools here (mayve some "level"/depth of
+           // mutation as param?)
 
         let operations_num_bitwise = vec![
             // Arithm
@@ -246,35 +250,18 @@ impl Mutant {
             BinOpKind::Rem,
         ];
 
-        let mut mutants: Vec<Mutant> = vec![];
-
         let operations =
-            if operations_bools.contains(&op) { 
-                mutants.push(Mutant {
-                    span,
-                    mutation: MutationType::BinaryOpMutation(UnaryOpMutated::new("true".to_string(), target_span, UnOpKind::Neg)),
-                    path: PathBuf::default(),
-                });
+            if operations_bools.contains(&op) { operations_bools } else { operations_num_bitwise };
 
-                mutants.push(Mutant {
-                    span,
-                    mutation: MutationType::BinaryOpMutation(UnaryOpMutated::new("false".to_string(), target_span, UnOpKind::Neg)),
-                    path: PathBuf::default(),
-                });
-                
-                operations_bools
-            } else { operations_num_bitwise };
-
-        mutants.extend(operations
+        operations
             .into_iter()
             .filter(|&kind| kind != op)
             .map(|kind| Mutant {
                 span,
-                mutation: MutationType::BinaryOpMutation(UnaryOpMutated::new(kind.to_str().to_string(), target_span, UnOpKind::Neg)),
+                mutation: MutationType::BinaryOpMutation(kind),
                 path: PathBuf::default(),
-            }));
-        
-        return mutants;
+            })
+            .collect()
     }
 
     pub fn create_delete_mutation(span: Span) -> Mutant {
