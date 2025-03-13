@@ -9,43 +9,24 @@ pub struct ElimDelegateMutator;
 
 impl Mutator for ElimDelegateMutator {
     fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant> {
-        todo!()
+        vec![
+            Mutant { span: ctxt.span, mutation: MutationType::ElimDelegateMutation, path: PathBuf::default() }
+        ]
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        // todo!()
-
-        match &ctxt.expr {
-            Some(expr) => {
-                match &expr.kind {
-                    ExprKind::Call(expr, args) => {
-                        if let ExprKind::Member(_, ident) = &expr.kind {
-                            if ident.to_string() == "delegatecall" {
-                                true
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    },
-                    _ => false
+        if let Some(expr) = ctxt.expr {
+            if let ExprKind::Call(expr, _) = &expr.kind {
+                if let ExprKind::Member(_, ident) = expr.kind {
+                    return ident.to_string() == "delegatecall";
                 }
             }
-            None => false
         }
 
-        // ExprKind::Call(expr, args) => {
-        //     if let ExprKind::Member(_, ident) = &expr.kind {
-        //         if ident.to_string() == "delegatecall" {
-        //             self.mutation_to_conduct
-        //                 .push(Mutant::create_delegatecall_mutation(ident.span));
-        //         }
-        //     }
-        // }
+        return false;
     }
 
     fn name(&self) ->  &'static str {
-        todo!()
+        "ElimDelegateMutation"
     }
 }
