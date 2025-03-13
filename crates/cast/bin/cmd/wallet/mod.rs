@@ -14,7 +14,7 @@ use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
-use rand::thread_rng;
+use rand::rng;
 use serde_json::json;
 use std::path::Path;
 use yansi::Paint;
@@ -232,7 +232,7 @@ impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::New { path, account_name, unsafe_password, number, .. } => {
-                let mut rng = thread_rng();
+                let mut rng = rng();
 
                 let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
                 if let Some(path) = path {
@@ -316,7 +316,7 @@ impl WalletSubcommands {
                     let entropy = Entropy::from_slice(hex::decode(entropy)?)?;
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
                 } else {
-                    let mut rng = thread_rng();
+                    let mut rng = rng();
                     Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
                 };
 
@@ -465,7 +465,7 @@ flag to set your key via:
                     rpassword::prompt_password("Enter password: ")?
                 };
 
-                let mut rng = thread_rng();
+                let mut rng = rng();
                 let (wallet, _) = PrivateKeySigner::encrypt_keystore(
                     dir,
                     &mut rng,
