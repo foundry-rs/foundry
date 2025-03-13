@@ -787,6 +787,8 @@ pub struct RawCallResult {
     pub traces: Option<SparsedTraceArena>,
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
+    /// The edge coverage info collected during the call
+    pub edge_coverage: Option<Vec<u8>>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
@@ -815,6 +817,7 @@ impl Default for RawCallResult {
             labels: HashMap::default(),
             traces: None,
             line_coverage: None,
+            edge_coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
             env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
@@ -945,8 +948,15 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, line_coverage, cheatcodes, chisel_state } =
-        inspector.collect();
+    let InspectorData {
+        mut logs,
+        labels,
+        traces,
+        line_coverage,
+        edge_coverage,
+        cheatcodes,
+        chisel_state,
+    } = inspector.collect();
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -969,6 +979,7 @@ fn convert_executed_result(
         labels,
         traces,
         line_coverage,
+        edge_coverage,
         transactions,
         state_changeset,
         env,

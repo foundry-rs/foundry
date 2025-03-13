@@ -1,5 +1,5 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, LineCoverageCollector, Fuzzer, LogCollector,
+    Cheatcodes, CheatsConfig, ChiselState, Fuzzer, LineCoverageCollector, LogCollector,
     TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
@@ -19,6 +19,7 @@ use revm::{
     },
     EvmContext, Inspector,
 };
+use revm_inspectors::edge_cov::EdgeCovInspector;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -200,6 +201,7 @@ impl InspectorStackBuilder {
             stack.set_chisel(chisel_state);
         }
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
+        stack.collect_edge_coverage(true);
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
@@ -248,6 +250,7 @@ pub struct InspectorData {
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
+    pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
@@ -286,7 +289,7 @@ pub struct InspectorStack {
 pub struct InspectorStackInner {
     pub chisel_state: Option<ChiselState>,
     pub line_coverage: Option<LineCoverageCollector>,
-    pub edge_coverage: Option<LineCoverageCollector>,
+    pub edge_coverage: Option<EdgeCovInspector>,
     pub fuzzer: Option<Fuzzer>,
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
@@ -392,10 +395,16 @@ impl InspectorStack {
         self.chisel_state = Some(ChiselState::new(final_pc));
     }
 
-    /// Set whether to enable the coverage collector.
+    /// Set whether to enable the line coverage collector.
     #[inline]
     pub fn collect_line_coverage(&mut self, yes: bool) {
         self.line_coverage = yes.then(Default::default);
+    }
+
+    /// Set whether to enable the edge coverage collector.
+    #[inline]
+    pub fn collect_edge_coverage(&mut self, yes: bool) {
+        self.edge_coverage = yes.then(Default::default);
     }
 
     /// Set whether to enable call isolation.
@@ -443,7 +452,15 @@ impl InspectorStack {
     pub fn collect(self) -> InspectorData {
         let Self {
             mut cheatcodes,
-            inner: InspectorStackInner { chisel_state, line_coverage, log_collector, tracer, .. },
+            inner:
+                InspectorStackInner {
+                    chisel_state,
+                    line_coverage,
+                    edge_coverage,
+                    log_collector,
+                    tracer,
+                    ..
+                },
         } = self;
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
@@ -472,6 +489,7 @@ impl InspectorStack {
                 .unwrap_or_default(),
             traces,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
+            edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
@@ -651,7 +669,7 @@ impl InspectorStackRefMut<'_> {
         for (addr, mut acc) in res.state {
             let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) else {
                 ecx.journaled_state.state.insert(addr, acc);
-                continue
+                continue;
             };
 
             // make sure accounts that were warmed earlier do not become cold
@@ -666,7 +684,7 @@ impl InspectorStackRefMut<'_> {
             for (key, val) in acc.storage {
                 let Some(slot_mut) = acc_mut.storage.get_mut(&key) else {
                     acc_mut.storage.insert(key, val);
-                    continue
+                    continue;
                 };
                 slot_mut.present_value = val.present_value;
                 slot_mut.is_cold &= val.is_cold;
