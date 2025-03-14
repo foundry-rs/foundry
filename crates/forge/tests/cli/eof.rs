@@ -2,11 +2,6 @@ use foundry_compilers::artifacts::EvmVersion;
 
 // Ensure we can run basic counter tests with EOF support.
 forgetest_init!(test_eof_flag, |prj, cmd| {
-    if !has_docker() {
-        println!("skipping because no docker is available");
-        return;
-    }
-
     prj.update_config(|config| {
         config.evm_version = EvmVersion::Osaka;
     });
@@ -26,12 +21,3 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
-
-fn has_docker() -> bool {
-    if !cfg!(target_os = "linux") {
-        return false;
-    }
-
-    // `images` will also check for the daemon.
-    std::process::Command::new("docker").arg("images").output().is_ok_and(|o| o.status.success())
-}
