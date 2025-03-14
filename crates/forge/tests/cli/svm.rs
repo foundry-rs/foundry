@@ -57,6 +57,12 @@ contract CounterTest is Test {{
     "#
     );
     prj.add_test("Counter", &src).unwrap();
+
+    // we need to remove the pinned solc version for this
+    prj.update_config(|c| {
+        c.solc.take();
+    });
+
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.sol:CounterTest
