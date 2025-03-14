@@ -5,6 +5,10 @@ forgetest_init!(test_eof_flag, |prj, cmd| {
         return;
     }
 
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Osaka;
+    });
+
     cmd.forge_fuse().args(["test", "--eof"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
