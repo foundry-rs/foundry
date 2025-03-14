@@ -1,3 +1,5 @@
+use foundry_compilers::artifacts::EvmVersion;
+
 // Ensure we can run basic counter tests with EOF support.
 forgetest_init!(test_eof_flag, |prj, cmd| {
     if !has_docker() {
