@@ -128,7 +128,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
+        let res = self.provider.call(req.clone()).block(block.unwrap_or_default()).await?;
 
         let mut decoded = vec![];
 
@@ -341,7 +341,8 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         let block = self
             .provider
-            .get_block(block, full.into())
+            .get_block(block)
+            .full()
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -951,8 +952,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block =
-                        self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
+                    let block = self.provider.get_block_by_hash(hash.block_hash).await?;
                     Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
                 }
             },

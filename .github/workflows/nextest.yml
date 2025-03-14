@@ -68,11 +68,11 @@ jobs:
         with:
           bun-version: latest
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
       - name: Install Vyper
-        run: pip install vyper~=0.4.0
+        run: pip --version && pip install vyper==0.4.0
 
       - name: Forge RPC cache
         uses: actions/cache@v3

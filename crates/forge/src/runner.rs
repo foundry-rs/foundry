@@ -9,10 +9,11 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{address, map::HashMap, Address, U256};
+use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{contracts::ContractsByAddress, TestFunctionExt, TestFunctionKind};
-use foundry_config::Config;
+use foundry_compilers::utils::canonicalized;
+use foundry_config::{Config, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
@@ -34,7 +35,15 @@ use proptest::test_runner::{
     FailurePersistence, FileFailurePersistence, RngAlgorithm, TestError, TestRng, TestRunner,
 };
 use rayon::prelude::*;
-use std::{borrow::Cow, cmp::min, collections::BTreeMap, sync::Arc, time::Instant};
+use serde::{Deserialize, Serialize};
+use std::{
+    borrow::Cow,
+    cmp::min,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use tracing::Span;
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
@@ -158,6 +167,9 @@ impl<'a> ContractRunner<'a> {
             U256::ZERO,
             Some(&self.mcr.revert_decoder),
         );
+
+        result.deployment_failure = deploy_result.is_err();
+
         if let Ok(dr) = &deploy_result {
             debug_assert_eq!(dr.address, address);
         }
@@ -340,9 +352,14 @@ impl<'a> ContractRunner<'a> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
+            let fail_msg = if !setup.deployment_failure {
+                "setUp()".to_string()
+            } else {
+                "constructor()".to_string()
+            };
             return SuiteResult::new(
                 start.elapsed(),
-                [("setUp()".to_string(), TestResult::setup_result(setup))].into(),
+                [(fail_msg, TestResult::setup_result(setup))].into(),
                 warnings,
             )
         }
@@ -496,7 +513,13 @@ impl<'a> FunctionRunner<'a> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::InvariantTest => {
-                self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
+                let test_bytecode = &self.cr.contract.bytecode;
+                self.run_invariant_test(
+                    func,
+                    call_after_invariant,
+                    identified_contracts.unwrap(),
+                    test_bytecode,
+                )
             }
             _ => unreachable!(),
         }
@@ -548,6 +571,7 @@ impl<'a> FunctionRunner<'a> {
         func: &Function,
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
+        test_bytecode: &Bytes,
     ) -> TestResult {
         // First, run the test normally to see if it needs to be skipped.
         if let Err(EvmError::Skip(reason)) = self.executor.call(
@@ -579,13 +603,16 @@ impl<'a> FunctionRunner<'a> {
             abi: &self.cr.contract.abi,
         };
 
-        let failure_dir = invariant_config.clone().failure_dir(self.cr.name);
-        let failure_file = failure_dir.join(&invariant_contract.invariant_function.name);
-        let show_solidity = invariant_config.clone().show_solidity;
+        let (failure_dir, failure_file) = invariant_failure_paths(
+            invariant_config,
+            self.cr.name,
+            &invariant_contract.invariant_function.name,
+        );
+        let show_solidity = invariant_config.show_solidity;
 
         // Try to replay recorded failure if any.
-        if let Ok(mut call_sequence) =
-            foundry_common::fs::read_json_file::<Vec<BaseCounterExample>>(failure_file.as_path())
+        if let Some(mut call_sequence) =
+            persisted_call_sequence(failure_file.as_path(), test_bytecode)
         {
             // Create calls from failed sequence and check if invariant still broken.
             let txes = call_sequence
@@ -688,7 +715,10 @@ impl<'a> FunctionRunner<'a> {
                                     error!(%err, "Failed to create invariant failure dir");
                                 } else if let Err(err) = foundry_common::fs::write_json_file(
                                     failure_file.as_path(),
-                                    &call_sequence,
+                                    &InvariantPersistedFailure {
+                                        call_sequence: call_sequence.clone(),
+                                        driver_bytecode: Some(test_bytecode.clone()),
+                                    },
                                 ) {
                                     error!(%err, "Failed to record call sequence");
                                 }
@@ -885,4 +915,51 @@ fn fuzzer_with_cases(
         trace!(target: "forge::test", "building stochastic fuzzer");
         TestRunner::new(config)
     }
+}
+
+/// Holds data about a persisted invariant failure.
+#[derive(Serialize, Deserialize)]
+struct InvariantPersistedFailure {
+    /// Recorded counterexample.
+    call_sequence: Vec<BaseCounterExample>,
+    /// Bytecode of the test contract that generated the counterexample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    driver_bytecode: Option<Bytes>,
+}
+
+/// Helper function to load failed call sequence from file.
+/// Ignores failure if generated with different test contract than the current one.
+fn persisted_call_sequence(path: &Path, bytecode: &Bytes) -> Option<Vec<BaseCounterExample>> {
+    foundry_common::fs::read_json_file::<InvariantPersistedFailure>(path).ok().and_then(
+        |persisted_failure| {
+            if let Some(persisted_bytecode) = &persisted_failure.driver_bytecode {
+                // Ignore persisted sequence if test bytecode doesn't match.
+                if !bytecode.eq(persisted_bytecode) {
+                    let _= sh_warn!("\
+                            Failure from {:?} file was ignored because test contract bytecode has changed.",
+                        path
+                    );
+                    return None;
+                }
+            };
+            Some(persisted_failure.call_sequence)
+        },
+    )
+}
+
+/// Helper functions to return canonicalized invariant failure paths.
+fn invariant_failure_paths(
+    config: &InvariantConfig,
+    contract_name: &str,
+    invariant_name: &str,
+) -> (PathBuf, PathBuf) {
+    let dir = config
+        .failure_persist_dir
+        .clone()
+        .unwrap()
+        .join("failures")
+        .join(contract_name.split(':').next_back().unwrap());
+    let dir = canonicalized(dir);
+    let file = canonicalized(dir.join(invariant_name));
+    (dir, file)
 }

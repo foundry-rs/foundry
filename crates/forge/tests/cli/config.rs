@@ -8,8 +8,10 @@ use foundry_compilers::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
+    filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
-    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
+    SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -17,6 +19,8 @@ use foundry_test_utils::{
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
+use semver::VersionReq;
+use serde_json::Value;
 use similar_asserts::assert_eq;
 use std::{
     fs,
@@ -1630,4 +1634,162 @@ contract GasSnapshotEmitTest is DSTest {
 
     // Assert that snapshots were not emitted to disk.
     assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+});
+
+// Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
+forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
+    prj.add_source(
+        "v1/Counter.sol",
+        r#"
+contract Counter {
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "v2/Counter.sol",
+        r#"
+contract Counter {
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "v3/Counter.sol",
+        r#"
+contract Counter {
+}
+    "#,
+    )
+    .unwrap();
+
+    // Additional profiles are defined with optimizer runs but without explicitly enabling
+    // optimizer
+    //
+    // additional_compiler_profiles = [
+    //   { name = "v1", optimizer_runs = 44444444, via_ir = true, evm_version = "cancun" },
+    //   { name = "v2", optimizer_runs = 111, via_ir = true },
+    //   { name = "v3", optimizer_runs = 800, evm_version = "istanbul", via_ir = false },
+    // ]
+    //
+    // compilation_restrictions = [
+    //   # v1
+    //   { paths = "src/v1/[!i]*.sol", version = "0.8.16", optimizer_runs = 44444444 },
+    //   # v2
+    //   { paths = "src/v2/{Counter}.sol", optimizer_runs = 111 },
+    //   # v3
+    //   { paths = "src/v3/*", optimizer_runs = 800 },
+    // ]
+    let v1_profile = SettingsOverrides {
+        name: "v1".to_string(),
+        via_ir: Some(true),
+        evm_version: Some(EvmVersion::Cancun),
+        optimizer: None,
+        optimizer_runs: Some(44444444),
+        bytecode_hash: None,
+    };
+    let v1_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v1/[!i]*.sol").unwrap(),
+        version: Some(VersionReq::from_str("0.8.16").unwrap()),
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(44444444),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let v2_profile = SettingsOverrides {
+        name: "v2".to_string(),
+        via_ir: Some(true),
+        evm_version: None,
+        optimizer: None,
+        optimizer_runs: Some(111),
+        bytecode_hash: None,
+    };
+    let v2_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v2/{Counter}.sol").unwrap(),
+        version: None,
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(111),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let v3_profile = SettingsOverrides {
+        name: "v3".to_string(),
+        via_ir: Some(false),
+        evm_version: Some(EvmVersion::Istanbul),
+        optimizer: None,
+        optimizer_runs: Some(800),
+        bytecode_hash: None,
+    };
+    let v3_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v3/*").unwrap(),
+        version: None,
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(800),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let additional_compiler_profiles = vec![v1_profile, v2_profile, v3_profile];
+    let compilation_restrictions = vec![v1_restrictions, v2_restrictions, v3_restrictions];
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = additional_compiler_profiles;
+        config.compilation_restrictions = compilation_restrictions;
+    });
+    // Should find and build all profiles satisfying settings restrictions.
+    cmd.forge_fuse().args(["build"]).assert_success();
+    prj.assert_artifacts_dir_exists();
+
+    let artifact_settings =
+        |artifact| -> (Option<Value>, Option<Value>, Option<Value>, Option<Value>) {
+            let artifact: serde_json::Value = serde_json::from_reader(
+                fs::File::open(prj.artifacts().join(artifact)).expect("no artifact"),
+            )
+            .expect("invalid artifact");
+            let settings =
+                artifact.get("metadata").unwrap().get("settings").unwrap().as_object().unwrap();
+            let optimizer = settings.get("optimizer").unwrap();
+            (
+                settings.get("viaIR").cloned(),
+                settings.get("evmVersion").cloned(),
+                optimizer.get("enabled").cloned(),
+                optimizer.get("runs").cloned(),
+            )
+        };
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
+    assert_eq!(None, via_ir);
+    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("false", enabled.unwrap().to_string());
+    assert_eq!("200", runs.unwrap().to_string());
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
+    assert_eq!("true", via_ir.unwrap().to_string());
+    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("true", enabled.unwrap().to_string());
+    assert_eq!("44444444", runs.unwrap().to_string());
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
+    assert_eq!("true", via_ir.unwrap().to_string());
+    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("true", enabled.unwrap().to_string());
+    assert_eq!("111", runs.unwrap().to_string());
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("v3/Counter.sol/Counter.json");
+    assert_eq!(None, via_ir);
+    assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
+    assert_eq!("true", enabled.unwrap().to_string());
+    assert_eq!("800", runs.unwrap().to_string());
 });

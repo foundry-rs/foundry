@@ -35,7 +35,8 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+    transaction::Recovered, Account, Header, Receipt, ReceiptWithBloom, Signed,
+    Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::{
@@ -529,19 +530,17 @@ impl Backend {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    // Set the fork block number
-                    let mut node_config = self.node_config.write().await;
-                    node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
-
-                    let mut env = self.env.read().clone();
-                    let (forked_db, client_fork_config) =
-                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
-
-                    *self.db.write().await = Box::new(forked_db);
-                    let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-                    *self.fork.write() = Some(fork);
-                    *self.env.write() = env;
+                    self.reset_block_number(fork_url, fork_block_number).await?;
                 } else {
+                    // If rpc url is unspecified, then update the fork with the new block number and
+                    // existing rpc url, this updates the cache path
+                    {
+                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        if let Some(fork_url) = maybe_fork_url {
+                            self.reset_block_number(fork_url, fork_block_number).await?;
+                        }
+                    }
+
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
 
@@ -590,6 +589,26 @@ impl Backend {
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
+    }
+
+    async fn reset_block_number(
+        &self,
+        fork_url: String,
+        fork_block_number: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut node_config = self.node_config.write().await;
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+
+        let mut env = self.env.read().clone();
+        let (forked_db, client_fork_config) =
+            node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
+
+        *self.db.write().await = Box::new(forked_db);
+        let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+        *self.fork.write() = Some(fork);
+        *self.env.write() = env;
+
+        Ok(())
     }
 
     /// Returns the `TimeManager` responsible for timestamps
@@ -1909,7 +1928,7 @@ impl Backend {
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
 
-        block
+        AnyRpcBlock::from(block)
     }
 
     /// Converts the `BlockNumber` into a numeric value
@@ -2868,7 +2887,7 @@ pub fn transaction_build(
         let DepositTransaction {
             nonce,
             source_hash,
-            from,
+            from: deposit_from,
             kind,
             mint,
             gas_limit,
@@ -2880,7 +2899,7 @@ pub fn transaction_build(
         let dep_tx = TxDeposit {
             source_hash,
             input,
-            from,
+            from: deposit_from,
             mint: Some(mint.to()),
             to: kind,
             is_system_transaction: is_system_tx,
@@ -2915,17 +2934,16 @@ pub fn transaction_build(
                 });
 
                 let tx = Transaction {
-                    inner: envelope,
+                    inner: Recovered::new_unchecked(envelope, deposit_from),
                     block_hash: block
                         .as_ref()
                         .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
                     block_number: block.as_ref().map(|block| block.header.number),
                     transaction_index: info.as_ref().map(|info| info.transaction_index),
                     effective_gas_price: None,
-                    from,
                 };
 
-                return WithOtherFields::new(tx);
+                return AnyRpcTransaction::from(WithOtherFields::new(tx));
             }
             Err(_) => {
                 error!(target: "backend", "failed to serialize deposit transaction");
@@ -2960,7 +2978,7 @@ pub fn transaction_build(
     // there's // no `info` yet.
     let hash = tx_hash.unwrap_or(*envelope.tx_hash());
 
-    let envelope = match envelope {
+    let envelope = match envelope.into_inner() {
         TxEnvelope::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
@@ -2989,17 +3007,19 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: envelope,
+        inner: Recovered::new_unchecked(
+            envelope,
+            eth_transaction.recover().expect("can recover signed tx"),
+        ),
         block_hash: block
             .as_ref()
             .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
-        from: eth_transaction.recover().expect("can recover signed tx"),
         // deprecated
         effective_gas_price: Some(effective_gas_price),
     };
-    WithOtherFields::new(tx)
+    AnyRpcTransaction::from(WithOtherFields::new(tx))
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.

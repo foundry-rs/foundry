@@ -7,7 +7,7 @@ on:
       - "rc"
       - "v*.*.*"
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 env:
@@ -95,7 +95,17 @@ jobs:
             platform: linux
             arch: amd64
           - runner: Linux-20.04
+            target: x86_64-unknown-linux-musl
+            svm_target_platform: linux-amd64
+            platform: linux
+            arch: amd64
+          - runner: Linux-20.04
             target: aarch64-unknown-linux-gnu
+            svm_target_platform: linux-aarch64
+            platform: linux
+            arch: arm64
+          - runner: Linux-20.04
+            target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64

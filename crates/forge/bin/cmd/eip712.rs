@@ -57,8 +57,8 @@ impl Eip712Args {
             collector.0
         };
 
-        for (id, _) in structs_in_target {
-            if let Some(resolved) = resolver.resolve_struct_eip712(id)? {
+        for id in structs_in_target.keys() {
+            if let Some(resolved) = resolver.resolve_struct_eip712(*id)? {
                 sh_println!("{resolved}\n")?;
             }
         }

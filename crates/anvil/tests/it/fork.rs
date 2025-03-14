@@ -11,7 +11,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
-    BlockId, BlockNumberOrTag, BlockTransactionsKind,
+    BlockId, BlockNumberOrTag,
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -538,7 +538,7 @@ async fn can_reset_fork_to_new_fork() {
 
     let tx = WithOtherFields::new(tx);
 
-    let mainnet_call_output = provider.call(&tx).await.unwrap();
+    let mainnet_call_output = provider.call(tx).await.unwrap();
 
     assert_eq!(mainnet_call_output, Bytes::new()); // 0x
 
@@ -563,11 +563,7 @@ async fn test_fork_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    let block = provider
-        .get_block(BlockId::Number(BLOCK_NUMBER.into()), false.into())
-        .await
-        .unwrap()
-        .unwrap();
+    let block = provider.get_block(BlockId::Number(BLOCK_NUMBER.into())).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -580,7 +576,7 @@ async fn test_fork_timestamp() {
     let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     let elapsed = start.elapsed().as_secs() + 1;
 
@@ -593,11 +589,7 @@ async fn test_fork_timestamp() {
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
         .unwrap();
-    let block = provider
-        .get_block(BlockId::Number(BLOCK_NUMBER.into()), false.into())
-        .await
-        .unwrap()
-        .unwrap();
+    let block = provider.get_block(BlockId::Number(BLOCK_NUMBER.into())).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
     let tx =
@@ -605,7 +597,7 @@ async fn test_fork_timestamp() {
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap(); // FIXME: Awaits endlessly here.
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.header.timestamp - BLOCK_TIMESTAMP;
     assert!(diff <= elapsed);
@@ -621,7 +613,7 @@ async fn test_fork_timestamp() {
     let tx = WithOtherFields::new(tx);
     let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP + 1);
 
     let tx =
@@ -629,7 +621,7 @@ async fn test_fork_timestamp() {
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.header.timestamp - (BLOCK_TIMESTAMP + 1);
     assert!(diff <= elapsed);
@@ -812,7 +804,7 @@ async fn test_fork_init_base_fee() {
 
     let provider = handle.http_provider();
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     // <https://etherscan.io/block/13184859>
     assert_eq!(block.header.number, 13184859u64);
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
@@ -820,7 +812,7 @@ async fn test_fork_init_base_fee() {
 
     api.mine_one().await;
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     let next_base_fee = block.header.base_fee_per_gas.unwrap();
     assert!(next_base_fee < init_base_fee);
@@ -866,7 +858,7 @@ async fn test_fork_call() {
     let provider = http_provider(rpc::next_http_archive_rpc_url().as_str());
     let tx = TransactionRequest::default().to(to).with_input(input.clone());
     let tx = WithOtherFields::new(tx);
-    let res0 = provider.call(&tx).block(BlockId::Number(block_number.into())).await.unwrap();
+    let res0 = provider.call(tx).block(BlockId::Number(block_number.into())).await.unwrap();
 
     let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 
@@ -1047,7 +1039,7 @@ async fn test_total_difficulty_fork() {
     let difficulty = U256::from(13_680_435_288_526_144u128);
 
     let provider = handle.http_provider();
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.total_difficulty, Some(total_difficulty));
     assert_eq!(block.header.difficulty, difficulty);
 
@@ -1056,7 +1048,7 @@ async fn test_total_difficulty_fork() {
 
     let next_total_difficulty = total_difficulty + difficulty;
 
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.total_difficulty, Some(next_total_difficulty));
     assert_eq!(block.header.difficulty, U256::ZERO);
 }
@@ -1300,11 +1292,8 @@ async fn test_base_fork_gas_limit() {
     .await;
 
     let provider = handle.http_provider();
-    let block = provider
-        .get_block(BlockId::Number(BlockNumberOrTag::Latest), BlockTransactionsKind::Hashes)
-        .await
-        .unwrap()
-        .unwrap();
+    let block =
+        provider.get_block(BlockId::Number(BlockNumberOrTag::Latest)).await.unwrap().unwrap();
 
     assert!(api.gas_limit() >= uint!(96_000_000_U256));
     assert!(block.header.gas_limit >= 96_000_000_u64);
@@ -1389,7 +1378,7 @@ async fn test_immutable_fork_transaction_hash() {
         (expected_transactions[2], address!("5Be88952ce249024613e0961eB437f5E9424A90c")),
     ] {
         let tx = api.backend.mined_transaction_by_hash(expected.0).unwrap();
-        assert_eq!(tx.inner.from, expected.1);
+        assert_eq!(tx.inner.inner.signer(), expected.1);
     }
 
     // Validate the order of transactions in the new block
@@ -1471,6 +1460,42 @@ async fn test_reset_dev_account_nonce() {
         .unwrap();
 
     assert!(receipt.status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
+    let config: NodeConfig = fork_config();
+
+    let (mut api, _handle) = spawn(config).await;
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    async fn get_block_from_cache_path(api: &mut EthApi) -> u64 {
+        let db = api.backend.get_db().read().await;
+        let cache_path = db.maybe_inner().unwrap().cache().cache_path().unwrap();
+        cache_path
+            .parent()
+            .expect("must have filename")
+            .file_name()
+            .expect("must have block number as dir name")
+            .to_str()
+            .expect("must be valid string")
+            .parse::<u64>()
+            .expect("must be valid number")
+    }
+
+    assert_eq!(BLOCK_NUMBER, get_block_from_cache_path(&mut api).await);
+
+    // Reset to older block without specifying a new rpc url
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: None,
+        block_number: Some(BLOCK_NUMBER - 1_000_000),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&mut api).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]

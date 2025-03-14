@@ -516,7 +516,8 @@ impl Cheatcode for etchCall {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
         ccx.ecx.load_account(*target)?;
-        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode));
+        let bytecode = Bytecode::new_raw_checked(Bytes::copy_from_slice(newRuntimeBytecode))
+            .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }
@@ -587,7 +588,7 @@ impl Cheatcode for coolCall {
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.env.tx.caller)
+        read_callers(ccx.state, &ccx.ecx.env.tx.caller, ccx.ecx.journaled_state.depth())
     }
 }
 
@@ -1067,19 +1068,17 @@ fn derive_snapshot_name(
 /// - If no caller modification is active:
 ///     - caller_mode will be equal to [CallerMode::None],
 ///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
-fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
-    let Cheatcodes { prank, broadcast, .. } = state;
-
+fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -> Result {
     let mut mode = CallerMode::None;
     let mut new_caller = default_sender;
     let mut new_origin = default_sender;
-    if let Some(prank) = prank {
+    if let Some(prank) = state.get_prank(call_depth) {
         mode = if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
         new_caller = &prank.new_caller;
         if let Some(new) = &prank.new_origin {
             new_origin = new;
         }
-    } else if let Some(broadcast) = broadcast {
+    } else if let Some(broadcast) = &state.broadcast {
         mode = if broadcast.single_call {
             CallerMode::Broadcast
         } else {

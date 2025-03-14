@@ -1173,3 +1173,97 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]],
     );
 });
+
+// Tests that persisted failure is discarded if test contract was modified.
+// <https://github.com/foundry-rs/foundry/issues/9965>
+forgetest_init!(invariant_replay_with_different_bytecode, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+    });
+    prj.add_source(
+        "Ownable.sol",
+        r#"
+contract Ownable {
+    address public owner = address(777);
+
+    function backdoor(address _owner) external {
+        owner = address(888);
+    }
+
+    function changeOwner(address _owner) external {
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_test(
+        "OwnableTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Ownable.sol";
+
+contract OwnableTest is Test {
+    Ownable ownable;
+
+    function setUp() public {
+        ownable = new Ownable();
+    }
+
+    function invariant_never_owner() public {
+        require(ownable.owner() != address(888), "never owner");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: revert: never owner]
+...
+"#]]);
+
+    // Should replay failure if same test.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: invariant_never_owner replay failure]
+...
+"#]]);
+
+    // Different test driver that should not fail the invariant.
+    prj.add_test(
+        "OwnableTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Ownable.sol";
+
+contract OwnableTest is Test {
+    Ownable ownable;
+
+    function setUp() public {
+        ownable = new Ownable();
+        // Ignore selector that fails invariant.
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Ownable.changeOwner.selector;
+        targetSelector(FuzzSelector({addr: address(ownable), selectors: selectors}));
+    }
+
+    function invariant_never_owner() public {
+        require(ownable.owner() != address(888), "never owner");
+    }
+}
+   "#,
+    )
+    .unwrap();
+    cmd.assert_success().stderr_eq(str![[r#"
+...
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
+...
+"#]])
+    .stdout_eq(str![[r#"
+...
+[PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
+...
+"#]]);
+});
