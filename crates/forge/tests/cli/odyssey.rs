@@ -1,9 +1,15 @@
+use foundry_compilers::artifacts::EvmVersion;
+
 // Ensure we can run basic counter tests with EOF support.
 forgetest_init!(test_eof_flag, |prj, cmd| {
     if !has_docker() {
         println!("skipping because no docker is available");
         return;
     }
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Osaka;
+    });
 
     cmd.forge_fuse().args(["test", "--eof"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
