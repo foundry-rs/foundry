@@ -7,12 +7,12 @@ use foundry_cli::{
     utils::{cache_local_signatures, FoundryPathExt},
 };
 use foundry_common::{
-    compile::{compile_target, ProjectCompiler},
+    compile::{compile_target, PathOrContractInfo, ProjectCompiler},
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use foundry_config::Config;
-use std::{fs::canonicalize, path::PathBuf};
+use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -38,7 +38,7 @@ pub enum SelectorsSubcommands {
         /// The name of the contract to upload selectors for.
         /// Can also be in form of `path:contract name`.
         #[arg(required_unless_present = "all")]
-        contract: Option<String>,
+        contract: Option<PathOrContractInfo>,
 
         /// Upload selectors for all contracts in the project.
         #[arg(long, required_unless_present = "contract")]
@@ -108,12 +108,15 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let output = if let Some(name) = &contract {
-                    let target_path = if let Some((path, _)) = name.split_once(':') {
-                        PathBuf::from(path)
-                    } else {
-                        project.find_contract_path(name)?
+                let output = if let Some(contract_info) = &contract {
+                    let Some(contract_name) = contract_info.name() else {
+                        eyre::bail!("No contract name provided.")
                     };
+
+                    let target_path = contract_info
+                        .path()
+                        .map(Ok)
+                        .unwrap_or_else(|| project.find_contract_path(contract_name))?;
                     compile_target(&target_path, &project, false)?
                 } else {
                     ProjectCompiler::new().compile(&project)?
@@ -130,9 +133,11 @@ impl SelectorsSubcommands {
                         .map(|(_, contract, artifact)| (contract, artifact))
                         .collect()
                 } else {
-                    let contract = contract.unwrap();
-                    let found_artifact = if let Some((path, contract)) = contract.split_once(':') {
-                        output.find(project.root().join(path).as_path(), contract)
+                    let contract_info = contract.unwrap();
+                    let contract = contract_info.name().unwrap().to_string();
+
+                    let found_artifact = if let Some(path) = contract_info.path() {
+                        output.find(project.root().join(path).as_path(), &contract)
                     } else {
                         output.find_first(&contract)
                     };
