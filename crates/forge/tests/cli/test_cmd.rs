@@ -3279,3 +3279,40 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10060>
+forgetest_init!(should_redact_pk_in_sign_delegation, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract CounterTest is Test {
+    function testCheckDelegation() external {
+        (address alice, uint256 key) = makeAddrAndKey("alice");
+        vm.signDelegation(address(0), key);
+        vm.signAndAttachDelegation(address(0), key);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "testCheckDelegation", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testCheckDelegation() ([GAS])
+Traces:
+  [..] CounterTest::testCheckDelegation()
+    ├─ [0] VM::addr(<pk>) [staticcall]
+    │   └─ ← [Return] alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6]
+    ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
+    │   └─ ← [Return]
+    ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    └─ ← [Stop]
+...
+
+"#]]);
+});
