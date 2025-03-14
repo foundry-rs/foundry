@@ -1,10 +1,12 @@
-use crate::mutation::mutation::{Mutator, MutationContext, Mutant};
+use crate::mutation::mutation::{Mutant, MutationType};
+use super::{MutationContext, Mutator};
 
-pub struct IdentifierMutator;
+pub struct UnaryOperatorMutator;
 
-impl Mutator for IdentifierMutator {
+impl Mutator for UnaryOperatorMutator {
     fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant> {
         todo!()
+
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {

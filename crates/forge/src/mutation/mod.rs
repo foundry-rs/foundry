@@ -1,7 +1,6 @@
 mod mutation;
 mod visitor; 
 mod mutators;
-mod mutator_registry;
 
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to

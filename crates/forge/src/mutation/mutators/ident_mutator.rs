@@ -1,8 +1,8 @@
-use crate::mutation::mutation::{Mutator, MutationContext, Mutant};
+use crate::mutation::mutation::{Mutant, MutationType};
+use super::{MutationContext, Mutator};
+pub struct IdentifierMutator;
 
-pub struct BinaryOpMutator;
-
-impl Mutator for BinaryOpMutator {
+impl Mutator for IdentifierMutator {
     fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant> {
         todo!()
     }

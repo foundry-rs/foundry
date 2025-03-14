@@ -1,6 +1,6 @@
 
-use crate::mutation::mutation::{Mutator, MutationContext, Mutant, MutationType};
-use crate::mutation::visitor::AssignVarTypes;
+use crate::mutation::mutation::{Mutant, MutationType};
+use super::{MutationContext, Mutator};
 
 use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
 use std::path::PathBuf;

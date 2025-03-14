@@ -1,4 +1,7 @@
-use crate::mutation::mutation::{Mutator, MutationContext, Mutant};
+use crate::mutation::mutation::{Mutant};
+use super::{MutationContext, Mutator};
+
+use crate::mutation::mutators::assignement_mutator::AssignmentMutator;
 
 /// Registry of all available mutators (ie implementing the Mutator trait)
 pub struct MutatorRegistry {

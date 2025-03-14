@@ -4,7 +4,7 @@ use solar_parse::ast::{
 
 use std::ops::ControlFlow;
 
-use crate::mutation::mutation::{Mutant, MutationType};
+use crate::mutation::mutation::{Mutant, MutationType, create_assignement_mutation, create_binary_op_mutation, create_delegatecall_mutation, create_delete_mutation, create_unary_mutation};
 
 #[derive(Debug, Clone)]
 pub enum AssignVarTypes {
@@ -29,14 +29,14 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             None => {}
             Some(exp) => match &exp.kind {
                 ExprKind::Lit(val, _) => {
-                    self.mutation_to_conduct.extend(Mutant::create_assignement_mutation(
+                    self.mutation_to_conduct.extend(create_assignement_mutation(
                         exp.span,
                         AssignVarTypes::Literal(val.kind.clone()),
                     ))
                 }
                 ExprKind::Unary(op, var) => self
                     .mutation_to_conduct
-                    .extend(Mutant::create_unary_mutation(op.span, op.kind, var)),
+                    .extend(create_unary_mutation(op.span, op.kind, var)),
                 _ => {}
             },
         }
@@ -74,14 +74,14 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             ExprKind::Assign(_, bin_op, rhs) => {
                 match &rhs.kind {
                     ExprKind::Lit(kind, _) => {
-                        self.mutation_to_conduct.extend(Mutant::create_assignement_mutation(
+                        self.mutation_to_conduct.extend(create_assignement_mutation(
                             rhs.span,
                             AssignVarTypes::Literal(kind.kind.clone()),
                         ))
                     }
 
                     ExprKind::Ident(val) => {
-                        self.mutation_to_conduct.extend(Mutant::create_assignement_mutation(
+                        self.mutation_to_conduct.extend(create_assignement_mutation(
                             rhs.span,
                             AssignVarTypes::Identifier(val.to_string()),
                         ))
@@ -92,29 +92,29 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
                 // if let ExprKind::Lit(kind, _) = &rhs.kind {
                 //     self.mutation_to_conduct
-                //         .extend(Mutant::create_assignement_mutation(rhs.span,
+                //         .extend(create_assignement_mutation(rhs.span,
                 // kind.kind.clone())); }
 
                 if let Some(op) = &bin_op {
                     self.mutation_to_conduct
-                        .extend(Mutant::create_binary_op_mutation(op.span, op.kind));
+                        .extend(create_binary_op_mutation(op.span, op.kind));
                 }
             }
             ExprKind::Binary(_, op, _) => {
                 self.mutation_to_conduct
-                    .extend(Mutant::create_binary_op_mutation(op.span, op.kind));
+                    .extend(create_binary_op_mutation(op.span, op.kind));
             }
             ExprKind::Call(expr, args) => {
                 if let ExprKind::Member(_, ident) = &expr.kind {
                     if ident.to_string() == "delegatecall" {
                         self.mutation_to_conduct
-                            .push(Mutant::create_delegatecall_mutation(ident.span));
+                            .push(create_delegatecall_mutation(ident.span));
                     }
                 }
             }
             // CallOptions
             ExprKind::Delete(_) => {
-                self.mutation_to_conduct.push(Mutant::create_delete_mutation(expr.span))
+                self.mutation_to_conduct.push(create_delete_mutation(expr.span))
             }
             // Indent
             // Index -> mutable? 0 it? idx should be a regular expression?
@@ -128,7 +128,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             // Type -> compilation error, most likely
             ExprKind::Unary(op, var) => {
                 self.mutation_to_conduct
-                    .extend(Mutant::create_unary_mutation(expr.span, op.kind, var));
+                    .extend(create_unary_mutation(expr.span, op.kind, var));
             }
             _ => {}
         };
