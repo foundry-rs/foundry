@@ -49,7 +49,7 @@ pub const PRECOMPILES: &[Address] = &[
     ODYSSEY_P256_ADDRESS,
 ];
 
-/// [EIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile address on Odyssey.
+/// [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile address on Odyssey.
 ///
 /// <https://github.com/ithacaxyz/odyssey/blob/482f4547631ae5c64ebea6a4b4ef93184a4abfee/crates/node/src/evm.rs#L35-L35>
 pub const ODYSSEY_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000014");
@@ -68,6 +68,6 @@ pub fn p256_verify(input: &Bytes, gas_limit: u64) -> PrecompileResult {
     })
 }
 
-/// [EIP-7212](https://eips.ethereum.org/EIPS/eip-7212#specification) secp256r1 precompile.
+/// [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md) secp256r1 precompile.
 pub const ODYSSEY_P256: PrecompileWithAddress =
     PrecompileWithAddress(ODYSSEY_P256_ADDRESS, Precompile::Standard(p256_verify));
