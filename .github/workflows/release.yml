@@ -149,6 +149,11 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
+      - name: MUSL setup
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          cargo install cross
+
       - name: Build binaries
         env:
           TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
@@ -169,7 +174,11 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          cargo build "${flags[@]}"
+          if [[ "$TARGET" != "x86_64-unknown-linux-musl" && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
+            cargo build "${flags[@]}"
+          else
+            cross build "${flags[@]}"
+          fi
 
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
@@ -187,13 +196,19 @@ jobs:
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
           OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          TARGET: ${{ matrix.target }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
           if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+            if [[ "$TARGET" != "x86_64-unknown-linux-musl" && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
+              tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
+              echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+            else
+              tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}_musl.tar.gz" -C $OUT_DIR forge cast anvil chisel
+              echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}_musl.tar.gz" >> $GITHUB_OUTPUT
+            fi
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
