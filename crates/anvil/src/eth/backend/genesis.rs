@@ -12,6 +12,8 @@ use tokio::sync::RwLockWriteGuard;
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
 pub struct GenesisConfig {
+    /// The initial number for the genesis block
+    pub number: u64,
     /// The initial timestamp for the genesis block
     pub timestamp: u64,
     /// Balance for genesis accounts

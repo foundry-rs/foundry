@@ -271,7 +271,13 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(
+        env: &Env,
+        spec_id: SpecId,
+        base_fee: Option<u64>,
+        timestamp: u64,
+        genesis_number: u64,
+    ) -> Self {
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
         let is_cancun = spec_id >= SpecId::CANCUN;
         let is_prague = spec_id >= SpecId::PRAGUE;
@@ -294,7 +300,7 @@ impl BlockchainStorage {
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number: U64 = U64::from(0u64);
+        let best_number: U64 = U64::from(genesis_number);
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -440,10 +446,20 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(
+        env: &Env,
+        spec_id: SpecId,
+        base_fee: Option<u64>,
+        timestamp: u64,
+        genesis_number: u64,
+    ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                env, spec_id, base_fee, timestamp,
+                env,
+                spec_id,
+                base_fee,
+                timestamp,
+                genesis_number,
             ))),
         }
     }

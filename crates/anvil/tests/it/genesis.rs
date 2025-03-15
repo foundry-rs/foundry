@@ -30,7 +30,7 @@ async fn can_apply_genesis() {
       "balance": "0xffffffffffffffffffffffffff"
     }
   },
-  "number": "0x0",
+  "number": 73,
   "gasUsed": "0x0",
   "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
 }
@@ -47,4 +47,7 @@ async fn can_apply_genesis() {
 
     let expected: U256 = U256::from_str_radix("ffffffffffffffffffffffffff", 16).unwrap();
     assert_eq!(balance, expected);
+
+    let block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number, 73u64);
 }
