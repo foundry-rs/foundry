@@ -2032,43 +2032,38 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
 });
 
 // https://github.com/foundry-rs/foundry/issues/9541
-forgetest_async!(
-    // ignore for now, fails with "json: unsupported value: NaN"
-    #[ignore]
-    cast_run_impersonated_tx,
-    |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(
-            NodeConfig::test()
-                .with_auto_impersonate(true)
-                .with_eth_rpc_url(Some("https://sepolia.base.org")),
-        )
-        .await;
+forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_auto_impersonate(true)
+            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+    )
+    .await;
 
-        let http_endpoint = handle.http_endpoint();
+    let http_endpoint = handle.http_endpoint();
 
-        let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
+    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
 
-        // send impersonated tx
-        let tx = TransactionRequest::default()
-            .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
-            .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-            .with_input(
-                Bytes::from_str(
-                    "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-                )
-                .unwrap(),
-            );
+    // send impersonated tx
+    let tx = TransactionRequest::default()
+        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_input(
+            Bytes::from_str(
+                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+            )
+            .unwrap(),
+        );
 
-        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-        assert!(receipt.status());
+    assert!(receipt.status());
 
-        // run impersonated tx
-        cmd.cast_fuse()
-            .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
-            .assert_success();
-    }
-);
+    // run impersonated tx
+    cmd.cast_fuse()
+        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
+        .assert_success();
+});
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
 casttest!(fetch_src_blockscout, |_prj, cmd| {
