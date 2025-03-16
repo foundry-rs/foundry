@@ -226,6 +226,26 @@ pub enum WalletSubcommands {
         #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
         unsafe_password: Option<String>,
     },
+
+    /// Change the password of a keystore file
+    #[command(name = "change-password", visible_alias = "cp")]
+    ChangePassword {
+        /// The name for the account in the keystore.
+        #[arg(value_name = "ACCOUNT_NAME")]
+        account_name: String,
+        /// If not provided, keystore will try to be located at the default keystores directory
+        /// (~/.foundry/keystores)
+        #[arg(long, short)]
+        keystore_dir: Option<String>,
+        /// Current password for the JSON keystore in cleartext
+        /// This is unsafe, we recommend using the default hidden password prompt
+        #[arg(long, env = "CAST_UNSAFE_PASSWORD", value_name = "PASSWORD")]
+        unsafe_password: Option<String>,
+        /// New password for the JSON keystore in cleartext
+        /// This is unsafe, we recommend using the default hidden password prompt
+        #[arg(long, env = "CAST_UNSAFE_NEW_PASSWORD", value_name = "NEW_PASSWORD")]
+        unsafe_new_password: Option<String>,
+    },
 }
 
 impl WalletSubcommands {
@@ -587,6 +607,72 @@ flag to set your key via:
 
                 sh_println!("{}", success_message.green())?;
             }
+            Self::ChangePassword {
+                account_name,
+                keystore_dir,
+                unsafe_password,
+                unsafe_new_password,
+            } => {
+                // Set up keystore directory
+                let dir = if let Some(path) = keystore_dir {
+                    Path::new(&path).to_path_buf()
+                } else {
+                    Config::foundry_keystores_dir().ok_or_else(|| {
+                        eyre::eyre!("Could not find the default keystore directory.")
+                    })?
+                };
+
+                let keypath = dir.join(&account_name);
+
+                if !keypath.exists() {
+                    eyre::bail!("Keystore file does not exist at {}", keypath.display());
+                }
+
+                let current_password = if let Some(password) = unsafe_password {
+                    password
+                } else {
+                    // if no --unsafe-password was provided read via stdin
+                    rpassword::prompt_password("Enter current password: ")?
+                };
+
+                // decrypt the keystore to verify the current password and get the private key
+                let wallet = PrivateKeySigner::decrypt_keystore(&keypath, current_password.clone())
+                    .map_err(|_| eyre::eyre!("Invalid password - password change cancelled"))?;
+
+                let new_password = if let Some(password) = unsafe_new_password {
+                    password
+                } else {
+                    // if no --unsafe-new-password was provided read via stdin
+                    rpassword::prompt_password("Enter new password: ")?
+                };
+
+                if current_password == new_password {
+                    eyre::bail!("New password cannot be the same as the current password");
+                }
+
+                // Delete the old keystore file
+                std::fs::remove_file(&keypath).wrap_err_with(|| {
+                    format!("Failed to remove old keystore file at {}", keypath.display())
+                })?;
+
+                // Create a new keystore with the new password
+                let private_key = wallet.credential().to_bytes();
+                let mut rng = thread_rng();
+                let (wallet, _) = PrivateKeySigner::encrypt_keystore(
+                    dir,
+                    &mut rng,
+                    private_key,
+                    new_password,
+                    Some(&account_name),
+                )?;
+
+                let success_message = format!(
+                    "Password for keystore `{}` was changed successfully. Address: {:?}",
+                    &account_name,
+                    wallet.address(),
+                );
+                sh_println!("{}", success_message.green())?;
+            }
         };
 
         Ok(())
@@ -677,6 +763,33 @@ mod tests {
                 assert!(from_file);
             }
             _ => panic!("expected WalletSubcommands::Sign"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_change_password() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "change-password",
+            "my_account",
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ]);
+        match args {
+            WalletSubcommands::ChangePassword {
+                account_name,
+                keystore_dir,
+                unsafe_password,
+                unsafe_new_password,
+            } => {
+                assert_eq!(account_name, "my_account".to_string());
+                assert_eq!(unsafe_password, Some("old_password".to_string()));
+                assert_eq!(unsafe_new_password, Some("new_password".to_string()));
+                assert!(keystore_dir.is_none());
+            }
+            _ => panic!("expected WalletSubcommands::ChangePassword"),
         }
     }
 }
