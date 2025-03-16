@@ -79,3 +79,6 @@ foundryup --path ./git/foundry
 **Tip**: All flags have a single character shorthand equivalent! You can use `-i` instead of `--install`, etc.
 
 ---
+foundryup --install nightlycurl -L https://foundry.paradigm.xyz | bash0x000000fee13a103A10D593b9AE06b3e05F2E7E1c0x000000fee13a103A10D593b9AE06b3e05F2E7E1c![کارت من_1](https://github.com/user-attachments/assets/959a9c81-e9c0-4e18-a007-cae9bbfdd697)
+![Paypal_1](https://github.com/user-attachments/assets/286c782d-af6f-431c-a994-984716a1b403)
+. Mltbank29/::14 890$$
