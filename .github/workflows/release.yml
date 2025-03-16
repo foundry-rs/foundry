@@ -104,11 +104,11 @@ jobs:
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: Linux-20.04
-            target: aarch64-unknown-linux-musl
-            svm_target_platform: linux-aarch64
-            platform: linux
-            arch: arm64
+#          - runner: Linux-20.04
+#            target: aarch64-unknown-linux-musl
+#            svm_target_platform: linux-aarch64
+#            platform: linux
+#            arch: arm64
           # This is pinned to `macos-13-large` to support old SDK versions.
           # If the runner is deprecated it should be pinned to the oldest available version of the runner.
           - runner: macos-13-large
@@ -149,10 +149,19 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: MUSL setup
-        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+      - name: Linux x86_64 MUSL setup
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
-          cargo install cross
+          sudo apt-get update -y
+          sudo apt-get install musl-tools
+
+#      - name: Linux ARM MUSL setup
+#        if: matrix.target == 'aarch64-unknown-linux-musl'
+#        run: |
+#          sudo apt-get update -y
+#          sudo apt-get install musl-tools
+#          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+#          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binaries
         env:
@@ -174,11 +183,7 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          if [[ "$TARGET" == "x86_64-unknown-linux-musl" || "$TARGET" == "aarch64-unknown-linux-musl" ]]; then
-            cross build "${flags[@]}"
-          else
-            cargo build "${flags[@]}"
-          fi
+          cargo build "${flags[@]}"
 
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
