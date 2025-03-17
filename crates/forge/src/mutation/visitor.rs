@@ -4,9 +4,13 @@ use solar_parse::ast::{
 
 use std::ops::ControlFlow;
 
-use crate::mutation::mutant::{Mutant, MutationType, create_assignement_mutation, create_binary_op_mutation, create_delegatecall_mutation, create_delete_mutation, create_unary_mutation};
-use crate::mutation::mutators::mutator_registry::MutatorRegistry;
-
+use crate::mutation::{
+    mutant::{
+        create_assignement_mutation, create_binary_op_mutation, create_delegatecall_mutation,
+        create_delete_mutation, create_unary_mutation, Mutant, MutationType,
+    },
+    mutators::mutator_registry::MutatorRegistry,
+};
 
 #[derive(Debug, Clone)]
 pub enum AssignVarTypes {
@@ -38,9 +42,9 @@ impl<'ast> Visit<'ast> for MutantVisitor {
                         AssignVarTypes::Literal(val.kind.clone()),
                     ))
                 }
-                ExprKind::Unary(op, var) => self
-                    .mutation_to_conduct
-                    .extend(create_unary_mutation(op.span, op.kind, var)),
+                ExprKind::Unary(op, var) => {
+                    self.mutation_to_conduct.extend(create_unary_mutation(op.span, op.kind, var))
+                }
                 _ => {}
             },
         }
@@ -100,26 +104,21 @@ impl<'ast> Visit<'ast> for MutantVisitor {
                 // kind.kind.clone())); }
 
                 if let Some(op) = &bin_op {
-                    self.mutation_to_conduct
-                        .extend(create_binary_op_mutation(op.span, op.kind));
+                    self.mutation_to_conduct.extend(create_binary_op_mutation(op.span, op.kind));
                 }
             }
             ExprKind::Binary(_, op, _) => {
-                self.mutation_to_conduct
-                    .extend(create_binary_op_mutation(op.span, op.kind));
+                self.mutation_to_conduct.extend(create_binary_op_mutation(op.span, op.kind));
             }
             ExprKind::Call(expr, args) => {
                 if let ExprKind::Member(_, ident) = &expr.kind {
                     if ident.to_string() == "delegatecall" {
-                        self.mutation_to_conduct
-                            .push(create_delegatecall_mutation(ident.span));
+                        self.mutation_to_conduct.push(create_delegatecall_mutation(ident.span));
                     }
                 }
             }
             // CallOptions
-            ExprKind::Delete(_) => {
-                self.mutation_to_conduct.push(create_delete_mutation(expr.span))
-            }
+            ExprKind::Delete(_) => self.mutation_to_conduct.push(create_delete_mutation(expr.span)),
             // Indent
             // Index -> mutable? 0 it? idx should be a regular expression?
             // Lit -> global/constant are using Lit as initializer
@@ -131,8 +130,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             // TypeCall -> compilation error
             // Type -> compilation error, most likely
             ExprKind::Unary(op, var) => {
-                self.mutation_to_conduct
-                    .extend(create_unary_mutation(expr.span, op.kind, var));
+                self.mutation_to_conduct.extend(create_unary_mutation(expr.span, op.kind, var));
             }
             _ => {}
         };

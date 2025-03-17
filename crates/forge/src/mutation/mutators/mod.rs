@@ -26,7 +26,7 @@ pub struct MutationContext<'a> {
     /// The expression to mutate
     pub expr: Option<&'a Expr<'a>>,
     /// The operation (in unary or binary-op mutations)
-    pub op_kind: Option<UnOpKind>, 
+    pub op_kind: Option<UnOpKind>,
 }
 
 pub struct MutationContextBuilder<'a> {
@@ -38,38 +38,30 @@ pub struct MutationContextBuilder<'a> {
 impl<'a> MutationContextBuilder<'a> {
     // Create a new empty builder
     pub fn new() -> Self {
-        MutationContextBuilder {
-            span: None,
-            expr: None,
-            op_kind: None,
-        }
+        MutationContextBuilder { span: None, expr: None, op_kind: None }
     }
-    
+
     // Required
     pub fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
         self
     }
-    
+
     // Optional
     pub fn with_expr(mut self, expr: &'a Expr<'a>) -> Self {
         self.expr = Some(expr);
         self
     }
-    
+
     // Optional
     pub fn with_op_kind(mut self, op_kind: UnOpKind) -> Self {
         self.op_kind = Some(op_kind);
         self
     }
-    
+
     pub fn build(self) -> Result<MutationContext<'a>, &'static str> {
         let span = self.span.ok_or("Span is required for MutationContext")?;
-        
-        Ok(MutationContext {
-            span,
-            expr: self.expr,
-            op_kind: self.op_kind,
-        })
+
+        Ok(MutationContext { span, expr: self.expr, op_kind: self.op_kind })
     }
 }

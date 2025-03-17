@@ -174,9 +174,9 @@ pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes) -> Vec<
         AssignVarTypes::Literal(lit) => match lit {
             LitKind::Bool(val) => vec![Mutant {
                 span,
-                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
-                    LitKind::Bool(!val),
-                )),
+                mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(LitKind::Bool(
+                    !val,
+                ))),
                 path: PathBuf::default(),
             }],
             LitKind::Number(val) => {
@@ -330,19 +330,17 @@ pub fn create_unary_mutation(
         })
         .collect();
 
-    mutations.extend(post_fixed_operations.into_iter().filter(|&kind| kind != op).map(
-        |kind| {
-            let new_expression = format!("{}{}", target_content, kind.to_str());
+    mutations.extend(post_fixed_operations.into_iter().filter(|&kind| kind != op).map(|kind| {
+        let new_expression = format!("{}{}", target_content, kind.to_str());
 
-            let mutated = UnaryOpMutated::new(new_expression, kind);
+        let mutated = UnaryOpMutated::new(new_expression, kind);
 
-            Mutant {
-                span: original_span,
-                mutation: MutationType::UnaryOperatorMutation(mutated),
-                path: PathBuf::default(),
-            }
-        },
-    ));
+        Mutant {
+            span: original_span,
+            mutation: MutationType::UnaryOperatorMutation(mutated),
+            path: PathBuf::default(),
+        }
+    }));
 
     return mutations;
 }

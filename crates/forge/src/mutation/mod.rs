@@ -1,14 +1,13 @@
 mod mutant;
-mod visitor; 
 mod mutators;
-
+mod visitor;
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use solar_parse::{
     ast::{
         interface::{source_map::FileName, Session},
-        ContractKind, ItemKind
+        ContractKind, ItemKind,
     },
     Parser,
 };
@@ -54,7 +53,7 @@ impl MutationHandler {
         Ok(())
     }
 
-    /// Read a source string, and for each contract found, gets its ast and visit it to list 
+    /// Read a source string, and for each contract found, gets its ast and visit it to list
     /// all mutations to conduct
     pub async fn generate_ast(&mut self) {
         let path = &self.contract_to_mutate;
@@ -227,7 +226,7 @@ impl MutationHandler {
         std::fs::write(&target_path, new_content)
             .expect(&format!("Failed to write to target file {:?}", &target_path));
     }
-    
+
     /// Compile a directory and get the compilation output
     fn compile_mutant(&self, mutant: &Mutant) -> Option<ProjectCompileOutput> {
         let temp_folder = &mutant.path;

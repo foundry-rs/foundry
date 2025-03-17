@@ -1,5 +1,5 @@
-use crate::mutation::mutant::{Mutant, MutationType};
 use super::{MutationContext, Mutator};
+use crate::mutation::mutant::{Mutant, MutationType};
 use eyre::{Context, Result};
 
 pub struct BinaryOpMutator;
@@ -13,7 +13,7 @@ impl Mutator for BinaryOpMutator {
         todo!()
     }
 
-    fn name(&self) ->  &'static str {
+    fn name(&self) -> &'static str {
         todo!()
     }
 }
