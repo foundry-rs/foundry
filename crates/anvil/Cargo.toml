@@ -20,7 +20,7 @@ required-features = ["cli"]
 
 [dependencies]
 # foundry internal
-anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
+anvil-core = { path = "core" }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-cli.workspace = true
@@ -118,10 +118,9 @@ tokio = { workspace = true, features = ["full"] }
 
 op-alloy-rpc-types.workspace = true
 
-
 [features]
 default = ["cli", "jemalloc"]
-cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
-cli = ["tokio/full", "cmd", "fdlimit"]
+cmd = ["clap", "clap_complete", "dep:ctrlc", "anvil-server/clap", "tokio/signal"]
+cli = ["tokio/full", "cmd", "dep:fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]

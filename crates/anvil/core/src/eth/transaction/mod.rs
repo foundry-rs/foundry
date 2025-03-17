@@ -197,7 +197,6 @@ impl MaybeImpersonatedTransaction {
     ///
     /// Note: this is feature gated so it does not conflict with the `Deref`ed
     /// [TypedTransaction::recover] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
             return Ok(sender);
@@ -209,7 +208,6 @@ impl MaybeImpersonatedTransaction {
     ///
     /// Note: this is feature gated so it does not conflict with the `Deref`ed
     /// [TypedTransaction::hash] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn is_impersonated(&self) -> bool {
         self.impersonated_sender.is_some()
     }
@@ -218,7 +216,6 @@ impl MaybeImpersonatedTransaction {
     ///
     /// Note: this is feature gated so it does not conflict with the `Deref`ed
     /// [TypedTransaction::hash] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
         if let Some(sender) = self.impersonated_sender {
             return self.transaction.impersonated_hash(sender)
@@ -368,7 +365,6 @@ impl PendingTransaction {
         Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
     }
 
-    #[cfg(feature = "impersonated-tx")]
     pub fn with_impersonated(transaction: TypedTransaction, sender: Address) -> Self {
         let hash = transaction.impersonated_hash(sender);
         Self {
@@ -936,7 +932,6 @@ impl TypedTransaction {
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
     /// This appends the `address` before hashing it
-    #[cfg(feature = "impersonated-tx")]
     pub fn impersonated_hash(&self, sender: Address) -> B256 {
         let mut buffer = Vec::new();
         Encodable::encode(self, &mut buffer);
