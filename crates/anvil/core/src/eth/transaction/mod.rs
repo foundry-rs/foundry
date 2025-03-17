@@ -194,9 +194,6 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::recover] function by default.
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
             return Ok(sender);
@@ -205,17 +202,11 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Returns whether the transaction is impersonated
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::hash] function by default.
     pub fn is_impersonated(&self) -> bool {
         self.impersonated_sender.is_some()
     }
 
     /// Returns the hash of the transaction
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::hash] function by default.
     pub fn hash(&self) -> B256 {
         if let Some(sender) = self.impersonated_sender {
             return self.transaction.impersonated_hash(sender)
