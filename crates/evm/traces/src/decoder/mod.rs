@@ -464,6 +464,14 @@ impl CallTraceDecoder {
 
                 Some(decoded.iter().map(format_token).collect())
             }
+            "signDelegation" | "signAndAttachDelegation" => {
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                // Redact private key and replace in trace for
+                // signAndAttachDelegation(address implementation, uint256 privateKey)
+                // signDelegation(address implementation, uint256 privateKey)
+                decoded[1] = DynSolValue::String("<pk>".to_string());
+                Some(decoded.iter().map(format_token).collect())
+            }
             "parseJson" |
             "parseJsonUint" |
             "parseJsonUintArray" |
