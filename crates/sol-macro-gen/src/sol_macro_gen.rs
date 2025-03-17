@@ -67,9 +67,9 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(&mut self) -> Result<()> {
+    pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
         for instance in &mut self.instances {
-            Self::generate_binding(instance).wrap_err_with(|| {
+            Self::generate_binding(instance, all_derives).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -81,7 +81,7 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    fn generate_binding(instance: &mut SolMacroGen) -> Result<()> {
+    fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
         let input = instance.get_sol_input()?.normalize_json()?;
 
         let SolInput { attrs: _, path: _, kind } = input;
@@ -89,7 +89,7 @@ impl MultiSolMacroGen {
         let tokens = match kind {
             SolInputKind::Sol(mut file) => {
                 let sol_attr: syn::Attribute = syn::parse_quote! {
-                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
+                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract, all_derives = #all_derives)]
                 };
                 file.attrs.push(sol_attr);
                 expand(file).wrap_err("failed to expand")?
@@ -101,6 +101,7 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_to_crate(
         &mut self,
         name: &str,
@@ -109,8 +110,9 @@ impl MultiSolMacroGen {
         single_file: bool,
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
+        all_derives: bool,
     ) -> Result<()> {
-        self.generate_bindings()?;
+        self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
 
@@ -172,8 +174,13 @@ edition = "2021"
         Ok(())
     }
 
-    pub fn write_to_module(&mut self, bindings_path: &Path, single_file: bool) -> Result<()> {
-        self.generate_bindings()?;
+    pub fn write_to_module(
+        &mut self,
+        bindings_path: &Path,
+        single_file: bool,
+        all_derives: bool,
+    ) -> Result<()> {
+        self.generate_bindings(all_derives)?;
 
         let _ = fs::create_dir_all(bindings_path);
 
