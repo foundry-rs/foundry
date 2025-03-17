@@ -97,7 +97,7 @@ jobs:
           - runner: Linux-20.04
             target: x86_64-unknown-linux-musl
             svm_target_platform: linux-amd64
-            platform: linux
+            platform: alpine
             arch: amd64
           - runner: Linux-20.04
             target: aarch64-unknown-linux-gnu
@@ -107,7 +107,7 @@ jobs:
           - runner: Linux-20.04
             target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
-            platform: linux
+            platform: alpine
             arch: arm64
           # This is pinned to `macos-13-large` to support old SDK versions.
           # If the runner is deprecated it should be pinned to the oldest available version of the runner.
@@ -196,19 +196,13 @@ jobs:
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
           OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
-          TARGET: ${{ matrix.target }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
-          if [ "$PLATFORM_NAME" == "linux" ]; then
-            if [[ "$TARGET" == "x86_64-unknown-linux-musl" || "$TARGET" == "aarch64-unknown-linux-musl" ]]; then
-              tar -czvf "foundry_${VERSION_NAME}_alpine_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
-              echo "file_name=foundry_${VERSION_NAME}_alpine_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
-            else
-              tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
-              echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
-            fi
+          if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
+            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
