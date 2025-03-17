@@ -174,7 +174,7 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          if [[ "$TARGET" == "x86_64-unknown-linux-musl" || "$TARGET" == "aarch64-unknown-linux-musl" ]]; then
+          if [[ "$TARGET" == "*-musl" ]]; then
             cross build "${flags[@]}"
           else
             cargo build "${flags[@]}"
