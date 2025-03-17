@@ -650,11 +650,6 @@ flag to set your key via:
                     eyre::bail!("New password cannot be the same as the current password");
                 }
 
-                // Delete the old keystore file
-                std::fs::remove_file(&keypath).wrap_err_with(|| {
-                    format!("Failed to remove old keystore file at {}", keypath.display())
-                })?;
-
                 // Create a new keystore with the new password
                 let private_key = wallet.credential().to_bytes();
                 let mut rng = thread_rng();
