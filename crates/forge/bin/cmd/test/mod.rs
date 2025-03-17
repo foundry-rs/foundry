@@ -2,7 +2,7 @@ use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
-use eyre::{Context, OptionExt, Result};
+use eyre::{bail, Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
@@ -300,7 +300,7 @@ impl TestArgs {
         // Set up the project.
         let project = config.project()?;
 
-        let filter = self.filter(&config);
+        let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
@@ -815,19 +815,19 @@ impl TestArgs {
 
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     /// Loads and applies filter from file if only last test run failures performed.
-    pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
+    pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
         if self.rerun {
             filter.test_pattern = last_run_failures(config);
         }
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
-                panic!("Can not supply both --match-path and |path|");
+                bail!("Can not supply both --match-path and |path|");
             }
         } else {
             filter.path_pattern = self.path.clone();
         }
-        filter.merge_with_config(config)
+        Ok(filter.merge_with_config(config))
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
