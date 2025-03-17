@@ -1,16 +1,10 @@
-use foundry_compilers::artifacts::EvmVersion;
-
 // Ensure we can run basic counter tests with EOF support.
 forgetest_init!(test_eof_flag, |prj, cmd| {
-    prj.update_config(|config| {
-        config.evm_version = EvmVersion::Osaka;
-    });
-
-    cmd.forge_fuse().args(["test", "--eof"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--eof", "--use", "0.8.19"]).assert_success().stdout_eq(str![[
+        r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (3805): This is a pre-release compiler version, please do not use it in production.
+Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -19,5 +13,6 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
-"#]]);
+"#
+    ]]);
 });
