@@ -83,7 +83,7 @@ pub enum ForgeSubcommand {
     VerifyCheck(VerifyCheckArgs),
 
     /// Verify the deployed bytecode against its source on Etherscan.
-    #[clap(visible_alias = "vb")]
+    #[command(visible_alias = "vb")]
     VerifyBytecode(VerifyBytecodeArgs),
 
     /// Deploy a smart contract.

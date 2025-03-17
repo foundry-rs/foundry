@@ -263,7 +263,7 @@ pub async fn watch_gas_snapshot(args: GasSnapshotArgs) -> Result<()> {
 /// test`
 pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build.load_config()?;
-    let filter = args.filter(&config);
+    let filter = args.filter(&config)?;
     // Marker to check whether to override the command.
     let no_reconfigure = filter.args().test_pattern.is_some() ||
         filter.args().path_pattern.is_some() ||
