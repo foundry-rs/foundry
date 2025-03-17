@@ -4,7 +4,9 @@ use solar_parse::ast::{
 
 use std::ops::ControlFlow;
 
-use crate::mutation::mutation::{Mutant, MutationType, create_assignement_mutation, create_binary_op_mutation, create_delegatecall_mutation, create_delete_mutation, create_unary_mutation};
+use crate::mutation::mutant::{Mutant, MutationType, create_assignement_mutation, create_binary_op_mutation, create_delegatecall_mutation, create_delete_mutation, create_unary_mutation};
+use crate::mutation::mutators::mutator_registry::MutatorRegistry;
+
 
 #[derive(Debug, Clone)]
 pub enum AssignVarTypes {
@@ -25,6 +27,8 @@ impl<'ast> Visit<'ast> for MutantVisitor {
         &mut self,
         var: &'ast VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
+        let registry = MutatorRegistry::new();
+
         match &var.initializer {
             None => {}
             Some(exp) => match &exp.kind {

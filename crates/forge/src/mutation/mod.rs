@@ -1,4 +1,4 @@
-mod mutation;
+mod mutant;
 mod visitor; 
 mod mutators;
 
@@ -14,9 +14,9 @@ use solar_parse::{
 };
 use std::sync::Arc;
 
-use crate::mutation::{mutation::Mutant, visitor::MutantVisitor};
+use crate::mutation::{mutant::Mutant, visitor::MutantVisitor};
 
-pub use crate::mutation::mutation::MutationResult;
+pub use crate::mutation::mutant::MutationResult;
 use foundry_compilers::{project::ProjectCompiler, ProjectCompileOutput};
 use foundry_config::Config;
 use rayon::prelude::*;
@@ -54,6 +54,8 @@ impl MutationHandler {
         Ok(())
     }
 
+    /// Read a source string, and for each contract found, gets its ast and visit it to list 
+    /// all mutations to conduct
     pub async fn generate_ast(&mut self) {
         let path = &self.contract_to_mutate;
         let target_content = Arc::clone(&self.src);
@@ -86,10 +88,10 @@ impl MutationHandler {
         });
     }
 
+    /// Create a folder for each mutation, naming based on the type and span
     pub fn create_mutation_folders(&mut self) {
         let temp_dir_root = tempfile::tempdir().unwrap();
         let target_contract_path = &self.contract_to_mutate;
-        // let mut mutations_list = self.mutations;
 
         for mutant in &mut self.mutations {
             let mutation_dir = temp_dir_root
@@ -113,6 +115,7 @@ impl MutationHandler {
         self.temp_dir = Some(temp_dir_root);
     }
 
+    /// Emit the solidity of the mutated contract, write it to disk and (try to) compile it
     pub async fn generate_and_compile(&self) -> Vec<(&Mutant, Option<ProjectCompileOutput>)> {
         let src_path = &self.contract_to_mutate;
 
@@ -132,6 +135,7 @@ impl MutationHandler {
             .collect()
     }
 
+    /// Copy the src, cache, out and test folders to one of the mutant temp folder
     fn copy_origin(path: &PathBuf, src_contract_path: &PathBuf, config: Arc<Config>) {
         let cache_src = &config.cache_path;
         let out_src = &config.out;
@@ -158,8 +162,8 @@ impl MutationHandler {
             .expect("Failed to copy in temp src directory");
     }
 
-    /// Recursively copy all files except one (ie the contract we're mutating)
-    /// @todo Symlinks instead
+    /// Recursively copy all files except one, from a src to a dst folder
+    /// @todo Symlinks instead?
     fn copy_dir_except(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
@@ -189,6 +193,7 @@ impl MutationHandler {
         Ok(())
     }
 
+    /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
     fn generate_mutant(&self, mutation: &Mutant, src_contract_path: &PathBuf) {
         let temp_dir_path = &mutation.path;
 
@@ -222,7 +227,8 @@ impl MutationHandler {
         std::fs::write(&target_path, new_content)
             .expect(&format!("Failed to write to target file {:?}", &target_path));
     }
-
+    
+    /// Compile a directory and get the compilation output
     fn compile_mutant(&self, mutant: &Mutant) -> Option<ProjectCompileOutput> {
         let temp_folder = &mutant.path;
 

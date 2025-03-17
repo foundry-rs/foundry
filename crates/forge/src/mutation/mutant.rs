@@ -5,24 +5,6 @@ use std::path::PathBuf;
 
 use super::visitor::AssignVarTypes;
 
-pub struct MutationContext<'a> {
-    pub span: Span,
-    /// The expression to mutate
-    pub expr: Option<&'a Expr<'a>>,
-    /// The operation (in unary or binary-op mutations)
-    pub op_kind: Option<UnOpKind>, 
-}
-
-pub trait Mutator {
-    /// Generate all mutant corresponding to a given context
-    fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant>;
-    /// True if a mutator can be applied to an expression/node
-    fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool;
-    fn name(&self) -> &'static str;
-}
-
-
-
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
 #[derive(Debug)]
 struct UnaryOpMutated {
@@ -186,6 +168,7 @@ impl Mutant {
     }
 }
 
+// in respective mutator
 pub fn create_assignement_mutation(span: Span, var_type: AssignVarTypes) -> Vec<Mutant> {
     match var_type {
         AssignVarTypes::Literal(lit) => match lit {

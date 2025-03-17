@@ -1,10 +1,11 @@
-use crate::mutation::mutation::{Mutant, MutationType};
+use crate::mutation::mutant::{Mutant, MutationType};
 use super::{MutationContext, Mutator};
+use eyre::{Context, Result};
 
 pub struct UnaryOperatorMutator;
 
 impl Mutator for UnaryOperatorMutator {
-    fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant> {
+    fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         todo!()
 
     }

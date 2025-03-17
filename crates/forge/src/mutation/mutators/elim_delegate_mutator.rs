@@ -1,17 +1,18 @@
 
-use crate::mutation::mutation::{Mutant, MutationType};
+use crate::mutation::mutant::{Mutant, MutationType};
 use super::{MutationContext, Mutator};
 
 use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
 use std::path::PathBuf;
+use eyre::{Context, Result};
 
 pub struct ElimDelegateMutator;
 
 impl Mutator for ElimDelegateMutator {
-    fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Vec<Mutant> {
-        vec![
-            Mutant { span: ctxt.span, mutation: MutationType::ElimDelegateMutation, path: PathBuf::default() }
-        ]
+    fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+        Ok(vec![
+            Mutant { span: context.span, mutation: MutationType::ElimDelegateMutation, path: PathBuf::default() }
+        ])
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
@@ -28,5 +29,11 @@ impl Mutator for ElimDelegateMutator {
 
     fn name(&self) ->  &'static str {
         "ElimDelegateMutation"
+    }
+}
+
+impl ToString for ElimDelegateMutator {
+    fn to_string(&self) -> String {
+        "".to_string()
     }
 }
