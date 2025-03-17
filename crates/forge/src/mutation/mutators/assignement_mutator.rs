@@ -80,6 +80,7 @@ impl Mutator for AssignmentMutator {
     }
 }
 
+/// Starting from a solar Expr, creates an AssignVarTypes enum (used for mutation)
 fn determinate_type(expr: &Expr<'_>) -> Result<AssignVarTypes> {
     match &expr.kind {
         ExprKind::Lit(kind, _) => Ok(AssignVarTypes::Literal(kind.kind.clone())),
