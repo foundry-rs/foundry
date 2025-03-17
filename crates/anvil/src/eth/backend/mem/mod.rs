@@ -241,6 +241,7 @@ impl Backend {
                 env.handler_cfg.spec_id,
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
+                genesis.number,
             )
         };
 
