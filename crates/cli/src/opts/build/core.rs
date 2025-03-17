@@ -120,7 +120,7 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Build with EOF.
+    /// Whether to compile contracts to EOF bytecode.
     #[arg(long)]
     #[serde(skip)]
     pub eof: bool,

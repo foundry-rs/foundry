@@ -896,16 +896,20 @@ impl Config {
 
     /// Adjusts settings if EOF compilation is enabled.
     ///
-    /// This includes enabling optimizer, via_ir and ensuring that evm_version is not lower than
-    /// Prague.
+    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
+    /// lower than Osaka.
     pub fn sanitize_eof_settings(&mut self) {
         if self.eof {
             self.optimizer = Some(true);
             self.normalize_optimizer_settings();
 
+            if self.eof_version.is_none() {
+                self.eof_version = Some(EofVersion::V1);
+            }
+
             self.via_ir = true;
-            if self.evm_version < EvmVersion::Prague {
-                self.evm_version = EvmVersion::Prague;
+            if self.evm_version < EvmVersion::Osaka {
+                self.evm_version = EvmVersion::Osaka;
             }
         }
     }
@@ -1081,7 +1085,6 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
-    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(solc) = &self.solc {
             let solc = match solc {
