@@ -28,12 +28,7 @@ pub struct SoldeerArgs {
 
 impl SoldeerArgs {
     pub async fn run(self) -> Result<()> {
-        let verbosity = match shell::verbosity() {
-            0 => Verbosity::new(0, 1),
-            1 => Verbosity::new(1, 0),
-            2 => Verbosity::new(2, 0),
-            _ => Verbosity::new(3, 0),
-        };
+        let verbosity = Verbosity::new(shell::verbosity(), if shell::is_quiet() { 1 } else { 0 });
         match soldeer_commands::run(self.command, verbosity).await {
             Ok(_) => Ok(()),
             Err(err) => Err(eyre::eyre!("Failed to run soldeer {}", err)),
