@@ -1957,7 +1957,7 @@ contract SimpleScript is Script {
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
- "#]].is_jsonlines());
+"#]].is_jsonlines());
 });
 
 // https://github.com/foundry-rs/foundry/pull/7742
