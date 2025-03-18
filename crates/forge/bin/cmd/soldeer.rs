@@ -1,9 +1,7 @@
 use clap::Parser;
 use eyre::Result;
-use soldeer_commands::Command;
-use foundry_common:: shell;
-pub use clap_verbosity_flag::Verbosity;
-
+use foundry_common::shell;
+use soldeer_commands::{Command, Verbosity};
 // CLI arguments for `forge soldeer`.
 // The following list of commands and their actions:
 //
@@ -28,11 +26,11 @@ pub struct SoldeerArgs {
     command: Command,
 }
 
-impl SoldeerArgs { 
+impl SoldeerArgs {
     pub async fn run(self) -> Result<()> {
         let verbosity = match shell::verbosity() {
             0 => Verbosity::new(0, 1),
-            1 => Verbosity::new(1, 0), 
+            1 => Verbosity::new(1, 0),
             2 => Verbosity::new(2, 0),
             _ => Verbosity::new(3, 0),
         };

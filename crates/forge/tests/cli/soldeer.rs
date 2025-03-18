@@ -51,6 +51,7 @@ forge-std = "1.8.1"
 forgesoldeer!(install_dependency_git, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
+    let git_arg = "--git";
     let git = "https://gitlab.com/mario4582928/Mario.git";
 
     let mut foundry_contents = r#"[profile.default]
@@ -65,7 +66,7 @@ libs = ["lib", "dependencies"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency, git]).assert_success();
+    cmd.arg("soldeer").args([command, dependency, git_arg, git]).assert_success();
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -96,6 +97,7 @@ forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.gi
 forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
+    let git_arg = "--git";
     let git = "https://gitlab.com/mario4582928/Mario.git";
     let rev_flag = "--rev";
     let commit = "7a0663eaf7488732f39550be655bad6694974cb3";
@@ -112,7 +114,7 @@ libs = ["lib", "dependencies"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]).assert_success();
+    cmd.arg("soldeer").args([command, dependency, git_arg, git, rev_flag, commit]).assert_success();
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly

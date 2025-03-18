@@ -3472,7 +3472,6 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
- "clap-verbosity-flag",
  "clap_complete",
  "clap_complete_fig",
  "clearscreen",
