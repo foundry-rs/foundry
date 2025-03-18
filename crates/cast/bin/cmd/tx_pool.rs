@@ -7,7 +7,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 
-/// CLI arguments for `cast txpool`.
+/// CLI arguments for `cast tx-pool`.
 #[derive(Debug, Parser, Clone)]
 pub enum TxPoolSubcommands {
     Content {
