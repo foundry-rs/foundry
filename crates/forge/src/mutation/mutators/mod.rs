@@ -7,7 +7,7 @@ pub mod unary_op_mutator;
 
 pub mod mutator_registry;
 
-use solar_parse::ast::{Expr, Span, UnOpKind};
+use solar_parse::ast::{Expr, Span, UnOpKind, VariableDefinition};
 
 use eyre::{Context, Result};
 
@@ -27,18 +27,21 @@ pub struct MutationContext<'a> {
     pub expr: Option<&'a Expr<'a>>,
     /// The operation (in unary or binary-op mutations)
     pub op_kind: Option<UnOpKind>,
+
+    pub var_definition: Option<&'a VariableDefinition<'a>>,
 }
 
 pub struct MutationContextBuilder<'a> {
     span: Option<Span>,
     expr: Option<&'a Expr<'a>>,
     op_kind: Option<UnOpKind>,
+    var_definition: Option<&'a VariableDefinition<'a>>,
 }
 
 impl<'a> MutationContextBuilder<'a> {
     // Create a new empty builder
     pub fn new() -> Self {
-        MutationContextBuilder { span: None, expr: None, op_kind: None }
+        MutationContextBuilder { span: None, expr: None, op_kind: None, var_definition: None }
     }
 
     // Required
@@ -59,9 +62,20 @@ impl<'a> MutationContextBuilder<'a> {
         self
     }
 
+    // Optional
+    pub fn with_var_definition(mut self, var_definition: &'a VariableDefinition<'a>) -> Self {
+        self.var_definition = Some(var_definition);
+        self
+    }
+
     pub fn build(self) -> Result<MutationContext<'a>, &'static str> {
         let span = self.span.ok_or("Span is required for MutationContext")?;
 
-        Ok(MutationContext { span, expr: self.expr, op_kind: self.op_kind })
+        Ok(MutationContext {
+            span,
+            expr: self.expr,
+            op_kind: self.op_kind,
+            var_definition: self.var_definition,
+        })
     }
 }

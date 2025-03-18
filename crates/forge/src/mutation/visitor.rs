@@ -33,6 +33,8 @@ impl<'ast> Visit<'ast> for MutantVisitor {
     ) -> ControlFlow<Self::BreakValue> {
         let registry = MutatorRegistry::new();
 
+        // pass var as MutationContext.var_definition
+
         match &var.initializer {
             None => {}
             Some(exp) => match &exp.kind {
@@ -101,7 +103,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
                 // if let ExprKind::Lit(kind, _) = &rhs.kind {
                 //     self.mutation_to_conduct
                 //         .extend(create_assignement_mutation(rhs.span,
-                // kind.kind.clone())); }
+                // AssignVarTypes::Literal(kind.kind.clone()))); }
 
                 if let Some(op) = &bin_op {
                     self.mutation_to_conduct.extend(create_binary_op_mutation(op.span, op.kind));

@@ -1,14 +1,17 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
-use eyre::{Context, Result};
-use solar_parse::ast::{BinOpKind, Expr, ExprKind};
+use eyre::{Context, OptionExt, Result};
+use solar_parse::ast::{BinOp, BinOpKind, Expr, ExprKind};
 use std::path::PathBuf;
 
 pub struct BinaryOpMutator;
 
+// @todo Add the other way to get there
+
 impl Mutator for BinaryOpMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
-        let op = get_kind(context)?;
+        let bin_op = get_bin_op(context)?;
+        let op = bin_op.kind;
 
         let operations_bools = vec![
             // Bool
@@ -58,6 +61,7 @@ impl Mutator for BinaryOpMutator {
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
         match ctxt.expr.unwrap().kind {
             ExprKind::Binary(_, _, _) => true,
+            ExprKind::Assign(_, bin_op, _) => bin_op.is_some(),
             _ => false,
         }
     }
@@ -67,9 +71,12 @@ impl Mutator for BinaryOpMutator {
     }
 }
 
-fn get_kind(ctxt: &MutationContext<'_>) -> Result<BinOpKind> {
-    match ctxt.expr.unwrap().kind {
-        ExprKind::Binary(_, op, _) => Ok(op.kind),
+fn get_bin_op(ctxt: &MutationContext<'_>) -> Result<BinOp> {
+    let expr = ctxt.expr.ok_or_eyre("BinaryOpMutator: unexpected expression")?;
+
+    match expr.kind {
+        ExprKind::Assign(_, Some(bin_op), _) => Ok(bin_op),
+        ExprKind::Binary(_, op, _) => Ok(op),
         _ => eyre::bail!(
             "BinaryOpMutator: unexpected expression kind: {:?}",
             ctxt.expr.unwrap().kind
