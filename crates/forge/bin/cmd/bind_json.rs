@@ -104,7 +104,7 @@ impl BindJsonArgs {
                 let ast = parser.parse_file().map_err(|e| e.emit())?;
 
                 let mut visitor = PreprocessorVisitor::new();
-                visitor.visit_source_unit(&ast);
+                let _ = visitor.visit_source_unit(&ast);
                 visitor.update(&sess, &mut content);
 
                 source.content = Arc::new(content);
