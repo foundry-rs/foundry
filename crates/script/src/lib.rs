@@ -271,7 +271,7 @@ impl ScriptArgs {
             }
 
             if shell::is_json() {
-                pre_simulation.show_json()?;
+                pre_simulation.show_json().await?;
             } else {
                 pre_simulation.show_traces().await?;
             }

@@ -185,8 +185,8 @@ impl PreExecutionState {
 
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
-            if self.build_data.predeploy_libraries.libraries_count() > 0 &&
-                self.args.evm.sender.is_none()
+            if self.build_data.predeploy_libraries.libraries_count() > 0
+                && self.args.evm.sender.is_none()
             {
                 for tx in txs {
                     if tx.transaction.to().is_none() {
@@ -384,13 +384,31 @@ impl ExecutedState {
 }
 
 impl PreSimulationState {
-    pub fn show_json(&self) -> Result<()> {
+    pub async fn show_json(&self) -> Result<()> {
         let result = &self.execution_result;
+        let decoder = &self.execution_artifacts.decoder;
+        let mut traces = result.traces.clone();
+
+        for (_, trace) in &mut traces {
+            decode_trace_arena(trace, decoder).await?;
+        }
+
+        let result_with_decoded_traces = &ScriptResult {
+            success: result.success,
+            gas_used: result.gas_used,
+            logs: result.logs.clone(),
+            traces,
+            labeled_addresses: result.labeled_addresses.clone(),
+            returned: result.returned.clone(),
+            transactions: result.transactions.clone(),
+            breakpoints: result.breakpoints.clone(),
+            address: result.address,
+        };
 
         let json_result = JsonResult {
             logs: decode_console_logs(&result.logs),
             returns: &self.execution_artifacts.returns,
-            result,
+            result: result_with_decoded_traces,
         };
         let json = serde_json::to_string(&json_result)?;
         sh_println!("{json}")?;
