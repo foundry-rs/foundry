@@ -209,6 +209,7 @@ alloy-provider = { version = "0.12.1", default-features = false }
 alloy-pubsub = { version = "0.12.1", default-features = false }
 alloy-rpc-client = { version = "0.12.1", default-features = false }
 alloy-rpc-types = { version = "0.12.1", default-features = true }
+alloy-rpc-types-txpool = { version = "0.12.1", default-features = false }
 alloy-serde = { version = "0.12.1", default-features = false }
 alloy-signer = { version = "0.12.1", default-features = false }
 alloy-signer-aws = { version = "0.12.1", default-features = false }

@@ -714,6 +714,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let eof = stdin::unwrap_line(eof)?;
             sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
         }
+        CastSubcommand::TxPool { command } => command.run().await?,
     };
 
     /// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether

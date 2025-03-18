@@ -3,7 +3,7 @@ use crate::cmd::{
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
     estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    wallet::WalletSubcommands,
+    tx_pool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
@@ -1052,6 +1052,13 @@ pub enum CastSubcommand {
     /// Decodes EOF container bytes
     #[command()]
     DecodeEof { eof: Option<String> },
+
+    /// Inspect the TxPool of a node.
+    #[command(visible_alias = "tp")]
+    TxPool {
+        #[command(subcommand)]
+        command: TxPoolSubcommands,
+    },
 }
 
 /// CLI arguments for `cast --to-base`.
