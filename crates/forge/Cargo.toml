@@ -67,6 +67,7 @@ async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
+clap-verbosity-flag = "3.0.0"
 dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
