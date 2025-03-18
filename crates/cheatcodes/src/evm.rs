@@ -585,6 +585,22 @@ impl Cheatcode for coolCall {
     }
 }
 
+impl Cheatcode for warmCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), false);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for coldCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), true);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
@@ -1194,4 +1210,13 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
             });
     }
     state_diffs
+}
+
+/// Helper function to set / unset cold storage slot of the target address.
+fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
+    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target) {
+        if let Some(storage_slot) = account.storage.get_mut(&slot) {
+            storage_slot.is_cold = cold;
+        }
+    }
 }
