@@ -17,7 +17,7 @@ use soldeer_commands::Command;
 // artifacts and configs
 
 #[derive(Clone, Debug, Parser)]
-#[clap(
+#[command(
     override_usage = "Native Solidity Package Manager, `run forge soldeer [COMMAND] --help` for more details"
 )]
 pub struct SoldeerArgs {
