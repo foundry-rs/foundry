@@ -4,13 +4,12 @@ use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
-    stream::{Fuse, Stream, StreamExt},
+    stream::{Fuse, StreamExt},
     task::AtomicWaker,
 };
 use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
     fmt,
-    pin::Pin,
     sync::Arc,
     task::{ready, Context, Poll},
     time::Duration,
