@@ -11,15 +11,26 @@ use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
-    // Initialize the global logger and other utilities.
+    setup()?;
+
+    let args = Forge::parse();
+    args.global.init()?;
+
+    run_command(args)
+}
+
+/// Setup the global logger and other utilities.
+pub fn setup() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
-    let args = Forge::parse();
-    args.global.init()?;
+    Ok(())
+}
 
+/// Run the subcommand.
+pub fn run_command(args: Forge) -> Result<()> {
     // Set the execution context based on the subcommand.
     let context = match &args.cmd {
         ForgeSubcommand::Test(_) => ForgeContext::Test,
