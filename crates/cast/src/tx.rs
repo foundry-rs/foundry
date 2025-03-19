@@ -1,3 +1,4 @@
+use crate::traces::identifier::SignaturesIdentifier;
 use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_json_abi::Function;
@@ -11,7 +12,6 @@ use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRe
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
-use cast::traces::identifier::SignaturesIdentifier;
 use eyre::Result;
 use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
@@ -131,7 +131,7 @@ pub struct InputState {
 /// Builder type constructing [TransactionRequest] from cast send/mktx inputs.
 ///
 /// It is implemented as a stateful builder with expected state transition of [InitState] ->
-/// [TxKindState] -> [InputState].
+/// [ToState] -> [InputState].
 #[derive(Debug)]
 pub struct CastTxBuilder<P, S> {
     provider: P,
@@ -198,7 +198,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
         })
     }
 
-    /// Sets [TxKind] for this builder and changes state to [TxKindState].
+    /// Sets [TxKind] for this builder and changes state to [ToState].
     pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<P, ToState>> {
         let to = if let Some(to) = to { Some(to.resolve(&self.provider).await?) } else { None };
         Ok(CastTxBuilder {

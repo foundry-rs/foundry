@@ -1,11 +1,11 @@
+use crate::{
+    revm::primitives::EnvWithHandlerCfg, utils::apply_chain_and_block_specific_env_changes,
+};
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::{
-    revm::primitives::EnvWithHandlerCfg, utils::apply_chain_and_block_specific_env_changes,
-};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -75,7 +75,7 @@ pub struct RunArgs {
     ///
     /// default value: 330
     ///
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(long, alias = "cups", value_name = "CUPS")]
     pub compute_units_per_second: Option<u64>,
 
@@ -83,7 +83,7 @@ pub struct RunArgs {
     ///
     /// default value: false
     ///
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
 

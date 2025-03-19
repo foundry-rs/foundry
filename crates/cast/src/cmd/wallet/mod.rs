@@ -1,3 +1,4 @@
+use crate::revm::primitives::Authorization;
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
@@ -7,7 +8,6 @@ use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
-use cast::revm::primitives::Authorization;
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};

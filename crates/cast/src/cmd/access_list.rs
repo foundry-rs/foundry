@@ -1,6 +1,8 @@
-use crate::tx::{CastTxBuilder, SenderKind};
+use crate::{
+    tx::{CastTxBuilder, SenderKind},
+    Cast,
+};
 use alloy_rpc_types::BlockId;
-use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{

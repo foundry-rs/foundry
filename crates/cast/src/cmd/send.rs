@@ -1,10 +1,12 @@
-use crate::tx::{self, CastTxBuilder};
+use crate::{
+    tx::{self, CastTxBuilder},
+    Cast,
+};
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
-use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -41,7 +43,7 @@ pub struct SendTxArgs {
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
 
-    /// Send via `eth_sendTransaction using the `--from` argument or $ETH_FROM as sender
+    /// Send via `eth_sendTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from")]
     unlocked: bool,
 

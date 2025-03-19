@@ -1,7 +1,10 @@
-use crate::tx::{CastTxBuilder, SenderKind};
+use crate::{
+    traces::TraceKind,
+    tx::{CastTxBuilder, SenderKind},
+    Cast,
+};
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
-use cast::{traces::TraceKind, Cast};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -38,7 +41,7 @@ pub struct CallArgs {
     /// The arguments of the function to call.
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of [SIG] and [ARGS].
+    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"]

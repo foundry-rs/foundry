@@ -157,7 +157,7 @@ fn get_interfaces(abis: Vec<(JsonAbi, String)>) -> Result<Vec<InterfaceSource>> 
             let source = match foundry_cli::utils::abi_to_solidity(&contract_abi, &name) {
                 Ok(generated_source) => generated_source,
                 Err(e) => {
-                    warn!("Failed to format interface for {name}: {e}");
+                    sh_warn!("Failed to format interface for {name}: {e}")?;
                     contract_abi.to_sol(&name, None)
                 }
             };
