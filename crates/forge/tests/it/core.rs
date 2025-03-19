@@ -2,9 +2,9 @@
 
 use crate::{
     config::*,
+    result::SuiteResult,
     test_helpers::{TEST_DATA_DEFAULT, TEST_DATA_PARIS},
 };
-use forge::result::SuiteResult;
 use foundry_evm::traces::TraceKind;
 use foundry_test_utils::Filter;
 use std::{collections::BTreeMap, env};

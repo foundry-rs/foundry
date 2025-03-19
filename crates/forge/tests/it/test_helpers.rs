@@ -1,8 +1,8 @@
 //! Test helpers for Forge integration tests.
 
+use crate::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
     compilers::multi::MultiCompiler,

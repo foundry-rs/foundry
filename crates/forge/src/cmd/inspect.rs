@@ -1,9 +1,9 @@
+use crate::revm::primitives::Eof;
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::{Context, Result};
-use forge::revm::primitives::Eof;
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},

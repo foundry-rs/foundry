@@ -2,10 +2,10 @@
 
 use crate::{
     config::*,
+    result::SuiteResult,
     test_helpers::{RE_PATH_SEPARATOR, TEST_DATA_DEFAULT, TEST_DATA_PARIS},
 };
 use alloy_chains::Chain;
-use forge::result::SuiteResult;
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_test_utils::Filter;
 use std::fs;

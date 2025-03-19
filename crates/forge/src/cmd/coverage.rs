@@ -1,8 +1,5 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
-use alloy_primitives::{map::HashMap, Address, Bytes, U256};
-use clap::{Parser, ValueEnum, ValueHint};
-use eyre::{Context, Result};
-use forge::{
+use crate::{
     coverage::{
         analysis::{SourceAnalysis, SourceFile, SourceFiles},
         anchors::find_anchors,
@@ -13,6 +10,9 @@ use forge::{
     utils::IcPcMap,
     MultiContractRunnerBuilder,
 };
+use alloy_primitives::{map::HashMap, Address, Bytes, U256};
+use clap::{Parser, ValueEnum, ValueHint};
+use eyre::{Context, Result};
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
@@ -330,11 +330,11 @@ impl CoverageArgs {
         Ok(())
     }
 
-    pub(crate) fn is_watch(&self) -> bool {
+    pub fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
-    pub(crate) fn watch(&self) -> &WatchArgs {
+    pub fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
 }

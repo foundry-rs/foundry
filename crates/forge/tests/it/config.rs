@@ -1,6 +1,6 @@
 //! Test config.
 
-use forge::{
+use crate::{
     result::{SuiteResult, TestStatus},
     MultiContractRunner,
 };

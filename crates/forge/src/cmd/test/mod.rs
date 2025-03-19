@@ -1,9 +1,5 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
-use alloy_primitives::U256;
-use chrono::Utc;
-use clap::{Parser, ValueHint};
-use eyre::{bail, Context, OptionExt, Result};
-use forge::{
+use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
@@ -16,6 +12,10 @@ use forge::{
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
+use alloy_primitives::U256;
+use chrono::Utc;
+use clap::{Parser, ValueHint};
+use eyre::{bail, Context, OptionExt, Result};
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
@@ -53,8 +53,8 @@ use yansi::Paint;
 
 mod filter;
 mod summary;
+use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
-use forge::{result::TestKind, traces::render_trace_arena_inner};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{format_invariant_metrics_table, TestSummaryReport};
 

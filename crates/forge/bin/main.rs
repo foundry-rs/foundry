@@ -1,12 +1,10 @@
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
+use forge::cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 use foundry_cli::{handler, utils};
 use foundry_common::shell;
 use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
-
-mod cmd;
-use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 
 mod opts;
 use opts::{Forge, ForgeSubcommand};

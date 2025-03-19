@@ -1,12 +1,13 @@
 //! Fuzz tests.
 
-use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
-use alloy_primitives::{Bytes, U256};
-use forge::{
+use crate::{
+    config::*,
     decode::decode_console_logs,
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
+    test_helpers::TEST_DATA_DEFAULT,
 };
+use alloy_primitives::{Bytes, U256};
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
