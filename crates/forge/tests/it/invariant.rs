@@ -1,7 +1,8 @@
 //! Invariant tests.
 
-use crate::{config::*, fuzz::CounterExample, test_helpers::TEST_DATA_DEFAULT};
+use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
+use forge::fuzz::CounterExample;
 use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 

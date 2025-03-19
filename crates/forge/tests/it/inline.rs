@@ -1,6 +1,7 @@
 //! Inline configuration tests.
 
-use crate::{result::TestKind, test_helpers::TEST_DATA_DEFAULT};
+use crate::test_helpers::TEST_DATA_DEFAULT;
+use forge::result::TestKind;
 use foundry_test_utils::Filter;
 
 #[tokio::test(flavor = "multi_thread")]
