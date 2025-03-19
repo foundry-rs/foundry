@@ -1,8 +1,9 @@
-use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_json_abi::Function;
 use alloy_network::{
-    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
+    AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
+    TransactionBuilder7702,
 };
 use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
@@ -277,7 +278,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, true).await
+        self._build(sender, true, false).await
     }
 
     /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
@@ -286,13 +287,26 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, false).await
+        self._build(sender, false, false).await
+    }
+
+    /// Builds an unsigned RLP-encoded raw transaction.
+    ///
+    /// Returns the hex encoded string representation of the transaction.
+    pub async fn build_unsigned_raw(self, from: Address) -> Result<String> {
+        let (tx, _) = self._build(SenderKind::Address(from), true, true).await?;
+        let tx = tx.build_unsigned()?;
+        match tx {
+            AnyTypedTransaction::Ethereum(t) => Ok(hex::encode_prefixed(t.encoded_for_signing())),
+            _ => eyre::bail!("Cannot generate unsigned transaction for non-Ethereum transactions"),
+        }
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
+        unsigned: bool,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
         let sender = sender.into();
         let from = sender.address();
@@ -316,7 +330,17 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
             nonce
         };
 
-        self.resolve_auth(sender, tx_nonce).await?;
+        if !unsigned {
+            self.resolve_auth(sender, tx_nonce).await?;
+        } else if self.auth.is_some() {
+            let Some(CliAuthorizationList::Signed(signed_auth)) = self.auth.take() else {
+                eyre::bail!(
+                    "SignedAuthorization needs to be provided for generating unsigned 7702 txs"
+                )
+            };
+
+            self.tx.set_authorization_list(vec![signed_auth]);
+        }
 
         if let Some(access_list) = match self.access_list.take() {
             None => None,
