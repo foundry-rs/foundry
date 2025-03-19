@@ -6,7 +6,6 @@ use crate::{
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
     },
-    opts::EvmOpts,
     utils::IcPcMap,
     MultiContractRunnerBuilder,
 };
@@ -23,6 +22,7 @@ use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::Config;
+use foundry_evm::opts::EvmOpts;
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::{
