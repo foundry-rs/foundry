@@ -27,28 +27,29 @@ use foundry_config::Config;
 use std::time::Instant;
 
 /// Run the `cast` command-line interface.
-pub async fn run() -> Result<()> {
-    let args = setup()?;
-    run_command(args.cmd)
+pub fn run() -> Result<()> {
+    setup()?;
+
+    let args = CastArgs::parse();
+    args.global.init()?;
+
+    run_command(args)
 }
 
 /// Setup the global logger and other utilities.
-pub fn setup() -> Result<CastArgs> {
+pub fn setup() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
-    let args = CastArgs::parse();
-    args.global.init()?;
-
-    Ok(args)
+    Ok(())
 }
 
 /// Run the subcommand.
 #[tokio::main]
-pub async fn run_command(arg: CastSubcommand) -> Result<()> {
-    match arg {
+pub async fn run_command(args: CastArgs) -> Result<()> {
+    match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } => {
             sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
