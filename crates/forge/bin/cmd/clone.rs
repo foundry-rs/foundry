@@ -423,6 +423,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     // we will canonicalize the sources directory later
     let src_dir = &path_config.sources;
     let lib_dir = &path_config.libraries[0];
+    // Optional dir, if found in src
+    let node_modules_dir = &root.join("node_modules");
     let contract_name = &meta.contract_name;
     let source_tree = meta.source_tree();
 
@@ -451,6 +453,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
             let folder_name = e.file_name();
             folder_name == "src" ||
                 folder_name == "lib" ||
+                folder_name == "node_modules" ||
                 folder_name == "contracts" ||
                 folder_name == "hardhat" ||
                 folder_name == "forge-std" ||
@@ -467,9 +470,21 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
         let folder_name = entry.file_name();
         // special handling when we need to re-organize the directories: we flatten them.
         if to_reorg {
-            if folder_name == "contracts" || folder_name == "src" || folder_name == "lib" {
+            if folder_name == "contracts" ||
+                folder_name == "src" ||
+                folder_name == "lib" ||
+                folder_name == "node_modules"
+            {
                 // move all sub folders in contracts to src or lib
-                let new_dir = if folder_name == "lib" { lib_dir } else { src_dir };
+                let new_dir = if folder_name == "lib" {
+                    lib_dir
+                } else if folder_name == "node_modules" {
+                    // Create node_modules dir if it exists in raw sources.
+                    std::fs::create_dir(node_modules_dir)?;
+                    node_modules_dir
+                } else {
+                    src_dir
+                };
                 for e in read_dir(entry.path())? {
                     let e = e?;
                     let dest = new_dir.join(e.file_name());
