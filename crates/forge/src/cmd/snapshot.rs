@@ -85,8 +85,7 @@ impl GasSnapshotArgs {
         self.test.is_watch()
     }
 
-    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
-    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    /// Returns the [`watchexec::Config`] necessary to bootstrap a new watch loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.test.watchexec_config()
     }

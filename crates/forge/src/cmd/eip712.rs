@@ -176,7 +176,8 @@ impl Resolver {
         Ok(Some(result))
     }
 
-    /// Converts given [TypeName] into a type which can be converted to [DynSolType].
+    /// Converts given [TypeName] into a type which can be converted to
+    /// [`alloy_dyn_abi::DynSolType`].
     ///
     /// Returns `None` if the type is not supported for EIP712 encoding.
     pub fn resolve_type(

@@ -120,8 +120,7 @@ impl BuildArgs {
         self.watch.watch.is_some()
     }
 
-    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
-    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    /// Returns the [`watchexec::Config`] necessary to bootstrap a new watch loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         // Use the path arguments or if none where provided the `src`, `test` and `script`
         // directories as well as the `foundry.toml` configuration file.

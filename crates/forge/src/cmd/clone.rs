@@ -306,8 +306,8 @@ impl CloneArgs {
 /// - `model_checker`, `debug`, and `output_selection` are ignored for now
 ///
 /// Detailed information can be found from the following link:
-/// - https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-/// - https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description
+/// - <https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options>
+/// - <https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description>
 fn update_config_by_metadata(
     config: &Config,
     doc: &mut toml_edit::DocumentMut,

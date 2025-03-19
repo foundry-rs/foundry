@@ -475,8 +475,6 @@ pub type ContractFactory<P> = DeploymentTxFactory<P>;
 /// Helper which manages the deployment transaction of a smart contract. It
 /// wraps a deployment transaction, and retrieves the contract address output
 /// by it.
-///
-/// Currently, we recommend using the [`ContractDeployer`] type alias.
 #[derive(Debug)]
 #[must_use = "ContractDeploymentTx does nothing unless you `send` it"]
 pub struct ContractDeploymentTx<P, C> {
@@ -513,9 +511,8 @@ pub struct Deployer<P> {
 
 impl<P: Provider<AnyNetwork>> Deployer<P> {
     /// Broadcasts the contract deployment transaction and after waiting for it to
-    /// be sufficiently confirmed (default: 1), it returns a tuple with
-    /// the [`Contract`](crate::Contract) struct at the deployed contract's address
-    /// and the corresponding [`AnyReceipt`].
+    /// be sufficiently confirmed (default: 1), it returns a tuple with the [`Address`] at the
+    /// deployed contract's address and the corresponding [`AnyTransactionReceipt`].
     pub async fn send_with_receipt(
         self,
     ) -> Result<(Address, AnyTransactionReceipt), ContractDeploymentError> {
@@ -536,42 +533,9 @@ impl<P: Provider<AnyNetwork>> Deployer<P> {
     }
 }
 
-/// To deploy a contract to the Ethereum network, a `ContractFactory` can be
+/// To deploy a contract to the Ethereum network, a [`ContractFactory`] can be
 /// created which manages the Contract bytecode and Application Binary Interface
 /// (ABI), usually generated from the Solidity compiler.
-///
-/// Once the factory's deployment transaction is mined with sufficient confirmations,
-/// the [`Contract`](crate::Contract) object is returned.
-///
-/// # Example
-///
-/// ```
-/// # async fn foo() -> Result<(), Box<dyn std::error::Error>> {
-/// use alloy_primitives::Bytes;
-/// use ethers_contract::ContractFactory;
-/// use ethers_providers::{Provider, Http};
-///
-/// // get the contract ABI and bytecode
-/// let abi = Default::default();
-/// let bytecode = Bytes::from_static(b"...");
-///
-/// // connect to the network
-/// let client = Provider::<Http>::try_from("http://localhost:8545").unwrap();
-/// let client = std::sync::Arc::new(client);
-///
-/// // create a factory which will be used to deploy instances of the contract
-/// let factory = ContractFactory::new(abi, bytecode, client);
-///
-/// // The deployer created by the `deploy` call exposes a builder which gets consumed
-/// // by the async `send` call
-/// let contract = factory
-///     .deploy("initial value".to_string())?
-///     .confirmations(0usize)
-///     .send()
-///     .await?;
-/// println!("{}", contract.address());
-/// # Ok(())
-/// # }
 #[derive(Clone, Debug)]
 pub struct DeploymentTxFactory<P> {
     client: P,
