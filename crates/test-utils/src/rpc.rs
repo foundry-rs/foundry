@@ -24,6 +24,11 @@ static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
         // "5c812e02193c4ba793f8c214317582bd",
+        "22d07e883da246438e63abad14d088f5",
+        "7031545d5b934be8bbdd12e77565178c",
+        "1156b9dbbfe249929d0cbcd3802683eb",
+        "85476c545f8f4e88915ad2260a225d0d",
+        "a254cdc5a4f14b7e8ae076d3b9fb5ea3",
     ];
 
     keys.shuffle(&mut rand::thread_rng());
@@ -34,11 +39,11 @@ static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 // List of alchemy keys for mainnet
 static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
-        "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
-        "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
-        "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
-        "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
-        "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
+        // "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
+        // "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
+        // "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
+        // "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
+        // "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
         // "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
         // "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
         // "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
@@ -169,11 +174,11 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
         }
 
         let mut urls = Vec::new();
-        for &key in ALCHEMY_KEYS.iter() {
+        for &key in INFURA_KEYS.iter() {
             if is_ws {
-                urls.push(format!("wss://eth-mainnet.g.alchemy.com/v2/{key}"));
+                urls.push(format!("wss://mainnet.infura.io/ws/v3/{key}"));
             } else {
-                urls.push(format!("https://eth-mainnet.g.alchemy.com/v2/{key}"));
+                urls.push(format!("https://mainnet.infura.io/v3/{key}"));
             }
         }
         urls
