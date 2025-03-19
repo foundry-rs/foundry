@@ -206,7 +206,7 @@ impl BindArgs {
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         let mut bindings = self.get_solmacrogen(artifacts)?;
-        bindings.generate_bindings()?;
+        bindings.generate_bindings(!self.skip_extra_derives)?;
         sh_println!("Checking bindings for {} contracts", bindings.instances.len())?;
         bindings.check_consistency(
             &self.crate_name,
@@ -236,10 +236,15 @@ impl BindArgs {
                 self.single_file,
                 self.alloy_version.clone(),
                 self.alloy_rev.clone(),
+                !self.skip_extra_derives,
             )?;
         } else {
             trace!(single_file = self.single_file, "generating module");
-            solmacrogen.write_to_module(bindings_root, self.single_file)?;
+            solmacrogen.write_to_module(
+                bindings_root,
+                self.single_file,
+                !self.skip_extra_derives,
+            )?;
         }
 
         Ok(())
