@@ -625,6 +625,22 @@
           "description": "The data to use to match encountered reverts"
         }
       ]
+    },
+    {
+      "name": "AccessListItem",
+      "description": "An EIP-2930 access list item.",
+      "fields": [
+        {
+          "name": "target",
+          "ty": "address",
+          "description": "The address to be added in access list."
+        },
+        {
+          "name": "storageKeys",
+          "ty": "bytes32[]",
+          "description": "The storage keys to be added in access list."
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -686,6 +702,26 @@
       },
       "group": "testing",
       "status": "internal",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "accessList",
+        "description": "Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.",
+        "declaration": "function accessList(AccessListItem[] calldata accessList) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "accessList((address,bytes32[])[])",
+        "selector": "0x743e4cb7",
+        "selectorBytes": [
+          116,
+          62,
+          76,
+          183
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
       "safety": "unsafe"
     },
     {
@@ -6632,6 +6668,26 @@
       },
       "group": "evm",
       "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "noAccessList",
+        "description": "Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.",
+        "declaration": "function noAccessList() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "noAccessList()",
+        "selector": "0x238ad778",
+        "selectorBytes": [
+          35,
+          138,
+          215,
+          120
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
       "safety": "unsafe"
     },
     {

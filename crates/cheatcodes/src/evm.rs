@@ -16,6 +16,7 @@ use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
 use foundry_evm_traces::StackSnapshotType;
+use itertools::Itertools;
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
 use std::{
@@ -581,6 +582,29 @@ impl Cheatcode for coolCall {
             account.unmark_touch();
             account.storage.clear();
         }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for accessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { accessList } = self;
+        let access_list = accessList
+            .iter()
+            .map(|item| {
+                let keys = item.storageKeys.iter().map(|key| B256::from(*key)).collect_vec();
+                alloy_rpc_types::AccessListItem { address: item.target, storage_keys: keys }
+            })
+            .collect_vec();
+        state.access_list = Some(alloy_rpc_types::AccessList::from(access_list));
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for noAccessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.access_list = Some(alloy_rpc_types::AccessList::default());
         Ok(Default::default())
     }
 }
