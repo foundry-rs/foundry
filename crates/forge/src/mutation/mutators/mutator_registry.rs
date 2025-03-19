@@ -2,8 +2,6 @@ use super::{MutationContext, Mutator};
 use crate::mutation::mutant::Mutant;
 use eyre::{Context, Result};
 
-use crate::mutation::mutators::assignement_mutator::AssignmentMutator;
-
 /// Registry of all available mutators (ie implementing the Mutator trait)
 pub struct MutatorRegistry {
     mutators: Vec<Box<dyn Mutator>>,

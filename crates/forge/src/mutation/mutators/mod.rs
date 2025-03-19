@@ -2,7 +2,6 @@ pub mod assignement_mutator;
 pub mod binary_op_mutator;
 pub mod delete_expression_mutator;
 pub mod elim_delegate_mutator;
-pub mod ident_mutator;
 pub mod unary_op_mutator;
 
 pub mod mutator_registry;

@@ -17,15 +17,17 @@ impl Mutator for ElimDelegateMutator {
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
-        if let Some(expr) = ctxt.expr {
-            if let ExprKind::Call(expr, _) = &expr.kind {
-                if let ExprKind::Member(_, ident) = expr.kind {
-                    return ident.to_string() == "delegatecall";
-                }
-            }
-        }
-
-        return false;
+        ctxt.expr
+            .as_ref()
+            .and_then(|expr| match &expr.kind {
+                ExprKind::Call(callee, _) => Some(callee),
+                _ => None,
+            })
+            .and_then(|callee| match &callee.kind {
+                ExprKind::Member(_, ident) => Some(ident),
+                _ => None,
+            })
+            .map_or(false, |ident| ident.to_string() == "delegatecall")
     }
 
     fn name(&self) -> &'static str {

@@ -7,7 +7,7 @@ use super::visitor::AssignVarTypes;
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
 #[derive(Debug)]
-struct UnaryOpMutated {
+pub struct UnaryOpMutated {
     /// String containing the whole new expression (operator and its target)
     /// eg `a++`
     new_expression: String,
@@ -17,7 +17,7 @@ struct UnaryOpMutated {
 }
 
 impl UnaryOpMutated {
-    fn new(new_expression: String, resulting_op_kind: UnOpKind) -> Self {
+    pub fn new(new_expression: String, resulting_op_kind: UnOpKind) -> Self {
         UnaryOpMutated { new_expression, resulting_op_kind }
     }
 }
