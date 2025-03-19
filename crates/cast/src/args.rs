@@ -26,8 +26,10 @@ use foundry_common::{
 use foundry_config::Config;
 use std::time::Instant;
 
+/// Run the `cast` command-line interface.
 #[tokio::main]
 pub async fn run() -> Result<()> {
+    // Initialize the global logger and other utilities.
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
@@ -36,6 +38,7 @@ pub async fn run() -> Result<()> {
     let args = CastArgs::parse();
     args.global.init()?;
 
+    // Run the subcommand.
     match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } => {
