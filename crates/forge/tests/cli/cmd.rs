@@ -728,6 +728,36 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
+// checks that clone works with raw src containing `node_modules`
+// <https://github.com/foundry-rs/foundry/issues/10115>
+forgetest!(can_clone_with_node_modules, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_mainnet_etherscan_api_key().as_str(),
+        "0xA3E217869460bEf59A1CfD0637e2875F9331e823",
+    ])
+    .arg(prj.root())
+    .assert_success()
+    .stdout_eq(str![[r#"
+Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj, cmd| {
     prj.assert_create_dirs_exists();
