@@ -68,21 +68,11 @@ impl MutationHandler {
                 })?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
+            
+            let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new()};
+            mutant_visitor.visit_source_unit(&ast);
+            self.mutations.extend(mutant_visitor.mutation_to_conduct);
 
-            for node in ast.items.iter() {
-                if let ItemKind::Contract(contract) = &node.kind {
-                    // @todo include library too?
-                    if matches!(
-                        contract.kind,
-                        ContractKind::Contract | ContractKind::AbstractContract
-                    ) {
-                        let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new() };
-                        mutant_visitor.visit_item_contract(contract);
-
-                        self.mutations.extend(mutant_visitor.mutation_to_conduct);
-                    }
-                }
-            }
             Ok(())
         });
     }
