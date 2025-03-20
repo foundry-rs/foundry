@@ -1,8 +1,8 @@
 use super::test;
+use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use alloy_primitives::{map::HashMap, U256};
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use regex::Regex;
 use std::{
@@ -85,8 +85,7 @@ impl GasSnapshotArgs {
         self.test.is_watch()
     }
 
-    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
-    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    /// Returns the [`watchexec::Config`] necessary to bootstrap a new watch loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.test.watchexec_config()
     }

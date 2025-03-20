@@ -109,8 +109,8 @@ impl BuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project()`]
+    /// [`foundry_config::utils::find_project_root`] and merges the cli `BuildArgs` into it before
+    /// returning [`foundry_config::Config::project()`]
     pub fn project(&self) -> Result<Project> {
         self.build.project()
     }
@@ -120,8 +120,7 @@ impl BuildArgs {
         self.watch.watch.is_some()
     }
 
-    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
-    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    /// Returns the [`watchexec::Config`] necessary to bootstrap a new watch loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         // Use the path arguments or if none where provided the `src`, `test` and `script`
         // directories as well as the `foundry.toml` configuration file.
