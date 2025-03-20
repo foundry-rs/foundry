@@ -1,9 +1,9 @@
 use super::interface::{fetch_abi_from_etherscan, load_abi_from_file};
+use crate::SimpleCast;
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{ext::TraceApi, Provider};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
-use cast::SimpleCast;
 use clap::{command, Parser};
 use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;

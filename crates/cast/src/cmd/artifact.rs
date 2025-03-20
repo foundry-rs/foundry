@@ -1,3 +1,7 @@
+use super::{
+    creation_code::{fetch_creation_code, parse_code_output},
+    interface::{fetch_abi_from_etherscan, load_abi_from_file},
+};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use clap::{command, Parser};
@@ -10,11 +14,6 @@ use foundry_cli::{
 use foundry_common::fs;
 use serde_json::json;
 use std::path::PathBuf;
-
-use super::{
-    creation_code::{fetch_creation_code, parse_code_output},
-    interface::{fetch_abi_from_etherscan, load_abi_from_file},
-};
 
 /// CLI arguments for `cast artifact`.
 #[derive(Parser)]

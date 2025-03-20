@@ -1,9 +1,8 @@
-use crate::args::parse_slot;
+use crate::{opts::parse_slot, Cast};
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
-use cast::Cast;
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
 use eyre::Result;
@@ -37,7 +36,7 @@ use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
 ///
-/// https://github.com/ethereum/solidity/blob/develop/Changelog.md#065-2020-04-06
+/// <https://github.com/ethereum/solidity/blob/develop/Changelog.md#065-2020-04-06>
 const MIN_SOLC: Version = Version::new(0, 6, 5);
 
 /// CLI arguments for `cast storage`.
