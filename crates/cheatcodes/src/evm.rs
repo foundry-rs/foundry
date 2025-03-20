@@ -612,7 +612,7 @@ impl Cheatcode for noAccessListCall {
     }
 }
 
-impl Cheatcode for warmCall {
+impl Cheatcode for warmSlotCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), false);
@@ -620,7 +620,7 @@ impl Cheatcode for warmCall {
     }
 }
 
-impl Cheatcode for coldCall {
+impl Cheatcode for coolSlotCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, slot } = *self;
         set_cold_slot(ccx, target, slot.into(), true);

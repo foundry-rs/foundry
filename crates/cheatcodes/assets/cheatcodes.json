@@ -3486,26 +3486,6 @@
     },
     {
       "func": {
-        "id": "cold",
-        "description": "Utility cheatcode to mark specific storage slot as cold, simulating no prior read.",
-        "declaration": "function cold(address target, bytes32 slot) external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "cold(address,bytes32)",
-        "selector": "0x40a4035f",
-        "selectorBytes": [
-          64,
-          164,
-          3,
-          95
-        ]
-      },
-      "group": "evm",
-      "status": "experimental",
-      "safety": "unsafe"
-    },
-    {
-      "func": {
         "id": "computeCreate2Address_0",
         "description": "Compute the address of a contract created with CREATE2 using the given CREATE2 deployer.",
         "declaration": "function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);",
@@ -3598,6 +3578,26 @@
           255,
           159,
           33
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "coolSlot",
+        "description": "Utility cheatcode to mark specific storage slot as cold, simulating no prior read.",
+        "declaration": "function coolSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "coolSlot(address,bytes32)",
+        "selector": "0x8c78e654",
+        "selectorBytes": [
+          140,
+          120,
+          230,
+          84
         ]
       },
       "group": "evm",
@@ -10538,18 +10538,18 @@
     },
     {
       "func": {
-        "id": "warm",
+        "id": "warmSlot",
         "description": "Utility cheatcode to mark specific storage slot as warm, simulating a prior read.",
-        "declaration": "function warm(address target, bytes32 slot) external;",
+        "declaration": "function warmSlot(address target, bytes32 slot) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "warm(address,bytes32)",
-        "selector": "0x289eb2d6",
+        "signature": "warmSlot(address,bytes32)",
+        "selector": "0xb23184cf",
         "selectorBytes": [
-          40,
-          158,
           178,
-          214
+          49,
+          132,
+          207
         ]
       },
       "group": "evm",

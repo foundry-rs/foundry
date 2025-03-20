@@ -562,11 +562,11 @@ interface Vm {
 
     /// Utility cheatcode to mark specific storage slot as warm, simulating a prior read.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
-    function warm(address target, bytes32 slot) external;
+    function warmSlot(address target, bytes32 slot) external;
 
     /// Utility cheatcode to mark specific storage slot as cold, simulating no prior read.
     #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
-    function cold(address target, bytes32 slot) external;
+    function coolSlot(address target, bytes32 slot) external;
 
     // -------- Call Manipulation --------
     // --- Mocks ---
