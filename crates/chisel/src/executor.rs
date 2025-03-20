@@ -1286,7 +1286,6 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
 /// Whether execution should continue after inspecting this expression
 #[inline]
 fn should_continue(expr: &pt::Expression) -> bool {
-    #[expect(clippy::match_like_matches_macro)]
     match expr {
         // assignments
         pt::Expression::PreDecrement(_, _) |       // --<inner>

@@ -90,13 +90,11 @@ macro_rules! casttest {
 
 /// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
 #[macro_export]
-#[expect(clippy::disallowed_macros)]
 macro_rules! forgetest_init {
     ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
         $crate::forgetest_init!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
-        #[expect(clippy::disallowed_macros)]
         #[test]
         $(#[$attr])*
         fn $test() {
@@ -109,7 +107,6 @@ macro_rules! forgetest_init {
 
 /// Setup forge soldeer
 #[macro_export]
-#[expect(clippy::disallowed_macros)]
 macro_rules! forgesoldeer {
     ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
         $crate::forgesoldeer!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);

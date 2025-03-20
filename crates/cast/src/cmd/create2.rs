@@ -89,7 +89,6 @@ pub struct Create2Args {
     no_random: bool,
 }
 
-#[expect(dead_code)]
 pub struct Create2Output {
     pub address: Address,
     pub salt: B256,

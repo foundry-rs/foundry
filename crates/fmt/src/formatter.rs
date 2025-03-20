@@ -63,7 +63,6 @@ macro_rules! format_err {
     };
 }
 
-#[expect(unused_macros)]
 macro_rules! bail {
     ($msg:literal $(,)?) => {
         return Err($crate::formatter::format_err!($msg))
@@ -132,7 +131,6 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
-    #[expect(dead_code)]
     unsafe fn buf_contents(&self) -> &String {
         *(&self.buf.w as *const W as *const &mut String)
     }
@@ -2095,7 +2093,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
         return_source_if_disabled!(self, loc, ';');
 
-        #[expect(clippy::if_same_then_else)]
         let pragma_descriptor = if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.

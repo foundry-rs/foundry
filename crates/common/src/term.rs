@@ -53,7 +53,6 @@ pub struct Spinner {
     idx: usize,
 }
 
-#[expect(unused)]
 #[expect(missing_docs)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {

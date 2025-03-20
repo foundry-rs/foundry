@@ -4604,7 +4604,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(unknown_lints, non_local_definitions)]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {

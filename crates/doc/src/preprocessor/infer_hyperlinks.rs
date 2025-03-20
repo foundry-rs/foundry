@@ -231,7 +231,7 @@ impl<'a> InlineLink<'a> {
     }
 
     /// Parses the first inline link.
-    #[expect(unused)]
+    #[allow(unused)]
     fn capture(s: &'a str) -> Option<Self> {
         let cap = RE_INLINE_LINK.captures(s)?;
         Self::from_capture(cap)

@@ -2876,7 +2876,6 @@ impl TransactionValidator for Backend {
 }
 
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
-#[expect(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
     eth_transaction: MaybeImpersonatedTransaction,
