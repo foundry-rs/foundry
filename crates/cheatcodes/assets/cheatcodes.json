@@ -625,6 +625,22 @@
           "description": "The data to use to match encountered reverts"
         }
       ]
+    },
+    {
+      "name": "AccessListItem",
+      "description": "An EIP-2930 access list item.",
+      "fields": [
+        {
+          "name": "target",
+          "ty": "address",
+          "description": "The address to be added in access list."
+        },
+        {
+          "name": "storageKeys",
+          "ty": "bytes32[]",
+          "description": "The storage keys to be added in access list."
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -686,6 +702,26 @@
       },
       "group": "testing",
       "status": "internal",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "accessList",
+        "description": "Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.",
+        "declaration": "function accessList(AccessListItem[] calldata accessList) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "accessList((address,bytes32[])[])",
+        "selector": "0x743e4cb7",
+        "selectorBytes": [
+          116,
+          62,
+          76,
+          183
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
       "safety": "unsafe"
     },
     {
@@ -3542,6 +3578,26 @@
           255,
           159,
           33
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "coolSlot",
+        "description": "Utility cheatcode to mark specific storage slot as cold, simulating no prior read.",
+        "declaration": "function coolSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "coolSlot(address,bytes32)",
+        "selector": "0x8c78e654",
+        "selectorBytes": [
+          140,
+          120,
+          230,
+          84
         ]
       },
       "group": "evm",
@@ -6612,6 +6668,26 @@
       },
       "group": "evm",
       "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "noAccessList",
+        "description": "Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.",
+        "declaration": "function noAccessList() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "noAccessList()",
+        "selector": "0x238ad778",
+        "selectorBytes": [
+          35,
+          138,
+          215,
+          120
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
       "safety": "unsafe"
     },
     {
@@ -10459,6 +10535,26 @@
       "group": "filesystem",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "warmSlot",
+        "description": "Utility cheatcode to mark specific storage slot as warm, simulating a prior read.",
+        "declaration": "function warmSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "warmSlot(address,bytes32)",
+        "selector": "0xb23184cf",
+        "selectorBytes": [
+          178,
+          49,
+          132,
+          207
+        ]
+      },
+      "group": "evm",
+      "status": "experimental",
+      "safety": "unsafe"
     },
     {
       "func": {

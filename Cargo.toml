@@ -188,13 +188,14 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.11.0", default-features = false }
-foundry-compilers = { version = "0.13.3", default-features = false }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "e60b89c" }
+foundry-compilers = { version = "0.13.5", default-features = false }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "cd548da" }
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.1", default-features = false }
 
 ## revm
 revm = { version = "20.0.0-alpha.6", default-features = false }
+revm-bytecode = { version = "1.0.0-alpha.4", default-features = false }
 revm-primitives = { version = "16.0.0-alpha.4", default-features = false }
 revm-inspectors = { version = "0.17.0-alpha.1", features = ["serde"] }
 
@@ -256,7 +257,7 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
-derive_more = { version = "1.0", features = ["full"] }
+derive_more = { version = "2.0", features = ["full"] }
 thiserror = "2"
 
 # bench
@@ -278,7 +279,7 @@ comfy-table = "7"
 dirs = "6"
 dunce = "1"
 evm-disassembler = "0.5"
-evmole = "0.6"
+evmole = "0.7"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
@@ -302,7 +303,7 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.6"
-soldeer-commands = "=0.5.2"
+soldeer-commands = "=0.5.3"
 strum = "0.27"
 tempfile = "3.13"
 tikv-jemallocator = "0.6"

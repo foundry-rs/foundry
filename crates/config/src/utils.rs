@@ -7,7 +7,7 @@ use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };
-use revm_primitives::SpecId;
+use revm_primitives::hardfork::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
 use std::{
     io,
@@ -263,6 +263,7 @@ pub fn evm_spec_id(evm_version: EvmVersion, odyssey: bool) -> SpecId {
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
         EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::OSAKA, // Osaka enables EOF
+        EvmVersion::Prague => SpecId::PRAGUE,
+        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }
