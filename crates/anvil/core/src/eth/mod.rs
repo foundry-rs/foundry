@@ -253,7 +253,6 @@ pub enum EthRequest {
 
     /// geth's `debug_traceCall`  endpoint
     #[serde(rename = "debug_traceCall")]
-    #[allow(clippy::large_enum_variant)]
     DebugTraceCall(
         WithOtherFields<TransactionRequest>,
         #[serde(default)] Option<BlockId>,
