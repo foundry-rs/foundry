@@ -29,8 +29,6 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 
 # evm support
-bytes.workspace = true
-k256.workspace = true
 revm = { workspace = true, features = [
     "std",
     "serde",
@@ -65,7 +63,6 @@ op-alloy-consensus = { workspace = true, features = ["serde"] }
 # axum related
 axum.workspace = true
 hyper.workspace = true
-tower.workspace = true
 
 # tracing
 tracing.workspace = true
@@ -79,7 +76,6 @@ async-trait.workspace = true
 
 # misc
 flate2 = "1.0"
-serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -105,15 +101,9 @@ clap_complete_fig = "4"
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-alloy-json-abi.workspace = true
-alloy-rpc-client = { workspace = true, features = ["pubsub"] }
-alloy-transport-ipc = { workspace = true, features = ["mock"] }
 alloy-provider = { workspace = true, features = ["txpool-api"] }
-alloy-transport-ws.workspace = true
-alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
-similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 op-alloy-rpc-types.workspace = true
