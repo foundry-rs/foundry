@@ -46,6 +46,7 @@ revm = { workspace = true, features = [
     "arbitrary",
     "c-kzg",
     "blst",
+    "secp256r1",
 ] }
 revm-inspectors.workspace = true
 

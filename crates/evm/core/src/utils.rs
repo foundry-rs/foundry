@@ -151,7 +151,7 @@ pub fn configure_tx_req_env(
     env.tx.caller =
         impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
-    env.tx.nonce = nonce;
+    env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();
     env.tx.data = input.input().cloned().unwrap_or_default();
     env.tx.chain_id = chain_id;
