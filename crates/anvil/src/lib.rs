@@ -68,9 +68,11 @@ mod shutdown;
 /// additional task management
 mod tasks;
 
+pub mod args;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+pub mod opts;
 
 #[macro_use]
 extern crate foundry_common;
