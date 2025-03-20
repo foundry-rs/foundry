@@ -3,13 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use std::fs::{self, File};
 
 /// Various error variants for `fs` operations that serve as an addition to the io::Error which
 /// does not provide any information about the path.
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum FsPathError {
     /// Provides additional path context for [`fs::write`].
     #[error("failed to write to {path:?}: {source}")]

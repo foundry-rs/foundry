@@ -4,7 +4,7 @@ use solang_parser::pt::Loc;
 use std::{fmt, str::FromStr};
 
 /// An inline config item
-#[allow(clippy::enum_variant_names)]
+#[expect(clippy::enum_variant_names)]
 #[derive(Clone, Copy, Debug)]
 pub enum InlineConfigItem {
     /// Disables the next code item regardless of newlines

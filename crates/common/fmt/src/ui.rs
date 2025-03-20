@@ -781,7 +781,7 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
 /// Various numerical ethereum types used for pretty printing
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum EthValue {
     U64(U64),
     U256(U256),

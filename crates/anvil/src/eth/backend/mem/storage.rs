@@ -350,7 +350,7 @@ impl BlockchainStorage {
         self.best_number = U64::from(block_number);
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),

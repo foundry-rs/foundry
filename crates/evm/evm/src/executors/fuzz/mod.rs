@@ -77,7 +77,7 @@ impl FuzzedExecutor {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn fuzz(
         &self,
         func: &Function,

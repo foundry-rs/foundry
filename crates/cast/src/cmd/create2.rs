@@ -89,7 +89,7 @@ pub struct Create2Args {
     no_random: bool,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct Create2Output {
     pub address: Address,
     pub salt: B256,
@@ -227,7 +227,7 @@ impl Create2Args {
                     }
 
                     // Calculate the `CREATE2` address.
-                    #[allow(clippy::needless_borrows_for_generic_args)]
+                    #[expect(clippy::needless_borrows_for_generic_args)]
                     let addr = deployer.create2(&salt.0, &init_code_hash);
 
                     // Check if the regex matches the calculated address' checksum.

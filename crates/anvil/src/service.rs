@@ -94,7 +94,7 @@ impl Future for NodeService {
             let filters = pin.filters.clone();
 
             // evict filters that timed out
-            #[allow(clippy::redundant_async_block)]
+            #[expect(clippy::redundant_async_block)]
             tokio::task::spawn(async move { filters.evict().await });
         }
 

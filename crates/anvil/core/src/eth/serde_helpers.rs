@@ -1,12 +1,12 @@
 //! custom serde helper functions
 
-#[allow(unused)]
+#[expect(unused)]
 pub mod sequence {
     use serde::{
         de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
     };
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub fn serialize<S, T>(val: &T, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,

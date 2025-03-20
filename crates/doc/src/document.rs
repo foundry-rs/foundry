@@ -80,7 +80,7 @@ impl Document {
 
 /// The content of the document.
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum DocumentContent {
     Empty,
     Single(ParseItem),

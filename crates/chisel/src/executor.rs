@@ -801,7 +801,7 @@ impl Type {
         }
 
         // Type members, like array, bytes etc
-        #[allow(clippy::single_match)]
+        #[expect(clippy::single_match)]
         match &self {
             Self::Access(inner, access) => {
                 if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {
@@ -1286,7 +1286,7 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
 /// Whether execution should continue after inspecting this expression
 #[inline]
 fn should_continue(expr: &pt::Expression) -> bool {
-    #[allow(clippy::match_like_matches_macro)]
+    #[expect(clippy::match_like_matches_macro)]
     match expr {
         // assignments
         pt::Expression::PreDecrement(_, _) |       // --<inner>

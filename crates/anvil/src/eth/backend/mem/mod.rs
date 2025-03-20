@@ -213,7 +213,7 @@ pub struct Backend {
 
 impl Backend {
     /// Initialises the balance of the given accounts
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<Box<dyn Db>>>,
         env: Arc<RwLock<EnvWithHandlerCfg>>,
@@ -1022,7 +1022,7 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn new_evm_with_inspector_ref<'i, 'db>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
@@ -2876,7 +2876,7 @@ impl TransactionValidator for Backend {
 }
 
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
     eth_transaction: MaybeImpersonatedTransaction,

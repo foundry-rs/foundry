@@ -148,7 +148,7 @@ impl ParseItem {
 
 /// A wrapper type around pt token.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum ParseSource {
     /// Source contract definition.
     Contract(Box<ContractDefinition>),
