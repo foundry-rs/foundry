@@ -94,7 +94,7 @@ impl<'a> CowBackend<'a> {
         if !self.is_initialized {
             let backend = self.backend.to_mut();
             let mut env = env.to_owned();
-            env.evm_env.spec = self.spec_id;
+            env.evm_env.cfg_env.spec = self.spec_id;
             backend.initialize(&env);
             self.is_initialized = true;
             return backend;

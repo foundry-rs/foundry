@@ -1,5 +1,5 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
-use revm_bytecode::{
+use revm::bytecode::{
     eof::{EofBody, EofHeader},
     Eof,
 };

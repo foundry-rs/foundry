@@ -279,11 +279,7 @@ mod tests {
     async fn fork_db_insert_basic_default() {
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
-        let meta = BlockchainDbMeta {
-            cfg_env: Default::default(),
-            block_env: Default::default(),
-            hosts: BTreeSet::from([rpc]),
-        };
+        let meta = BlockchainDbMeta { block_env: Default::default(), hosts: BTreeSet::from([rpc]) };
         let db = BlockchainDb::new(meta, None);
 
         let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;

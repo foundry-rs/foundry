@@ -195,12 +195,10 @@ solar-parse = { version = "=0.1.1", default-features = false }
 
 ## revm
 revm = { version = "20.0.0-alpha.6", default-features = false }
-revm-bytecode = { version = "1.0.0-alpha.4", default-features = false }
 revm-primitives = { version = "16.0.0-alpha.4", default-features = false }
 revm-inspectors = { version = "0.17.0-alpha.1", features = ["serde"] }
 
 ## alloy
-alloy-evm = { path = "../evm/crates/evm" }
 alloy-consensus = { version = "0.12.6", default-features = false }
 alloy-contract = { version = "0.12.6", default-features = false }
 alloy-eips = { version = "0.12.6", default-features = false }
@@ -239,6 +237,7 @@ alloy-sol-macro-input = "0.8.22"
 alloy-sol-types = "0.8.22"
 syn-solidity = "0.8.22"
 
+alloy-evm = "0.1.0-alpha.2"
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.7.0"

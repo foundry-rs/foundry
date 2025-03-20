@@ -224,7 +224,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ee1682d3b973d08cdcba76014b5e119142c0f0d094b3ba372164e61abd53d9f"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3995,7 +3997,7 @@ dependencies = [
  "chrono",
  "comfy-table",
  "foundry-macros",
- "revm-bytecode",
+ "revm",
  "serde",
  "serde_json",
  "similar-asserts",
