@@ -290,8 +290,8 @@ impl<'a> ContractVisitor<'a> {
 
                 Ok(())
             }
-            // Try-catch statement. Coverage is reported for expression, for each clause and their
-            // bodies (if any).
+            // Try-catch statement. Coverage is reported as branches for catch clauses with
+            // statements.
             NodeType::TryStatement => {
                 self.visit_expression(
                     &node
@@ -299,20 +299,53 @@ impl<'a> ContractVisitor<'a> {
                         .ok_or_else(|| eyre::eyre!("try statement had no call"))?,
                 )?;
 
-                // Add coverage for each Try-catch clause.
-                for clause in node
-                    .attribute::<Vec<Node>>("clauses")
-                    .ok_or_else(|| eyre::eyre!("try statement had no clause"))?
-                {
-                    // Add coverage for clause statement.
-                    self.push_item_kind(CoverageItemKind::Statement, &clause.src);
-                    self.visit_statement(&clause)?;
+                let branch_id = self.branch_id;
+                self.branch_id += 1;
 
-                    // Add coverage for clause body only if it is not empty.
-                    if let Some(block) = clause.attribute::<Node>("block") {
-                        if has_statements(&block) {
-                            self.push_item_kind(CoverageItemKind::Statement, &block.src);
-                            self.visit_block(&block)?;
+                let mut clauses = node
+                    .attribute::<Vec<Node>>("clauses")
+                    .ok_or_else(|| eyre::eyre!("try statement had no clauses"))?;
+
+                let try_block = clauses
+                    .remove(0)
+                    .attribute::<Node>("block")
+                    .ok_or_else(|| eyre::eyre!("try statement had no block"))?;
+                // Add branch with path id 0 for try (first clause).
+                self.push_item_kind(
+                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
+                    &ast::LowFidelitySourceLocation {
+                        start: node.src.start,
+                        length: try_block
+                            .src
+                            .length
+                            .map(|length| try_block.src.start + length - node.src.start),
+                        index: node.src.index,
+                    },
+                );
+                self.visit_block(&try_block)?;
+
+                let mut path_id = 1;
+                for clause in clauses {
+                    if let Some(catch_block) = clause.attribute::<Node>("block") {
+                        if has_statements(&catch_block) {
+                            // Add catch branch if it has statements.
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id,
+                                    is_first_opcode: true,
+                                },
+                                &catch_block.src,
+                            );
+                            self.visit_block(&catch_block)?;
+                            // Increment path id for next branch.
+                            path_id += 1;
+                        } else if clause.attribute::<Node>("parameters").is_some() {
+                            // Add coverage for clause with parameters and empty statements.
+                            // (`catch (bytes memory reason) {}`).
+                            // Catch all clause without statements is ignored (`catch {}`).
+                            self.push_item_kind(CoverageItemKind::Statement, &clause.src);
+                            self.visit_statement(&clause)?;
                         }
                     }
                 }

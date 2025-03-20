@@ -120,11 +120,7 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Use EOF-enabled solc binary. Enables via-ir and sets EVM version to Prague. Requires Docker
-    /// to be installed.
-    ///
-    /// Note that this is a temporary solution until the EOF support is merged into the main solc
-    /// release.
+    /// Whether to compile contracts to EOF bytecode.
     #[arg(long)]
     #[serde(skip)]
     pub eof: bool,

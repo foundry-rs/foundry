@@ -2,7 +2,7 @@ use crate::utils::apply_chain_and_block_specific_env_changes;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{network::BlockResponse, Network, Provider};
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactionsKind};
+use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
 use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
@@ -26,10 +26,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
     let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
         provider.get_chain_id(),
-        provider.get_block_by_number(
-            BlockNumberOrTag::Number(block_number),
-            BlockTransactionsKind::Hashes
-        )
+        provider.get_block_by_number(BlockNumberOrTag::Number(block_number))
     )?;
     let block = if let Some(block) = block {
         block
