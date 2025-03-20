@@ -36,6 +36,7 @@ pub struct CounterExampleOutcome {
 
 /// Outcome of a single fuzz
 #[derive(Debug)]
+#[expect(clippy::large_enum_variant)]
 pub enum FuzzOutcome {
     Case(CaseOutcome),
     CounterExample(CounterExampleOutcome),
