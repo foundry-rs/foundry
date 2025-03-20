@@ -72,7 +72,10 @@ mod tasks;
 #[cfg(feature = "cmd")]
 pub mod cmd;
 
+#[cfg(feature = "cmd")]
 pub mod args;
+
+#[cfg(feature = "cmd")]
 pub mod opts;
 
 #[macro_use]

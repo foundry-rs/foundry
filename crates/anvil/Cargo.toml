@@ -110,7 +110,14 @@ op-alloy-rpc-types.workspace = true
 
 [features]
 default = ["cli", "jemalloc"]
-cmd = ["clap", "clap_complete", "dep:ctrlc", "anvil-server/clap", "tokio/signal"]
-cli = ["tokio/full", "cmd", "dep:fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
+cli = ["tokio/full", "cmd"]
+cmd = [
+    "clap",
+    "clap_complete",
+    "dep:fdlimit",
+    "dep:ctrlc",
+    "anvil-server/clap",
+    "tokio/signal",
+]
