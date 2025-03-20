@@ -1,6 +1,6 @@
+use crate::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
 use foundry_cli::{
     opts::Dependency,
     utils::{CommandUtils, Git, LoadConfig},

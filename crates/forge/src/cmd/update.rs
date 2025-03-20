@@ -1,7 +1,7 @@
+use crate::{DepIdentifier, DepMap, Lockfile};
 use alloy_primitives::map::HashMap;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::{DepIdentifier, DepMap, Lockfile};
 use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},

@@ -1,6 +1,6 @@
+use crate::Lockfile;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use forge::Lockfile;
 use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
