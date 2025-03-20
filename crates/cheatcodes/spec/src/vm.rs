@@ -549,23 +549,23 @@ interface Vm {
     function store(address target, bytes32 slot, bytes32 value) external;
 
     /// Marks the slots of an account and the account address as cold.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
 
     /// Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function accessList(AccessListItem[] calldata accessList) external;
 
     /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function noAccessList() external;
 
     /// Utility cheatcode to mark specific storage slot as warm, simulating a prior read.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function warmSlot(address target, bytes32 slot) external;
 
     /// Utility cheatcode to mark specific storage slot as cold, simulating no prior read.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
     // -------- Call Manipulation --------
