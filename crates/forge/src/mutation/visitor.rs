@@ -36,10 +36,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
         self.mutation_to_conduct.extend(registry.generate_mutations(&context));
 
-        // @todo this is taken from the Visit trait -> commented line (original trait
-        // implementation) infinitely recurse and don't see why rn
-        // <Self as solar_parse::ast::visit::Visit<'ast>>::visit_variable_definition(self, var)
-
+        // Rest is Solar visitor:
         let VariableDefinition {
             span,
             ty,
@@ -71,9 +68,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
         self.mutation_to_conduct.extend(registry.generate_mutations(&context));
 
-        // @todo same as todo above, this should be working:
-        // <Self as solar_parse::ast::visit::Visit<'ast>>::visit_expr(self, expr)
-
+        // Rest is Solar visitor:
         let Expr { span, kind } = expr;
         self.visit_span(span)?;
         match kind {
