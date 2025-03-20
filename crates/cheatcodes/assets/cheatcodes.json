@@ -708,7 +708,7 @@
       "func": {
         "id": "accessList",
         "description": "Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.",
-        "declaration": "function accessList(AccessListItem[] calldata accessList) external;",
+        "declaration": "function accessList(AccessListItem[] calldata access) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "accessList((address,bytes32[])[])",
