@@ -168,12 +168,12 @@ interface Vm {
     function cloneAccount(address source, address target) external;
     function closeFile(string calldata path) external;
     function coinbase(address newCoinbase) external;
-    function cold(address target, bytes32 slot) external;
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
     function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
     function contains(string calldata subject, string calldata search) external returns (bool result);
     function cool(address target) external;
+    function coolSlot(address target, bytes32 slot) external;
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
     function copyStorage(address from, address to) external;
     function createDir(string calldata path, bool recursive) external;
@@ -520,7 +520,7 @@ interface Vm {
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
     function txGasPrice(uint256 newGasPrice) external;
     function unixTime() external view returns (uint256 milliseconds);
-    function warm(address target, bytes32 slot) external;
+    function warmSlot(address target, bytes32 slot) external;
     function warp(uint256 newTimestamp) external;
     function writeFile(string calldata path, string calldata data) external;
     function writeFileBinary(string calldata path, bytes calldata data) external;
