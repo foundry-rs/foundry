@@ -554,7 +554,7 @@ interface Vm {
 
     /// Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function accessList(AccessListItem[] calldata accessList) external;
+    function accessList(AccessListItem[] calldata access) external;
 
     /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
     #[cheatcode(group = Evm, safety = Unsafe)]
