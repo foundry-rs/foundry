@@ -74,14 +74,17 @@ indicatif = "0.17"
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
+rand.workspace = true
 regex = { workspace = true, default-features = false }
 reqwest = { workspace = true, features = ["json"] }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
 solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml = { workspace = true, features = ["preserve_order"] }
@@ -91,6 +94,7 @@ watchexec-events = "5.0"
 watchexec-signals = "4.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
+num-bigint = "0.4"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
