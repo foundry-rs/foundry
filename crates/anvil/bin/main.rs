@@ -1,4 +1,5 @@
-//! The `anvil` cli
+//! The `anvil` CLI: a fast local Ethereum development node, akin to Hardhat Network, Tenderly.
+
 use anvil::args::run;
 
 #[cfg(all(feature = "jemalloc", unix))]
