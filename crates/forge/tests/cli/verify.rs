@@ -263,16 +263,49 @@ forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
 
 // tests `create && contract-verify && verify-check` on Sepolia testnet if correct env vars are set
 forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia(), prj, cmd);
+    // Implicitly tests `--verifier etherscan` on Sepolia testnet
+    verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
 
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
 // TEST_PRIVATE_KEY=0x...
-// ETHERSCAN_API_KEY=
-forgetest!(can_create_verify_random_contract_sepolia, |prj, cmd| {
-    create_verify_on_chain(EnvExternalities::sepolia(), prj, cmd);
+// ETHERSCAN_API_KEY=<API_KEY>
+forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
+    // Implicitly tests `--verifier etherscan` on Sepolia testnet
+    create_verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
+
+// tests `create --verify --verifier sourcify` on Sepolia testnet
+forgetest!(can_create_verify_random_contract_sepolia_sourcify, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_sourcify(), prj, cmd);
+});
+
+// tests `create --verify --verifier sourcify` with etherscan api key set
+// <https://github.com/foundry-rs/foundry/issues/10000>
+forgetest!(
+    can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
+    }
+);
+
+// tests `create --verify --verifier blockscout` on Sepolia testnet
+forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_blockscout(), prj, cmd);
+});
+
+// tests `create --verify --verifier blockscout` on Sepolia testnet with etherscan api key set
+forgetest!(
+    can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(
+            EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(),
+            prj,
+            cmd,
+        );
+    }
+);
 
 // tests `create && contract-verify --guess-constructor-args && verify-check` on Goerli testnet if
 // correct env vars are set

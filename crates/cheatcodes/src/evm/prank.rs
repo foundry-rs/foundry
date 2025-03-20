@@ -1,8 +1,8 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
 
 /// Prank information.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Prank {
     /// Address of the contract that initiated the prank
     pub prank_caller: Address,
@@ -45,13 +45,13 @@ impl Prank {
         }
     }
 
-    /// Apply the prank by setting `used` to true iff it is false
+    /// Apply the prank by setting `used` to true if it is false
     /// Only returns self in the case it is updated (first application)
     pub fn first_time_applied(&self) -> Option<Self> {
         if self.used {
             None
         } else {
-            Some(Self { used: true, ..self.clone() })
+            Some(Self { used: true, ..*self })
         }
     }
 }
@@ -113,9 +113,9 @@ impl Cheatcode for startPrank_3Call {
 }
 
 impl Cheatcode for stopPrankCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        state.prank = None;
+        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
     }
 }
@@ -127,32 +127,33 @@ fn prank(
     single_call: bool,
     delegate_call: bool,
 ) -> Result {
-    let prank = Prank::new(
-        ccx.caller,
-        ccx.ecx.env.tx.caller,
-        *new_caller,
-        new_origin.copied(),
-        ccx.ecx.journaled_state.depth(),
-        single_call,
-        delegate_call,
-    );
-
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
         let code = ccx.code(*new_caller)?;
         ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
     }
 
-    if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.prank {
+    let depth = ccx.ecx.journaled_state.depth();
+    if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
         // This should not be possible without first calling `stopPrank`
         ensure!(
-            single_call == current_single_call,
+            single_call == *current_single_call,
             "cannot override an ongoing prank with a single vm.prank; \
              use vm.startPrank to override the current prank"
         );
     }
+
+    let prank = Prank::new(
+        ccx.caller,
+        ccx.ecx.env.tx.caller,
+        *new_caller,
+        new_origin.copied(),
+        depth,
+        single_call,
+        delegate_call,
+    );
 
     ensure!(
         ccx.state.broadcast.is_none(),
@@ -160,6 +161,6 @@ fn prank(
          pass the desired `tx.origin` into the `broadcast` cheatcode call"
     );
 
-    ccx.state.prank = Some(prank);
+    ccx.state.pranks.insert(prank.depth, prank);
     Ok(Default::default())
 }

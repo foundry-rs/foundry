@@ -21,7 +21,7 @@ async fn can_send_eip7702_tx() {
     // PUSH1(25) RETURN
     let logger_bytecode = bytes!("66365f5f37365fa05f5260076019f3");
 
-    let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
 
     let from = wallets[0].address();
     let tx = TransactionRequest::default()

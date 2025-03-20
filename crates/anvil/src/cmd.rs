@@ -342,7 +342,7 @@ impl NodeArgs {
                 }
             });
 
-            // on windows, this will never fires
+            // On windows, this will never fire.
             #[cfg(not(unix))]
             let mut sigterm = Box::pin(futures::future::pending::<()>());
 
@@ -350,11 +350,9 @@ impl NodeArgs {
             tokio::select! {
                  _ = &mut sigterm => {
                     trace!("received sigterm signal, shutting down");
-                },
-                _ = &mut on_shutdown =>{
-
                 }
-                _ = &mut state_dumper =>{}
+                _ = &mut on_shutdown => {}
+                _ = &mut state_dumper => {}
             }
 
             // shutdown received
