@@ -304,26 +304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-node-bindings"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9151507742ac142201c3a56f74fd94c2ceda96115eed60a3dabaeef85e6b64a"
-dependencies = [
- "alloy-genesis",
- "alloy-network",
- "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "k256",
- "rand 0.8.5",
- "serde_json",
- "tempfile",
- "thiserror 2.0.12",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "alloy-primitives"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -819,7 +799,6 @@ dependencies = [
  "pin-project 1.1.10",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
@@ -980,29 +959,23 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-genesis",
- "alloy-json-abi",
- "alloy-json-rpc",
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
  "alloy-pubsub",
  "alloy-rlp",
- "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
- "alloy-transport-ipc",
- "alloy-transport-ws",
  "alloy-trie",
  "anvil-core",
  "anvil-rpc",
  "anvil-server",
  "async-trait",
  "axum",
- "bytes",
  "chrono",
  "clap",
  "clap_complete",
@@ -1019,7 +992,6 @@ dependencies = [
  "futures",
  "hyper 1.6.0",
  "itertools 0.14.0",
- "k256",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "parking_lot",
@@ -1027,13 +999,10 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "serde_repr",
- "similar-asserts",
  "tempfile",
  "thiserror 2.0.12",
  "tikv-jemallocator",
  "tokio",
- "tower 0.5.2",
  "tracing",
  "tracing-subscriber",
  "yansi",
@@ -2106,7 +2075,6 @@ dependencies = [
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
- "alloy-node-bindings",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
@@ -2117,14 +2085,12 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "anvil",
- "async-trait",
  "aws-sdk-kms",
  "chrono",
  "clap",
  "clap_complete",
  "clap_complete_fig",
  "comfy-table",
- "divan",
  "dunce",
  "evmole",
  "eyre",
@@ -2137,7 +2103,6 @@ dependencies = [
  "foundry-test-utils",
  "foundry-wallets",
  "futures",
- "indicatif",
  "itertools 0.14.0",
  "rand 0.8.5",
  "rayon",
@@ -2517,12 +2482,6 @@ checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
 ]
-
-[[package]]
-name = "condtype"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf0a07a401f374238ab8e2f11a104d2851bf9ce711ec69804834de8af45c7af"
 
 [[package]]
 name = "console"
@@ -3022,31 +2981,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "divan"
-version = "0.1.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0583193020b29b03682d8d33bb53a5b0f50df6daacece12ca99b904cfdcb8c4"
-dependencies = [
- "cfg-if",
- "clap",
- "condtype",
- "divan-macros",
- "libc",
- "regex-lite",
-]
-
-[[package]]
-name = "divan-macros"
-version = "0.1.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8dc51d98e636f5e3b0759a39257458b22619cac7e96d932da6eeb052891bb67c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
 name = "doctest-file"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3454,7 +3388,6 @@ name = "forge"
 version = "1.0.0"
 dependencies = [
  "alloy-chains",
- "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-network",
@@ -3464,11 +3397,8 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-macro-expander",
- "alloy-sol-macro-input",
  "alloy-transport",
  "anvil",
- "async-trait",
  "axum",
  "chrono",
  "clap",
@@ -3476,7 +3406,6 @@ dependencies = [
  "clap_complete_fig",
  "clearscreen",
  "comfy-table",
- "dialoguer",
  "dunce",
  "evm-disassembler",
  "eyre",
@@ -3499,7 +3428,6 @@ dependencies = [
  "futures",
  "globset",
  "humantime-serde",
- "hyper 1.6.0",
  "indicatif",
  "inferno",
  "itertools 0.14.0",
@@ -3535,7 +3463,6 @@ dependencies = [
  "toml_edit",
  "tower-http",
  "tracing",
- "tracing-subscriber",
  "watchexec",
  "watchexec-events",
  "watchexec-signals",
@@ -3631,7 +3558,6 @@ version = "1.0.0"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
- "alloy-rpc-types",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -3639,7 +3565,6 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
- "tracing",
  "walkdir",
 ]
 
@@ -3647,7 +3572,6 @@ dependencies = [
 name = "forge-sol-macro-gen"
 version = "1.0.0"
 dependencies = [
- "alloy-json-abi",
  "alloy-sol-macro-expander",
  "alloy-sol-macro-input",
  "eyre",
@@ -3655,7 +3579,6 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "serde_json",
  "syn 2.0.100",
 ]
 
@@ -3852,14 +3775,12 @@ dependencies = [
  "foundry-common-fmt",
  "foundry-compilers",
  "foundry-config",
- "foundry-macros",
  "itertools 0.14.0",
  "num-format",
  "reqwest",
  "semver 1.0.26",
  "serde",
  "serde_json",
- "similar-asserts",
  "terminal_size",
  "thiserror 2.0.12",
  "tokio",
@@ -4090,7 +4011,6 @@ dependencies = [
  "derive_more 2.0.1",
  "foundry-common-fmt",
  "foundry-macros",
- "foundry-test-utils",
  "itertools 0.14.0",
 ]
 
