@@ -1,12 +1,11 @@
 //! custom serde helper functions
 
-#[allow(unused)]
+#[allow(dead_code)]
 pub mod sequence {
     use serde::{
         de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
     };
 
-    #[allow(unused)]
     pub fn serialize<S, T>(val: &T, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -56,6 +55,7 @@ pub mod empty_params {
 pub mod lenient_block_number {
     use alloy_rpc_types::BlockNumberOrTag;
     use serde::{Deserialize, Deserializer};
+
     /// Following the spec the block parameter is either:
     ///
     /// > HEX String - an integer block number
