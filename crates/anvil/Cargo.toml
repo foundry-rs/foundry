@@ -15,7 +15,7 @@ workspace = true
 
 [[bin]]
 name = "anvil"
-path = "bin/main.rs"
+path = "src/anvil.rs"
 required-features = ["cli"]
 
 [dependencies]
