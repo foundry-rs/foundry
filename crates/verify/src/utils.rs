@@ -20,7 +20,8 @@ use reqwest::Url;
 use revm_primitives::{
     db::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId, TxKind,
+    hardfork::SpecId,
+    Bytecode, Env, TxKind,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};

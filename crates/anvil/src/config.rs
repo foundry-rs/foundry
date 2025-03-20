@@ -37,7 +37,9 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
+    revm::primitives::{
+        hardfork::SpecId, BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, TxEnv,
+    },
     utils::apply_chain_and_block_specific_env_changes,
 };
 use itertools::Itertools;
