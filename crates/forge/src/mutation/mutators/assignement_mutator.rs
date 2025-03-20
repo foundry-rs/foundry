@@ -79,11 +79,17 @@ impl Mutator for AssignmentMutator {
         "AssignmentMutator"
     }
 
+    // Only match Assign expr (ie global var) and the var definition with a litteral initializer (ie
+    // x = 6)
     fn is_applicable(&self, context: &MutationContext<'_>) -> bool {
         if let Some(expr) = context.expr {
             matches!(expr.kind, ExprKind::Assign(..))
         } else if let Some(var_definition) = context.var_definition {
-            matches!(var_definition.initializer.as_ref().unwrap().kind, ExprKind::Lit(..))
+            if let Some(init) = &var_definition.initializer {
+                matches!(init.kind, ExprKind::Lit(..))
+            } else {
+                false
+            }
         } else {
             false
         }

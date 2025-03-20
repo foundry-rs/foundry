@@ -1,6 +1,6 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
-use eyre::{Context, OptionExt, Result};
+use eyre::{OptionExt, Result};
 use solar_parse::ast::{BinOp, BinOpKind, Expr, ExprKind};
 use std::path::PathBuf;
 
@@ -59,6 +59,10 @@ impl Mutator for BinaryOpMutator {
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
+        if ctxt.expr.is_none() {
+            return false;
+        }
+
         match ctxt.expr.unwrap().kind {
             ExprKind::Binary(_, _, _) => true,
             ExprKind::Assign(_, bin_op, _) => bin_op.is_some(),
@@ -77,9 +81,6 @@ fn get_bin_op(ctxt: &MutationContext<'_>) -> Result<BinOp> {
     match expr.kind {
         ExprKind::Assign(_, Some(bin_op), _) => Ok(bin_op),
         ExprKind::Binary(_, op, _) => Ok(op),
-        _ => eyre::bail!(
-            "BinaryOpMutator: unexpected expression kind: {:?}",
-            ctxt.expr.unwrap().kind
-        ),
+        _ => eyre::bail!("BinaryOpMutator: unexpected expression kind"),
     }
 }

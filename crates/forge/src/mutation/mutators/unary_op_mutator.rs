@@ -1,7 +1,7 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType, UnaryOpMutated};
 use eyre::{eyre, Context, Result};
-use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
+use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOp, UnOpKind};
 use std::path::PathBuf;
 
 pub struct UnaryOperatorMutator;
@@ -17,7 +17,7 @@ impl Mutator for UnaryOperatorMutator {
             if let LitKind::Bool(val) = expr.kind {
                 // Return early with your vector
                 return Ok(vec![Mutant {
-                    span: context.span,
+                    span: expr.span,
                     mutation: MutationType::UnaryOperatorMutation(UnaryOpMutated::new(
                         format!("!{}", val.to_string()),
                         UnOpKind::Not,
@@ -38,7 +38,16 @@ impl Mutator for UnaryOperatorMutator {
 
         let expr = context.expr.unwrap();
 
-        let target_kind = &expr.kind;
+        let target_kind;
+        let op;
+
+        match &expr.kind {
+            ExprKind::Unary(un_op, target) => {
+                target_kind = &target.kind;
+                op = un_op.kind;
+            }
+            _ => unreachable!(),
+        };
 
         let target_content = match target_kind {
             ExprKind::Lit(lit, _) => match &lit.kind {
@@ -58,12 +67,6 @@ impl Mutator for UnaryOperatorMutator {
             _ => "".to_string(),
         };
 
-        let op = if context.op_kind.is_some() {
-            context.op_kind.unwrap()
-        } else {
-            eyre::bail!("unexpected context")
-        };
-
         let mut mutations: Vec<Mutant>;
 
         mutations = operations
@@ -75,7 +78,7 @@ impl Mutator for UnaryOperatorMutator {
                 let mutated = UnaryOpMutated::new(new_expression, kind);
 
                 Mutant {
-                    span: context.span,
+                    span: expr.span,
                     mutation: MutationType::UnaryOperatorMutation(mutated),
                     path: PathBuf::default(),
                 }
@@ -89,7 +92,7 @@ impl Mutator for UnaryOperatorMutator {
                 let mutated = UnaryOpMutated::new(new_expression, kind);
 
                 Mutant {
-                    span: context.span,
+                    span: expr.span,
                     mutation: MutationType::UnaryOperatorMutation(mutated),
                     path: PathBuf::default(),
                 }

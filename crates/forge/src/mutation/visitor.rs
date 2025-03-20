@@ -1,15 +1,10 @@
-use solar_parse::ast::{
-    visit::Visit, Expr, ExprKind, Ident, IndexKind, LitKind, VariableDefinition,
-};
+use solar_parse::ast::{visit::Visit, Expr, ExprKind, IndexKind, LitKind, VariableDefinition};
 
 use std::ops::ControlFlow;
 
 use crate::mutation::{
-    mutant::{
-        create_assignement_mutation, create_binary_op_mutation, create_delegatecall_mutation,
-        create_delete_mutation, create_unary_mutation, Mutant, MutationType,
-    },
-    mutators::mutator_registry::MutatorRegistry,
+    mutant::Mutant,
+    mutators::{mutator_registry::MutatorRegistry, MutationContextBuilder},
 };
 
 #[derive(Debug, Clone)]
@@ -33,23 +28,13 @@ impl<'ast> Visit<'ast> for MutantVisitor {
     ) -> ControlFlow<Self::BreakValue> {
         let registry = MutatorRegistry::new();
 
-        // pass var as MutationContext.var_definition
+        let context = MutationContextBuilder::new()
+            .with_span(var.span)
+            .with_var_definition(var)
+            .build()
+            .unwrap();
 
-        match &var.initializer {
-            None => {}
-            Some(exp) => match &exp.kind {
-                ExprKind::Lit(val, _) => {
-                    self.mutation_to_conduct.extend(create_assignement_mutation(
-                        exp.span,
-                        AssignVarTypes::Literal(val.kind.clone()),
-                    ))
-                }
-                ExprKind::Unary(op, var) => {
-                    self.mutation_to_conduct.extend(create_unary_mutation(op.span, op.kind, var))
-                }
-                _ => {}
-            },
-        }
+        self.mutation_to_conduct.extend(registry.generate_mutations(&context));
 
         // @todo this is taken from the Visit trait -> commented line (original trait
         // implementation) infinitely recurse and don't see why rn
@@ -79,63 +64,13 @@ impl<'ast> Visit<'ast> for MutantVisitor {
     }
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        match &expr.kind {
-            // Array skipped for now (swap could be mutating it, cf above for rational)
-            ExprKind::Assign(_, bin_op, rhs) => {
-                match &rhs.kind {
-                    ExprKind::Lit(kind, _) => {
-                        self.mutation_to_conduct.extend(create_assignement_mutation(
-                            rhs.span,
-                            AssignVarTypes::Literal(kind.kind.clone()),
-                        ))
-                    }
+        let registry = MutatorRegistry::new();
 
-                    ExprKind::Ident(val) => {
-                        self.mutation_to_conduct.extend(create_assignement_mutation(
-                            rhs.span,
-                            AssignVarTypes::Identifier(val.to_string()),
-                        ))
-                    }
+        let context =
+            MutationContextBuilder::new().with_span(expr.span).with_expr(expr).build().unwrap();
 
-                    _ => {}
-                }
+        self.mutation_to_conduct.extend(registry.generate_mutations(&context));
 
-                // if let ExprKind::Lit(kind, _) = &rhs.kind {
-                //     self.mutation_to_conduct
-                //         .extend(create_assignement_mutation(rhs.span,
-                // AssignVarTypes::Literal(kind.kind.clone()))); }
-
-                if let Some(op) = &bin_op {
-                    self.mutation_to_conduct.extend(create_binary_op_mutation(op.span, op.kind));
-                }
-            }
-            ExprKind::Binary(_, op, _) => {
-                self.mutation_to_conduct.extend(create_binary_op_mutation(op.span, op.kind));
-            }
-            ExprKind::Call(expr, args) => {
-                if let ExprKind::Member(_, ident) = &expr.kind {
-                    if ident.to_string() == "delegatecall" {
-                        self.mutation_to_conduct.push(create_delegatecall_mutation(ident.span));
-                    }
-                }
-            }
-            // CallOptions
-            ExprKind::Delete(_) => self.mutation_to_conduct.push(create_delete_mutation(expr.span)),
-            // Indent
-            // Index -> mutable? 0 it? idx should be a regular expression?
-            // Lit -> global/constant are using Lit as initializer
-            // Member
-            // New
-            // Payable -> compilation error
-            // Ternary -> swap them?
-            // Tuple -> swap if same type?
-            // TypeCall -> compilation error
-            // Type -> compilation error, most likely
-            ExprKind::Unary(op, var) => {
-                self.mutation_to_conduct.extend(create_unary_mutation(expr.span, op.kind, var));
-            }
-            _ => {}
-        };
         // @todo same as todo above, this should be working:
         // <Self as solar_parse::ast::visit::Visit<'ast>>::visit_expr(self, expr)
 
