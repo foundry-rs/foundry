@@ -1,6 +1,3 @@
-//! The `cast` CLI: a Swiss Army knife for interacting with EVM smart contracts, sending
-//! transactions and getting chain data.
-
 use cast::args::run;
 
 #[cfg(all(feature = "jemalloc", unix))]
