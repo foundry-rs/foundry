@@ -68,10 +68,11 @@ mod shutdown;
 /// additional task management
 mod tasks;
 
-pub mod args;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+
+pub mod args;
 pub mod opts;
 
 #[macro_use]

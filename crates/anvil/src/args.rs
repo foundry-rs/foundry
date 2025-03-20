@@ -14,7 +14,7 @@ pub fn run() -> Result<()> {
     run_command(args)
 }
 
-/// Setup the global logger and other utilities.
+/// Setup the exception handler and other utilities.
 pub fn setup() -> Result<()> {
     handler::install();
     utils::load_dotenv();
