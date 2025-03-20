@@ -575,6 +575,93 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
     assert_eq!(decrypted_private_key, test_private_key);
 });
 
+// tests that `cast wallet change-password` can successfully change the password of a keystore file
+casttest!(wallet_change_password, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+
+    cmd.set_current_dir(prj.root());
+
+    let account_name = "testAccount";
+
+    // Default Anvil private key
+    let test_private_key =
+        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    // import private key with initial password
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "import",
+            account_name,
+            "--private-key",
+            &test_private_key.to_string(),
+            "-k",
+            "keystore",
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+`testAccount` keystore was saved successfully. [ADDRESS]
+
+"#]]);
+
+    // check that the keystore file was created
+    let keystore_file = keystore_path.join(account_name);
+    assert!(keystore_file.exists());
+
+    // change the password
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "change-password",
+            account_name,
+            "--keystore-dir",
+            "keystore",
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Password for keystore `testAccount` was changed successfully. [ADDRESS]
+
+"#]]);
+
+    // verify the old password no longer works
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "decrypt-keystore",
+            account_name,
+            "-k",
+            "keystore",
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_failure();
+
+    // verify the new password works
+    let decrypt_output = cmd.cast_fuse().args([
+        "wallet",
+        "decrypt-keystore",
+        account_name,
+        "-k",
+        "keystore",
+        "--unsafe-password",
+        "new_password",
+    ]);
+
+    // get the PK out of the output (last word in the output)
+    let decrypt_output = decrypt_output.assert_success().get_output().stdout_lossy();
+    let private_key_string = decrypt_output.split_whitespace().last().unwrap();
+
+    // check that the decrypted private key matches the imported private key
+    let decrypted_private_key = B256::from_str(private_key_string).unwrap();
+    assert_eq!(decrypted_private_key, test_private_key);
+});
+
 // tests that `cast estimate` is working correctly.
 casttest!(estimate_function_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
