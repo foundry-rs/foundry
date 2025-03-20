@@ -72,6 +72,9 @@ mod tasks;
 #[cfg(feature = "cmd")]
 pub mod cmd;
 
+pub mod args;
+pub mod opts;
+
 #[macro_use]
 extern crate foundry_common;
 
