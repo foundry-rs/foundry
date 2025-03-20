@@ -43,6 +43,7 @@ pub struct Params<T: Default> {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "method", content = "params"))]
+#[expect(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "web3_clientVersion", with = "empty_params"))]
     Web3ClientVersion(()),
@@ -300,6 +301,7 @@ pub enum EthRequest {
 
     /// geth's `debug_traceCall`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
+    #[allow(clippy::large_enum_variant)]
     DebugTraceCall(
         WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
