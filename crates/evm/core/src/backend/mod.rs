@@ -970,7 +970,7 @@ impl DatabaseExt for Backend {
                             .map(|acc| acc.info.clone())
                             .unwrap_or_default();
 
-                        if !fork.db.accounts.contains_key(&caller) {
+                        if !fork.db.cache.accounts.contains_key(&caller) {
                             // update the caller account which is required by the evm
                             fork.db.insert_account_info(caller, caller_account.clone());
                         }
@@ -1119,7 +1119,7 @@ impl DatabaseExt for Backend {
                     .map(|acc| acc.info.clone())
                     .unwrap_or_default();
 
-                if !fork.db.accounts.contains_key(&caller) {
+                if !fork.db.cache.accounts.contains_key(&caller) {
                     // update the caller account which is required by the evm
                     fork.db.insert_account_info(caller, caller_account.clone());
                 }
@@ -1466,9 +1466,9 @@ impl DatabaseExt for Backend {
 
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
         if let Some(db) = self.active_fork_db_mut() {
-            db.block_hashes.insert(block_number, block_hash);
+            db.cache.block_hashes.insert(block_number, block_hash);
         } else {
-            self.mem_db.block_hashes.insert(block_number, block_hash);
+            self.mem_db.cache.block_hashes.insert(block_number, block_hash);
         }
     }
 }
@@ -1878,17 +1878,17 @@ fn merge_db_account_data<ExtDB: DatabaseRef>(
 ) {
     trace!(?addr, "merging database data");
 
-    let Some(acc) = active.accounts.get(&addr) else { return };
+    let Some(acc) = active.cache.accounts.get(&addr) else { return };
 
     // port contract cache over
-    if let Some(code) = active.contracts.get(&acc.info.code_hash) {
+    if let Some(code) = active.cache.contracts.get(&acc.info.code_hash) {
         trace!("merging contract cache");
-        fork_db.contracts.insert(acc.info.code_hash, code.clone());
+        fork_db.cache.contracts.insert(acc.info.code_hash, code.clone());
     }
 
     // port account storage over
     use std::collections::hash_map::Entry;
-    match fork_db.accounts.entry(addr) {
+    match fork_db.cache.accounts.entry(addr) {
         Entry::Vacant(vacant) => {
             trace!("target account not present - inserting from active");
             // if the fork_db doesn't have the target account
