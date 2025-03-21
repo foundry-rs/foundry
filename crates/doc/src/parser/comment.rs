@@ -134,7 +134,7 @@ impl Comments {
         ident: &str,
         inheritdocs: Option<HashMap<String, Self>>,
     ) -> Self {
-        let mut result = Self(Vec::from_iter(self.iter().cloned()));
+        let mut result = Self(self.iter().cloned().collect::<Vec<_>>());
 
         if let (Some(inheritdocs), Some(base)) = (inheritdocs, self.find_inheritdoc_base()) {
             let key = format!("{base}.{ident}");

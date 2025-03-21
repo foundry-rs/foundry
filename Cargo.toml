@@ -41,6 +41,7 @@ exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 dbg-macro = "warn"
 explicit_into_iter_loop = "warn"
 explicit_iter_loop = "warn"
+from_iter_instead_of_collect = "warn"
 manual-string-new = "warn"
 uninlined-format-args = "warn"
 use-self = "warn"
