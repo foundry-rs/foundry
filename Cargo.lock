@@ -11108,13 +11108,3 @@ dependencies = [
  "once_cell",
  "simd-adler32",
 ]
-
-[[patch.unused]]
-name = "revm"
-version = "20.0.0-alpha.3"
-source = "git+https://github.com/bluealloy/revm?rev=9e39df5#9e39df5dbc5fdc98779c644629b28b8bee75794a"
-
-[[patch.unused]]
-name = "revm-inspectors"
-version = "0.16.0"
-source = "git+https://github.com/paradigmxyz/revm-inspectors?rev=2a365e3#2a365e34e220a6273fbe3ea27eda3d7f1208f8de"

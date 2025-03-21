@@ -169,7 +169,7 @@ impl EvmOpts {
                 cfg_env: cfg,
             },
             tx: TxEnv {
-                gas_price: self.env.gas_price.unwrap_or_default(),
+                gas_price: self.env.gas_price.unwrap_or_default().into(),
                 gas_limit: self.gas_limit(),
                 caller: self.sender,
                 ..Default::default()

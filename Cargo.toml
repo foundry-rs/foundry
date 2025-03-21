@@ -317,8 +317,6 @@ vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 [patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm", rev = "9e39df5" }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "2a365e3" }
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
@@ -354,3 +352,7 @@ revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev 
 # alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 # alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
+
+## revm
+# revm = { git = "https://github.com/bluealloy/revm", rev = "9e39df5" }
+# revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "2a365e3" }

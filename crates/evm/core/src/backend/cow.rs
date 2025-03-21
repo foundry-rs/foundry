@@ -69,7 +69,7 @@ impl<'a> CowBackend<'a> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        self.spec_id = env.handler_cfg.spec_id;
+        self.spec_id = env.evm_env.cfg_env.spec;
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
         let res = evm.replay().wrap_err("EVM error")?;
