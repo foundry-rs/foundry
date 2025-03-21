@@ -611,7 +611,7 @@ impl TestResult {
     }
 
     /// Returns the invariant test result.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn invariant_result(
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,

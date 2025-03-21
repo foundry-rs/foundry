@@ -7,7 +7,7 @@ pub type BackendResult<T> = Result<T, BackendError>;
 
 /// Errors that can happen when working with [`revm::Database`]
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum BackendError {
     #[error("{0}")]
     Message(String),

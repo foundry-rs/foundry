@@ -8,8 +8,8 @@ use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
-        next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
-        next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
+        next_mainnet_etherscan_api_key, next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -730,7 +730,7 @@ casttest!(rlp, |_prj, cmd| {
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
 casttest!(impl_slot, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the implementation slot (AAVE Proxy)
     cmd.args([
@@ -749,7 +749,7 @@ casttest!(impl_slot, |_prj, cmd| {
 });
 
 casttest!(impl_slot_beacon, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the beacon slot
     cmd.args([
@@ -851,7 +851,7 @@ casttest!(calldata_array, |_prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "run",
         "-v",
@@ -899,7 +899,7 @@ casttest!(to_base, |_prj, cmd| {
 
 // tests that revert reason is only present if transaction has reverted.
 casttest!(receipt_revert_reason, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
     cmd.args([
@@ -931,7 +931,7 @@ to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
     cmd.cast_fuse()
@@ -1044,7 +1044,7 @@ access list:
 });
 
 casttest!(logs_topics, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1061,7 +1061,7 @@ casttest!(logs_topics, |_prj, cmd| {
 });
 
 casttest!(logs_topic_2, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1080,7 +1080,7 @@ casttest!(logs_topic_2, |_prj, cmd| {
 });
 
 casttest!(logs_sig, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1097,7 +1097,7 @@ casttest!(logs_sig, |_prj, cmd| {
 });
 
 casttest!(logs_sig_2, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1268,7 +1268,7 @@ Error: Must specify a recipient address or contract code to deploy
 });
 
 casttest!(storage, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
         [r#"
 0x0000000000000000000000000000000000000000000000000000000000000000
@@ -1276,7 +1276,7 @@ casttest!(storage, |_prj, cmd| {
 "#]
     ]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.cast_fuse()
         .args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc])
         .assert_success()
@@ -1285,7 +1285,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
     let decimals_slot = "0x09";
     cmd.cast_fuse()
@@ -1296,7 +1296,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     let total_supply_slot = "0x01";
     let block_before = "4634747";
     let block_after = "4634748";
@@ -1308,7 +1308,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.cast_fuse()
         .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_after])
         .assert_success()
@@ -1323,7 +1323,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1350,7 +1350,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1367,7 +1367,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1457,7 +1457,7 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",

@@ -196,7 +196,7 @@ pub struct Wallets {
 }
 
 impl Wallets {
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
         Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }

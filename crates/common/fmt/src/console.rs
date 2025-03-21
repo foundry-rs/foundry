@@ -453,7 +453,7 @@ mod tests {
         p_3: U256,
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     #[derive(Clone, Debug, ConsoleFmt)]
     enum Logs {
         Log1(Log1),

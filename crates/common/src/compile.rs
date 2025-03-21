@@ -548,7 +548,7 @@ pub fn etherscan_project(
 
 /// Configures the reporter and runs the given closure.
 pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
-    #[allow(clippy::collapsible_else_if)]
+    #[expect(clippy::collapsible_else_if)]
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {

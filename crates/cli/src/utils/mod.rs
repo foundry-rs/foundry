@@ -376,7 +376,7 @@ impl<'a> Git<'a> {
         self.cmd().arg("init").exec().map(drop)
     }
 
-    #[allow(clippy::should_implement_trait)] // this is not std::ops::Add clippy
+    #[expect(clippy::should_implement_trait)] // this is not std::ops::Add clippy
     pub fn add<I, S>(self, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,

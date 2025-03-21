@@ -28,7 +28,7 @@ const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
 const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 
 /// Represents an anvil fork of an anvil node
-#[allow(unused)]
+#[expect(unused)]
 pub struct LocalFork {
     origin_api: EthApi,
     origin_handle: NodeHandle,
@@ -36,7 +36,7 @@ pub struct LocalFork {
     fork_handle: NodeHandle,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl LocalFork {
     /// Spawns two nodes with the test config
     pub async fn new() -> Self {

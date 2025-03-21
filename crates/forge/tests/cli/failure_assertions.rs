@@ -188,9 +188,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
 
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests).unwrap();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: log != expected log] testShouldFailCanMatchConsecutiveEvents() ([GAS])
 [FAIL: log != expected log] testShouldFailDifferentIndexedParameters() ([GAS])
@@ -209,8 +207,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
 [FAIL: log != expected log] testShouldFailNoEmitDirectlyOnNextCall() ([GAS])
 Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
-"#,
-    );
+"#]]);
 
     cmd.forge_fuse()
         .args(["test", "--mc", "ExpectEmitCountFailureTest"])

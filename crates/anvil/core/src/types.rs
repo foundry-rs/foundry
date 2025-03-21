@@ -36,8 +36,8 @@ pub struct ReorgOptions {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(clippy::large_enum_variant)]
 #[serde(untagged)]
+#[expect(clippy::large_enum_variant)]
 pub enum TransactionData {
     JSON(TransactionRequest),
     Raw(Bytes),

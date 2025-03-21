@@ -78,6 +78,11 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Changes compilation to only use literal content and not URLs.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub use_literal_content: bool,
+
     /// Do not append any metadata to the bytecode.
     ///
     /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
@@ -220,6 +225,10 @@ impl Provider for BuildOpts {
 
         if self.via_ir {
             dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.use_literal_content {
+            dict.insert("use_literal_content".to_string(), true.into());
         }
 
         if self.no_metadata {
