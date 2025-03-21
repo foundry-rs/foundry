@@ -149,8 +149,8 @@ fn next_archive_url(is_ws: bool) -> String {
         next(urls)
     } else {
         urls.choose_weighted(&mut rand::thread_rng(), |url| {
-            if url.contains("reth") {
-                2usize
+            if url.contains("reth") || url.contains(":85") {
+                10usize
             } else {
                 1usize
             }
