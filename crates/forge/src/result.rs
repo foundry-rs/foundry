@@ -164,7 +164,7 @@ impl TestOutcome {
         }
 
         sh_println!("\nFailing tests:")?;
-        for (suite_name, suite) in outcome.results.iter() {
+        for (suite_name, suite) in &outcome.results {
             let failed = suite.failed();
             if failed == 0 {
                 continue;

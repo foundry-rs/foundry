@@ -799,7 +799,7 @@ mod tests {
     }
 
     fn pick_creation_info(address: &str) -> Option<(&'static str, &'static str)> {
-        for (addr, contract_name, creation_code) in CREATION_ARRAY.iter() {
+        for (addr, contract_name, creation_code) in &CREATION_ARRAY {
             if address == *addr {
                 return Some((contract_name, creation_code));
             }

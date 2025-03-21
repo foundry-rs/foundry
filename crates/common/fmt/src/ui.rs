@@ -291,7 +291,7 @@ impl UIfmt for OtherFields {
         if !self.is_empty() {
             s.push('\n');
         }
-        for (key, value) in self.iter() {
+        for (key, value) in self {
             let val = EthValue::from(value.clone()).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);

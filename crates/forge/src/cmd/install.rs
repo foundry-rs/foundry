@@ -395,7 +395,7 @@ impl Installer<'_> {
         }
 
         // have exact match
-        for candidate in candidates.iter() {
+        for candidate in &candidates {
             if candidate == tag {
                 return Ok(tag.into())
             }
@@ -457,7 +457,7 @@ impl Installer<'_> {
         }
 
         // have exact match
-        for candidate in candidates.iter() {
+        for candidate in &candidates {
             if candidate == tag {
                 return Ok(Some(tag.to_string()))
             }
