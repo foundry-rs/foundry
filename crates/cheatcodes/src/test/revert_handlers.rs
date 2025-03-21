@@ -108,7 +108,16 @@ fn handle_revert(
         } else {
             (&stringify(&actual_revert), &stringify(expected_reason))
         };
-        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
+
+        // When using vm.expectRevert(abi.encodeWithSignature("Error(string)", "A"));, the expected
+        // reason starts with "revert: " We strip redundant `revert: ` prefix from the revert reason
+        let expected = &expected.replace("revert: ", "");
+
+        if expected == actual {
+            return Ok(());
+        }
+
+        Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
     }
 }
 
