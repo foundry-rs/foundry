@@ -358,7 +358,7 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>) -> Result<()>
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
         .collect::<HashMap<_, _>>();
     let mut diffs = Vec::with_capacity(tests.len());
-    for test in tests.into_iter() {
+    for test in tests {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
