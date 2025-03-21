@@ -26,6 +26,10 @@ pub mod backend;
 pub mod buffer;
 pub mod constants;
 pub mod decode;
+
+pub mod env;
+pub use env::*;
+
 pub mod fork;
 pub mod opcodes;
 pub mod opts;

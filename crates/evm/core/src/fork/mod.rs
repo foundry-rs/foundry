@@ -1,5 +1,5 @@
 use super::opts::EvmOpts;
-use revm::primitives::Env;
+use crate::Env;
 
 mod init;
 pub use init::environment;
