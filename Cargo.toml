@@ -116,10 +116,8 @@ alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
 foldhash.opt-level = 3
 keccak.opt-level = 3
-revm-interpreter.opt-level = 3
-revm-precompile.opt-level = 3
-revm-primitives.opt-level = 3
 revm.opt-level = 3
+revm-interpreter.opt-level = 3
 ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
@@ -196,7 +194,6 @@ solar-parse = { version = "=0.1.1", default-features = false }
 
 ## revm
 revm = { version = "20.0.0-alpha.7", default-features = false }
-revm-primitives = { version = "16.0.0-alpha.5", default-features = false }
 revm-inspectors = { version = "0.17.0-alpha.1", features = ["serde"] }
 
 ## alloy

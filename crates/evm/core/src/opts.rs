@@ -5,7 +5,7 @@ use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config, GasLimit};
-use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
+use revm::context::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;

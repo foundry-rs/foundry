@@ -9,8 +9,9 @@ use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
-    db::{CacheDB, DatabaseRef},
-    primitives::{Account, AccountInfo, Bytecode},
+    bytecode::Bytecode,
+    database::{CacheDB, DatabaseRef},
+    state::{Account, AccountInfo},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;

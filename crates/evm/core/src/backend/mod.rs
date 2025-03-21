@@ -15,13 +15,16 @@ use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::{
-    db::{CacheDB, DatabaseRef},
-    inspectors::NoOpInspector,
+    bytecode::Bytecode,
+    context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
+    database::{CacheDB, DatabaseRef},
+    inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, BlobExcessGasAndPrice, Bytecode, Env, EnvWithHandlerCfg, EvmState,
-        EvmStorageSlot, HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
+        hardfork::SpecId, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot, HashMap as Map, Log,
+        KECCAK_EMPTY,
     },
+    state::{Account, AccountInfo},
     Database, DatabaseCommit, JournaledState,
 };
 use std::{

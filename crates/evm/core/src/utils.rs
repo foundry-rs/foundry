@@ -13,14 +13,14 @@ use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    handler::register::EvmHandler,
+    context::{result::EVMError, CreateScheme},
+    handler::{register::EvmHandler, FrameOrResult, FrameResult},
     interpreter::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
     precompile::secp256r1::P256VERIFY,
-    primitives::{CreateScheme, EVMError, HandlerCfg, SpecId, KECCAK_EMPTY},
-    FrameOrResult, FrameResult,
+    primitives::{hardfork::SpecId, HandlerCfg, KECCAK_EMPTY},
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 

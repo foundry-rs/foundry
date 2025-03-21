@@ -9,7 +9,7 @@ use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::Address;
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
-use revm::{inspectors::NoOpInspector, interpreter::CreateInputs, EvmContext, Inspector};
+use revm::{inspector::NoOpInspector, interpreter::CreateInputs, EvmContext, Inspector};
 use revm_inspectors::access_list::AccessListInspector;
 
 #[macro_use]
