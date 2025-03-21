@@ -166,14 +166,8 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
     static HTTP: LazyLock<Vec<String>> = LazyLock::new(|| get(false));
 
     fn get(is_ws: bool) -> Vec<String> {
-        let env_urls = env_archive_urls(is_ws);
-        if !env_urls.is_empty() {
-            let mut urls = env_urls.to_vec();
-            urls.shuffle(&mut rand::thread_rng());
-            return urls;
-        }
+        let mut urls = env_archive_urls(is_ws).to_vec();
 
-        let mut urls = Vec::new();
         for &key in INFURA_KEYS.iter() {
             if is_ws {
                 urls.push(format!("wss://mainnet.infura.io/ws/v3/{key}"));
@@ -181,6 +175,9 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
                 urls.push(format!("https://mainnet.infura.io/v3/{key}"));
             }
         }
+
+        urls.shuffle(&mut rand::thread_rng());
+
         urls
     }
 
