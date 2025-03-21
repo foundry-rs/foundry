@@ -3,8 +3,7 @@ use crate::mutation::mutant::{Mutant, MutationType};
 
 use eyre::Result;
 use solar_parse::ast::ExprKind;
-use std::path::PathBuf;
-use std::fmt::Display;
+use std::{fmt::Display, path::PathBuf};
 
 pub struct ElimDelegateMutator;
 
@@ -27,7 +26,8 @@ impl Mutator for ElimDelegateMutator {
             .and_then(|callee| match &callee.kind {
                 ExprKind::Member(_, ident) => Some(ident),
                 _ => None,
-            }).is_some_and(|ident| ident.to_string() == "delegatecall")
+            })
+            .is_some_and(|ident| ident.to_string() == "delegatecall")
     }
 }
 

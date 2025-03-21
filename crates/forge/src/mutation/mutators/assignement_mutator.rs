@@ -27,9 +27,9 @@ impl Mutator for AssignmentMutator {
             AssignVarTypes::Literal(lit) => match lit {
                 LitKind::Bool(val) => Ok(vec![Mutant {
                     span,
-                    mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                        LitKind::Bool(!val),
-                    )),
+                    mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Bool(
+                        !val,
+                    ))),
                     path: PathBuf::default(),
                 }]),
                 LitKind::Number(val) => Ok(vec![
@@ -52,24 +52,22 @@ impl Mutator for AssignmentMutator {
                     eyre::bail!("AssignementMutator: unexpected literal kind: {:?}", lit)
                 }
             },
-            AssignVarTypes::Identifier(ident) => {
-                Ok(vec![
-                    Mutant {
-                        span,
-                        mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                            LitKind::Number(num_bigint::BigInt::ZERO),
-                        )),
-                        path: PathBuf::default(),
-                    },
-                    Mutant {
-                        span,
-                        mutation: MutationType::Assignment(AssignVarTypes::Identifier(
-                            format!("-{ident}"),
-                        )),
-                        path: PathBuf::default(),
-                    },
-                ])
-            }
+            AssignVarTypes::Identifier(ident) => Ok(vec![
+                Mutant {
+                    span,
+                    mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Number(
+                        num_bigint::BigInt::ZERO,
+                    ))),
+                    path: PathBuf::default(),
+                },
+                Mutant {
+                    span,
+                    mutation: MutationType::Assignment(AssignVarTypes::Identifier(format!(
+                        "-{ident}"
+                    ))),
+                    path: PathBuf::default(),
+                },
+            ]),
         }
     }
 

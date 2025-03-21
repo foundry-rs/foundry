@@ -60,10 +60,9 @@ impl<'a> MutationContextBuilder<'a> {
     pub fn build(self) -> Result<MutationContext<'a>, &'static str> {
         let span = self.span.ok_or("Span is required for MutationContext")?;
 
-        Ok(MutationContext {
-            span,
-            expr: self.expr,
-            var_definition: self.var_definition,
-        })
+        Ok(MutationContext { span, expr: self.expr, var_definition: self.var_definition })
     }
 }
+
+#[cfg(test)]
+mod tests;

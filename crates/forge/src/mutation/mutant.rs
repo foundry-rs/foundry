@@ -1,9 +1,8 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
-use solar_parse::ast::{BinOpKind, LitKind, Span, UnOpKind};
-use std::path::PathBuf ;
-use std::fmt::Display;
 use super::visitor::AssignVarTypes;
+use solar_parse::ast::{BinOpKind, LitKind, Span, UnOpKind};
+use std::{fmt::Display, path::PathBuf};
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
 #[derive(Debug)]
@@ -58,9 +57,8 @@ pub enum MutationType {
     // /// For a if(x) condition x:
     // /// replace x with true; replace x with false
     // This mutation is not used anymore, as we mutate the condition as an expression,
-    // which will creates true/false mutant as well as more complex conditions (eg if(foo++ > --bar)
-    // ) IfStatementMutation,
-
+    // which will creates true/false mutant as well as more complex conditions (eg if(foo++ >
+    // --bar) ) IfStatementMutation,
     /// For a require(x) condition:
     /// replace x with true; replace x with false
     // Same as for IfStatementMutation, the expression inside the require is mutated as an
@@ -104,19 +102,15 @@ impl MutationType {
             Self::ElimDelegate => "ElimDelegate".to_string(),
             Self::FunctionCall => "FunctionCall".to_string(),
             Self::Require => "Require".to_string(),
-            Self::SwapArgumentsFunction => {
-                "SwapArgumentsFunction".to_string()
-            }
-            Self::SwapArgumentsOperator => {
-                "SwapArgumentsOperator".to_string()
-            }
+            Self::SwapArgumentsFunction => "SwapArgumentsFunction".to_string(),
+            Self::SwapArgumentsOperator => "SwapArgumentsOperator".to_string(),
             Self::UnaryOperator(mutated) => {
                 // avoid operator in tmp dir name
                 format!("{}_{:?}", "UnaryOperator", mutated.resulting_op_kind)
             }
         }
     }
-} 
+}
 
 impl Display for MutationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

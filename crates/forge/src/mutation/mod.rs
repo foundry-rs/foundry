@@ -29,17 +29,8 @@ pub struct MutationHandler {
 }
 
 impl MutationHandler {
-    pub fn new(
-        contract_to_mutate: PathBuf,
-        config: Arc<foundry_config::Config>,
-    ) -> Self {
-        Self {
-            contract_to_mutate,
-            src: Arc::default(),
-            mutations: vec![],
-            config,
-            temp_dir: None,
-        }
+    pub fn new(contract_to_mutate: PathBuf, config: Arc<foundry_config::Config>) -> Self {
+        Self { contract_to_mutate, src: Arc::default(), mutations: vec![], config, temp_dir: None }
     }
 
     /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants
@@ -65,8 +56,8 @@ impl MutationHandler {
                 })?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
-            
-            let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new()};
+
+            let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new() };
             mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
 
@@ -162,16 +153,12 @@ impl MutationHandler {
             let ty = entry.file_type()?;
 
             if ty.is_dir() {
-                Self::copy_dir_except(
-                    entry.path(),
-                    dst.as_ref().join(entry.file_name()),
-                    except,
-                )?;
+                Self::copy_dir_except(entry.path(), dst.as_ref().join(entry.file_name()), except)?;
             } else if entry.file_name() != except.file_name().unwrap_or_default() {
-                    // std::os::unix::fs::symlink(entry.path(),
-                    // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
-                    // std::os::windows::fs::symlink_file
-                    std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+                // std::os::unix::fs::symlink(entry.path(),
+                // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
+                // std::os::windows::fs::symlink_file
+                std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
             }
         }
         Ok(())
