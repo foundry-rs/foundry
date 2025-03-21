@@ -1,7 +1,7 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType, UnaryOpMutated};
-use eyre::{eyre, Context, Result};
-use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOp, UnOpKind};
+use eyre::Result;
+use solar_parse::ast::{ExprKind, LitKind, UnOpKind};
 use std::path::PathBuf;
 
 pub struct UnaryOperatorMutator;
@@ -18,8 +18,8 @@ impl Mutator for UnaryOperatorMutator {
                 // Return early with your vector
                 return Ok(vec![Mutant {
                     span: expr.span,
-                    mutation: MutationType::UnaryOperatorMutation(UnaryOpMutated::new(
-                        format!("!{}", val.to_string()),
+                    mutation: MutationType::UnaryOperator(UnaryOpMutated::new(
+                        format!("!{val}"),
                         UnOpKind::Not,
                     )),
                     path: PathBuf::default(),
@@ -53,7 +53,7 @@ impl Mutator for UnaryOperatorMutator {
             ExprKind::Lit(lit, _) => match &lit.kind {
                 LitKind::Bool(val) => val.to_string(),
                 LitKind::Number(val) => val.to_string(),
-                _ => "".to_string(),
+                _ => String::new(),
             },
             ExprKind::Ident(inner) => inner.to_string(),
             ExprKind::Member(expr, ident) => {
@@ -61,10 +61,10 @@ impl Mutator for UnaryOperatorMutator {
                     ExprKind::Ident(inner) => {
                         format!("{}{}", ident.as_str(), inner.to_string())
                     } // @todo not supporting something like a.b[0]++
-                    _ => "".to_string(),
+                    _ => String::new(),
                 }
             }
-            _ => "".to_string(),
+            _ => String::new(),
         };
 
         let mut mutations: Vec<Mutant>;
@@ -79,7 +79,7 @@ impl Mutator for UnaryOperatorMutator {
 
                 Mutant {
                     span: expr.span,
-                    mutation: MutationType::UnaryOperatorMutation(mutated),
+                    mutation: MutationType::UnaryOperator(mutated),
                     path: PathBuf::default(),
                 }
             })
@@ -93,13 +93,13 @@ impl Mutator for UnaryOperatorMutator {
 
                 Mutant {
                     span: expr.span,
-                    mutation: MutationType::UnaryOperatorMutation(mutated),
+                    mutation: MutationType::UnaryOperator(mutated),
                     path: PathBuf::default(),
                 }
             },
         ));
 
-        return Ok(mutations);
+        Ok(mutations)
     }
 
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
@@ -109,10 +109,6 @@ impl Mutator for UnaryOperatorMutator {
             }
         }
 
-        return false;
-    }
-
-    fn name(&self) -> &'static str {
-        "UnaryOperatorMutator"
+        false
     }
 }

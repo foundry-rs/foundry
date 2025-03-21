@@ -1,7 +1,7 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
 use eyre::{OptionExt, Result};
-use solar_parse::ast::{BinOp, BinOpKind, Expr, ExprKind};
+use solar_parse::ast::{BinOp, BinOpKind, ExprKind};
 use std::path::PathBuf;
 
 pub struct BinaryOpMutator;
@@ -52,7 +52,7 @@ impl Mutator for BinaryOpMutator {
             .filter(|&kind| kind != op)
             .map(|kind| Mutant {
                 span: context.span,
-                mutation: MutationType::BinaryOpMutation(kind),
+                mutation: MutationType::BinaryOp(kind),
                 path: PathBuf::default(),
             })
             .collect())
@@ -68,10 +68,6 @@ impl Mutator for BinaryOpMutator {
             ExprKind::Assign(_, bin_op, _) => bin_op.is_some(),
             _ => false,
         }
-    }
-
-    fn name(&self) -> &'static str {
-        "BinaryOpMutator"
     }
 }
 

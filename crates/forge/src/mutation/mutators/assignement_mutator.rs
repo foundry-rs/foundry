@@ -4,8 +4,8 @@ use crate::mutation::{
     visitor::AssignVarTypes,
 };
 
-use eyre::{Context, Result};
-use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
+use eyre::Result;
+use solar_parse::ast::{ExprKind, LitKind};
 use std::path::PathBuf;
 
 pub struct AssignmentMutator;
@@ -27,7 +27,7 @@ impl Mutator for AssignmentMutator {
             AssignVarTypes::Literal(lit) => match lit {
                 LitKind::Bool(val) => Ok(vec![Mutant {
                     span,
-                    mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                    mutation: MutationType::Assignment(AssignVarTypes::Literal(
                         LitKind::Bool(!val),
                     )),
                     path: PathBuf::default(),
@@ -35,14 +35,14 @@ impl Mutator for AssignmentMutator {
                 LitKind::Number(val) => Ok(vec![
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                        mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(num_bigint::BigInt::ZERO),
                         )),
                         path: PathBuf::default(),
                     },
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                        mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(-val),
                         )),
                         path: PathBuf::default(),
@@ -53,30 +53,24 @@ impl Mutator for AssignmentMutator {
                 }
             },
             AssignVarTypes::Identifier(ident) => {
-                let inner = ident.to_string();
-
                 Ok(vec![
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Literal(
+                        mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(num_bigint::BigInt::ZERO),
                         )),
                         path: PathBuf::default(),
                     },
                     Mutant {
                         span,
-                        mutation: MutationType::AssignmentMutation(AssignVarTypes::Identifier(
-                            format!("-{}", inner),
+                        mutation: MutationType::Assignment(AssignVarTypes::Identifier(
+                            format!("-{ident}"),
                         )),
                         path: PathBuf::default(),
                     },
                 ])
             }
         }
-    }
-
-    fn name(&self) -> &'static str {
-        "AssignmentMutator"
     }
 
     // Only match Assign expr (ie global var) and the var definition with a litteral initializer (ie
@@ -103,14 +97,6 @@ fn determinate_type(context: &MutationContext<'_>) -> Option<AssignVarTypes> {
     } else {
         context.expr.unwrap()
     };
-
-    // if let Some(var_definition) = context.var_definition {
-    //     match &var_definition.initializer.as_ref().unwrap().kind {
-    //         ExprKind::Lit(kind, _) => return Ok(AssignVarTypes::Literal(kind.kind.clone())),
-    //         ExprKind::Ident(val) => return Ok(AssignVarTypes::Identifier(val.to_string())),
-    //         _ => eyre::bail!("AssignementMutator: unexpected expression kind: {:?}",
-    // &var_definition.initializer.as_ref().unwrap().kind)     }
-    // }
 
     match &expr.kind {
         ExprKind::Lit(kind, _) => Some(AssignVarTypes::Literal(kind.kind.clone())),

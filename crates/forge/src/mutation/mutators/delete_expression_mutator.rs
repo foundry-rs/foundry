@@ -1,8 +1,8 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
-use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
+use solar_parse::ast::ExprKind;
 
-use eyre::{Context, Result};
+use eyre::Result;
 use std::path::PathBuf;
 
 pub struct DeleteExpressionMutator;
@@ -11,7 +11,7 @@ impl Mutator for DeleteExpressionMutator {
     fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         Ok(vec![Mutant {
             span: ctxt.span,
-            mutation: MutationType::DeleteExpressionMutation,
+            mutation: MutationType::DeleteExpression,
             path: PathBuf::default(),
         }])
     }
@@ -22,9 +22,5 @@ impl Mutator for DeleteExpressionMutator {
         } else {
             false
         }
-    }
-
-    fn name(&self) -> &'static str {
-        "DeleteExpression"
     }
 }

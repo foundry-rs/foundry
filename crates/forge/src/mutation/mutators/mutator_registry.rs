@@ -1,6 +1,5 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::Mutant;
-use eyre::{Context, Result};
 
 use super::{
     assignement_mutator, binary_op_mutator, delete_expression_mutator, elim_delegate_mutator,
@@ -14,7 +13,7 @@ pub struct MutatorRegistry {
 
 impl MutatorRegistry {
     pub fn new() -> Self {
-        let mut registry = MutatorRegistry { mutators: Vec::new() };
+        let mut registry = Self { mutators: Vec::new() };
 
         registry.mutators.push(Box::new(assignement_mutator::AssignmentMutator));
         registry.mutators.push(Box::new(binary_op_mutator::BinaryOpMutator));

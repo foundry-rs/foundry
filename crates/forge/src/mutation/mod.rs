@@ -5,10 +5,7 @@ mod visitor;
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use solar_parse::{
-    ast::{
-        interface::{source_map::FileName, Session},
-        ContractKind, ItemKind,
-    },
+    ast::interface::{source_map::FileName, Session},
     Parser,
 };
 use std::sync::Arc;
@@ -35,8 +32,8 @@ impl MutationHandler {
     pub fn new(
         contract_to_mutate: PathBuf,
         config: Arc<foundry_config::Config>,
-    ) -> MutationHandler {
-        MutationHandler {
+    ) -> Self {
+        Self {
             contract_to_mutate,
             src: Arc::default(),
             mutations: vec![],
@@ -109,7 +106,7 @@ impl MutationHandler {
         let src_path = &self.contract_to_mutate;
 
         self.mutations.iter().for_each(|mutant| {
-            self.generate_mutant(&mutant, src_path);
+            self.generate_mutant(mutant, src_path);
         });
 
         self.mutations
@@ -125,7 +122,7 @@ impl MutationHandler {
     }
 
     /// Copy the src, cache, out and test folders to one of the mutant temp folder
-    fn copy_origin(path: &PathBuf, src_contract_path: &PathBuf, config: Arc<Config>) {
+    fn copy_origin(path: &Path, src_contract_path: &Path, config: Arc<Config>) {
         let cache_src = &config.cache_path;
         let out_src = &config.out;
         let contract_src = &config.src;
@@ -141,13 +138,13 @@ impl MutationHandler {
         std::fs::create_dir_all(&contract_dest).expect("Failed to create temp src directory");
         std::fs::create_dir_all(&test_dest).expect("Failed to create temp src directory");
 
-        Self::copy_dir_except(&cache_src, &cache_dest, src_contract_path)
+        Self::copy_dir_except(cache_src, cache_dest, src_contract_path)
             .expect("Failed to copy in temp cache");
-        Self::copy_dir_except(&out_src, &out_dest, src_contract_path)
+        Self::copy_dir_except(out_src, out_dest, src_contract_path)
             .expect("Failed to copy in temp out directory");
-        Self::copy_dir_except(&contract_src, &contract_dest, src_contract_path)
+        Self::copy_dir_except(contract_src, contract_dest, src_contract_path)
             .expect("Failed to copy in temp src directory");
-        Self::copy_dir_except(&test_src, &test_dest, src_contract_path)
+        Self::copy_dir_except(test_src, test_dest, src_contract_path)
             .expect("Failed to copy in temp src directory");
     }
 
@@ -156,7 +153,7 @@ impl MutationHandler {
     fn copy_dir_except(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
-        except: &PathBuf,
+        except: &Path,
     ) -> std::io::Result<()> {
         std::fs::create_dir_all(&dst)?;
 
@@ -166,24 +163,22 @@ impl MutationHandler {
 
             if ty.is_dir() {
                 Self::copy_dir_except(
-                    &entry.path(),
-                    &dst.as_ref().join(entry.file_name()),
+                    entry.path(),
+                    dst.as_ref().join(entry.file_name()),
                     except,
                 )?;
-            } else {
-                if entry.file_name() != except.file_name().unwrap_or_default() {
+            } else if entry.file_name() != except.file_name().unwrap_or_default() {
                     // std::os::unix::fs::symlink(entry.path(),
                     // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
                     // std::os::windows::fs::symlink_file
-                    std::fs::copy(entry.path(), &dst.as_ref().join(entry.file_name()))?;
-                }
+                    std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
             }
         }
         Ok(())
     }
 
     /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
-    fn generate_mutant(&self, mutation: &Mutant, src_contract_path: &PathBuf) {
+    fn generate_mutant(&self, mutation: &Mutant, src_contract_path: &Path) {
         let temp_dir_path = &mutation.path;
 
         let span = mutation.span;
@@ -214,7 +209,7 @@ impl MutationHandler {
         dbg!(&new_content);
 
         std::fs::write(&target_path, new_content)
-            .expect(&format!("Failed to write to target file {:?}", &target_path));
+            .unwrap_or_else(|_| panic!("Failed to write to target file {:?}", &target_path));
     }
 
     /// Compile a directory and get the compilation output

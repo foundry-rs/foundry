@@ -1,9 +1,10 @@
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
 
-use eyre::{Context, Result};
-use solar_parse::ast::{BinOpKind, Expr, ExprKind, LitKind, Span, UnOpKind};
+use eyre::Result;
+use solar_parse::ast::ExprKind;
 use std::path::PathBuf;
+use std::fmt::Display;
 
 pub struct ElimDelegateMutator;
 
@@ -11,7 +12,7 @@ impl Mutator for ElimDelegateMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         Ok(vec![Mutant {
             span: context.span,
-            mutation: MutationType::ElimDelegateMutation,
+            mutation: MutationType::ElimDelegate,
             path: PathBuf::default(),
         }])
     }
@@ -26,17 +27,12 @@ impl Mutator for ElimDelegateMutator {
             .and_then(|callee| match &callee.kind {
                 ExprKind::Member(_, ident) => Some(ident),
                 _ => None,
-            })
-            .map_or(false, |ident| ident.to_string() == "delegatecall")
-    }
-
-    fn name(&self) -> &'static str {
-        "ElimDelegateMutation"
+            }).is_some_and(|ident| ident.to_string() == "delegatecall")
     }
 }
 
-impl ToString for ElimDelegateMutator {
-    fn to_string(&self) -> String {
-        "".to_string()
+impl Display for ElimDelegateMutator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "")
     }
 }
