@@ -2122,7 +2122,6 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types",
- "alloy-rpc-types-txpool",
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
