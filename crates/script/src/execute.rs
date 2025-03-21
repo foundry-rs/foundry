@@ -189,7 +189,7 @@ impl PreExecutionState {
             if self.build_data.predeploy_libraries.libraries_count() > 0 &&
                 self.args.evm.sender.is_none()
             {
-                for tx in txs.iter() {
+                for tx in txs {
                     if tx.transaction.to().is_none() {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
