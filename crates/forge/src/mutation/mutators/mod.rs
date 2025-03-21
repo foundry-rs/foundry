@@ -19,6 +19,7 @@ pub trait Mutator {
     fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool;
 }
 
+#[derive(Debug)]
 pub struct MutationContext<'a> {
     pub span: Span,
     /// The expression to mutate
