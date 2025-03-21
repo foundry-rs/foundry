@@ -226,7 +226,7 @@ impl AstEq for Statement {
     fn ast_eq(&self, other: &Self) -> bool {
         match self {
             Self::If(loc, expr, stmt1, stmt2) => {
-                #[allow(clippy::borrowed_box)]
+                #[expect(clippy::borrowed_box)]
                 let wrap_if = |stmt1: &Box<Self>, stmt2: &Option<Box<Self>>| {
                     (
                         wrap_in_box!(stmt1, *loc),

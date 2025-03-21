@@ -107,7 +107,7 @@ impl Cheatcodes<'static> {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use std::{fs, path::Path};

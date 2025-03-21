@@ -1,6 +1,5 @@
 //! custom serde helper functions
 
-#[allow(dead_code)]
 pub mod sequence {
     use serde::{
         de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,

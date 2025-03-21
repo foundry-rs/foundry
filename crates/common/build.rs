@@ -3,7 +3,7 @@ use std::{env, error::Error};
 use chrono::DateTime;
 use vergen::EmitBuilder;
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn main() -> Result<(), Box<dyn Error>> {
     // Re-run the build script if the build script itself changes or if the
     // environment variables change.

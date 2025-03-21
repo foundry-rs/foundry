@@ -31,7 +31,6 @@ pub struct Forge {
 }
 
 #[derive(Subcommand)]
-#[allow(clippy::large_enum_variant)]
 pub enum ForgeSubcommand {
     /// Run the project's tests.
     #[command(visible_alias = "t")]
