@@ -28,7 +28,7 @@ static RETH_HOSTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 static DRPC_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         "Agc9NK9-6UzYh-vQDDM80Tv0A5UnBkUR8I3qssvAG40d",
-        "AvTJ1CllUUOHr1SH08xt9XDv7jJ0Bj0R8I3fssvAG40d",
+        "AjUPUPonSEInt2CZ_7A-ai3hMyxxBlsR8I4EssvAG40d",
     ];
 
     keys.shuffle(&mut rand::thread_rng());
