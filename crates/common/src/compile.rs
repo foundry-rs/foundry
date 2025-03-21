@@ -507,7 +507,7 @@ pub fn etherscan_project(
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
-    for remapping in settings.remappings.iter_mut() {
+    for remapping in &mut settings.remappings {
         let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
         remapping.path = new_path.display().to_string();
     }

@@ -1849,7 +1849,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         // order all groups alphabetically
-        for group in import_groups.iter() {
+        for group in &import_groups {
             // SAFETY: group is not empty
             let first = group[0];
             let last = group.last().copied().expect("group is not empty");
