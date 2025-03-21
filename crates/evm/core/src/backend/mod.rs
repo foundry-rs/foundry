@@ -35,6 +35,9 @@ use std::{
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 
+mod env;
+pub use env::{AsEnvMut, Env, EnvMut};
+
 mod error;
 pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult};
 
