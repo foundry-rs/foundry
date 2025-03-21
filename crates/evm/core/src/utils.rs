@@ -1,7 +1,7 @@
 pub use crate::ic::*;
 use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
-    InspectorExt,
+    Env, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
@@ -33,7 +33,7 @@ pub use revm::primitives::EvmState as StateChangeset;
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: &mut revm::primitives::Env,
+    env: &mut Env,
     block: &N::BlockResponse,
 ) {
     use NamedChain::*;
@@ -101,7 +101,7 @@ pub fn get_function<'a>(
 
 /// Configures the env for the given RPC transaction.
 /// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
-pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxEnvelope>) {
+pub fn configure_tx_env(env: &mut Env, tx: &Transaction<AnyTxEnvelope>) {
     let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from());
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
         configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
@@ -112,7 +112,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxE
 /// `impersonated_from` is the address of the impersonated account. This helps account for an
 /// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
 pub fn configure_tx_req_env(
-    env: &mut revm::primitives::Env,
+    env: &mut Env,
     tx: &TransactionRequest,
     impersonated_from: Option<Address>,
 ) -> eyre::Result<()> {

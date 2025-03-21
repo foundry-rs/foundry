@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use foundry_evm::revm::precompile::Precompile;
+use foundry_evm::{backend::Env, revm::precompile::Precompile};
 use std::{fmt::Debug, sync::Arc};
 
 /// Object-safe trait that enables injecting extra precompiles when using
@@ -53,7 +53,7 @@ mod tests {
         }
 
         let db = revm::db::EmptyDB::default();
-        let env = Box::<revm::primitives::Env>::default();
+        let env = Box::<Env>::default();
         let spec = SpecId::LATEST;
         let handler_cfg = revm::primitives::HandlerCfg::new(spec);
         let inspector = revm::inspectors::NoOpInspector;
