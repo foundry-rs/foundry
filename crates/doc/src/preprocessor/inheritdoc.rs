@@ -23,7 +23,7 @@ impl Preprocessor for Inheritdoc {
     }
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
-        for document in documents.iter() {
+        for document in &documents {
             if let DocumentContent::Single(ref item) = document.content {
                 let context = self.visit_item(item, &documents);
                 if !context.is_empty() {
@@ -50,7 +50,7 @@ impl Inheritdoc {
         }
 
         // Match item's children.
-        for ch in item.children.iter() {
+        for ch in &item.children {
             let matched = ch
                 .comments
                 .find_inheritdoc_base()
@@ -76,7 +76,7 @@ impl Inheritdoc {
                         // Not matched for the contract because it's a noop
                         // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
 
-                        for children in item.children.iter() {
+                        for children in &item.children {
                             // TODO: improve matching logic
                             if source.ident() == children.source.ident() {
                                 let key = format!("{}.{}", base, source.ident());

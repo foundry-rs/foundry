@@ -28,7 +28,7 @@ const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
 /// Subset of [CompactBytecode] excluding sourcemaps.
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct BytecodeData {
     pub object: Option<BytecodeObject>,

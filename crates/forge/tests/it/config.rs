@@ -104,7 +104,7 @@ impl TestConfig {
 
 /// A helper to assert the outcome of multiple tests with helpful assert messages
 #[track_caller]
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub fn assert_multiple(
     actuals: &BTreeMap<String, SuiteResult>,
     expecteds: BTreeMap<

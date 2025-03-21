@@ -49,11 +49,19 @@ use utils::decode_instructions;
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 
+pub mod args;
+pub mod cmd;
+pub mod opts;
+
 pub mod base;
 pub mod errors;
 mod rlp_converter;
+pub mod tx;
 
 use rlp_converter::Item;
+
+#[macro_use]
+extern crate tracing;
 
 #[macro_use]
 extern crate foundry_common;
