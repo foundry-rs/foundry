@@ -165,7 +165,7 @@ impl RuntimeTransport {
         };
 
         // Add any custom headers.
-        for header in self.headers.iter() {
+        for header in &self.headers {
             let make_err = || RuntimeTransportError::BadHeader(header.to_string());
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;

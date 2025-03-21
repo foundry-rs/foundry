@@ -79,7 +79,7 @@ where
     D: DatabaseRef<Error = DatabaseError>,
 {
     let mut cache_db = CacheDB::new(state);
-    for (account, account_overrides) in overrides.iter() {
+    for (account, account_overrides) in &overrides {
         let mut account_info = cache_db.basic_ref(*account)?.unwrap_or_default();
 
         if let Some(nonce) = account_overrides.nonce {
@@ -114,7 +114,7 @@ where
                 )?;
             }
             (None, Some(account_state_diff)) => {
-                for (key, value) in account_state_diff.iter() {
+                for (key, value) in account_state_diff {
                     cache_db.insert_account_storage(*account, (*key).into(), (*value).into())?;
                 }
             }

@@ -373,7 +373,7 @@ impl BlockchainStorage {
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
-            for tx in block.transactions.iter() {
+            for tx in &block.transactions {
                 self.transactions.remove(&tx.hash());
             }
             block.transactions.clear();
@@ -419,7 +419,7 @@ impl BlockchainStorage {
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in serializable_blocks.iter() {
+        for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number;
@@ -430,7 +430,7 @@ impl BlockchainStorage {
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
-        for serializable_transaction in serializable_transactions.iter() {
+        for serializable_transaction in &serializable_transactions {
             let transaction: MinedTransaction = serializable_transaction.clone().into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }

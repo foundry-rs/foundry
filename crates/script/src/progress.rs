@@ -68,7 +68,7 @@ impl SequenceProgressState {
             Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
         };
 
-        for tx_hash in sequence.pending.iter() {
+        for tx_hash in &sequence.pending {
             state.tx_sent(*tx_hash);
         }
 
