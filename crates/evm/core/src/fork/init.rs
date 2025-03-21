@@ -1,11 +1,12 @@
-use crate::utils::apply_chain_and_block_specific_env_changes;
+use crate::{utils::apply_chain_and_block_specific_env_changes, Env};
 use alloy_consensus::BlockHeader;
+use alloy_evm::EvmEnv;
 use alloy_primitives::Address;
 use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
-use revm::context::{BlockEnv, CfgEnv, Env, TxEnv};
+use revm::context::{BlockEnv, CfgEnv, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
@@ -57,16 +58,18 @@ pub async fn environment<N: Network, P: Provider<N>>(
     cfg.disable_block_gas_limit = disable_block_gas_limit;
 
     let mut env = Env {
-        cfg,
-        block: BlockEnv {
-            number: block.header().number(),
-            timestamp: block.header().timestamp(),
-            beneficiary: block.header().beneficiary(),
-            difficulty: block.header().difficulty(),
-            prevrandao: block.header().mix_hash(),
-            basefee: block.header().base_fee_per_gas().unwrap_or_default(),
-            gas_limit: block.header().gas_limit(),
-            ..Default::default()
+        evm_env: EvmEnv {
+            cfg_env: cfg,
+            block_env: BlockEnv {
+                number: block.header().number(),
+                timestamp: block.header().timestamp(),
+                beneficiary: block.header().beneficiary(),
+                difficulty: block.header().difficulty(),
+                prevrandao: block.header().mix_hash(),
+                basefee: block.header().base_fee_per_gas().unwrap_or_default(),
+                gas_limit: block.header().gas_limit(),
+                ..Default::default()
+            },
         },
         tx: TxEnv {
             caller: origin,
