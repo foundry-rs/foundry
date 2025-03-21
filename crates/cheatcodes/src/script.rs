@@ -8,7 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::primitives::{Bytecode, SignedAuthorization};
+use revm::{bytecode::Bytecode, context_interface::transaction::SignedAuthorization};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {

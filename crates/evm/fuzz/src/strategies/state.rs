@@ -9,9 +9,9 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
-    db::{CacheDB, DatabaseRef, DbAccount},
-    interpreter::opcode,
-    primitives::AccountInfo,
+    bytecode::opcode::OpCode,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    state::AccountInfo,
 };
 use std::{collections::BTreeMap, fmt, sync::Arc};
 

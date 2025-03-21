@@ -33,7 +33,7 @@ mod tests {
     use crate::{evm::inject_precompiles, PrecompileFactory};
     use alloy_primitives::Address;
     use foundry_evm::revm::primitives::{address, Bytes, Precompile, PrecompileResult, SpecId};
-    use revm::primitives::PrecompileOutput;
+    use revm::precompile::PrecompileOutput;
 
     #[test]
     fn build_evm_with_extra_precompiles() {

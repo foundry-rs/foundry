@@ -90,7 +90,7 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use revm::primitives::Bytecode;
+use revm::bytecode::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
