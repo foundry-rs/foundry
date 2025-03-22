@@ -455,12 +455,12 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf
             }
             // External libraries doesn't have functions included in abi, but `methodIdentifiers`.
             if let Some(method_identifiers) = &artifact.method_identifiers {
-                method_identifiers.iter().for_each(|(signature, selector)| {
+                for (signature, selector) in method_identifiers {
                     cached_signatures
                         .functions
                         .entry(format!("0x{selector}"))
                         .or_insert(signature.to_string());
-                });
+                }
             }
         }
     });

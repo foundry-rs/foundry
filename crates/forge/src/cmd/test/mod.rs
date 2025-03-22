@@ -472,7 +472,7 @@ impl TestArgs {
         // Run tests in a non-streaming fashion and collect results for serialization.
         if !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter);
-            results.values_mut().for_each(|suite_result| {
+            for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
                     if verbosity >= 2 {
                         // Decode logs at level 2 and above.
@@ -482,7 +482,7 @@ impl TestArgs {
                         test_result.logs = vec![];
                     }
                 }
-            });
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -704,13 +704,13 @@ impl TestArgs {
                                 .iter()
                                 .filter_map(|(k, v)| {
                                     previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                        if previous_snapshot != v {
+                                        if previous_snapshot == v {
+                                            None
+                                        } else {
                                             Some((
                                                 k.clone(),
                                                 (previous_snapshot.clone(), v.clone()),
                                             ))
-                                        } else {
-                                            None
                                         }
                                     })
                                 })

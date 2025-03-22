@@ -1466,12 +1466,12 @@ async fn test_reset_dev_account_nonce() {
 async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let config: NodeConfig = fork_config();
 
-    let (mut api, _handle) = spawn(config).await;
+    let (api, _handle) = spawn(config).await;
     let info = api.anvil_node_info().await.unwrap();
     let number = info.fork_config.fork_block_number.unwrap();
     assert_eq!(number, BLOCK_NUMBER);
 
-    async fn get_block_from_cache_path(api: &mut EthApi) -> u64 {
+    async fn get_block_from_cache_path(api: &EthApi) -> u64 {
         let db = api.backend.get_db().read().await;
         let cache_path = db.maybe_inner().unwrap().cache().cache_path().unwrap();
         cache_path
@@ -1485,7 +1485,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
             .expect("must be valid number")
     }
 
-    assert_eq!(BLOCK_NUMBER, get_block_from_cache_path(&mut api).await);
+    assert_eq!(BLOCK_NUMBER, get_block_from_cache_path(&api).await);
 
     // Reset to older block without specifying a new rpc url
     api.anvil_reset(Some(Forking {
@@ -1495,7 +1495,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     .await
     .unwrap();
 
-    assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&mut api).await);
+    assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&api).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]

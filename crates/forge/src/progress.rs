@@ -61,7 +61,7 @@ impl TestsProgressState {
     /// phase. Test progress is placed under test suite progress entry so all tests within suite
     /// are grouped.
     pub fn start_fuzz_progress(
-        &mut self,
+        &self,
         suite_name: &str,
         test_name: &String,
         runs: u32,
@@ -84,7 +84,7 @@ impl TestsProgressState {
     }
 
     /// Removes overall test progress.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.multi.clear().unwrap();
     }
 }

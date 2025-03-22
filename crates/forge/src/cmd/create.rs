@@ -351,7 +351,14 @@ impl CreateArgs {
         }
 
         if dry_run {
-            if !shell::is_json() {
+            if shell::is_json() {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            } else {
                 sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
 
                 sh_println!("Contract: {}", self.contract.name)?;
@@ -362,13 +369,6 @@ impl CreateArgs {
                 sh_println!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
 
                 sh_warn!("To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more.")?;
-            } else {
-                let output = json!({
-                    "contract": self.contract.name,
-                    "transaction": &deployer.tx,
-                    "abi":&abi
-                });
-                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
             }
 
             return Ok(());

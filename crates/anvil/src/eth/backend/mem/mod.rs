@@ -1413,10 +1413,10 @@ impl Backend {
                 gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
                 max_fee_per_blob_gas: max_fee_per_blob_gas
                     .or_else(|| {
-                        if !blob_hashes.is_empty() {
-                            env.block.get_blob_gasprice()
-                        } else {
+                        if blob_hashes.is_empty() {
                             None
+                        } else {
+                            env.block.get_blob_gasprice()
                         }
                     })
                     .map(U256::from),
@@ -2594,7 +2594,7 @@ impl Backend {
                     .zip(storage_proofs)
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
                         StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),

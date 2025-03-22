@@ -248,8 +248,7 @@ pub fn initialize(target: &Path) {
         // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
 
         // Release the read lock and acquire a write lock, initializing the lock file.
-        _read = None;
-
+        drop(_read);
         let mut write = lock.write().unwrap();
 
         let mut data = String::new();

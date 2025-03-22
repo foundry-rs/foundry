@@ -214,7 +214,7 @@ impl EtherscanVerificationProvider {
 
     /// Configures the API request to the Etherscan API using the given [`VerifyArgs`].
     async fn prepare_verify_request(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<(Client, VerifyContract)> {
@@ -283,11 +283,11 @@ impl EtherscanVerificationProvider {
             // API key passed.
             let is_etherscan = verifier_type.is_etherscan() ||
                 (verifier_type.is_sourcify() && etherscan_key.is_some());
-            let base_url = if !is_etherscan {
+            let base_url = if is_etherscan {
+                base_url.unwrap_or(api_url)
+            } else {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_prefix("/api").unwrap_or(api_url)
-            } else {
-                base_url.unwrap_or(api_url)
             };
             builder.with_chain_id(chain).with_api_url(api_url)?.with_url(base_url)?
         } else {
@@ -305,7 +305,7 @@ impl EtherscanVerificationProvider {
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
     pub async fn create_verify_request(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<VerifyContract> {
@@ -353,7 +353,7 @@ impl EtherscanVerificationProvider {
     /// constructor arguments was provided, read them and encode. Otherwise,
     /// return whatever was set in the [VerifyArgs] args.
     async fn constructor_args(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<Option<String>> {
@@ -370,7 +370,7 @@ impl EtherscanVerificationProvider {
             };
             let encoded_args = encode_function_args(
                 &func,
-                read_constructor_args_file(constructor_args_path.to_path_buf())?,
+                read_constructor_args_file(constructor_args_path.clone())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()))
@@ -387,7 +387,7 @@ impl EtherscanVerificationProvider {
     /// match provided creation code with local bytecode of the target contract.
     /// If bytecode match, returns latest bytes of on-chain creation code as constructor arguments.
     async fn guess_constructor_args(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<String> {
@@ -455,10 +455,10 @@ impl EtherscanVerificationProvider {
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
 /// ```
 async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
-    if version.build != BuildMetadata::EMPTY {
-        Ok(version)
-    } else {
+    if version.build == BuildMetadata::EMPTY {
         Ok(lookup_compiler_version(&version).await?)
+    } else {
+        Ok(version)
     }
 }
 

@@ -79,7 +79,7 @@ impl TtyWidth {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 /// The requested output mode.
 pub enum OutputMode {
     /// Default output
@@ -104,7 +104,7 @@ impl OutputMode {
 }
 
 /// The requested output format.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Plain text output.
     #[default]
@@ -178,7 +178,7 @@ enum ShellOut {
 }
 
 /// Whether messages should use color output.
-#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize, Deserialize, ValueEnum)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy, Serialize, Deserialize, ValueEnum)]
 pub enum ColorChoice {
     /// Intelligently guess whether to use color output (default).
     #[default]

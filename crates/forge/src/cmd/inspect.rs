@@ -206,15 +206,15 @@ fn print_abi(abi: &JsonAbi) -> Result<()> {
         for func in abi.functions.iter().flat_map(|(_, f)| f) {
             let selector = func.selector().to_string();
             let state_mut = func.state_mutability.as_json_str();
-            let func_sig = if !func.outputs.is_empty() {
+            let func_sig = if func.outputs.is_empty() {
+                format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
+            } else {
                 format!(
                     "{}({}) {state_mut} returns ({})",
                     func.name,
                     get_ty_sig(&func.inputs),
                     get_ty_sig(&func.outputs)
                 )
-            } else {
-                format!("{}({}) {state_mut}", func.name, get_ty_sig(&func.inputs))
             };
             table.add_row(["function", &func_sig, &selector]);
         }

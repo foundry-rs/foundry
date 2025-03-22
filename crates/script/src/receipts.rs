@@ -15,10 +15,10 @@ pub enum TxStatus {
 
 impl From<AnyTransactionReceipt> for TxStatus {
     fn from(receipt: AnyTransactionReceipt) -> Self {
-        if !receipt.inner.inner.inner.receipt.status.coerce_status() {
-            Self::Revert(receipt)
-        } else {
+        if receipt.inner.inner.inner.receipt.status.coerce_status() {
             Self::Success(receipt)
+        } else {
+            Self::Revert(receipt)
         }
     }
 }
