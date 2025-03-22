@@ -89,7 +89,7 @@ impl FmtArgs {
                             SOLC_EXTENSIONS,
                         ));
                     } else if path.is_sol() {
-                        inputs.push(path.to_path_buf());
+                        inputs.push(path.clone());
                     } else {
                         warn!("Cannot process path {}", path.display());
                     }

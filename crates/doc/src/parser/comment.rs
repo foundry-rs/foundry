@@ -104,7 +104,7 @@ impl Comment {
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Clone, Debug, Default, PartialEq, Deref, DerefMut)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deref, DerefMut)]
 pub struct Comments(Vec<Comment>);
 
 /// Forward the [Comments] function implementation to the [CommentsRef]
@@ -153,12 +153,12 @@ impl Comments {
 
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+        Self(value.into_iter().filter_map(Comment::from_doc_comment).collect())
     }
 }
 
 /// The collection of references to natspec [Comment] items.
-#[derive(Debug, Default, PartialEq, Deref)]
+#[derive(Debug, Default, PartialEq, Eq, Deref)]
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
@@ -170,13 +170,13 @@ impl<'a> CommentsRef<'a> {
     /// Filter a collection of comments and return only those that match provided tags.
     pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| tags.contains(&c.tag)).collect())
     }
 
     /// Filter a collection of comments and return only those that do not match provided tags.
     pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| !tags.contains(&c.tag)).collect())
     }
 
     /// Check if the collection contains a target comment.
@@ -200,7 +200,7 @@ impl<'a> CommentsRef<'a> {
 
     /// Filter a collection of comments and only return the custom tags.
     pub fn get_custom_tags(&self) -> Self {
-        CommentsRef(self.iter().cloned().filter(|c| c.is_custom()).collect())
+        CommentsRef(self.iter().copied().filter(|c| c.is_custom()).collect())
     }
 }
 

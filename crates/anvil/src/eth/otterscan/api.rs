@@ -418,7 +418,7 @@ impl EthApi {
                 txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
             ),
             BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(
-                txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
+                txs.iter().skip(page * page_size).take(page_size).copied().collect(),
             ),
             BlockTransactions::Uncle => unreachable!(),
         };

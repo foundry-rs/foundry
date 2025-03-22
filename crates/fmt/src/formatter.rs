@@ -1171,7 +1171,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         T: Visitable + CodeLocation,
     {
         write_chunk!(self, "{}", prefix)?;
-        let whitespace = if !prefix.is_empty() { " " } else { "" };
+        let whitespace = if prefix.is_empty() { "" } else { " " };
         let next_after_start_offset = items.first().map(|item| item.loc().start());
         let first_surrounding = SurroundingChunk::new("", start_offset, next_after_start_offset);
         let last_surronding = SurroundingChunk::new(")", None, end_offset);

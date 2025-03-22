@@ -103,8 +103,8 @@ pub fn build_using_cache(
     let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>()?;
 
     for (key, value) in cached_artifacts {
-        let name = args.contract.name.to_owned() + ".sol";
-        let version = etherscan_settings.compiler_version.to_owned();
+        let name = args.contract.name.clone() + ".sol";
+        let version = etherscan_settings.compiler_version.clone();
         // Ignores vyper
         if version.starts_with("vyper:") {
             eyre::bail!("Vyper contracts are not supported")
@@ -147,15 +147,15 @@ pub fn print_result(
     config: &Config,
 ) {
     if let Some(res) = res {
-        if !shell::is_json() {
+        if shell::is_json() {
+            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
+            json_results.push(json_res);
+        } else {
             let _ = sh_println!(
                 "{} with status {}",
                 format!("{bytecode_type:?} code matched").green().bold(),
                 res.green().bold()
             );
-        } else {
-            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
-            json_results.push(json_res);
         }
     } else if !shell::is_json() {
         let _ = sh_err!(

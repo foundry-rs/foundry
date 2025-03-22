@@ -135,9 +135,7 @@ pub fn fuzz_param_from_state(
             value()
                 .prop_map(move |value| {
                     let mut fuzzed_addr = Address::from_word(value);
-                    if !deployed_libs.contains(&fuzzed_addr) {
-                        DynSolValue::Address(fuzzed_addr)
-                    } else {
+                    if deployed_libs.contains(&fuzzed_addr) {
                         let mut rng = StdRng::seed_from_u64(0x1337); // use deterministic rng
 
                         // Do not use addresses of deployed libraries as fuzz input, instead return
@@ -152,6 +150,8 @@ pub fn fuzz_param_from_state(
                             }
                         }
 
+                        DynSolValue::Address(fuzzed_addr)
+                    } else {
                         DynSolValue::Address(fuzzed_addr)
                     }
                 })

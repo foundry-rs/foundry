@@ -456,10 +456,10 @@ fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
 }
 
 fn assert_false(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if !condition {
-        Ok(Default::default())
-    } else {
+    if condition {
         Err(SimpleAssertionError)
+    } else {
+        Ok(Default::default())
     }
 }
 
@@ -472,10 +472,10 @@ fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a
 }
 
 fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
-    if left != right {
-        Ok(Default::default())
-    } else {
+    if left == right {
         Err(ComparisonAssertionError::Ne { left, right })
+    } else {
+        Ok(Default::default())
     }
 }
 

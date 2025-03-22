@@ -704,13 +704,13 @@ impl TestArgs {
                                 .iter()
                                 .filter_map(|(k, v)| {
                                     previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                        if previous_snapshot != v {
+                                        if previous_snapshot == v {
+                                            None
+                                        } else {
                                             Some((
                                                 k.clone(),
                                                 (previous_snapshot.clone(), v.clone()),
                                             ))
-                                        } else {
-                                            None
                                         }
                                     })
                                 })

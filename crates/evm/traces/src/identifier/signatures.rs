@@ -56,7 +56,7 @@ impl SignaturesIdentifier {
         cache_path: Option<PathBuf>,
         offline: bool,
     ) -> eyre::Result<SingleSignaturesIdentifier> {
-        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
+        let client = if offline { None } else { Some(OpenChainClient::new()?) };
 
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");

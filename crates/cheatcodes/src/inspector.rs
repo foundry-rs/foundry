@@ -1555,10 +1555,10 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                         },
                     };
 
-                    if count != expected.count {
-                        Some((expected, count))
-                    } else {
+                    if count == expected.count {
                         None
+                    } else {
+                        Some((expected, count))
                     }
                 })
                 .collect::<Vec<_>>();
