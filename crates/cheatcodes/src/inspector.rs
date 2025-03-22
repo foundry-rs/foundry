@@ -1798,7 +1798,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
+    fn meter_gas_end(&mut self, interpreter: &Interpreter) {
         // Remove recorded gas if we exit frame.
         if will_exit(interpreter.instruction_result) {
             self.gas_metering.paused_frames.pop();
@@ -1812,7 +1812,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
+    fn meter_gas_check(&self, interpreter: &mut Interpreter) {
         if will_exit(interpreter.instruction_result) {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
@@ -1833,7 +1833,7 @@ impl Cheatcodes {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn arbitrary_storage_end(&mut self, interpreter: &Interpreter, ecx: Ecx) {
         let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
         } else {
@@ -1867,7 +1867,7 @@ impl Cheatcodes {
 
     /// Records storage slots reads and writes.
     #[cold]
-    fn record_accesses(&mut self, interpreter: &mut Interpreter) {
+    fn record_accesses(&mut self, interpreter: &Interpreter) {
         let Some(access) = &mut self.accesses else { return };
         match interpreter.current_opcode() {
             op::SLOAD => {
@@ -1883,7 +1883,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn record_state_diffs(&mut self, interpreter: &Interpreter, ecx: Ecx) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.current_opcode() {
             op::SELFDESTRUCT => {

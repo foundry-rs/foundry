@@ -1960,9 +1960,8 @@ impl Config {
             }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    match Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        Ok(chain) => cache.chains.push(Self::list_foundry_chain_cache(chain)?),
-                        Err(_) => continue,
+                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
                     }
                 }
                 Ok(cache)

@@ -214,7 +214,7 @@ impl EtherscanVerificationProvider {
 
     /// Configures the API request to the Etherscan API using the given [`VerifyArgs`].
     async fn prepare_verify_request(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<(Client, VerifyContract)> {
@@ -305,7 +305,7 @@ impl EtherscanVerificationProvider {
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
     pub async fn create_verify_request(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<VerifyContract> {
@@ -353,7 +353,7 @@ impl EtherscanVerificationProvider {
     /// constructor arguments was provided, read them and encode. Otherwise,
     /// return whatever was set in the [VerifyArgs] args.
     async fn constructor_args(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<Option<String>> {

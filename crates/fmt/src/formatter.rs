@@ -322,11 +322,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// If the block style is configured to [SingleLineBlockStyle::Preserve],
     /// lookup whether there was a newline introduced in `[start_from, end_at]` range
     /// where `end_at` is the start of the block.
-    fn should_attempt_block_single_line(
-        &self,
-        stmt: &mut Statement,
-        start_from: usize,
-    ) -> bool {
+    fn should_attempt_block_single_line(&self, stmt: &mut Statement, start_from: usize) -> bool {
         match self.config.single_line_statement_blocks {
             SingleLineBlockStyle::Single => true,
             SingleLineBlockStyle::Multi => false,

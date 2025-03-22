@@ -138,7 +138,7 @@ impl ResolvedEtherscanConfigs {
             match config {
                 Ok(c) if c.chain == Some(chain) => return Some(Ok(c)),
                 Err(e) => return Some(Err(e)),
-                _ => continue,
+                Ok(_) => {}
             }
         }
         None
