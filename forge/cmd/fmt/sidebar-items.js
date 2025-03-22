@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Input"],"fn":["format_diff_summary"],"struct":["FmtArgs","Line"]};
