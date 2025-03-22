@@ -179,7 +179,7 @@ impl FoldedStackTraceBuilder {
 
     /// Internal method to build the folded stack trace without subtracting gas consumed by
     /// the children function calls.
-    fn build_without_subtraction(&mut self) -> Vec<String> {
+    fn build_without_subtraction(&self) -> Vec<String> {
         let mut lines = Vec::new();
         for TraceEntry { names, gas } in &self.traces {
             lines.push(format!("{} {}", names.join(";"), gas));

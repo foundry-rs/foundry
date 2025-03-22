@@ -387,7 +387,7 @@ impl EtherscanVerificationProvider {
     /// match provided creation code with local bytecode of the target contract.
     /// If bytecode match, returns latest bytes of on-chain creation code as constructor arguments.
     async fn guess_constructor_args(
-        &mut self,
+        &self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<String> {

@@ -645,7 +645,7 @@ mod tests {
         stripped_creation_code: &str,
     ) {
         compiled.compiled_contracts_by_compiler_version().iter().for_each(|(_, contracts)| {
-            contracts.iter().for_each(|(name, contract)| {
+            for (name, contract) in contracts {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.bin_ref().expect("creation code not found");
@@ -655,7 +655,7 @@ mod tests {
                         "inconsistent creation code"
                     );
                 }
-            });
+            }
         });
     }
 

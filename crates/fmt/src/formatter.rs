@@ -323,7 +323,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// lookup whether there was a newline introduced in `[start_from, end_at]` range
     /// where `end_at` is the start of the block.
     fn should_attempt_block_single_line(
-        &mut self,
+        &self,
         stmt: &mut Statement,
         start_from: usize,
     ) -> bool {
