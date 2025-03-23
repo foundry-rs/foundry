@@ -48,8 +48,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::mpsc::{self, RecvTimeoutError},
-    time::Duration,
 };
 
 mod macros;
@@ -587,9 +585,6 @@ impl Config {
     pub const DEFAULT_CREATE2_DEPLOYER: Address =
         address!("4e59b44847b379578588920ca78fbf26c0b4956c");
 
-    /// Docker image with eof-enabled solc binary
-    pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
-
     /// Loads the `Config` from the current directory.
     ///
     /// See [`figment`](Self::figment) for more details.
@@ -901,16 +896,20 @@ impl Config {
 
     /// Adjusts settings if EOF compilation is enabled.
     ///
-    /// This includes enabling via_ir, eof_version and ensuring that evm_version is not lower than
-    /// Prague.
+    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
+    /// lower than Osaka.
     pub fn sanitize_eof_settings(&mut self) {
         if self.eof {
-            self.via_ir = true;
+            self.optimizer = Some(true);
+            self.normalize_optimizer_settings();
+
             if self.eof_version.is_none() {
                 self.eof_version = Some(EofVersion::V1);
             }
-            if self.evm_version < EvmVersion::Prague {
-                self.evm_version = EvmVersion::Prague;
+
+            self.via_ir = true;
+            if self.evm_version < EvmVersion::Osaka {
+                self.evm_version = EvmVersion::Osaka;
             }
         }
     }
@@ -1086,45 +1085,7 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
-    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
-        if self.eof {
-            let (tx, rx) = mpsc::channel();
-            let root = self.root.clone();
-            std::thread::spawn(move || {
-                tx.send(
-                    Solc::new_with_args(
-                        "docker",
-                        [
-                            "run",
-                            "--rm",
-                            "-i",
-                            "-v",
-                            &format!("{}:/app/root", root.display()),
-                            Self::EOF_SOLC_IMAGE,
-                        ],
-                    )
-                    .map(Some),
-                )
-            });
-            // If it takes more than 1 second, this likely means we are pulling the image.
-            return match rx.recv_timeout(Duration::from_secs(1)) {
-                Ok(res) => res,
-                Err(RecvTimeoutError::Timeout) => {
-                    // `sh_warn!` is a circular dependency, preventing us from using it here.
-                    eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(
-                            "Pulling Docker image for eof-solc, this might take some time..."
-                        )
-                    );
-
-                    rx.recv().expect("sender dropped")
-                }
-                Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
-            };
-        }
-
         if let Some(solc) = &self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
@@ -4617,7 +4578,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
-    #[allow(clippy::disallowed_macros)]
+    #[expect(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {
@@ -4643,7 +4604,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unknown_lints, non_local_definitions)]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {

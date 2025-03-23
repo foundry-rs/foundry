@@ -39,6 +39,7 @@ exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [workspace.lints.clippy]
 dbg-macro = "warn"
+explicit_iter_loop = "warn"
 manual-string-new = "warn"
 uninlined-format-args = "warn"
 use-self = "warn"
@@ -188,7 +189,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.11.0", default-features = false }
-foundry-compilers = { version = "0.13.3", default-features = false }
+foundry-compilers = { version = "0.13.5", default-features = false }
 foundry-fork-db = "0.12"
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.1", default-features = false }
@@ -220,8 +221,6 @@ alloy-transport = { version = "0.12.1", default-features = false }
 alloy-transport-http = { version = "0.12.1", default-features = false }
 alloy-transport-ipc = { version = "0.12.1", default-features = false }
 alloy-transport-ws = { version = "0.12.1", default-features = false }
-alloy-node-bindings = { version = "0.12.1", default-features = false }
-alloy-network-primitives = { version = "0.12.1", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "0.8.22"
@@ -235,7 +234,6 @@ alloy-primitives = { version = "0.8.22", features = [
 alloy-sol-macro-expander = "0.8.22"
 alloy-sol-macro-input = "0.8.22"
 alloy-sol-types = "0.8.22"
-syn-solidity = "0.8.22"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
@@ -255,11 +253,8 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
-derive_more = { version = "1.0", features = ["full"] }
+derive_more = { version = "2.0", features = ["full"] }
 thiserror = "2"
-
-# bench
-divan = "0.1"
 
 # misc
 auto_impl = "1"
@@ -282,7 +277,7 @@ eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
 hyper = "1.5"
-indexmap = "2.6"
+indicatif = "0.17"
 itertools = "0.14"
 jsonpath_lib = "0.3"
 k256 = "0.13"
@@ -301,7 +296,7 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.6"
-soldeer-commands = "=0.5.2"
+soldeer-commands = "=0.5.3"
 strum = "0.27"
 tempfile = "3.13"
 tikv-jemallocator = "0.6"

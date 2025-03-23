@@ -84,7 +84,7 @@ impl FuzzRunIdentifiedContracts {
     pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
         if !created_contracts.is_empty() {
             let mut targets = self.targets.lock();
-            for addr in created_contracts.iter() {
+            for addr in &created_contracts {
                 targets.remove(addr);
             }
         }

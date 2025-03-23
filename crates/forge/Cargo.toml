@@ -28,8 +28,6 @@ foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
 
-revm-inspectors.workspace = true
-
 comfy-table.workspace = true
 eyre.workspace = true
 proptest.workspace = true
@@ -50,7 +48,6 @@ foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
 alloy-chains.workspace = true
-alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-network.workspace = true
@@ -59,18 +56,14 @@ alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-signer.workspace = true
-alloy-sol-macro-expander = { workspace = true, features = ["json"] }
-alloy-sol-macro-input.workspace = true
 alloy-transport.workspace = true
 
-async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
-dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
-indicatif = "0.17"
+indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
@@ -86,15 +79,14 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = "0.22"
-watchexec = "5.0"
-watchexec-events = "4.0"
+watchexec = "6.0"
+watchexec-events = "5.0"
 watchexec-signals = "4.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
-hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 opener = "0.7"
 
@@ -118,7 +110,6 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
     "rustls",
 ] }
 tempfile.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 alloy-signer-local.workspace = true
 

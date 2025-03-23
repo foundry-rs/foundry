@@ -313,7 +313,7 @@ fn derive_enum(name: &Ident, input: &syn::DataEnum, attrs: &[Attribute]) -> Resu
 }
 
 fn check_named_fields(data: &DataStruct, ident: &Ident) {
-    for field in data.fields.iter() {
+    for field in &data.fields {
         if field.ident.is_none() {
             emit_warning!(ident, "all params must be named");
         }

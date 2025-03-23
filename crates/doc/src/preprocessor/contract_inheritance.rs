@@ -26,13 +26,13 @@ impl Preprocessor for ContractInheritance {
     }
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
-        for document in documents.iter() {
+        for document in &documents {
             if let DocumentContent::Single(ref item) = document.content {
                 if let ParseSource::Contract(ref contract) = item.source {
                     let mut links = HashMap::default();
 
                     // Attempt to match bases to other contracts
-                    for base in contract.base.iter() {
+                    for base in &contract.base {
                         let base_ident = base.name.identifiers.last().unwrap().name.clone();
                         if let Some(linked) = self.try_link_base(&base_ident, &documents) {
                             links.insert(base_ident, linked);
