@@ -460,7 +460,8 @@ where
 /// Helper function that tries to decode custom error name and inputs from error payload data.
 async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
     if let Some(err_data) = serde_json::from_str::<String>(data.get())?.strip_prefix("0x") {
-        let selector = err_data.get(..8).unwrap();
+        let Some(selector) = err_data.get(..8) else { return Ok(None) };
+
         if let Some(known_error) = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
             .write()
             .await

@@ -272,9 +272,11 @@ impl CreateArgs {
         id: ArtifactId,
         dry_run: bool,
     ) -> Result<()> {
-        let bin = bin.into_bytes().unwrap_or_else(|| {
-            panic!("no bytecode found in bin object for {}", self.contract.name)
-        });
+        let bin = bin.into_bytes().unwrap_or_default();
+        if bin.is_empty() {
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
+        }
+
         let provider = Arc::new(provider);
         let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone(), timeout);
 
