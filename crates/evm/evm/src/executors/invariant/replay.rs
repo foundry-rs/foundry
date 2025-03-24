@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 /// Replays a call sequence for collecting logs and traces.
 /// Returns counterexample to be used when the call sequence is a failed scenario.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn replay_run(
     invariant_contract: &InvariantContract<'_>,
     mut executor: Executor,
@@ -100,7 +100,7 @@ pub fn replay_run(
 }
 
 /// Replays the error case, shrinks the failing sequence and collects all necessary traces.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn replay_error(
     failed_case: &FailedInvariantCaseData,
     invariant_contract: &InvariantContract<'_>,

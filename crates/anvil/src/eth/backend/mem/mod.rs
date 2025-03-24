@@ -35,7 +35,8 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+    transaction::Recovered, Account, Header, Receipt, ReceiptWithBloom, Signed,
+    Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::{
@@ -212,7 +213,7 @@ pub struct Backend {
 
 impl Backend {
     /// Initialises the balance of the given accounts
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<Box<dyn Db>>>,
         env: Arc<RwLock<EnvWithHandlerCfg>>,
@@ -240,6 +241,7 @@ impl Backend {
                 env.handler_cfg.spec_id,
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
+                genesis.number,
             )
         };
 
@@ -1020,7 +1022,7 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn new_evm_with_inspector_ref<'i, 'db>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
@@ -1927,7 +1929,7 @@ impl Backend {
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
 
-        block
+        AnyRpcBlock::from(block)
     }
 
     /// Converts the `BlockNumber` into a numeric value
@@ -2874,7 +2876,6 @@ impl TransactionValidator for Backend {
 }
 
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
-#[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
     eth_transaction: MaybeImpersonatedTransaction,
@@ -2886,7 +2887,7 @@ pub fn transaction_build(
         let DepositTransaction {
             nonce,
             source_hash,
-            from,
+            from: deposit_from,
             kind,
             mint,
             gas_limit,
@@ -2898,7 +2899,7 @@ pub fn transaction_build(
         let dep_tx = TxDeposit {
             source_hash,
             input,
-            from,
+            from: deposit_from,
             mint: Some(mint.to()),
             to: kind,
             is_system_transaction: is_system_tx,
@@ -2933,17 +2934,16 @@ pub fn transaction_build(
                 });
 
                 let tx = Transaction {
-                    inner: envelope,
+                    inner: Recovered::new_unchecked(envelope, deposit_from),
                     block_hash: block
                         .as_ref()
                         .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
                     block_number: block.as_ref().map(|block| block.header.number),
                     transaction_index: info.as_ref().map(|info| info.transaction_index),
                     effective_gas_price: None,
-                    from,
                 };
 
-                return WithOtherFields::new(tx);
+                return AnyRpcTransaction::from(WithOtherFields::new(tx));
             }
             Err(_) => {
                 error!(target: "backend", "failed to serialize deposit transaction");
@@ -2978,7 +2978,7 @@ pub fn transaction_build(
     // there's // no `info` yet.
     let hash = tx_hash.unwrap_or(*envelope.tx_hash());
 
-    let envelope = match envelope {
+    let envelope = match envelope.into_inner() {
         TxEnvelope::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
@@ -3007,17 +3007,19 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: envelope,
+        inner: Recovered::new_unchecked(
+            envelope,
+            eth_transaction.recover().expect("can recover signed tx"),
+        ),
         block_hash: block
             .as_ref()
             .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
-        from: eth_transaction.recover().expect("can recover signed tx"),
         // deprecated
         effective_gas_price: Some(effective_gas_price),
     };
-    WithOtherFields::new(tx)
+    AnyRpcTransaction::from(WithOtherFields::new(tx))
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.

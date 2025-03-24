@@ -123,7 +123,7 @@ impl SolcParser {
     /// Given a list of nodes, find a "ContractDefinition" node that matches
     /// the provided contract_id.
     fn contract_root_node<'a>(&self, nodes: &'a [Node], contract_id: &str) -> Option<&'a Node> {
-        for n in nodes.iter() {
+        for n in nodes {
             if n.node_type == NodeType::ContractDefinition {
                 let contract_data = &n.other;
                 if let Value::String(contract_name) = contract_data.get("name")? {
@@ -145,7 +145,7 @@ impl SolcParser {
                 natspecs.push(NatSpec { contract: contract.into(), function: None, docs, line })
             }
         }
-        for n in node.nodes.iter() {
+        for n in &node.nodes {
             if let Some((function, docs, line)) = self.get_fn_data(n) {
                 natspecs.push(NatSpec {
                     contract: contract.into(),

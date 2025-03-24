@@ -271,7 +271,13 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(
+        env: &Env,
+        spec_id: SpecId,
+        base_fee: Option<u64>,
+        timestamp: u64,
+        genesis_number: u64,
+    ) -> Self {
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
         let is_cancun = spec_id >= SpecId::CANCUN;
         let is_prague = spec_id >= SpecId::PRAGUE;
@@ -294,7 +300,7 @@ impl BlockchainStorage {
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![]);
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number: U64 = U64::from(0u64);
+        let best_number: U64 = U64::from(genesis_number);
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -344,7 +350,6 @@ impl BlockchainStorage {
         self.best_number = U64::from(block_number);
     }
 
-    #[allow(unused)]
     pub fn empty() -> Self {
         Self {
             blocks: Default::default(),
@@ -367,7 +372,7 @@ impl BlockchainStorage {
     /// Removes all stored transactions for the given block hash
     pub fn remove_block_transactions(&mut self, block_hash: B256) {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
-            for tx in block.transactions.iter() {
+            for tx in &block.transactions {
                 self.transactions.remove(&tx.hash());
             }
             block.transactions.clear();
@@ -413,7 +418,7 @@ impl BlockchainStorage {
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
-        for serializable_block in serializable_blocks.iter() {
+        for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number;
@@ -424,7 +429,7 @@ impl BlockchainStorage {
 
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
-        for serializable_transaction in serializable_transactions.iter() {
+        for serializable_transaction in &serializable_transactions {
             let transaction: MinedTransaction = serializable_transaction.clone().into();
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
@@ -440,10 +445,20 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, spec_id: SpecId, base_fee: Option<u64>, timestamp: u64) -> Self {
+    pub fn new(
+        env: &Env,
+        spec_id: SpecId,
+        base_fee: Option<u64>,
+        timestamp: u64,
+        genesis_number: u64,
+    ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                env, spec_id, base_fee, timestamp,
+                env,
+                spec_id,
+                base_fee,
+                timestamp,
+                genesis_number,
             ))),
         }
     }

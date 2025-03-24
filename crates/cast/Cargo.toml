@@ -42,6 +42,7 @@ alloy-provider = { workspace = true, features = [
     "ws",
     "ipc",
     "trace-api",
+    "txpool-api"
 ] }
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
@@ -70,7 +71,6 @@ clap_complete = "4"
 clap_complete_fig = "4"
 comfy-table.workspace = true
 dunce.workspace = true
-indicatif = "0.17"
 itertools.workspace = true
 regex = { workspace = true, default-features = false }
 rpassword = "7"
@@ -87,10 +87,6 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
-alloy-node-bindings.workspace = true
-
-async-trait.workspace = true
-divan.workspace = true
 
 [features]
 default = ["jemalloc"]
@@ -98,7 +94,3 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
-
-[[bench]]
-name = "vanity"
-harness = false

@@ -44,7 +44,7 @@ pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
     fn inner(arena: &CallTraceArena, node_idx: usize, out: &mut Vec<PendingNode>) {
         let mut pending = PendingNode { node_idx, steps_count: 0 };
         let node = &arena.nodes()[node_idx];
-        for order in node.ordering.iter() {
+        for order in &node.ordering {
             match order {
                 TraceMemberOrder::Call(idx) => {
                     out.push(pending);

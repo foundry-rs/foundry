@@ -31,7 +31,7 @@ pub fn ws_provider_with_signer(
 
 /// Currently required to get around <https://github.com/alloy-rs/alloy/issues/296>
 pub async fn connect_pubsub(conn_str: &str) -> RootProvider {
-    alloy_provider::ProviderBuilder::default().on_builtin(conn_str).await.unwrap()
+    alloy_provider::ProviderBuilder::default().connect(conn_str).await.unwrap()
 }
 
 type PubsubSigner = FillProvider<
@@ -53,7 +53,7 @@ type PubsubSigner = FillProvider<
 >;
 
 pub async fn connect_pubsub_with_wallet(conn_str: &str, wallet: EthereumWallet) -> PubsubSigner {
-    alloy_provider::ProviderBuilder::new().wallet(wallet).on_builtin(conn_str).await.unwrap()
+    alloy_provider::ProviderBuilder::new().wallet(wallet).connect(conn_str).await.unwrap()
 }
 
 pub async fn ipc_provider_with_wallet(

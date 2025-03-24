@@ -80,8 +80,8 @@ pub fn get_cached_entry_by_name(
     let mut cached_entry = None;
     let mut alternatives = Vec::new();
 
-    for (abs_path, entry) in cache.files.iter() {
-        for (artifact_name, _) in entry.artifacts.iter() {
+    for (abs_path, entry) in &cache.files {
+        for artifact_name in entry.artifacts.keys() {
             if artifact_name == name {
                 if cached_entry.is_some() {
                     eyre::bail!(
@@ -124,7 +124,7 @@ pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
 pub fn needs_setup(abi: &JsonAbi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
-    for setup_fn in setup_fns.iter() {
+    for setup_fn in &setup_fns {
         if setup_fn.name != "setUp" {
             let _ = sh_warn!(
                 "Found invalid setup function \"{}\" did you mean \"setUp()\"?",

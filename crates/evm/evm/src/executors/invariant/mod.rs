@@ -801,7 +801,7 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        for (address, (identifier, _)) in self.setup_contracts.iter() {
+        for (address, (identifier, _)) in self.setup_contracts {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
