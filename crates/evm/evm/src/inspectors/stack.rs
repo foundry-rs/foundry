@@ -8,15 +8,15 @@ use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
+    context::result::ExecutionResult,
+    context_interface::cfg::{CreateScheme, TransactTo},
     inspectors::CustomPrintTracer,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
-    primitives::{
-        Account, AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult,
-        HashMap, Output, TransactTo,
-    },
+    primitives::{BlockEnv, Env, EnvWithHandlerCfg, HashMap, Output},
+    state::{Account, AccountStatus},
     EvmContext, Inspector, JournaledState,
 };
 use std::{

@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use foundry_evm::revm::precompile::Precompile;
+use foundry_evm::{backend::Env, revm::precompile::Precompile};
 use std::{fmt::Debug, sync::Arc};
 
 /// Object-safe trait that enables injecting extra precompiles when using
@@ -33,7 +33,7 @@ mod tests {
     use crate::{evm::inject_precompiles, PrecompileFactory};
     use alloy_primitives::Address;
     use foundry_evm::revm::primitives::{address, Bytes, Precompile, PrecompileResult, SpecId};
-    use revm::primitives::PrecompileOutput;
+    use revm::precompile::PrecompileOutput;
 
     #[test]
     fn build_evm_with_extra_precompiles() {
@@ -53,7 +53,7 @@ mod tests {
         }
 
         let db = revm::db::EmptyDB::default();
-        let env = Box::<revm::primitives::Env>::default();
+        let env = Box::<Env>::default();
         let spec = SpecId::LATEST;
         let handler_cfg = revm::primitives::HandlerCfg::new(spec);
         let inspector = revm::inspectors::NoOpInspector;

@@ -16,11 +16,14 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
     traces::TraceMode,
 };
+use foundry_evm_core::AsEnvMut;
 use reqwest::Url;
-use revm_primitives::{
-    db::Database,
+use revm::primitives::{
+    bytecode::Bytecode,
+    database::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId, TxKind,
+    hardfork::SpecId,
+    TxKind,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -348,13 +351,14 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
-    env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.beneficiary;
+pub fn configure_env_block(mut env: impl AsEnvMut, block: &AnyRpcBlock) {
+    let env = env.as_env_mut();
+    env.block.timestamp = block.header.timestamp;
+    env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
-    env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-    env.block.gas_limit = U256::from(block.header.gas_limit);
+    env.block.prevrandao = block.header.mix_hash;
+    env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+    env.block.gas_limit = block.header.gas_limit;
 }
 
 pub fn deploy_contract(

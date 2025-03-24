@@ -1,5 +1,5 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
-use revm_primitives::{
+use revm::bytecode::{
     eof::{EofBody, EofHeader},
     Eof,
 };
@@ -16,8 +16,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
                 sum_code_sizes: _,
                 sum_container_sizes: _,
             },
-        body:
-            EofBody { types_section, code_section, container_section, data_section, is_data_filled: _ },
+        body: EofBody { code_info, code_section, container_section, data_section, .. },
         raw: _,
     } = eof;
 
@@ -43,7 +42,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
         table.apply_modifier(UTF8_ROUND_CORNERS);
         table.set_content_arrangement(ContentArrangement::Dynamic);
         table.set_header(vec!["", "Inputs", "Outputs", "Max stack height", "Code"]);
-        for (idx, (code, type_section)) in code_section.iter().zip(types_section).enumerate() {
+        for (idx, (code, type_section)) in code_section.iter().zip(code_info).enumerate() {
             table.add_row(vec![
                 &idx.to_string(),
                 &type_section.inputs.to_string(),

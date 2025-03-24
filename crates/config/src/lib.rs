@@ -39,7 +39,7 @@ use foundry_compilers::{
     RestrictionsWithVersion, VyperLanguage,
 };
 use regex::Regex;
-use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
+use revm::primitives::{hardfork::SpecId, map::AddressHashMap, FixedBytes};
 use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{

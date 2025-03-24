@@ -29,7 +29,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
-    db::{DatabaseCommit, DatabaseRef},
+    database::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
     primitives::{
         AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,

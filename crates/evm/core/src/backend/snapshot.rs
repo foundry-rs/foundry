@@ -1,8 +1,6 @@
+use crate::Env;
 use alloy_primitives::{map::AddressHashMap, B256, U256};
-use revm::{
-    primitives::{AccountInfo, Env, HashMap},
-    JournaledState,
-};
+use revm::{primitives::HashMap, state::AccountInfo, JournaledState};
 use serde::{Deserialize, Serialize};
 
 /// A minimal abstraction of a state at a certain point in time
@@ -18,14 +16,14 @@ pub struct StateSnapshot {
 pub struct BackendStateSnapshot<T> {
     pub db: T,
     /// The journaled_state state at a specific point
-    pub journaled_state: JournaledState,
+    pub journaled_state: JournalInit,
     /// Contains the env at the time of the snapshot
     pub env: Env,
 }
 
 impl<T> BackendStateSnapshot<T> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {
+    pub fn new(db: T, journaled_state: JournalInit, env: Env) -> Self {
         Self { db, journaled_state, env }
     }
 
@@ -36,7 +34,7 @@ impl<T> BackendStateSnapshot<T> {
     /// those logs that are missing in the snapshot's journaled_state, since the current
     /// journaled_state includes the same logs, we can simply replace use that See also
     /// `DatabaseExt::revert`.
-    pub fn merge(&mut self, current: &JournaledState) {
+    pub fn merge<DB>(&mut self, current: &Journal<DB>) {
         self.journaled_state.logs.clone_from(&current.logs);
     }
 }

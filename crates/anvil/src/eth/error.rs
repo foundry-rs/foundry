@@ -246,8 +246,8 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
-    #[error("too many blobs in one transaction, have: {0}")]
-    TooManyBlobs(usize),
+    #[error("too many blobs in one transaction, have: {0}, max: {1}")]
+    TooManyBlobs(usize, usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
@@ -265,12 +265,12 @@ pub enum InvalidTransactionError {
     AuthorizationListNotSupported,
     /// Forwards error from the revm
     #[error(transparent)]
-    Revm(revm::primitives::InvalidTransaction),
+    Revm(revm::context::result::InvalidTransaction),
 }
 
-impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
-    fn from(err: revm::primitives::InvalidTransaction) -> Self {
-        use revm::primitives::InvalidTransaction;
+impl From<revm::context::result::InvalidTransaction> for InvalidTransactionError {
+    fn from(err: revm::context::result::InvalidTransaction) -> Self {
+        use revm::context::result::InvalidTransaction;
         match err {
             InvalidTransaction::InvalidChainId => Self::InvalidChainId,
             InvalidTransaction::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
@@ -300,7 +300,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
             InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
             InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs { have } => Self::TooManyBlobs(have),
+            InvalidTransaction::TooManyBlobs { max, have } => Self::TooManyBlobs(have, max),
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }

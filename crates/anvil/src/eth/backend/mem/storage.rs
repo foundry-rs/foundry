@@ -33,8 +33,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
-    backend::MemDb,
-    revm::primitives::Env,
+    backend::{Env, MemDb},
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
     },

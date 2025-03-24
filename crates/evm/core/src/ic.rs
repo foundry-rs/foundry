@@ -1,10 +1,6 @@
 use alloy_primitives::map::rustc_hash::FxHashMap;
 use eyre::Result;
-use revm::interpreter::{
-    opcode::{PUSH0, PUSH1, PUSH32},
-    OpCode,
-};
-use revm_inspectors::opcode::immediate_size;
+use revm::bytecode::opcode::{OpCode, PUSH0, PUSH1, PUSH32};
 use serde::Serialize;
 
 /// Maps from program counter to instruction counter.
@@ -117,7 +113,7 @@ pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction<'_>>> {
     while pc < code.len() {
         let op = OpCode::new(code[pc]);
         pc += 1;
-        let immediate_size = op.map(|op| immediate_size(op, &code[pc..])).unwrap_or(0) as usize;
+        let immediate_size = op.map(|op| op.info().immediate_size()).unwrap_or(0) as usize;
 
         if pc + immediate_size > code.len() {
             eyre::bail!("incomplete sequence of bytecode");
