@@ -2,7 +2,7 @@ use crate::executors::{Executor, ExecutorBuilder};
 use alloy_primitives::Address;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Chain, Config};
-use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
+use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts, Env};
 use foundry_evm_traces::TraceMode;
 use revm::primitives::{hardfork::SpecId, Env};
 use std::ops::{Deref, DerefMut};
@@ -14,7 +14,7 @@ pub struct TracingExecutor {
 
 impl TracingExecutor {
     pub fn new(
-        env: revm::primitives::Env,
+        env: Env,
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,

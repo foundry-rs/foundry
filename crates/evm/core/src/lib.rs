@@ -10,7 +10,7 @@ use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Address;
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
-use revm::{inspector::NoOpInspector, interpreter::CreateInputs, Inspector};
+use revm::{inspector::NoOpInspector, interpreter::CreateInputs, EvmContext, Inspector};
 use revm_inspectors::access_list::AccessListInspector;
 
 #[macro_use]
@@ -27,7 +27,10 @@ pub mod backend;
 pub mod buffer;
 pub mod constants;
 pub mod decode;
+
 pub mod env;
+pub use env::*;
+
 pub mod fork;
 pub mod opcodes;
 pub mod opts;

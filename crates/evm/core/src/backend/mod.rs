@@ -15,14 +15,17 @@ use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::{
-    context::{result::ResultAndState, JournalInit},
-    context_interface::block::BlobExcessGasAndPrice,
+    bytecode::Bytecode,
+    context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
-    state::{Account, AccountInfo, Bytecode, EvmState, EvmStorageSlot},
-    Database, DatabaseCommit, ExecuteEvm, Journal,
+    primitives::{
+        hardfork::SpecId, EnvWithHandlerCfg, EvmState, EvmStorageSlot, HashMap as Map, Log,
+        KECCAK_EMPTY,
+    },
+    state::{Account, AccountInfo},
+    Database, DatabaseCommit, JournaledState,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -1051,8 +1054,8 @@ impl DatabaseExt for Backend {
         if let Some(active_fork_id) = self.active_fork_id() {
             self.forks.update_block(
                 self.ensure_fork_id(active_fork_id).cloned()?,
-                env.block.number,
-                env.block.timestamp,
+                env.evm_env.block_env.number,
+                env.evm_env.block_env.timestamp,
             )?;
         }
 

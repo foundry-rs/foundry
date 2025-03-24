@@ -1,7 +1,7 @@
 use crate::{utils::apply_chain_and_block_specific_env_changes, Env};
 use alloy_consensus::BlockHeader;
 use alloy_evm::EvmEnv;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;

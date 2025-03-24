@@ -9,7 +9,7 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
-    bytecode::opcode::OpCode,
+    bytecode::opcode,
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };

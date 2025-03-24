@@ -15,7 +15,7 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
-    backend::Backend,
+    backend::{Backend, Env},
     decode::RevertDecoder,
     executors::{Executor, ExecutorBuilder},
     fork::CreateFork,
@@ -274,7 +274,7 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub env: revm::primitives::Env,
+    pub env: Env,
     /// EVM version.
     pub spec_id: SpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
@@ -467,7 +467,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: &Path,
         output: &ProjectCompileOutput,
-        env: revm::primitives::Env,
+        env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
         let contracts = output

@@ -116,10 +116,8 @@ alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
 foldhash.opt-level = 3
 keccak.opt-level = 3
-revm-interpreter.opt-level = 3
-revm-precompile.opt-level = 3
-revm-primitives.opt-level = 3
 revm.opt-level = 3
+revm-interpreter.opt-level = 3
 ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
@@ -195,8 +193,7 @@ solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.1", default-features = false }
 
 ## revm
-revm = { version = "20.0.0-alpha.6", default-features = false }
-revm-primitives = { version = "16.0.0-alpha.4", default-features = false }
+revm = { version = "20.0.0-alpha.7", default-features = false }
 revm-inspectors = { version = "0.17.0-alpha.1", features = ["serde"] }
 
 ## alloy
@@ -235,14 +232,14 @@ alloy-sol-macro-expander = "0.8.22"
 alloy-sol-macro-input = "0.8.22"
 alloy-sol-types = "0.8.22"
 
-alloy-evm = "0.1.0-alpha.2"
+alloy-evm = "0.1.0-alpha.3"
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 
 ## op-alloy
-op-alloy-consensus = "0.11.0"
-op-alloy-rpc-types = "0.11.0"
+op-alloy-consensus = "0.11.2"
+op-alloy-rpc-types = "0.11.2"
 
 ## cli
 anstream = "0.6"
@@ -351,3 +348,6 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm", rev = "9e39df5" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "2a365e3" }
+
+## foundry
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "c168d11" }

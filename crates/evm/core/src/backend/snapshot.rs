@@ -1,5 +1,6 @@
+use crate::Env;
 use alloy_primitives::{map::AddressHashMap, B256, U256};
-use revm::{context::JournalInit, primitives::HashMap, state::AccountInfo, Journal};
+use revm::{primitives::HashMap, state::AccountInfo, JournaledState};
 use serde::{Deserialize, Serialize};
 
 use crate::Env;

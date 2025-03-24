@@ -23,7 +23,7 @@ use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
-use revm_primitives::{AccountInfo, TxKind};
+use revm::{primitives::TxKind, state::AccountInfo};
 use std::path::PathBuf;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -243,7 +243,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
 
-            env.block.number = U256::ZERO; // Genesis block
+            env.evm_env.block_env.number = 0_u64; // Genesis block
             let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
@@ -445,7 +445,7 @@ impl VerifyBytecodeArgs {
                 evm_opts,
             )
             .await?;
-            env.block.number = U256::from(simulation_block);
+            env.evm_env.block_env.number = simulation_block;
             let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same

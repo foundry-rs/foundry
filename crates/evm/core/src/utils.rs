@@ -1,9 +1,7 @@
 pub use crate::ic::*;
 use crate::{
-    backend::DatabaseExt,
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
-    precompiles::{ODYSSEY_P256, ODYSSEY_P256_ADDRESS},
-    AsEnvMut, Env, EnvMut, InspectorExt,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
+    AsEnvMut, Env, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
 use alloy_evm::{eth::EthEvmContext, EvmEnv};
@@ -16,18 +14,14 @@ use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    context::{result::EVMError, ContextTr, Evm, EvmData},
-    handler::{
-        instructions::EthInstructions, register::EvmHandler, EthFrame, EthPrecompiles, Frame,
-        PrecompileProvider,
-    },
+    context::{result::EVMError, CreateScheme},
+    handler::{register::EvmHandler, FrameOrResult, FrameResult},
     interpreter::{
-        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
-        CreateInputs, CreateOutcome, FrameInput, Gas, InstructionResult, InterpreterResult,
+        return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        Gas, InstructionResult, InterpreterResult,
     },
-    precompile::{secp256r1::P256VERIFY, PrecompileError},
-    primitives::{CreateScheme, EVMError, HandlerCfg, SpecId, KECCAK_EMPTY},
-    FrameOrResult, FrameResult, Journal, MainBuilder,
+    precompile::secp256r1::P256VERIFY,
+    primitives::{hardfork::SpecId, HandlerCfg, KECCAK_EMPTY},
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -79,9 +73,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 if let Some(l1_block_number) = block
                     .other_fields()
                     .and_then(|other| other.get("l1BlockNumber").cloned())
-                    .and_then(|l1_block_number| {
-                        serde_json::from_value::<U256>(l1_block_number).ok()
-                    })
+                    .and_then(|l1_block_number| serde_json::from_value::<u64>(l1_block_number).ok())
                 {
                     env.block.number = l1_block_number.to();
                 }
@@ -177,7 +169,7 @@ pub fn configure_tx_req_env(
 
 /// Get the gas used, accounting for refunds
 pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
-    let refund_quotient = if SpecId::enabled(spec, SpecId::LONDON) { 5 } else { 2 };
+    let refund_quotient = if SpecId::is_enabled_in(spec, SpecId::LONDON) { 5 } else { 2 };
     spent - (refunded).min(spent / refund_quotient)
 }
 

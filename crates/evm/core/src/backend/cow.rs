@@ -14,11 +14,13 @@ use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
+    bytecode::Bytecode,
     context::{result::ResultAndState, JournalInit},
+    context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{hardfork::SpecId, HashMap as Map},
+    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map},
     state::{Account, AccountInfo, Bytecode},
-    Database, DatabaseCommit, ExecuteEvm,
+    Database, DatabaseCommit, ExecuteEvm, JournaledState,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
