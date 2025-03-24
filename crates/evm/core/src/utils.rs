@@ -37,7 +37,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     block: &N::BlockResponse,
 ) {
     use NamedChain::*;
-    if let Ok(chain) = NamedChain::try_from(env.evm_env.cfg_env.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(env.evm_env.cfg_env.cfg.chain_id) {
         let block_number = block.header().number();
 
         match chain {
