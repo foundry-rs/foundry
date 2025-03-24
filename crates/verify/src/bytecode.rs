@@ -243,7 +243,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
 
-            env.block.number = U256::ZERO; // Genesis block
+            env.evm_env.block_env.number = 0_u64; // Genesis block
             let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
@@ -445,7 +445,7 @@ impl VerifyBytecodeArgs {
                 evm_opts,
             )
             .await?;
-            env.block.number = U256::from(simulation_block);
+            env.evm_env.block_env.number = simulation_block;
             let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
