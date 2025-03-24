@@ -6,7 +6,7 @@ use crate::{
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, Selector, TxKind, B256, U128, U256};
+use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
@@ -37,7 +37,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     block: &N::BlockResponse,
 ) {
     use NamedChain::*;
-    if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(env.evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();
 
         match chain {
@@ -160,8 +160,7 @@ pub fn configure_tx_req_env(
 
     // Type 4, EIP-7702
     if let Some(authorization_list) = authorization_list {
-        env.tx.authorization_list =
-            Some(revm::primitives::AuthorizationList::Signed(authorization_list.clone()));
+        env.tx.authorization_list = authorization_list.clone();
     }
 
     Ok(())

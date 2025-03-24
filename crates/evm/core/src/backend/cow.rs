@@ -15,8 +15,9 @@ use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     bytecode::Bytecode,
+    context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map, ResultAndState},
+    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map},
     state::{Account, AccountInfo},
     Database, DatabaseCommit, JournaledState,
 };
