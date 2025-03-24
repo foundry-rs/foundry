@@ -12,6 +12,8 @@ use tokio::sync::RwLockWriteGuard;
 /// Genesis settings
 #[derive(Clone, Debug, Default)]
 pub struct GenesisConfig {
+    /// The initial number for the genesis block
+    pub number: u64,
     /// The initial timestamp for the genesis block
     pub timestamp: u64,
     /// Balance for genesis accounts
@@ -48,7 +50,7 @@ impl GenesisConfig {
                 // insert all accounts
                 db.insert_account(addr, self.genesis_to_account_info(&acc));
                 // insert all storage values
-                for (k, v) in storage.unwrap_or_default().iter() {
+                for (k, v) in &storage.unwrap_or_default() {
                     db.set_storage_at(addr, *k, *v)?;
                 }
             }

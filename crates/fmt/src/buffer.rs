@@ -431,7 +431,7 @@ mod tests {
             /* comment2 */ ",
         ];
 
-        for content in contents.iter() {
+        for content in &contents {
             let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
             write!(buf, "{content}")?;
             assert_eq!(&buf.w, content);

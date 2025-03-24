@@ -213,7 +213,7 @@ impl ExtTester {
     }
 }
 
-/// Initializes a project with `forge init` at the given path.
+/// Initializes a project with `forge init` at the given path from a template directory.
 ///
 /// This should be called after an empty project is created like in
 /// [some of this crate's macros](crate::forgetest_init).
@@ -226,7 +226,9 @@ impl ExtTester {
 /// This used to use a `static` `Lazy`, but this approach does not with `cargo-nextest` because it
 /// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
 /// test can initialize the template at a time.
-#[allow(clippy::disallowed_macros)]
+///
+/// This sets the project's solc version to the [`SOLC_VERSION`].
+#[expect(clippy::disallowed_macros)]
 pub fn initialize(target: &Path) {
     println!("initializing {}", target.display());
 
