@@ -8,8 +8,8 @@ use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
-        next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
-        next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
+        next_mainnet_etherscan_api_key, next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -575,6 +575,93 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
     assert_eq!(decrypted_private_key, test_private_key);
 });
 
+// tests that `cast wallet change-password` can successfully change the password of a keystore file
+casttest!(wallet_change_password, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+
+    cmd.set_current_dir(prj.root());
+
+    let account_name = "testAccount";
+
+    // Default Anvil private key
+    let test_private_key =
+        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    // import private key with initial password
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "import",
+            account_name,
+            "--private-key",
+            &test_private_key.to_string(),
+            "-k",
+            "keystore",
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+`testAccount` keystore was saved successfully. [ADDRESS]
+
+"#]]);
+
+    // check that the keystore file was created
+    let keystore_file = keystore_path.join(account_name);
+    assert!(keystore_file.exists());
+
+    // change the password
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "change-password",
+            account_name,
+            "--keystore-dir",
+            "keystore",
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Password for keystore `testAccount` was changed successfully. [ADDRESS]
+
+"#]]);
+
+    // verify the old password no longer works
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "decrypt-keystore",
+            account_name,
+            "-k",
+            "keystore",
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_failure();
+
+    // verify the new password works
+    let decrypt_output = cmd.cast_fuse().args([
+        "wallet",
+        "decrypt-keystore",
+        account_name,
+        "-k",
+        "keystore",
+        "--unsafe-password",
+        "new_password",
+    ]);
+
+    // get the PK out of the output (last word in the output)
+    let decrypt_output = decrypt_output.assert_success().get_output().stdout_lossy();
+    let private_key_string = decrypt_output.split_whitespace().last().unwrap();
+
+    // check that the decrypted private key matches the imported private key
+    let decrypted_private_key = B256::from_str(private_key_string).unwrap();
+    assert_eq!(decrypted_private_key, test_private_key);
+});
+
 // tests that `cast estimate` is working correctly.
 casttest!(estimate_function_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -643,7 +730,7 @@ casttest!(rlp, |_prj, cmd| {
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
 casttest!(impl_slot, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the implementation slot (AAVE Proxy)
     cmd.args([
@@ -662,7 +749,7 @@ casttest!(impl_slot, |_prj, cmd| {
 });
 
 casttest!(impl_slot_beacon, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the beacon slot
     cmd.args([
@@ -764,7 +851,7 @@ casttest!(calldata_array, |_prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "run",
         "-v",
@@ -812,7 +899,7 @@ casttest!(to_base, |_prj, cmd| {
 
 // tests that revert reason is only present if transaction has reverted.
 casttest!(receipt_revert_reason, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
     cmd.args([
@@ -844,7 +931,7 @@ to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
     cmd.cast_fuse()
@@ -957,7 +1044,7 @@ access list:
 });
 
 casttest!(logs_topics, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -974,7 +1061,7 @@ casttest!(logs_topics, |_prj, cmd| {
 });
 
 casttest!(logs_topic_2, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -993,7 +1080,7 @@ casttest!(logs_topic_2, |_prj, cmd| {
 });
 
 casttest!(logs_sig, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1010,7 +1097,7 @@ casttest!(logs_sig, |_prj, cmd| {
 });
 
 casttest!(logs_sig_2, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1110,6 +1197,32 @@ casttest!(mktx_signer_from_match, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(mktx_raw_unsigned, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e80180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -1155,7 +1268,7 @@ Error: Must specify a recipient address or contract code to deploy
 });
 
 casttest!(storage, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
         [r#"
 0x0000000000000000000000000000000000000000000000000000000000000000
@@ -1163,7 +1276,7 @@ casttest!(storage, |_prj, cmd| {
 "#]
     ]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.cast_fuse()
         .args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc])
         .assert_success()
@@ -1172,7 +1285,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
     let decimals_slot = "0x09";
     cmd.cast_fuse()
@@ -1183,7 +1296,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     let total_supply_slot = "0x01";
     let block_before = "4634747";
     let block_after = "4634748";
@@ -1195,7 +1308,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.cast_fuse()
         .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_after])
         .assert_success()
@@ -1210,7 +1323,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1237,7 +1350,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1254,7 +1367,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1344,7 +1457,7 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",

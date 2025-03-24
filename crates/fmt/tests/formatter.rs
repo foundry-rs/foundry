@@ -165,7 +165,7 @@ macro_rules! test_dir {
         test_dir!($dir, Default::default());
     };
     ($dir:ident, $config:expr $(,)?) => {
-        #[allow(non_snake_case)]
+        #[expect(non_snake_case)]
         #[test]
         fn $dir() {
             test_directory(stringify!($dir), $config);

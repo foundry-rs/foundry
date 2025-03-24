@@ -109,7 +109,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo hack check
+      - run: cargo hack check --each-feature --exclude-features isolate-by-default
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@main

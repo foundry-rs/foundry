@@ -507,7 +507,7 @@ pub fn etherscan_project(
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
-    for remapping in settings.remappings.iter_mut() {
+    for remapping in &mut settings.remappings {
         let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
         remapping.path = new_path.display().to_string();
     }
@@ -548,7 +548,7 @@ pub fn etherscan_project(
 
 /// Configures the reporter and runs the given closure.
 pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
-    #[allow(clippy::collapsible_else_if)]
+    #[expect(clippy::collapsible_else_if)]
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
