@@ -6,7 +6,7 @@ use crate::{
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, Selector, TxKind, B256, U256};
+use alloy_primitives::{Address, Selector, TxKind, B256, U128, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
@@ -148,15 +148,15 @@ pub fn configure_tx_req_env(
     env.tx.chain_id = chain_id;
 
     // Type 1, EIP-2930
-    env.tx.access_list = access_list.clone().unwrap_or_default().0.into_iter().collect();
+    env.tx.access_list = access_list.clone().unwrap_or_default();
 
     // Type 2, EIP-1559
-    env.tx.gas_price = U256::from(gas_price.or(max_fee_per_gas).unwrap_or_default());
-    env.tx.gas_priority_fee = max_priority_fee_per_gas.map(U256::from);
+    env.tx.gas_price = gas_price.or(max_fee_per_gas).unwrap_or_default();
+    env.tx.gas_priority_fee = max_priority_fee_per_gas;
 
     // Type 3, EIP-4844
     env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
-    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.map(U256::from);
+    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
 
     // Type 4, EIP-7702
     if let Some(authorization_list) = authorization_list {
@@ -169,7 +169,7 @@ pub fn configure_tx_req_env(
 
 /// Get the gas used, accounting for refunds
 pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
-    let refund_quotient = if SpecId::enabled(spec, SpecId::LONDON) { 5 } else { 2 };
+    let refund_quotient = if SpecId::is_enabled_in(spec, SpecId::LONDON) { 5 } else { 2 };
     spent - (refunded).min(spent / refund_quotient)
 }
 
