@@ -5,7 +5,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-#[allow(unused_extern_crates)] // Used by `ConsoleFmt`.
+#[expect(unused_extern_crates)] // Used by `ConsoleFmt`.
 extern crate self as foundry_common;
 
 #[macro_use]

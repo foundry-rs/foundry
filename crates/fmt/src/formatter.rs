@@ -50,7 +50,7 @@ impl FormatterError {
     }
 }
 
-#[allow(unused_macros)]
+#[expect(unused_macros)]
 macro_rules! format_err {
     ($msg:literal $(,)?) => {
         $crate::formatter::FormatterError::custom($msg.to_string())
@@ -63,7 +63,6 @@ macro_rules! format_err {
     };
 }
 
-#[allow(unused_macros)]
 macro_rules! bail {
     ($msg:literal $(,)?) => {
         return Err($crate::formatter::format_err!($msg))
@@ -132,14 +131,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
-    #[allow(dead_code)]
     unsafe fn buf_contents(&self) -> &String {
         *(&self.buf.w as *const W as *const &mut String)
     }
 
     /// Casts the current `W` writer or the current temp buffer as a `String` reference.
     /// Should only be used for debugging.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     unsafe fn temp_buf_contents(&self) -> &String {
         match &self.temp_bufs[..] {
             [] => self.buf_contents(),
@@ -1849,7 +1847,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         // order all groups alphabetically
-        for group in import_groups.iter() {
+        for group in &import_groups {
             // SAFETY: group is not empty
             let first = group[0];
             let last = group.last().copied().expect("group is not empty");
@@ -2095,7 +2093,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
         return_source_if_disabled!(self, loc, ';');
 
-        #[allow(clippy::if_same_then_else)]
         let pragma_descriptor = if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.

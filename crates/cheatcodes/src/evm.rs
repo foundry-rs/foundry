@@ -591,8 +591,8 @@ impl Cheatcode for coolCall {
 
 impl Cheatcode for accessListCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { accessList } = self;
-        let access_list = accessList
+        let Self { access } = self;
+        let access_list = access
             .iter()
             .map(|item| {
                 let keys = item.storageKeys.iter().map(|key| B256::from(*key)).collect_vec();

@@ -1,60 +1,30 @@
-//! The `anvil` cli
-
-use anvil::cmd::NodeArgs;
-use clap::{CommandFactory, Parser, Subcommand};
+use crate::opts::{Anvil, AnvilSubcommand};
+use clap::{CommandFactory, Parser};
 use eyre::Result;
-use foundry_cli::{handler, opts::GlobalArgs, utils};
-use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_cli::{handler, utils};
 
-#[cfg(all(feature = "jemalloc", unix))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-/// A fast local Ethereum development node.
-#[derive(Parser)]
-#[command(name = "anvil", version = SHORT_VERSION, long_version = LONG_VERSION, next_display_order = None)]
-pub struct Anvil {
-    /// Include the global arguments.
-    #[command(flatten)]
-    pub global: GlobalArgs,
-
-    #[command(flatten)]
-    pub node: NodeArgs,
-
-    #[command(subcommand)]
-    pub cmd: Option<AnvilSubcommand>,
-}
-
-#[derive(Subcommand)]
-pub enum AnvilSubcommand {
-    /// Generate shell completions script.
-    #[command(visible_alias = "com")]
-    Completions {
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
-    },
-
-    /// Generate Fig autocompletion spec.
-    #[command(visible_alias = "fig")]
-    GenerateFigSpec,
-}
-
-fn main() {
-    if let Err(err) = run() {
-        let _ = foundry_common::sh_err!("{err:?}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> Result<()> {
-    handler::install();
-    utils::load_dotenv();
-    utils::enable_paint();
+/// Run the `anvil` command line interface.
+pub fn run() -> Result<()> {
+    setup()?;
 
     let mut args = Anvil::parse();
     args.global.init()?;
     args.node.evm.resolve_rpc_alias();
 
+    run_command(args)
+}
+
+/// Setup the exception handler and other utilities.
+pub fn setup() -> Result<()> {
+    handler::install();
+    utils::load_dotenv();
+    utils::enable_paint();
+
+    Ok(())
+}
+
+/// Run the subcommand.
+pub fn run_command(args: Anvil) -> Result<()> {
     if let Some(cmd) = &args.cmd {
         match cmd {
             AnvilSubcommand::Completions { shell } => {

@@ -1,5 +1,4 @@
 use crate::{
-    cmd::StateFile,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -52,7 +51,7 @@ use std::{
     fs::File,
     io,
     net::{IpAddr, Ipv4Addr},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -549,8 +548,9 @@ impl NodeConfig {
 
     /// Loads the init state from a file if it exists
     #[must_use]
-    pub fn with_init_state_path(mut self, path: impl AsRef<Path>) -> Self {
-        self.init_state = StateFile::parse_path(path).ok().and_then(|file| file.state);
+    #[cfg(feature = "cmd")]
+    pub fn with_init_state_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.init_state = crate::cmd::StateFile::parse_path(path).ok().and_then(|file| file.state);
         self
     }
 

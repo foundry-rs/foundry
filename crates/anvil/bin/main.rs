@@ -1,7 +1,6 @@
-//! The `cast` CLI: a Swiss Army knife for interacting with EVM smart contracts, sending
-//! transactions and getting chain data.
+//! The `anvil` CLI: a fast local Ethereum development node, akin to Hardhat Network, Tenderly.
 
-use cast::args::run;
+use anvil::args::run;
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]

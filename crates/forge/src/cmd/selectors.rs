@@ -219,7 +219,7 @@ impl SelectorsSubcommands {
                         first_contract.name,
                         second_contract.name,
                     ]);
-                    for method in colliding_methods.iter() {
+                    for method in &colliding_methods {
                         table.add_row([method.0, method.1, method.2]);
                     }
                     sh_println!("{} collisions found:", colliding_methods.len())?;
