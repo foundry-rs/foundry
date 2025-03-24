@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
-use revm::{context::result::EVMError, context_interface::result::EVMError};
+use revm::context::result::EVMError;
 use std::{convert::Infallible, fmt::Display};
 
 pub type BackendResult<T> = Result<T, BackendError>;

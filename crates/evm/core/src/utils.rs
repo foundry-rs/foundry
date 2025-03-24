@@ -1,10 +1,10 @@
 pub use crate::ic::*;
 use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
-    AsEnvMut, Env, InspectorExt,
+    AsEnvMut, Env, EnvMut, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
-use alloy_evm::{eth::EthEvmContext, EvmEnv};
+use alloy_evm::eth::EthEvmContext;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, Bytes, Selector, TxKind, B256, U256};
@@ -20,7 +20,6 @@ use revm::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
-    precompile::secp256r1::P256VERIFY,
     primitives::{hardfork::SpecId, HandlerCfg, KECCAK_EMPTY},
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};

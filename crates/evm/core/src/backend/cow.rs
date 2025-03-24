@@ -16,10 +16,9 @@ use foundry_fork_db::DatabaseError;
 use revm::{
     bytecode::Bytecode,
     context::{result::ResultAndState, JournalInit},
-    context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map},
-    state::{Account, AccountInfo, Bytecode},
+    state::{Account, AccountInfo},
     Database, DatabaseCommit, ExecuteEvm, JournaledState,
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -91,7 +90,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend.
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
-    fn backend_mut(&mut self, env: EnvMut<'_>) -> &mut Backend {
+    fn backend_mut(&mut self, mut env: EnvMut<'_>) -> &mut Backend {
         let env = env.as_env_mut().to_owned();
         if !self.is_initialized {
             let backend = self.backend.to_mut();
@@ -167,7 +166,7 @@ impl DatabaseExt for CowBackend<'_> {
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        env: EnvMut<'_>,
+        mut env: EnvMut<'_>,
         journaled_state: &mut JournaledState<'_>,
     ) -> eyre::Result<()> {
         self.backend_mut(env.as_env_mut()).roll_fork(id, block_number, env, journaled_state)

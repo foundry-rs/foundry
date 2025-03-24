@@ -20,11 +20,8 @@ use revm::{
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{
-        hardfork::SpecId, EnvWithHandlerCfg, EvmState, EvmStorageSlot, HashMap as Map, Log,
-        KECCAK_EMPTY,
-    },
-    state::{Account, AccountInfo},
+    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map, Log, KECCAK_EMPTY},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     Database, DatabaseCommit, JournaledState,
 };
 use std::{
@@ -1054,8 +1051,8 @@ impl DatabaseExt for Backend {
         if let Some(active_fork_id) = self.active_fork_id() {
             self.forks.update_block(
                 self.ensure_fork_id(active_fork_id).cloned()?,
-                env.evm_env.block_env.number,
-                env.evm_env.block_env.timestamp,
+                env.block.number,
+                env.block.timestamp,
             )?;
         }
 

@@ -3,8 +3,6 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::Env;
-
 use super::CreateFork;
 use crate::Env;
 use alloy_consensus::BlockHeader;

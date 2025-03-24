@@ -3713,6 +3713,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
+ "foundry-evm-core",
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",

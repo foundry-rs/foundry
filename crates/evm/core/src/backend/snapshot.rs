@@ -3,8 +3,6 @@ use alloy_primitives::{map::AddressHashMap, B256, U256};
 use revm::{primitives::HashMap, state::AccountInfo, JournaledState};
 use serde::{Deserialize, Serialize};
 
-use crate::Env;
-
 /// A minimal abstraction of a state at a certain point in time
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StateSnapshot {
