@@ -36,7 +36,6 @@ pub struct Params<T: Default> {
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
-#[expect(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[serde(rename = "web3_clientVersion", with = "empty_params")]
     Web3ClientVersion(()),
