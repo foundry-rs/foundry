@@ -1,6 +1,8 @@
 use crate::mutation::{
     mutant::{Mutant, MutationType},
-    mutators::{assignement_mutator::AssignmentMutator, MutationContext, Mutator},
+    mutators::{
+        assignement_mutator::AssignmentMutator, tests::helper::*, MutationContext, Mutator,
+    },
     visitor::AssignVarTypes,
     Session,
 };
@@ -13,10 +15,6 @@ use solar_parse::{
 };
 
 use super::*;
-
-fn create_span(start: u32, end: u32) -> Span {
-    Span::new(BytePos(start), BytePos(end))
-}
 
 #[test]
 fn test_is_applicable_for_assign_expr() {
@@ -166,7 +164,7 @@ fn test_generate_identifier_mutants() {
 
     let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
         let expr = arena.alloc(Expr {
-            kind: ExprKind::Ident(Ident { name: Symbol::intern("varia"), span }),
+            kind: ExprKind::Ident(Ident { name: Symbol::intern("variable"), span }),
             span,
         });
 

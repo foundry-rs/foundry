@@ -27,6 +27,8 @@ impl Display for UnaryOpMutated {
     }
 }
 
+// @todo add a mutation from universalmutator: line swap (swap two lines of code, as it
+// could theoretically uncover untested reentrancies
 #[derive(Debug)]
 pub enum MutationType {
     // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
