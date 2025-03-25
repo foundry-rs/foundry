@@ -149,11 +149,8 @@ pub fn fuzz_param_from_state(
                                 break;
                             }
                         }
-
-                        DynSolValue::Address(fuzzed_addr)
-                    } else {
-                        DynSolValue::Address(fuzzed_addr)
                     }
+                    DynSolValue::Address(fuzzed_addr)
                 })
                 .boxed()
         }
