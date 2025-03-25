@@ -58,14 +58,15 @@ needless_continue = "warn"
 needless_for_each = "warn"
 needless_pass_by_ref_mut = "warn"
 nonstandard_macro_braces = "warn"
+read_zero_byte_vec = "warn"
+redundant_clone = "warn"
 uninlined-format-args = "warn"
 use-self = "warn"
-read_zero_byte_vec = "warn"
-result_large_err = "allow"
-redundant_clone = "warn"
-octal-escapes = "allow"
+
 # until <https://github.com/rust-lang/rust-clippy/issues/13885> is fixed
 literal-string-with-formatting-args = "allow"
+octal-escapes = "allow"
+result_large_err = "allow"
 
 [workspace.lints.rust]
 rust-2018-idioms = "warn"
