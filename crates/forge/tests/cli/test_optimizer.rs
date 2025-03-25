@@ -744,6 +744,7 @@ Compiling 2 files with [..]
 
 // ├── src
 // │ ├── CounterA.sol
+// │ ├── CounterB.sol
 // │ ├── Counter.sol
 // │ └── v1
 // │     └── Counter.sol
@@ -791,6 +792,24 @@ contract CounterA {
     "#,
     )
     .unwrap();
+    // Contract with constructor args without name.
+    prj.add_source(
+        "CounterB.sol",
+        r#"
+contract CounterB {
+    uint256 public number;
+
+    constructor(uint256) {
+        number = 1;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
     prj.add_source(
         "v1/Counter.sol",
         r#"
@@ -815,6 +834,7 @@ contract Counter {
 import {Test} from "forge-std/Test.sol";
 import {Counter} from "src/Counter.sol";
 import "src/CounterA.sol";
+import "src/CounterB.sol";
 import {Counter as CounterV1} from "src/v1/Counter.sol";
 
 contract CounterTest is Test {
@@ -835,17 +855,24 @@ contract CounterTest is Test {
         counter.increment();
         assertEq(counter.number(), 1235);
     }
+
+    function test_Increment_In_Counter_B() public {
+        CounterB counter = new CounterB(1234);
+        counter.increment();
+        assertEq(counter.number(), 2);
+    }
 }
     "#,
     )
     .unwrap();
-    // 20 files plus one mock file are compiled on first run.
+    // 22 files plus one mock file are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 22 files with [..]
+Compiling 23 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [PASS] test_Increment_In_Counter_A() (gas: [..])
+[PASS] test_Increment_In_Counter_B() (gas: [..])
 [PASS] test_Increment_In_Counter_V1() (gas: [..])
 ...
 
@@ -876,6 +903,7 @@ Compiling 1 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [PASS] test_Increment_In_Counter_A() (gas: [..])
+[PASS] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
 
@@ -908,6 +936,38 @@ Compiling 1 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A() (gas: [..])
+[PASS] test_Increment_In_Counter_B() (gas: [..])
+[FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
+...
+
+"#]]);
+
+    // Change CounterB to fail test.
+    prj.add_source(
+        "CounterB.sol",
+        r#"
+contract CounterB {
+    uint256 public number;
+
+    constructor(uint256) {
+        number = 100;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only CounterB should be compiled and test should fail.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_Increment_In_Counter() (gas: [..])
+[FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A() (gas: [..])
+[FAIL: assertion failed: 101 != 2] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
 
@@ -938,6 +998,7 @@ Compiling 1 files with [..]
 ...
 [FAIL: assertion failed: 12345 != 1] test_Increment_In_Counter() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A() (gas: [..])
+[FAIL: assertion failed: 101 != 2] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
 
