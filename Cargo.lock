@@ -3868,7 +3868,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.13.5"
-source = "git+https://github.com/foundry-rs/compilers?rev=67ac483#67ac483d536dad7e6de298cb2a98219fe4d14fe7"
+source = "git+https://github.com/foundry-rs/compilers?rev=0d0f5d9#0d0f5d9093ee008f70c02a1527b8fc81983fa053"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3905,7 +3905,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.13.5"
-source = "git+https://github.com/foundry-rs/compilers?rev=67ac483#67ac483d536dad7e6de298cb2a98219fe4d14fe7"
+source = "git+https://github.com/foundry-rs/compilers?rev=0d0f5d9#0d0f5d9093ee008f70c02a1527b8fc81983fa053"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3914,7 +3914,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.13.5"
-source = "git+https://github.com/foundry-rs/compilers?rev=67ac483#67ac483d536dad7e6de298cb2a98219fe4d14fe7"
+source = "git+https://github.com/foundry-rs/compilers?rev=0d0f5d9#0d0f5d9093ee008f70c02a1527b8fc81983fa053"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3937,7 +3937,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.13.5"
-source = "git+https://github.com/foundry-rs/compilers?rev=67ac483#67ac483d536dad7e6de298cb2a98219fe4d14fe7"
+source = "git+https://github.com/foundry-rs/compilers?rev=0d0f5d9#0d0f5d9093ee008f70c02a1527b8fc81983fa053"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3951,7 +3951,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.13.5"
-source = "git+https://github.com/foundry-rs/compilers?rev=67ac483#67ac483d536dad7e6de298cb2a98219fe4d14fe7"
+source = "git+https://github.com/foundry-rs/compilers?rev=0d0f5d9#0d0f5d9093ee008f70c02a1527b8fc81983fa053"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -8439,7 +8439,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -8457,7 +8457,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "strum 0.26.3",
 ]
@@ -8465,7 +8465,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8479,7 +8479,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8506,7 +8506,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8516,7 +8516,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.0",
@@ -8536,7 +8536,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.1"
-source = "git+https://github.com/paradigmxyz/solar?rev=63bfcb9#63bfcb9f9379f15f45955e7b97dfa722f59ae47f"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#71b3445065e1b5e48a9f5ea6cbb6964643869084"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

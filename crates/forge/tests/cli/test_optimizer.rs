@@ -856,6 +856,12 @@ contract CounterTest is Test {
         assertEq(counter.number(), 1235);
     }
 
+    function test_Increment_In_Counter_A_with_named_args() public {
+        CounterA counter = new CounterA({_newNumber: 1234, _owner: address(this)});
+        counter.increment();
+        assertEq(counter.number(), 1235);
+    }
+
     function test_Increment_In_Counter_B() public {
         CounterB counter = new CounterB(1234);
         counter.increment();
@@ -872,6 +878,7 @@ Compiling 23 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [PASS] test_Increment_In_Counter_A() (gas: [..])
+[PASS] test_Increment_In_Counter_A_with_named_args() (gas: [..])
 [PASS] test_Increment_In_Counter_B() (gas: [..])
 [PASS] test_Increment_In_Counter_V1() (gas: [..])
 ...
@@ -903,6 +910,7 @@ Compiling 1 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [PASS] test_Increment_In_Counter_A() (gas: [..])
+[PASS] test_Increment_In_Counter_A_with_named_args() (gas: [..])
 [PASS] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
@@ -936,6 +944,7 @@ Compiling 1 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A() (gas: [..])
+[FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A_with_named_args() (gas: [..])
 [PASS] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
@@ -967,6 +976,7 @@ Compiling 1 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A() (gas: [..])
+[FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A_with_named_args() (gas: [..])
 [FAIL: assertion failed: 101 != 2] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
@@ -998,6 +1008,7 @@ Compiling 1 files with [..]
 ...
 [FAIL: assertion failed: 12345 != 1] test_Increment_In_Counter() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A() (gas: [..])
+[FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A_with_named_args() (gas: [..])
 [FAIL: assertion failed: 101 != 2] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
 ...
