@@ -352,6 +352,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
         ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
+        ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
         ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
         ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
         ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),

@@ -1676,6 +1676,70 @@ casttest!(block_number_hash, |_prj, cmd| {
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });
 
+// Tests that `cast --disable-block-gas-limit` commands are working correctly for BSC
+// <https://github.com/foundry-rs/foundry/pull/9996>
+// Equivalent transaction on Binance Smart Chain Testnet:
+// <https://testnet.bscscan.com/tx/0x0db4f279fc4d47dca1e6ace180f45f50c5bf12e2b968f210c217f57031e02744>
+casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
+    let bsc_testnet_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChainTestnet);
+
+    let latest_block_json: serde_json::Value = serde_json::from_str(
+        &cmd.args(["block", "--rpc-url", bsc_testnet_rpc_url.as_str(), "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy(),
+    )
+    .expect("Failed to parse latest block");
+
+    let latest_excessive_gas_limit_tx =
+        latest_block_json["transactions"].as_array().and_then(|txs| {
+            txs.iter()
+                .find(|tx| tx.get("gas").and_then(|gas| gas.as_str()) == Some("0x7fffffffffffffff"))
+        });
+
+    match latest_excessive_gas_limit_tx {
+        Some(tx) => {
+            let tx_hash =
+                tx.get("hash").and_then(|h| h.as_str()).expect("Transaction missing hash");
+
+            // If --disable-block-gas-limit is not provided, the transaction should fail as the gas
+            // limit exceeds the block gas limit.
+            cmd.cast_fuse()
+                .args(["run", "-v", tx_hash, "--quick", "--rpc-url", bsc_testnet_rpc_url.as_str()])
+                .assert_failure()
+                .stderr_eq(str![[r#"
+Error: EVM error; transaction validation error: caller gas limit exceeds the block gas limit
+
+"#]]);
+
+            // If --disable-block-gas-limit is provided, the transaction should succeed
+            // despite the gas limit exceeding the block gas limit.
+            cmd.cast_fuse()
+                .args([
+                    "run",
+                    "-v",
+                    tx_hash,
+                    "--quick",
+                    "--rpc-url",
+                    bsc_testnet_rpc_url.as_str(),
+                    "--disable-block-gas-limit",
+                ])
+                .assert_success()
+                .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+        }
+        None => {
+            eprintln!(
+                "Skipping test: No transaction with gas = 0x7fffffffffffffff found in the latest block."
+            );
+        }
+    }
+});
+
 casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
