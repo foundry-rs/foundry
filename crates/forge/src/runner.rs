@@ -132,7 +132,7 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
         let mut result = TestSetup::default();
-        for code in self.mcr.libs_to_deploy.iter() {
+        for code in &self.mcr.libs_to_deploy {
             let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
@@ -290,7 +290,7 @@ impl<'a> ContractRunner<'a> {
             self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
         let call_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
         // There is a single miss-cased `setUp` function, so we add a warning
-        for &setup_fn in setup_fns.iter() {
+        for &setup_fn in &setup_fns {
             if setup_fn.name != "setUp" {
                 warnings.push(format!(
                     "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
