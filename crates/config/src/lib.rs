@@ -27,13 +27,14 @@ use foundry_compilers::{
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
-        multi::{MultiCompiler, MultiCompilerSettings},
+        multi::{MultiCompiler, MultiCompilerSettings, SolidityCompiler},
         solc::{Solc, SolcCompiler},
         vyper::{Vyper, VyperSettings},
         Compiler,
     },
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
+    resolc::Resolc,
     solc::{CliSettings, SolcSettings},
     ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
     RestrictionsWithVersion, VyperLanguage,
@@ -123,6 +124,9 @@ use bind_json::BindJsonConfig;
 
 mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
+
+pub mod revive;
+use revive::ReviveConfig;
 
 /// Foundry configuration
 ///
@@ -534,6 +538,8 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
+    /// Revive Config/Settings
+    pub revive: ReviveConfig,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -1022,7 +1028,11 @@ impl Config {
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
-        let paths = self.project_paths();
+        let paths = if self.revive.revive_compile {
+            ReviveConfig::project_paths(self)
+        } else {
+            self.project_paths()
+        };
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
@@ -1243,9 +1253,35 @@ impl Config {
         Ok(vyper)
     }
 
+    /// Returns the Revive [Resolc] compiler.
+    pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
+        if let Some(path) = &self.revive.solc_path {
+            if !path.is_file() {
+                return Err(SolcError::msg(format!("`solc` {} does not exist", path.display())));
+            }
+            let solc = Solc::new(path)?;
+            Resolc::new(
+                self.revive.revive_path.clone().unwrap_or("resolc".into()),
+                SolcCompiler::Specific(solc),
+            )
+        } else {
+            Resolc::new(
+                self.revive.revive_path.clone().unwrap_or("resolc".into()),
+                self.solc_compiler()?,
+            )
+        }
+    }
+
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
-        Ok(MultiCompiler { solc: Some(self.solc_compiler()?), vyper: self.vyper_compiler()? })
+        Ok(MultiCompiler {
+            solidity: if self.revive.revive_compile {
+                SolidityCompiler::Resolc(self.revive_compiler()?)
+            } else {
+                SolidityCompiler::Solc(self.solc_compiler()?)
+            },
+            vyper: self.vyper_compiler()?,
+        })
     }
 
     /// Returns configured [MultiCompilerSettings].
@@ -1549,7 +1585,11 @@ impl Config {
             evm_version: Some(self.evm_version),
             metadata: Some(SettingsMetadata {
                 use_literal_content: Some(self.use_literal_content),
-                bytecode_hash: Some(self.bytecode_hash),
+                bytecode_hash: if self.revive.revive_compile {
+                    Some(BytecodeHash::None)
+                } else {
+                    Some(self.bytecode_hash)
+                },
                 cbor_metadata: Some(self.cbor_metadata),
             }),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
@@ -2428,6 +2468,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             eof: false,
             _non_exhaustive: (),
+            revive: Default::default(),
         }
     }
 }

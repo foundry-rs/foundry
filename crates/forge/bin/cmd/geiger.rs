@@ -129,7 +129,7 @@ fn try_lint_file(
     let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
     let ast = parser.parse_file().map_err(|e| e.emit())?;
     let mut visitor = Visitor::new(sess, unsafe_cheatcodes);
-    visitor.visit_source_unit(&ast);
+    let _ = visitor.visit_source_unit(&ast);
     Ok(visitor.count)
 }
 

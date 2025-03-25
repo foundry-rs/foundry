@@ -21,6 +21,7 @@ mod geiger;
 mod inline_config;
 mod multi_script;
 mod odyssey;
+mod revive_build;
 mod script;
 mod soldeer;
 mod svm;

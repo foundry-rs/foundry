@@ -285,7 +285,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{fixed_bytes, map::HashMap};
     use foundry_compilers::{
-        multi::MultiCompiler,
+        multi::{MultiCompiler, SolidityCompiler},
         solc::{Solc, SolcCompiler},
         Project, ProjectCompileOutput, ProjectPathsConfig,
     };
@@ -312,7 +312,10 @@ mod tests {
                 .paths(paths)
                 .ephemeral()
                 .no_artifacts()
-                .build(MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None })
+                .build(MultiCompiler {
+                    solidity: SolidityCompiler::Solc(SolcCompiler::Specific(solc)),
+                    vyper: None,
+                })
                 .unwrap();
 
             let mut output = project.compile().unwrap();

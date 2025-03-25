@@ -10,7 +10,7 @@ use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
     compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
-    multi::MultiCompilerSettings,
+    multi::{MultiCompilerSettings, SolidityCompiler},
     solc::Solc,
     Graph, Project,
 };
@@ -41,7 +41,7 @@ impl VerificationContext {
         project.no_artifacts = true;
 
         let solc = Solc::find_or_install(&compiler_version)?;
-        project.compiler.solc = Some(SolcCompiler::Specific(solc));
+        project.compiler.solidity = SolidityCompiler::Solc(SolcCompiler::Specific(solc));
 
         Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
     }

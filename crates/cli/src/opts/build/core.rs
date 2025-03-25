@@ -192,7 +192,12 @@ impl<'a> From<&'a BuildOpts> for Figment {
             figment = figment.merge(("skip", skip));
         };
 
-        figment
+        let revive = args
+            .compiler
+            .revive_opts
+            .apply_overrides(figment.extract_inner("revive").unwrap_or_default());
+
+        figment.merge(("revive", revive))
     }
 }
 

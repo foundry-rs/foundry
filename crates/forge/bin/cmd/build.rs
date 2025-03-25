@@ -15,7 +15,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    Config,
+    revive, Config,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -90,12 +90,17 @@ impl BuildArgs {
         }
 
         let format_json = shell::is_json();
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .files(files)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
+
+        if config.revive.revive_compile {
+            compiler =
+                compiler.size_limits(revive::CONTRACT_SIZE_LIMIT, revive::CONTRACT_SIZE_LIMIT);
+        }
 
         let output = compiler.compile(&project)?;
 

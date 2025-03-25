@@ -24,6 +24,11 @@ static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
         // "5c812e02193c4ba793f8c214317582bd",
+        // "22d07e883da246438e63abad14d088f5",
+        // "7031545d5b934be8bbdd12e77565178c",
+        // "1156b9dbbfe249929d0cbcd3802683eb",
+        // "85476c545f8f4e88915ad2260a225d0d",
+        // "a254cdc5a4f14b7e8ae076d3b9fb5ea3",
     ];
 
     keys.shuffle(&mut rand::thread_rng());
@@ -39,10 +44,10 @@ static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // "GL4M0hfzSYGU5e1_t804HoUDOObWP-FA",
         // "WV407BEiBmjNJfKo9Uo_55u0z0ITyCOX",
         // "Ge56dH9siMF4T0whP99sQXOcr2mFs8wZ",
-        "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
-        "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
-        "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
-        "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
+        // "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
+        // "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
+        // "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
+        // "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
         // "U4hsGWgl9lBM1j3jhSgJ4gbjHg2jRwKy",
         // "K-uNlqYoYCO9cdBHcifwCDAcEjDy1UHL",
         // "GWdgwabOE2XfBdLp_gIq-q6QHa7DSoag",
@@ -58,9 +63,10 @@ static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         // "sDNCLu_e99YZRkbWlVHiuM3BQ5uxYCZU",
         // "M6lfpxTBrywHOvKXOS4yb7cTTpa25ZQ9",
         // "UK8U_ogrbYB4lQFTGJHHDrbiS4UPnac6",
-        "Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf",
+        // "Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf",
         // "UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE",
-        "bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
+        // "bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
+        "J8CPVdIiPCAclaj9HY0wFu0HOsUpKtvt",
     ];
     keys.shuffle(&mut rand::thread_rng());
     keys
