@@ -1,5 +1,5 @@
 use crate::mutation::{
-    mutant::{Mutant, MutationType},
+    mutant::{Mutant, MutationType, UnaryOpMutated},
     mutators::{
         tests::helper::*, unary_op_mutator::UnaryOperatorMutator, MutationContext, Mutator,
     },
@@ -49,80 +49,49 @@ fn test_generate_prefixed_mutants() {
 
     let context = MutationContext { expr: Some(expr), var_definition: None, span };
 
-        let mutator = UnaryOperatorMutator;
-        let mutants = mutator.generate_mutants(&context).unwrap();
+    let mutator = UnaryOperatorMutator;
+    let mutants = mutator.generate_mutants(&context).unwrap();
 
+    let operations = vec![
+        UnOpKind::PreInc,
+        UnOpKind::PreDec,
+        UnOpKind::Neg,
+        UnOpKind::BitNot,
+        UnOpKind::PostInc,
+        UnOpKind::PostDec,
+    ];
 
-        let operations = vec![
-            UnOpKind::PreInc, // number
-            UnOpKind::PreDec, // n
-            UnOpKind::Neg,    // n @todo filter this one only for int
-            UnOpKind::BitNot, // n
-        ];
+    assert_eq!(mutants.len(), operations.len() - 1);
 
-        assert_eq!(mutants.len(), operations.len() - 1);
+    let mutants_kind = mutants
+        .iter()
+        .map(|m| match &m.mutation {
+            MutationType::UnaryOperator(mutated) => mutated.resulting_op_kind,
+            _ => panic!("Expected binary op mutant"),
+        })
+        .collect::<Vec<_>>();
 
-        let mutants_kind = mutants
-            .iter()
-            .map(|m| match m.mutation {
-                MutationType::UnaryOperator(UnaryOpMutated::new(new_expression, resulting_op_kind)) => resulting_op_kind,
-                _ => panic!("Expected binary op mutant"),
-            })
-            .collect::<Vec<_>>();
-
-        assert!(all_but_one(&operations_num_bitwise, &mutants_kind));
-
-        Ok(())
-    });
+    assert!(all_but_one(&operations, &mutants_kind));
 }
 
 #[test]
 fn test_generate_bool_op_mutant() {
     let arena = Arena::new();
     let span = create_span(10, 20);
+    let mut val = Lit { span, symbol: Symbol::DUMMY, kind: LitKind::Bool(true) };
 
-    let sess = Session::builder().with_silent_emitter(None).build();
+    let expr = arena.alloc(Expr { kind: ExprKind::Lit(&mut val, None), span });
 
-    let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
-        let mut val = Lit { span, symbol: Symbol::DUMMY, kind: LitKind::Number(23.into()) };
-        let mut val2 = Lit { span, symbol: Symbol::DUMMY, kind: LitKind::Number(45.into()) };
+    let context = MutationContext { expr: Some(expr), var_definition: None, span };
 
-        let left = arena.alloc(Expr { kind: ExprKind::Lit(&mut val, None), span });
+    let mutator = UnaryOperatorMutator;
+    let mutants = mutator.generate_mutants(&context).unwrap();
 
-        let right = arena.alloc(Expr { kind: ExprKind::Lit(&mut val2, None), span });
+    assert_eq!(mutants.len(), 1);
 
-        let bin_op = BinOp { span, kind: BinOpKind::Lt };
-
-        let expr = arena.alloc(Expr { kind: ExprKind::Binary(left, bin_op, right), span });
-
-        let context = MutationContext { expr: Some(expr), var_definition: None, span };
-
-        let mutator = UnaryOperatorMutator;
-        let mutants = mutator.generate_mutants(&context).unwrap();
-
-        let operations_bools = vec![
-            BinOpKind::Lt,
-            BinOpKind::Le,
-            BinOpKind::Gt,
-            BinOpKind::Ge,
-            BinOpKind::Eq,
-            BinOpKind::Ne,
-            BinOpKind::Or,
-            BinOpKind::And,
-        ];
-
-        assert_eq!(mutants.len(), operations_bools.len() - 1);
-
-        let mutants_kind = mutants
-            .iter()
-            .map(|m| match m.mutation {
-                MutationType::BinaryOp(kind) => kind,
-                _ => panic!("Expected binary op mutant"),
-            })
-            .collect::<Vec<_>>();
-
-        assert!(all_but_one(&operations_bools, &mutants_kind));
-
-        Ok(())
-    });
+    if let MutationType::UnaryOperator(mutated) = &mutants[0].mutation {
+        assert_eq!(mutated.resulting_op_kind, UnOpKind::Not);
+    } else {
+        panic!("Expected negated identifier mutation");
+    }
 }

@@ -12,7 +12,7 @@ pub struct UnaryOpMutated {
     new_expression: String,
 
     /// The underlying operator used by this mutant
-    resulting_op_kind: UnOpKind,
+    pub resulting_op_kind: UnOpKind,
 }
 
 impl UnaryOpMutated {
