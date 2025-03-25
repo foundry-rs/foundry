@@ -2,7 +2,7 @@
 
 use foundry_config::{
     NamedChain,
-    NamedChain::{Arbitrum, Base, Mainnet, Optimism, Polygon, Sepolia},
+    NamedChain::{Arbitrum, Base, BinanceSmartChainTestnet, Mainnet, Optimism, Polygon, Sepolia},
 };
 use rand::seq::SliceRandom;
 use std::sync::{
@@ -178,6 +178,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
             Arbitrum => "arbitrum",
             Polygon => "polygon",
             Sepolia => "sepolia",
+            BinanceSmartChainTestnet => "bsc-testnet",
             _ => "",
         };
         format!("lb.drpc.org/ogrpc?network={network}&dkey={key}")
