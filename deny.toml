@@ -7,6 +7,12 @@ yanked = "warn"
 ignore = [
     # proc-macro-error is unmaintained
     "RUSTSEC-2024-0370",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
+    "RUSTSEC-2024-0436",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
+    "RUSTSEC-2024-0437",
+    # humantime is unmaintained
+    "RUSTSEC-2025-0014",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -43,7 +49,6 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
-    "OpenSSL",
     "Unlicense",
     "WTFPL",
     "BSL-1.0",

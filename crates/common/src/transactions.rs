@@ -57,11 +57,10 @@ impl TransactionReceiptWithRevertReason {
             .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
         if let Some(block_hash) = self.receipt.block_hash {
-            match provider
-                .call(&transaction.inner.inner.into())
-                .block(BlockId::Hash(block_hash.into()))
-                .await
-            {
+            let mut call_request: WithOtherFields<TransactionRequest> =
+                transaction.inner.inner.clone_inner().into();
+            call_request.set_from(transaction.inner.inner.signer());
+            match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }

@@ -7,7 +7,7 @@ on:
       - "rc"
       - "v*.*.*"
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 env:
@@ -89,15 +89,25 @@ jobs:
           # `target`: Rust build target triple
           # `platform` and `arch`: Used in tarball names
           # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - runner: Linux-20.04
+          - runner: Linux-22.04
             target: x86_64-unknown-linux-gnu
             svm_target_platform: linux-amd64
             platform: linux
             arch: amd64
-          - runner: Linux-20.04
+          - runner: Linux-22.04
+            target: x86_64-unknown-linux-musl
+            svm_target_platform: linux-amd64
+            platform: alpine
+            arch: amd64
+          - runner: Linux-22.04
             target: aarch64-unknown-linux-gnu
             svm_target_platform: linux-aarch64
             platform: linux
+            arch: arm64
+          - runner: Linux-22.04
+            target: aarch64-unknown-linux-musl
+            svm_target_platform: linux-aarch64
+            platform: alpine
             arch: arm64
           # This is pinned to `macos-13-large` to support old SDK versions.
           # If the runner is deprecated it should be pinned to the oldest available version of the runner.
@@ -132,12 +142,10 @@ jobs:
           echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
           echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
-      - name: Linux ARM setup
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: cross setup
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          cargo install cross
 
       - name: Build binaries
         env:
@@ -159,7 +167,11 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          cargo build "${flags[@]}"
+          if [[ "$TARGET" == *-musl || "$TARGET" == "aarch64-unknown-linux-gnu" ]]; then
+            cross build "${flags[@]}"
+          else
+            cargo build "${flags[@]}"
+          fi
 
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
@@ -181,7 +193,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
-          if [ "$PLATFORM_NAME" == "linux" ]; then
+          if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
             tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           elif [ "$PLATFORM_NAME" == "darwin" ]; then

@@ -28,7 +28,7 @@ const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
 /// Subset of [CompactBytecode] excluding sourcemaps.
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct BytecodeData {
     pub object: Option<BytecodeObject>,
@@ -147,7 +147,7 @@ impl ContractsByArtifact {
                     None
                 }
             })
-            .min_by(|(score1, _), (score2, _)| score1.partial_cmp(score2).unwrap())
+            .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
             .map(|(_, data)| data)
     }
 
