@@ -7,7 +7,7 @@ use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };
-use revm_primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
 use std::{
     io,

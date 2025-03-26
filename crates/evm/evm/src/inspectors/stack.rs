@@ -8,15 +8,18 @@ use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
+    context::{
+        result::{ExecutionResult, Output},
+        BlockEnv,
+    },
+    context_interface::CreateScheme,
     inspectors::CustomPrintTracer,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
-    primitives::{
-        Account, AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult,
-        HashMap, Output, TransactTo,
-    },
+    primitives::{Env, EnvWithHandlerCfg, HashMap, TxKind},
+    state::{Account, AccountStatus},
     EvmContext, Inspector, JournaledState,
 };
 use std::{
@@ -571,7 +574,7 @@ impl InspectorStackRefMut<'_> {
     fn transact_inner(
         &mut self,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
-        transact_to: TransactTo,
+        transact_to: TxKind,
         caller: Address,
         input: Bytes,
         gas_limit: u64,

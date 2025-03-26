@@ -33,7 +33,7 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
-use revm::primitives::Eof;
+use revm::bytecode::Eof;
 use std::{
     borrow::Cow,
     fmt::Write,

@@ -23,7 +23,7 @@ use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
-use revm_primitives::{AccountInfo, TxKind};
+use revm::{context::TxKind, state::AccountInfo};
 use std::path::PathBuf;
 
 impl_figment_convert!(VerifyBytecodeArgs);

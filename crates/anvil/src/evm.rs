@@ -54,7 +54,7 @@ mod tests {
 
         let db = revm::db::EmptyDB::default();
         let env = Box::<revm::primitives::Env>::default();
-        let spec = SpecId::LATEST;
+        let spec = SpecId::default();
         let handler_cfg = revm::primitives::HandlerCfg::new(spec);
         let inspector = revm::inspectors::NoOpInspector;
         let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);

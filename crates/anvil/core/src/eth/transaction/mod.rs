@@ -23,10 +23,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use revm::{
-    interpreter::InstructionResult,
-    primitives::{OptimismFields, TxEnv},
-};
+use revm::{context::TxEnv, interpreter::InstructionResult, primitives::OptimismFields};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 

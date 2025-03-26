@@ -43,9 +43,9 @@ revm = { workspace = true, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
-    "optimism",
     "c-kzg",
     "blst",
+    "secp256r1",
 ] }
 revm-inspectors.workspace = true
 

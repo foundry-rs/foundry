@@ -133,11 +133,11 @@ impl Display for CreateScheme {
 }
 
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+    pub fn eq(&self, create_scheme: revm::context_interface::CreateScheme) -> bool {
         matches!(
             (self, create_scheme),
-            (Self::Create, revm::primitives::CreateScheme::Create) |
-                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, revm::context_interface::CreateScheme::Create) |
+                (Self::Create2, revm::context_interface::CreateScheme::Create2 { .. })
         )
     }
 }

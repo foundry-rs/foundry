@@ -1,6 +1,7 @@
 use alloy_primitives::{map::AddressHashMap, B256, U256};
 use revm::{
-    primitives::{AccountInfo, Env, HashMap},
+    primitives::{Env, HashMap},
+    state::AccountInfo,
     JournaledState,
 };
 use serde::{Deserialize, Serialize};

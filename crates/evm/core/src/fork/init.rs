@@ -5,7 +5,10 @@ use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
-use revm::primitives::{BlockEnv, CfgEnv, Env, TxEnv};
+use revm::{
+    context::{BlockEnv, CfgEnv, TxEnv},
+    primitives::Env,
+};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.

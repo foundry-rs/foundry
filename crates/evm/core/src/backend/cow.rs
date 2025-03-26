@@ -14,11 +14,11 @@ use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    db::DatabaseRef,
-    primitives::{
-        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
-        SpecId,
-    },
+    bytecode::Bytecode,
+    context_interface::result::ResultAndState,
+    database::DatabaseRef,
+    primitives::{hardfork::SpecId, Env, EnvWithHandlerCfg, HashMap as Map},
+    state::{Account, AccountInfo},
     Database, DatabaseCommit, JournaledState,
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -54,7 +54,7 @@ pub struct CowBackend<'a> {
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
     pub fn new_borrowed(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
+        Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::default() }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes

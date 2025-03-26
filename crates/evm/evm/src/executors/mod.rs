@@ -29,11 +29,13 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
-    db::{DatabaseCommit, DatabaseRef},
+    bytecode::Bytecode,
+    context::{BlockEnv, TxEnv},
+    context_interface::result::{ExecutionResult, Output, ResultAndState},
+    database::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
     primitives::{
-        AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,
-        ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
+        hardfork::SpecId, AuthorizationList, Env, EnvWithHandlerCfg, SignedAuthorization, TxKind,
     },
 };
 use std::{
@@ -112,7 +114,7 @@ impl Executor {
         // do not fail.
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::primitives::AccountInfo {
+            revm::state::AccountInfo {
                 code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
                 // Also set the code hash manually so that it's not computed later.
                 // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
@@ -817,7 +819,7 @@ impl Default for RawCallResult {
             coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
+            env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::default()),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,

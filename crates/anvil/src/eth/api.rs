@@ -27,7 +27,6 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use alloy_consensus::{
@@ -79,18 +78,16 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm::{
-    backend::DatabaseError,
-    decode::RevertDecoder,
-    revm::{
-        db::DatabaseRef,
-        interpreter::{return_ok, return_revert, InstructionResult},
-        primitives::BlockEnv,
-    },
-};
+use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use revm::primitives::Bytecode;
+use revm::{
+    context::BlockEnv,
+    context_interface::{block::BlobExcessGasAndPrice, result::Output},
+    database::DatabaseRef,
+    interpreter::{return_ok, return_revert, InstructionResult},
+    primitives::Bytecode,
+};
 use std::{future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`

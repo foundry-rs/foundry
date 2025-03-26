@@ -45,15 +45,16 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
+    bytecode::opcode as op,
+    context::BlockEnv,
+    context_interface::{result::EVMError, CreateScheme},
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{
-        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId,
-        EOF_MAGIC_BYTES,
-    },
+    primitives::{hardfork::SpecId, SignedAuthorization, EOF_MAGIC_BYTES},
+    state::EvmStorageSlot,
     EvmContext, InnerEvmContext, Inspector,
 };
 use serde_json::Value;
