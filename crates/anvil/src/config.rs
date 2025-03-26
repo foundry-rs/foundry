@@ -38,6 +38,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
+    Env, EvmEnv,
 };
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -1009,12 +1010,14 @@ impl NodeConfig {
             cfg.memory_limit = value;
         }
 
-        let env = revm::primitives::Env {
-            cfg: cfg.cfg_env,
-            block: BlockEnv {
-                gas_limit: U256::from(self.gas_limit()),
-                basefee: U256::from(self.get_base_fee()),
-                ..Default::default()
+        let env = Env {
+            evm_env: EvmEnv {
+                cfg_env: cfg.cfg_env,
+                block_env: BlockEnv {
+                    gas_limit: U256::from(self.gas_limit()),
+                    basefee: U256::from(self.get_base_fee()),
+                    ..Default::default()
+                },
             },
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };

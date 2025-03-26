@@ -1,4 +1,4 @@
-use alloy_evm::EvmEnv;
+pub use alloy_evm::EvmEnv;
 use revm::{
     context::{BlockEnv, CfgEnv, JournalTr, TxEnv},
     Context, Database,

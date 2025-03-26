@@ -1049,8 +1049,8 @@ impl DatabaseExt for Backend {
         if let Some(active_fork_id) = self.active_fork_id() {
             self.forks.update_block(
                 self.ensure_fork_id(active_fork_id).cloned()?,
-                env.block.number,
-                env.block.timestamp,
+                env.evm_env.block_env.number,
+                env.evm_env.block_env.timestamp,
             )?;
         }
 
@@ -1822,8 +1822,8 @@ impl Default for BackendInner {
 
 /// This updates the currently used env with the fork's environment
 pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
-    current.block = fork.block;
-    current.cfg = fork.cfg;
+    current.evm_env.block_env = fork.evm_env.block_env;
+    current.evm_env.cfg_env = fork.evm_env.cfg_env;
     current.tx.chain_id = fork.tx.chain_id;
 }
 
@@ -1913,15 +1913,15 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 
 /// Updates the env's block with the block's data
 fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
-    env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.beneficiary;
-    env.block.difficulty = block.header.difficulty;
-    env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-    env.block.gas_limit = U256::from(block.header.gas_limit);
-    env.block.number = U256::from(block.header.number);
+    env.evm_env.block_env.timestamp = block.header.timestamp;
+    env.evm_env.block_env.beneficiary = block.header.beneficiary;
+    env.evm_env.block_env.difficulty = block.header.difficulty;
+    env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+    env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+    env.evm_env.block_env.gas_limit = block.header.gas_limit;
+    env.evm_env.block_env.number = block.header.number;
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
-        env.block.blob_excess_gas_and_price =
+        env.evm_env.block_env.blob_excess_gas_and_price =
             Some(BlobExcessGasAndPrice::new(excess_blob_gas, false));
     }
 }

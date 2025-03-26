@@ -1,6 +1,5 @@
-use crate::{utils::apply_chain_and_block_specific_env_changes, Env};
+use crate::{utils::apply_chain_and_block_specific_env_changes, Env, EvmEnv};
 use alloy_consensus::BlockHeader;
-use alloy_evm::EvmEnv;
 use alloy_primitives::Address;
 use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::BlockNumberOrTag;

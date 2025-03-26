@@ -1,6 +1,5 @@
 use super::fork::environment;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork};
-use alloy_evm::EvmEnv;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork, EvmEnv};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
