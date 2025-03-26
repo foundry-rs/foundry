@@ -69,8 +69,7 @@ impl Cheatcode for signDelegationWithNonceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = self;
         let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let auth = create_auth_with_nonce(ccx, *implementation, authority, *nonce)?;
+        let auth = create_auth_with_nonce(ccx, *implementation, *nonce)?;
         let sig = signer.sign_hash_sync(&auth.signature_hash())?;
         Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
     }
@@ -98,7 +97,7 @@ impl Cheatcode for signAndAttachDelegationWithNonceCall {
         let auth = create_auth_with_nonce(ccx, *implementation, *nonce)?;
         let sig = signer.sign_hash_sync(&auth.signature_hash())?;
         let signed_auth = sig_to_auth(sig, auth);
-        write_delegation(ccx, signed_auth.clone())?;
+        write_delegation_skip_nonce(ccx, signed_auth.clone())?;
         ccx.state.active_delegation = Some(signed_auth);
         Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
     }
@@ -131,6 +130,13 @@ fn create_auth(
         },
         nonce,
     ))
+}
+
+fn write_delegation_skip_nonce(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
+    let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
+    let bytecode = Bytecode::new_eip7702(*auth.address());
+    ccx.ecx.journaled_state.set_code(authority, bytecode);
+    Ok(())
 }
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
