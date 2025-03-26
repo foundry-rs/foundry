@@ -9456,6 +9456,26 @@
     },
     {
       "func": {
+        "id": "signDelegationWithNonce",
+        "description": "Sign an EIP-7702 authorization for delegation for specific nonce",
+        "declaration": "function signDelegationWithNonce(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegationWithNonce(address,uint256,uint64)",
+        "selector": "0xb9ebba52",
+        "selectorBytes": [
+          185,
+          235,
+          186,
+          82
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signP256",
         "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
         "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",

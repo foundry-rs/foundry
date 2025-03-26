@@ -464,7 +464,7 @@ impl CallTraceDecoder {
 
                 Some(decoded.iter().map(format_token).collect())
             }
-            "signDelegation" | "signAndAttachDelegation" | "signAndAttachDelegationWithNonce" => {
+            "signDelegation" | "signDelegationWithNonce" |"signAndAttachDelegation" | "signAndAttachDelegationWithNonce" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                 // Redact private key and replace in trace for
                 // signAndAttachDelegation(address implementation, uint256 privateKey)
