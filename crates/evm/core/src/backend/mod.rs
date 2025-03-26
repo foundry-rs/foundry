@@ -5,7 +5,7 @@ use crate::{
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
-    InspectorExt,
+    Env, InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
@@ -20,7 +20,7 @@ use revm::{
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{hardfork::SpecId, Env, EnvWithHandlerCfg, HashMap as Map, Log, KECCAK_EMPTY},
+    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     Database, DatabaseCommit, JournaledState,
 };

@@ -6,7 +6,7 @@ use crate::{
         diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertStateSnapshotAction,
     },
     fork::{CreateFork, ForkId},
-    InspectorExt,
+    Env, InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
@@ -17,7 +17,7 @@ use revm::{
     bytecode::Bytecode,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{hardfork::SpecId, Env, EnvWithHandlerCfg, HashMap as Map},
+    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map},
     state::{Account, AccountInfo},
     Database, DatabaseCommit, JournaledState,
 };
