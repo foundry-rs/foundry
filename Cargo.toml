@@ -235,6 +235,7 @@ alloy-sol-macro-input = "0.8.22"
 alloy-sol-types = "0.8.22"
 
 alloy-chains = "0.1"
+alloy-evm = "0.1.0-alpha.3"
 alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 

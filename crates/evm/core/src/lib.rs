@@ -22,6 +22,9 @@ pub mod abi {
 
 mod ic;
 
+pub mod env;
+pub use env::*;
+
 pub mod backend;
 pub mod buffer;
 pub mod constants;

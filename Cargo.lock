@@ -223,6 +223,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-evm"
+version = "0.1.0-alpha.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f40fe575395f20dc9527c2dc65350786492e9723d2035e9f716269b65be34c9c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "auto_impl",
+ "derive_more 2.0.1",
+ "op-revm",
+ "revm",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "alloy-genesis"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,6 +251,19 @@ dependencies = [
  "alloy-serde",
  "alloy-trie",
  "serde",
+]
+
+[[package]]
+name = "alloy-hardforks"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e61d55f42faedd980ee3e391aa9ff8ae0fc20723fa1c6d69ac06e06d08fbade"
+dependencies = [
+ "alloy-chains",
+ "alloy-eip2124",
+ "alloy-primitives",
+ "auto_impl",
+ "dyn-clone",
 ]
 
 [[package]]
@@ -4287,6 +4318,7 @@ version = "1.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-json-abi",
  "alloy-network",
@@ -6672,6 +6704,7 @@ dependencies = [
  "auto_impl",
  "once_cell",
  "revm",
+ "serde",
 ]
 
 [[package]]
