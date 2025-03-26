@@ -5,7 +5,7 @@ use alloy_primitives::{
     Address, B256, U256,
 };
 use alloy_sol_types::SolValue;
-use revm::interpreter::{opcode, Interpreter};
+use revm::{bytecode::opcode, interpreter::Interpreter};
 
 /// Recorded mapping slots.
 #[derive(Clone, Debug, Default)]

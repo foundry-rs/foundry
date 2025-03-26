@@ -1,9 +1,6 @@
 use alloy_primitives::map::rustc_hash::FxHashMap;
 use eyre::Result;
-use revm::interpreter::{
-    opcode::{PUSH0, PUSH1, PUSH32},
-    OpCode,
-};
+use revm::bytecode::opcode::{OpCode, PUSH0, PUSH1, PUSH32};
 use revm_inspectors::opcode::immediate_size;
 use serde::Serialize;
 
