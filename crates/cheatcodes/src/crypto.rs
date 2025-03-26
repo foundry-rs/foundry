@@ -276,6 +276,7 @@ fn sign_with_wallet(
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {
     let signing_key = parse_private_key_p256(private_key)?;
     let signature: P256Signature = signing_key.sign_prehash(digest.as_slice())?;
+    let signature = signature.normalize_s().unwrap_or(signature);
     let r_bytes: [u8; 32] = signature.r().to_bytes().into();
     let s_bytes: [u8; 32] = signature.s().to_bytes().into();
 
