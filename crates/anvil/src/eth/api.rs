@@ -82,11 +82,11 @@ use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use revm::{
+    bytecode::Bytecode,
     context::BlockEnv,
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::DatabaseRef,
     interpreter::{return_ok, return_revert, InstructionResult},
-    primitives::Bytecode,
 };
 use std::{future::Future, sync::Arc, time::Duration};
 

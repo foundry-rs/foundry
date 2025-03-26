@@ -2001,7 +2001,7 @@ mod tests {
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
-    use revm::DatabaseRef;
+    use revm::database::DatabaseRef;
 
     const ENDPOINT: Option<&str> = option_env!("ETH_RPC_URL");
 

@@ -1,5 +1,5 @@
 use alloy_primitives::Bytes;
-use revm::interpreter::opcode;
+use revm::bytecode::opcode;
 
 /// Named parameter of an EVM opcode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

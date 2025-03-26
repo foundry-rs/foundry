@@ -10,13 +10,10 @@ use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use foundry_evm::{
-    backend::DatabaseError,
-    decode::RevertDecoder,
-    revm::{
-        interpreter::InstructionResult,
-        primitives::{EVMError, InvalidHeader},
-    },
+use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
+use revm::{
+    context_interface::result::{EVMError, InvalidHeader, InvalidTransaction},
+    interpreter::InstructionResult,
 };
 use serde::Serialize;
 
@@ -246,8 +243,8 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
-    #[error("too many blobs in one transaction, have: {0}")]
-    TooManyBlobs(usize),
+    #[error("too many blobs in one transaction, have: {0}, max: {1}")]
+    TooManyBlobs(usize, usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
@@ -268,9 +265,8 @@ pub enum InvalidTransactionError {
     Revm(revm::primitives::InvalidTransaction),
 }
 
-impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
-    fn from(err: revm::primitives::InvalidTransaction) -> Self {
-        use revm::primitives::InvalidTransaction;
+impl From<InvalidTransaction> for InvalidTransactionError {
+    fn from(err: InvalidTransaction) -> Self {
         match err {
             InvalidTransaction::InvalidChainId => Self::InvalidChainId,
             InvalidTransaction::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
@@ -300,7 +296,7 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
             InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
             InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs { have } => Self::TooManyBlobs(have),
+            InvalidTransaction::TooManyBlobs { have, max } => Self::TooManyBlobs(have, max),
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
