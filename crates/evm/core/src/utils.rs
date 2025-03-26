@@ -112,7 +112,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxE
 /// `impersonated_from` is the address of the impersonated account. This helps account for an
 /// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
 pub fn configure_tx_req_env(
-    env: &mut revm::primitives::Env,
+    env: &mut crate::Env,
     tx: &TransactionRequest,
     impersonated_from: Option<Address>,
 ) -> eyre::Result<()> {
@@ -136,32 +136,31 @@ pub fn configure_tx_req_env(
     } = *tx;
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
-    env.tx.transact_to = to.unwrap_or(TxKind::Create);
+    env.tx.kind = to.unwrap_or(TxKind::Create);
     // If the transaction is impersonated, we need to set the caller to the from
     // address Ref: https://github.com/foundry-rs/foundry/issues/9541
     env.tx.caller =
         impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
     env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
-    env.tx.nonce = nonce;
+    env.tx.nonce = nonce.unwrap_or_default();
     env.tx.value = value.unwrap_or_default();
     env.tx.data = input.input().cloned().unwrap_or_default();
     env.tx.chain_id = chain_id;
 
     // Type 1, EIP-2930
-    env.tx.access_list = access_list.clone().unwrap_or_default().0.into_iter().collect();
+    env.tx.access_list = access_list.clone().unwrap_or_default();
 
     // Type 2, EIP-1559
-    env.tx.gas_price = U256::from(gas_price.or(max_fee_per_gas).unwrap_or_default());
-    env.tx.gas_priority_fee = max_priority_fee_per_gas.map(U256::from);
+    env.tx.gas_price = gas_price.or(max_fee_per_gas).unwrap_or_default();
+    env.tx.gas_priority_fee = max_priority_fee_per_gas;
 
     // Type 3, EIP-4844
     env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
-    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.map(U256::from);
+    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
 
     // Type 4, EIP-7702
     if let Some(authorization_list) = authorization_list {
-        env.tx.authorization_list =
-            Some(revm::primitives::AuthorizationList::Signed(authorization_list.clone()));
+        env.tx.authorization_list = authorization_list.clone();
     }
 
     Ok(())
@@ -169,7 +168,7 @@ pub fn configure_tx_req_env(
 
 /// Get the gas used, accounting for refunds
 pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
-    let refund_quotient = if SpecId::enabled(spec, SpecId::LONDON) { 5 } else { 2 };
+    let refund_quotient = if SpecId::is_enabled_in(spec, SpecId::LONDON) { 5 } else { 2 };
     spent - (refunded).min(spent / refund_quotient)
 }
 
