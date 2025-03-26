@@ -65,6 +65,17 @@ impl Cheatcode for signDelegationCall {
     }
 }
 
+impl Cheatcode for signDelegationWithNonceCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, nonce } = self;
+        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
+        let authority = signer.address();
+        let auth = create_auth_with_nonce(ccx, *implementation, authority, *nonce)?;
+        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+        Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
+    }
+}
+
 impl Cheatcode for signAndAttachDelegationCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = self;
