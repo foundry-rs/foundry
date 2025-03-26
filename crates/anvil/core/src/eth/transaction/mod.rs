@@ -23,6 +23,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_revm::OpTransaction;
 use revm::{context::TxEnv, interpreter::InstructionResult, primitives::OptimismFields};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -391,10 +392,10 @@ impl PendingTransaction {
                 let TxLegacy { nonce, gas_price, gas_limit, value, to, input, .. } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    kind: transact_to(to),
                     data: input.clone(),
                     chain_id,
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: (*value),
                     gas_price: U256::from(*gas_price),
                     gas_priority_fee: None,
@@ -417,10 +418,10 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    kind: transact_to(to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
                     gas_price: U256::from(*gas_price),
                     gas_priority_fee: None,
@@ -444,10 +445,10 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    kind: transact_to(to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
@@ -473,10 +474,10 @@ impl PendingTransaction {
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
-                    transact_to: TxKind::Call(*to),
+                    kind: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
@@ -502,16 +503,16 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: TxKind::Call(*to),
+                    kind: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
-                    authorization_list: Some(authorization_list.clone().into()),
+                    authorization_list: authorization_list.clone(),
                     ..Default::default()
                 }
             }
@@ -530,10 +531,10 @@ impl PendingTransaction {
                 } = tx;
                 TxEnv {
                     caller,
-                    transact_to: transact_to(kind),
+                    kind: transact_to(kind),
                     data: input.clone(),
                     chain_id,
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
                     gas_price: U256::ZERO,
                     gas_priority_fee: None,
