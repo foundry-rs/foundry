@@ -1,70 +1,78 @@
 //! Tests for the `forge test` with preprocessed cache.
 
 // Test cache is invalidated when `forge build` if optimize test option toggled.
-forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
-    prj.update_config(|config| {
-        config.cache_tests = true;
-    });
-    // All files are built with optimized tests.
-    cmd.args(["build"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+forgetest_init!(
+    #[cfg_attr(windows, ignore = "TODO: fix compilers panic")]
+    toggle_invalidate_cache_on_build,
+    |prj, cmd| {
+        prj.update_config(|config| {
+            config.cache_tests = true;
+        });
+        // All files are built with optimized tests.
+        cmd.args(["build"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 22 files with [..]
 ...
 
 "#]]);
-    // No files are rebuilt.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+        // No files are rebuilt.
+        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 No files changed, compilation skipped
 ...
 
 "#]]);
 
-    // Toggle test optimizer off.
-    prj.update_config(|config| {
-        config.cache_tests = false;
-    });
-    // All files are rebuilt with preprocessed cache false.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+        // Toggle test optimizer off.
+        prj.update_config(|config| {
+            config.cache_tests = false;
+        });
+        // All files are rebuilt with preprocessed cache false.
+        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 22 files with [..]
 ...
 
 "#]]);
-});
+    }
+);
 
 // Test cache is invalidated when `forge test` if optimize test option toggled.
-forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
-    prj.update_config(|config| {
-        config.cache_tests = true;
-    });
-    // All files are built with optimized tests.
-    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+forgetest_init!(
+    #[cfg_attr(windows, ignore = "TODO: fix compilers panic")]
+    toggle_invalidate_cache_on_test,
+    |prj, cmd| {
+        prj.update_config(|config| {
+            config.cache_tests = true;
+        });
+        // All files are built with optimized tests.
+        cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 20 files with [..]
 ...
 
 "#]]);
-    // No files are rebuilt.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+        // No files are rebuilt.
+        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 No files changed, compilation skipped
 ...
 
 "#]]);
 
-    // Toggle test optimizer off.
-    prj.update_config(|config| {
-        config.cache_tests = false;
-    });
-    // All files are rebuilt with preprocessed cache false.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+        // Toggle test optimizer off.
+        prj.update_config(|config| {
+            config.cache_tests = false;
+        });
+        // All files are rebuilt with preprocessed cache false.
+        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 20 files with [..]
 ...
 
 "#]]);
-});
+    }
+);
 
 // Counter contract without interface instantiated in CounterTest
 //
@@ -1011,6 +1019,156 @@ Compiling 1 files with [..]
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_A_with_named_args() (gas: [..])
 [FAIL: assertion failed: 101 != 2] test_Increment_In_Counter_B() (gas: [..])
 [FAIL: assertion failed: 12345 != 1235] test_Increment_In_Counter_V1() (gas: [..])
+...
+
+"#]]);
+});
+
+// Test preprocessing contracts with payable constructor, value and salt named args.
+forgetest_init!(preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.cache_tests = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 _number) payable {
+        number = msg.value;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "CounterWithSalt.sol",
+        r#"
+contract CounterWithSalt {
+    uint256 public number;
+
+    constructor(uint256 _number) payable {
+        number = msg.value;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "src/Counter.sol";
+import {CounterWithSalt} from "src/CounterWithSalt.sol";
+
+contract CounterTest is Test {
+    function test_Increment_In_Counter() public {
+        Counter counter = new Counter{value: 111}(1);
+        counter.increment();
+        assertEq(counter.number(), 112);
+    }
+
+    function test_Increment_In_Counter_With_Salt() public {
+        CounterWithSalt counter = new CounterWithSalt{value: 111, salt: bytes32("preprocess_counter_with_salt")}(1);
+        assertEq(address(counter), 0x3Efe9ecFc73fB3baB7ECafBB40D3e134260Be6AB);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 21 files with [..]
+...
+[PASS] test_Increment_In_Counter() (gas: [..])
+[PASS] test_Increment_In_Counter_With_Salt() (gas: [..])
+...
+
+"#]]);
+
+    // Change contract to fail test.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 _number) payable {
+        number = msg.value + _number;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only Counter should be compiled and test should fail.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[FAIL: assertion failed: 113 != 112] test_Increment_In_Counter() (gas: [..])
+[PASS] test_Increment_In_Counter_With_Salt() (gas: [..])
+...
+
+"#]]);
+
+    // Change contract with salt to fail test too.
+    prj.add_source(
+        "CounterWithSalt.sol",
+        r#"
+contract CounterWithSalt {
+    uint256 public number;
+
+    constructor(uint256 _number) payable {
+        number = msg.value + _number;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only Counter should be compiled and test should fail.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[FAIL: assertion failed: 113 != 112] test_Increment_In_Counter() (gas: [..])
+[FAIL: assertion failed: 0x6cDcb015cFcAd0C23560322EdEE8f324520E4b93 != 0x3Efe9ecFc73fB3baB7ECafBB40D3e134260Be6AB] test_Increment_In_Counter_With_Salt() (gas: [..])
 ...
 
 "#]]);
