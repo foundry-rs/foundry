@@ -463,6 +463,16 @@ impl TestArgs {
                         entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry) 
                     })
                     .collect()
+            } else if let Some(contract_pattern) = &self.mutate_contract {
+                // If --mutate-contract is provided, use it to filter contracts
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| {
+                        entry.is_sol() && !entry.is_sol_test() && 
+                        output.artifact_ids()
+                            .find(|(id, _)| id.source == *entry)
+                            .map_or(false, |(id, _)| contract_pattern.is_match(&id.name))
+                    })
+                    .collect()
             } else if self.mutate.as_ref().unwrap().is_empty() {
                 // If --mutate is passed without arguments, use all Solidity files
                 source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
