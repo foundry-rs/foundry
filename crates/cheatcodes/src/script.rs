@@ -98,13 +98,11 @@ fn create_auth_with_nonce(
     implementation: Address,
     nonce: u64,
 ) -> Result<Authorization> {
-    Ok(
-        Authorization {
-            address: implementation,
-            nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
-        },
-    )
+    Ok(Authorization {
+        address: implementation,
+        nonce,
+        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+    })
 }
 
 fn create_auth(
