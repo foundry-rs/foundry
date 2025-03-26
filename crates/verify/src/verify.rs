@@ -6,7 +6,7 @@ use crate::{
     utils::is_host_only,
     RetryArgs,
 };
-use alloy_primitives::Address;
+use alloy_primitives::{map::HashSet, Address};
 use alloy_provider::Provider;
 use clap::{Parser, ValueHint};
 use eyre::Result;
@@ -19,7 +19,6 @@ use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::Cont
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config, SolcReq};
 use itertools::Itertools;
 use reqwest::Url;
-use revm::primitives::HashSet;
 use semver::BuildMetadata;
 use std::path::PathBuf;
 

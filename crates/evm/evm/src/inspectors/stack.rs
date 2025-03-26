@@ -18,7 +18,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
-    primitives::{Env, EnvWithHandlerCfg, HashMap, TxKind},
+    primitives::{Env, EnvWithHandlerCfg, HashMap},
     state::{Account, AccountStatus},
     EvmContext, Inspector, JournaledState,
 };

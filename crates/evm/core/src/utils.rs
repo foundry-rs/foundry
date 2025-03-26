@@ -14,18 +14,17 @@ use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context_interface::{result::EVMError, CreateScheme},
-    handler::register::EvmHandler,
+    handler::{register::EvmHandler, FrameOrResult, FrameResult},
     interpreter::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
     precompile::secp256r1::P256VERIFY,
     primitives::{hardfork::SpecId, HandlerCfg, KECCAK_EMPTY},
-    FrameOrResult, FrameResult,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-pub use revm::primitives::EvmState as StateChangeset;
+pub use revm::state::EvmState as StateChangeset;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
