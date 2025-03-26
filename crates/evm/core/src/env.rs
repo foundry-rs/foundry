@@ -1,6 +1,6 @@
 use alloy_evm::EvmEnv;
 use revm::{
-    context::{BlockEnv, CfgEnv, ContextTr, JournalTr, TxEnv},
+    context::{BlockEnv, CfgEnv, JournalTr, TxEnv},
     Context, Database,
 };
 
