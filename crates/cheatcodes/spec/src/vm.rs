@@ -2168,6 +2168,9 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
 
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegationWithNonce(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
     function getWallets() external returns (address[] memory wallets);
