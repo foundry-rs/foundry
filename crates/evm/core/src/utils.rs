@@ -17,15 +17,15 @@ use revm::{
     context::{ContextTr, Evm, EvmData, JournalInner},
     context_interface::{result::EVMError, CreateScheme},
     handler::{
-        instructions::EthInstructions, register::EvmHandler, EthPrecompiles, FrameOrResult,
-        FrameResult, PrecompileProvider,
+        instructions::EthInstructions, EthPrecompiles, FrameOrResult, FrameResult, Handler,
+        PrecompileProvider,
     },
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
         CreateInputs, CreateOutcome, Gas, InstructionResult, InterpreterResult,
     },
     precompile::PrecompileError,
-    primitives::{hardfork::SpecId, HandlerCfg, KECCAK_EMPTY},
+    primitives::{hardfork::SpecId, KECCAK_EMPTY},
     Journal,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -206,7 +206,7 @@ fn get_create2_factory_call_inputs(
 ///
 /// Should be installed after [revm::inspector_handle_register] and before any other registers.
 pub fn create2_handler_register<I: InspectorExt>(
-    handler: &mut EvmHandler<'_, I, &mut dyn DatabaseExt>,
+    handler: &mut Handler<'_, I, &mut dyn DatabaseExt>,
 ) {
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
 
@@ -396,12 +396,24 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for MaybeOdysseyPrecompiles {
 pub type FoundryEvmCtx<'a> = EthEvmContext<&'a mut dyn DatabaseExt>;
 
 /// Type alias for revm's EVM used by Foundry.
-pub type FoundryEvm<'db, INSP> = Evm<
-    FoundryEvmCtx<'db>,
-    INSP,
-    EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>,
-    MaybeOdysseyPrecompiles,
->;
+pub struct FoundryEvm<'db, INSP>(
+    Evm<
+        FoundryEvmCtx<'db>,
+        INSP,
+        EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>,
+        MaybeOdysseyPrecompiles,
+    >,
+);
+
+impl<'db, 'i, I: InspectorExt + ?Sized> FoundryEvm<'db, &'i mut I> {
+    pub fn new(ctx: FoundryEvmCtx<'db>, inspector: &'i mut I) -> Self {
+        let is_odyssey = inspector.is_odyssey();
+        let instruction = EthInstructions::default();
+        let precompiles = MaybeOdysseyPrecompiles::new(is_odyssey);
+
+        Self(Evm { data: EvmData { ctx, inspector }, instruction, precompiles })
+    }
+}
 
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
@@ -425,17 +437,11 @@ pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
     )
 }
 
+/// Creates a new EVM with the given context.
 pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
     ctx: FoundryEvmCtx<'db>,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
     // handler.append_handler_register_plain(create2_handler_register);
-
-    let is_odyssey = inspector.is_odyssey();
-
-    Evm {
-        data: EvmData { ctx, inspector },
-        instruction: EthInstructions::default(),
-        precompiles: MaybeOdysseyPrecompiles::new(is_odyssey),
-    }
+    FoundryEvm::new(ctx, inspector)
 }

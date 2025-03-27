@@ -196,7 +196,6 @@ solar-parse = { version = "=0.1.1", default-features = false }
 ## revm
 revm = { version = "20.0.0", default-features = false }
 revm-inspectors = { version = "0.17.0-alpha.1", features = ["serde"] }
-op-revm = { version = "1.0.0", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "0.12.6", default-features = false }
@@ -349,7 +348,7 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 ## revm
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "0953b17" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "0953b17" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "6d40d0e" }
 
 ## foundry
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "c168d11" }

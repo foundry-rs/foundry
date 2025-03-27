@@ -9,7 +9,7 @@ use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::Address;
 use auto_impl::auto_impl;
 use backend::DatabaseExt;
-use revm::{inspector::NoOpInspector, interpreter::CreateInputs, EvmContext, Inspector};
+use revm::{inspector::NoOpInspector, interpreter::CreateInputs, Inspector};
 use revm_inspectors::access_list::AccessListInspector;
 
 #[macro_use]
@@ -24,6 +24,7 @@ mod ic;
 
 pub mod env;
 pub use env::*;
+use utils::FoundryEvmCtx;
 
 pub mod backend;
 pub mod buffer;
@@ -44,9 +45,9 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
-    fn should_use_create2_factory(
+    fn should_use_create2_factory<'a>(
         &mut self,
-        _context: &mut EvmContext<&mut dyn DatabaseExt>,
+        _context: FoundryEvmCtx<'a>,
         _inputs: &mut CreateInputs,
     ) -> bool {
         false

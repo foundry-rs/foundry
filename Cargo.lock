@@ -1059,7 +1059,6 @@ dependencies = [
  "foundry-common",
  "foundry-evm",
  "op-alloy-consensus",
- "op-revm",
  "rand 0.8.5",
  "revm",
  "serde",
@@ -6699,7 +6698,8 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "1.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=0953b17#0953b17f08fa4ba40ba845f97e5d2c353c376f32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6eadb8205294a61224897e4c69f486a9461da45e4c6caffc921ff9b1b1a89282"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -7888,8 +7888,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.17.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1504e2851a11562fb350a9f408e5783351650aef11790aea0b0d0d9ab961c40"
+source = "git+https://github.com/paradigmxyz/revm-inspectors.git?rev=6d40d0e#6d40d0e22c8cc2ec71ed98fe88c17dec64e5d45c"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
