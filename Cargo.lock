@@ -6664,25 +6664,25 @@ checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
 
 [[package]]
 name = "op-alloy-consensus"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "971eaae9cfc8b6aabb62cef8d7d49640d2e8e948e5aa3177788c4dea3d226452"
+checksum = "27fb241560c631ece7b17ff6390b87140bc98ecb4fb6134b53ba4836f11c35bb"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
- "derive_more 1.0.0",
+ "derive_more 2.0.1",
  "serde",
  "thiserror 2.0.12",
 ]
 
 [[package]]
 name = "op-alloy-rpc-types"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "398b77b1fe4a9ca83d031d59a19fa9aa4ffcc2a896a83b7861a94292c2098412"
+checksum = "12e5551cb5703c768b6f50b4f1f989aa8a272028aff16d5ac44e75613d7f659e"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6690,7 +6690,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "derive_more 1.0.0",
+ "derive_more 2.0.1",
  "op-alloy-consensus",
  "serde",
  "serde_json",

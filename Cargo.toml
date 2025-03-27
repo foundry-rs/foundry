@@ -116,9 +116,9 @@ alloy-sol-types.opt-level = 3
 hashbrown.opt-level = 3
 foldhash.opt-level = 3
 keccak.opt-level = 3
+revm.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
-revm.opt-level = 3
 ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
@@ -199,27 +199,27 @@ revm-inspectors = { version = "0.17.0-alpha.1", features = ["serde"] }
 op-revm = { version = "1.0.0", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.12.1", default-features = false }
-alloy-contract = { version = "0.12.1", default-features = false }
-alloy-eips = { version = "0.12.1", default-features = false }
-alloy-genesis = { version = "0.12.1", default-features = false }
-alloy-json-rpc = { version = "0.12.1", default-features = false }
-alloy-network = { version = "0.12.1", default-features = false }
-alloy-provider = { version = "0.12.1", default-features = false }
-alloy-pubsub = { version = "0.12.1", default-features = false }
-alloy-rpc-client = { version = "0.12.1", default-features = false }
-alloy-rpc-types = { version = "0.12.1", default-features = true }
-alloy-serde = { version = "0.12.1", default-features = false }
-alloy-signer = { version = "0.12.1", default-features = false }
-alloy-signer-aws = { version = "0.12.1", default-features = false }
-alloy-signer-gcp = { version = "0.12.1", default-features = false }
-alloy-signer-ledger = { version = "0.12.1", default-features = false }
-alloy-signer-local = { version = "0.12.1", default-features = false }
-alloy-signer-trezor = { version = "0.12.1", default-features = false }
-alloy-transport = { version = "0.12.1", default-features = false }
-alloy-transport-http = { version = "0.12.1", default-features = false }
-alloy-transport-ipc = { version = "0.12.1", default-features = false }
-alloy-transport-ws = { version = "0.12.1", default-features = false }
+alloy-consensus = { version = "0.12.6", default-features = false }
+alloy-contract = { version = "0.12.6", default-features = false }
+alloy-eips = { version = "0.12.6", default-features = false }
+alloy-genesis = { version = "0.12.6", default-features = false }
+alloy-json-rpc = { version = "0.12.6", default-features = false }
+alloy-network = { version = "0.12.6", default-features = false }
+alloy-provider = { version = "0.12.6", default-features = false }
+alloy-pubsub = { version = "0.12.6", default-features = false }
+alloy-rpc-client = { version = "0.12.6", default-features = false }
+alloy-rpc-types = { version = "0.12.6", default-features = true }
+alloy-serde = { version = "0.12.6", default-features = false }
+alloy-signer = { version = "0.12.6", default-features = false }
+alloy-signer-aws = { version = "0.12.6", default-features = false }
+alloy-signer-gcp = { version = "0.12.6", default-features = false }
+alloy-signer-ledger = { version = "0.12.6", default-features = false }
+alloy-signer-local = { version = "0.12.6", default-features = false }
+alloy-signer-trezor = { version = "0.12.6", default-features = false }
+alloy-transport = { version = "0.12.6", default-features = false }
+alloy-transport-http = { version = "0.12.6", default-features = false }
+alloy-transport-ipc = { version = "0.12.6", default-features = false }
+alloy-transport-ws = { version = "0.12.6", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "0.8.22"
@@ -240,8 +240,8 @@ alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 
 ## op-alloy
-op-alloy-consensus = "0.11.0"
-op-alloy-rpc-types = "0.11.0"
+op-alloy-consensus = "0.11.3"
+op-alloy-rpc-types = "0.11.3"
 
 ## cli
 anstream = "0.6"
