@@ -88,6 +88,12 @@ contract ExpectRevertTest is DSTest {
         Reverter reverter = new Reverter();
         vm.expectRevert(abi.encodeWithSignature("Error(string)", "my revert reason"));
         reverter.revertWithMessage("my revert reason");
+
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "A"));
+        reverter.revertWithMessage("A");
+
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "revert: A"));
+        reverter.revertWithMessage("revert: A");
     }
 
     function testShouldFailIfExpectRevertWrongString() public {
