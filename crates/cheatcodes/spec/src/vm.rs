@@ -370,8 +370,6 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
 
-
-
     // -------- Record Debug Traces --------
 
     /// Records the debug trace during the run.
