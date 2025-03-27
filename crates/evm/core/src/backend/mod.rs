@@ -1195,7 +1195,7 @@ impl DatabaseExt for Backend {
                             );
                         }
                     } else {
-                        let _ = active.journaled_state.load_account(*addr, &mut active.db);
+                        let _ = active.journaled_state.load_account(&mut active.db, *addr);
                     }
                 }
 
@@ -1235,7 +1235,7 @@ impl DatabaseExt for Backend {
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
-        mut env: Env,
+        env: &mut Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1275,7 +1275,7 @@ impl DatabaseExt for Backend {
     fn transact_from_tx(
         &mut self,
         tx: &TransactionRequest,
-        mut env: Env,
+        env: &mut Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1397,7 +1397,7 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Fetch the account from the journaled state. Will create a new account if it does
         // not already exist.
-        let mut state_acc = journaled_state.load_account(*target, self)?;
+        let mut state_acc = journaled_state.load_account(self, *target)?;
 
         // Set the account's bytecode and code hash, if the `bytecode` field is present.
         if let Some(bytecode) = source.code.as_ref() {
@@ -1431,7 +1431,7 @@ impl DatabaseExt for Backend {
         state_acc.info.balance = source.balance;
 
         // Touch the account to ensure the loaded information persists if called in `setUp`.
-        journaled_state.touch(target);
+        journaled_state.touch(*target);
 
         Ok(())
     }
