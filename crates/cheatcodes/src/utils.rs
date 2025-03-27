@@ -7,7 +7,7 @@ use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
-use rand::{seq::SliceRandom, thread_rng, Rng, RngCore};
+use rand::{seq::SliceRandom, Rng, RngCore};
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -237,12 +237,12 @@ impl Cheatcode for sortCall {
 }
 
 impl Cheatcode for shuffleCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { array } = self;
 
         let mut shuffled_values = array.clone();
-        let mut rng = thread_rng();
-        shuffled_values.shuffle(&mut rng);
+        let rng = state.rng();
+        shuffled_values.shuffle(rng);
 
         Ok(shuffled_values.abi_encode())
     }
