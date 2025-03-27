@@ -1,78 +1,70 @@
 //! Tests for the `forge test` with preprocessed cache.
 
 // Test cache is invalidated when `forge build` if optimize test option toggled.
-forgetest_init!(
-    #[cfg_attr(windows, ignore = "TODO: fix compilers panic")]
-    toggle_invalidate_cache_on_build,
-    |prj, cmd| {
-        prj.update_config(|config| {
-            config.cache_tests = true;
-        });
-        // All files are built with optimized tests.
-        cmd.args(["build"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
+    prj.update_config(|config| {
+        config.cache_tests = true;
+    });
+    // All files are built with optimized tests.
+    cmd.args(["build"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 22 files with [..]
 ...
 
 "#]]);
-        // No files are rebuilt.
-        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    // No files are rebuilt.
+    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 No files changed, compilation skipped
 ...
 
 "#]]);
 
-        // Toggle test optimizer off.
-        prj.update_config(|config| {
-            config.cache_tests = false;
-        });
-        // All files are rebuilt with preprocessed cache false.
-        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    // Toggle test optimizer off.
+    prj.update_config(|config| {
+        config.cache_tests = false;
+    });
+    // All files are rebuilt with preprocessed cache false.
+    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 22 files with [..]
 ...
 
 "#]]);
-    }
-);
+});
 
 // Test cache is invalidated when `forge test` if optimize test option toggled.
-forgetest_init!(
-    #[cfg_attr(windows, ignore = "TODO: fix compilers panic")]
-    toggle_invalidate_cache_on_test,
-    |prj, cmd| {
-        prj.update_config(|config| {
-            config.cache_tests = true;
-        });
-        // All files are built with optimized tests.
-        cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
+    prj.update_config(|config| {
+        config.cache_tests = true;
+    });
+    // All files are built with optimized tests.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 20 files with [..]
 ...
 
 "#]]);
-        // No files are rebuilt.
-        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    // No files are rebuilt.
+    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 No files changed, compilation skipped
 ...
 
 "#]]);
 
-        // Toggle test optimizer off.
-        prj.update_config(|config| {
-            config.cache_tests = false;
-        });
-        // All files are rebuilt with preprocessed cache false.
-        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    // Toggle test optimizer off.
+    prj.update_config(|config| {
+        config.cache_tests = false;
+    });
+    // All files are rebuilt with preprocessed cache false.
+    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Compiling 20 files with [..]
 ...
 
 "#]]);
-    }
-);
+});
 
 // Counter contract without interface instantiated in CounterTest
 //
