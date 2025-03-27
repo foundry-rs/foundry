@@ -9438,7 +9438,7 @@
       "func": {
         "id": "shuffle",
         "description": "Randomly shuffles an array.",
-        "declaration": "function shuffle(uint256[] memory array) external returns (uint256[] memory);",
+        "declaration": "function shuffle(uint256[] calldata array) external returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "",
         "signature": "shuffle(uint256[])",
@@ -9860,7 +9860,7 @@
       "func": {
         "id": "sort",
         "description": "Sorts an array in ascending order.",
-        "declaration": "function sort(uint256[] memory array) external returns (uint256[] memory);",
+        "declaration": "function sort(uint256[] calldata array) external returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "",
         "signature": "sort(uint256[])",
