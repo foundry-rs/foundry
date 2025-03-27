@@ -91,6 +91,7 @@ impl<'a> CowBackend<'a> {
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
     fn backend_mut(&mut self, env: &mut EnvMut<'_>) -> &mut Backend {
+        let env = env.as_env_mut().to_owned();
         if !self.is_initialized {
             let backend = self.backend.to_mut();
             let mut env = env.to_owned();
