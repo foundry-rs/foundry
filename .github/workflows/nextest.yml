@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   REVIVE_RELEASE_VERSION: v0.1.0-dev.12
+  DLRP_API_KEY: ${{ secrets.DLRP_API_KEY }}
 
 jobs:
   matrices:

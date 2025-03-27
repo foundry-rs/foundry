@@ -32,6 +32,7 @@ static DRPC_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
     let mut keys = vec!["AgasqIYODEW_j_J0F91L8oETmhtHCXkR8JAVssvAG40d".to_owned()];
     // Fetch secret from GitHub Actions environment variable
     if let Ok(secret) = env::var("DLRP_API_KEY") {
+        keys.clear();
         keys.push(secret);
     }
 

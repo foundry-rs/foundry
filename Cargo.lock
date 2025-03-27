@@ -546,7 +546,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -1877,7 +1877,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -3894,7 +3894,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.13.3"
-source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#6ef790bd3abab15d5b2291bafe6f6a04ad71ebb7"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#534bed521110e775edc52313d3a1061f75422caa"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3907,7 +3907,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "md-5",
  "path-slash",
  "rand 0.8.5",
@@ -3930,7 +3930,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.13.3"
-source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#6ef790bd3abab15d5b2291bafe6f6a04ad71ebb7"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#534bed521110e775edc52313d3a1061f75422caa"
 dependencies = [
  "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
@@ -3940,7 +3940,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-resolc"
 version = "0.13.3"
-source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#6ef790bd3abab15d5b2291bafe6f6a04ad71ebb7"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#534bed521110e775edc52313d3a1061f75422caa"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3961,7 +3961,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.13.3"
-source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#6ef790bd3abab15d5b2291bafe6f6a04ad71ebb7"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#534bed521110e775edc52313d3a1061f75422caa"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3984,7 +3984,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.13.3"
-source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#6ef790bd3abab15d5b2291bafe6f6a04ad71ebb7"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#534bed521110e775edc52313d3a1061f75422caa"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3998,7 +3998,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.13.3"
-source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#6ef790bd3abab15d5b2291bafe6f6a04ad71ebb7"
+source = "git+https://github.com/paritytech/foundry-revive-compiler.git?branch=revive#534bed521110e775edc52313d3a1061f75422caa"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5513,15 +5513,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -5774,7 +5765,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -7065,7 +7056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
@@ -8503,7 +8494,7 @@ dependencies = [
  "const-hex",
  "derive_builder",
  "dunce",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -8539,7 +8530,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.0",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9420,7 +9411,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69fff37da548239c3bf9e64a12193d261e8b22b660991c6fd2df057c168f435f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -9996,7 +9987,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

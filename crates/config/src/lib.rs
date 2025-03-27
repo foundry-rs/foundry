@@ -1586,6 +1586,7 @@ impl Config {
             metadata: Some(SettingsMetadata {
                 use_literal_content: Some(self.use_literal_content),
                 bytecode_hash: if self.revive.revive_compile {
+                    // Workaround for BytecodeHash issue https://github.com/paritytech/revive/issues/219
                     Some(BytecodeHash::None)
                 } else {
                     Some(self.bytecode_hash)
