@@ -1,26 +1,32 @@
 pub use crate::ic::*;
 use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
-    InspectorExt,
+    Env, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
+use alloy_evm::eth::EthEvmContext;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, Selector, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
+    context::{ContextTr, Evm, EvmData, JournalInner},
     context_interface::{result::EVMError, CreateScheme},
-    handler::{register::EvmHandler, FrameOrResult, FrameResult},
-    interpreter::{
-        return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        Gas, InstructionResult, InterpreterResult,
+    handler::{
+        instructions::EthInstructions, register::EvmHandler, EthPrecompiles, FrameOrResult,
+        FrameResult, PrecompileProvider,
     },
-    precompile::secp256r1::P256VERIFY,
+    interpreter::{
+        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
+        CreateInputs, CreateOutcome, Gas, InstructionResult, InterpreterResult,
+    },
+    precompile::PrecompileError,
     primitives::{hardfork::SpecId, HandlerCfg, KECCAK_EMPTY},
+    Journal,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -305,65 +311,131 @@ pub fn create2_handler_register<I: InspectorExt>(
         });
 }
 
-/// Adds Odyssey P256 precompile to the list of loaded precompiles.
-pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
-    let prev = handler.pre_execution.load_precompiles.clone();
-    handler.pre_execution.load_precompiles = Arc::new(move || {
-        let mut loaded_precompiles = prev();
-
-        loaded_precompiles.extend([ODYSSEY_P256, P256VERIFY]);
-
-        loaded_precompiles
-    });
+/// [`PrecompileProvider`] wrapper that enables [`P256VERIFY`] if `odyssey` is enabled.
+pub struct MaybeOdysseyPrecompiles {
+    inner: EthPrecompiles,
+    odyssey: bool,
 }
+
+impl MaybeOdysseyPrecompiles {
+    /// Creates a new instance of the [`MaybeOdysseyPrecompiles`].
+    pub fn new(odyssey: bool) -> Self {
+        Self { inner: EthPrecompiles::default(), odyssey }
+    }
+}
+
+impl<CTX: ContextTr> PrecompileProvider<CTX> for MaybeOdysseyPrecompiles {
+    type Output = InterpreterResult;
+
+    fn set_spec(&mut self, spec: <<CTX as ContextTr>::Cfg as revm::context::Cfg>::Spec) {
+        PrecompileProvider::<CTX>::set_spec(&mut self.inner, spec);
+    }
+
+    fn run(
+        &mut self,
+        context: &mut CTX,
+        address: &Address,
+        bytes: &Bytes,
+        gas_limit: u64,
+    ) -> Result<Option<Self::Output>, String> {
+        if self.odyssey && address == ODYSSEY_P256.address() {
+            let mut result = InterpreterResult {
+                result: InstructionResult::Return,
+                gas: Gas::new(gas_limit),
+                output: Bytes::new(),
+            };
+
+            match ODYSSEY_P256.precompile()(bytes, gas_limit) {
+                Ok(output) => {
+                    let underflow = result.gas.record_cost(output.gas_used);
+                    if underflow {
+                        result.result = InstructionResult::PrecompileOOG;
+                    } else {
+                        result.result = InstructionResult::Return;
+                        result.output = output.bytes;
+                    }
+                }
+                Err(e) => {
+                    if let PrecompileError::Fatal(_) = e {
+                        return Err(e.to_string());
+                    }
+                    result.result = if e.is_oog() {
+                        InstructionResult::PrecompileOOG
+                    } else {
+                        InstructionResult::PrecompileError
+                    };
+                }
+            }
+        }
+
+        self.inner.run(context, address, bytes, gas_limit)
+    }
+
+    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+        let warm_addresses = self.inner.warm_addresses() as Box<dyn Iterator<Item = Address>>;
+
+        let iter = if self.odyssey {
+            Box::new(warm_addresses.chain(core::iter::once(*ODYSSEY_P256.address())))
+        } else {
+            warm_addresses
+        };
+
+        Box::new(iter)
+    }
+
+    fn contains(&self, address: &Address) -> bool {
+        if self.odyssey && address == ODYSSEY_P256.address() {
+            true
+        } else {
+            self.inner.contains(address)
+        }
+    }
+}
+
+/// [`revm::Context`] type used by Foundry.
+pub type FoundryEvmCtx<'a> = EthEvmContext<&'a mut dyn DatabaseExt>;
+
+/// Type alias for revm's EVM used by Foundry.
+pub type FoundryEvm<'db, INSP> = Evm<
+    FoundryEvmCtx<'db>,
+    INSP,
+    EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>,
+    MaybeOdysseyPrecompiles,
+>;
 
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
-    env: revm::primitives::EnvWithHandlerCfg,
+    env: Env,
     inspector: &'i mut I,
-) -> revm::Evm<'evm, &'i mut I, &'db mut dyn DatabaseExt> {
-    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
-
-    // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
-    // performance issues.
-    /*
-    revm::Evm::builder()
-        .with_db(db)
-        .with_env(env)
-        .with_external_context(inspector)
-        .with_handler_cfg(handler_cfg)
-        .append_handler_register(revm::inspector_handle_register)
-        .append_handler_register(create2_handler_register)
-        .build()
-    */
-
-    let mut handler = revm::Handler::new(handler_cfg);
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    if inspector.is_odyssey() {
-        handler.append_handler_register_plain(odyssey_handler_register);
-    }
-    handler.append_handler_register_plain(create2_handler_register);
-
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
-
-    revm::Evm::new(context, handler)
+) -> FoundryEvm<'db, &'i mut I> {
+    new_evm_with_context(
+        FoundryEvmCtx {
+            journaled_state: Journal::new_with_inner(
+                db,
+                JournalInner::new(env.evm_env.cfg_env.spec),
+            ),
+            block: env.evm_env.block_env,
+            cfg: env.evm_env.cfg_env,
+            tx: env.tx,
+            chain: (),
+            error: Ok(()),
+        },
+        inspector,
+    )
 }
 
-pub fn new_evm_with_existing_context<'a>(
-    inner: revm::InnerEvmContext<&'a mut dyn DatabaseExt>,
-    inspector: &'a mut dyn InspectorExt,
-) -> revm::Evm<'a, &'a mut dyn InspectorExt, &'a mut dyn DatabaseExt> {
-    let handler_cfg = HandlerCfg::new(inner.spec_id());
+pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
+    ctx: FoundryEvmCtx<'db>,
+    inspector: &'i mut I,
+) -> FoundryEvm<'db, &'i mut I> {
+    // handler.append_handler_register_plain(create2_handler_register);
 
-    let mut handler = revm::Handler::new(handler_cfg);
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    if inspector.is_odyssey() {
-        handler.append_handler_register_plain(odyssey_handler_register);
+    let is_odyssey = inspector.is_odyssey();
+
+    Evm {
+        data: EvmData { ctx, inspector },
+        instruction: EthInstructions::default(),
+        precompiles: MaybeOdysseyPrecompiles::new(is_odyssey),
     }
-    handler.append_handler_register_plain(create2_handler_register);
-
-    let context =
-        revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
-    revm::Evm::new(context, handler)
 }
