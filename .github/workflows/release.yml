@@ -6,15 +6,25 @@ on:
       - "stable"
       - "rc"
       - "v*.*.*"
-  schedule:
-    - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      is_nightly:
+        description: "Is this a nightly release?"
+        type: boolean
+        required: true
+        default: true
+      version:
+        description: "stable version for the build"
+        type: string
+        required: false
+        default: "v0.3.0"
 
 env:
   CARGO_TERM_COLOR: always
-  IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+  IS_NIGHTLY: ${{ inputs.is_nightly }}
   PROFILE: maxperf
-  STABLE_VERSION: "v0.3.0"
+  STABLE_VERSION: ${{ inputs.version }}
+  RUST_MUSL_CROSS_IMAGE:  messense/rust-musl-cross@sha256:5afc91a4f7da8a14a6c688ebf49fef9b9ec30f28fd827f2cf7e7c4d6c31bd10a
 
 jobs:
   prepare:
@@ -65,13 +75,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  release-docker:
-    name: Release Docker
-    needs: prepare
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      tag_name: ${{ needs.prepare.outputs.tag_name }}
-
   release:
     permissions:
       id-token: write
@@ -89,26 +92,11 @@ jobs:
           # `target`: Rust build target triple
           # `platform` and `arch`: Used in tarball names
           # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - runner: Linux-20.04
-            target: x86_64-unknown-linux-gnu
-            svm_target_platform: linux-amd64
-            platform: linux
-            arch: amd64
-          - runner: Linux-20.04
+          - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             svm_target_platform: linux-amd64
             platform: linux
             arch: amd64
-          - runner: Linux-20.04
-            target: aarch64-unknown-linux-gnu
-            svm_target_platform: linux-aarch64
-            platform: linux
-            arch: arm64
-          - runner: Linux-20.04
-            target: aarch64-unknown-linux-musl
-            svm_target_platform: linux-aarch64
-            platform: linux
-            arch: arm64
           # This is pinned to `macos-13-large` to support old SDK versions.
           # If the runner is deprecated it should be pinned to the oldest available version of the runner.
           - runner: macos-13-large
@@ -121,7 +109,7 @@ jobs:
             svm_target_platform: macosx-aarch64
             platform: darwin
             arch: arm64
-          - runner: Windows
+          - runner: windows-2022
             target: x86_64-pc-windows-msvc
             svm_target_platform: windows-amd64
             platform: win32
@@ -142,12 +130,11 @@ jobs:
           echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
           echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
-      - name: Linux ARM setup
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Linux setup musl x86_64
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          sudo apt-get install -y musl-tools
 
       - name: Build binaries
         env:
@@ -156,22 +143,31 @@ jobs:
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
           OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          PROFILE: ${{ env.PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $PROFILE --bins 
-            --no-default-features --features aws-kms,cli,asm-keccak)
 
-          # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
-          if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
-            flags+=(--features jemalloc)
-          fi
-
+          ext=""
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          cargo build "${flags[@]}"
+          flags="--target $TARGET --profile $PROFILE --bins --no-default-features --features aws-kms,cli,asm-keccak"
+          if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
+            flags="$flags --features jemalloc"
+          fi
 
-          bins=(anvil cast chisel forge)
+          if [[ "$TARGET" == "x86_64-unknown-linux-musl" ]]; then
+            docker run -v $PWD:/opt/revive $RUST_MUSL_CROSS_IMAGE /bin/bash -c "
+            cd /opt/revive
+            rustup target add x86_64-unknown-linux-musl
+            cargo build $flags
+          "
+          sudo chown -R $(id -u):$(id -g) .
+          else
+            cargo build $flags
+          fi
+
+          bins=(cast forge)
           for name in "${bins[@]}"; do
             bin=$OUT_DIR/$name$ext
             echo ""
@@ -192,16 +188,16 @@ jobs:
         shell: bash
         run: |
           if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
+            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           else
             cd $OUT_DIR
-            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
+            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
           fi
@@ -217,13 +213,9 @@ jobs:
           sudo apt-get -y install help2man
           help2man -N $OUT_DIR/forge > forge.1
           help2man -N $OUT_DIR/cast > cast.1
-          help2man -N $OUT_DIR/anvil > anvil.1
-          help2man -N $OUT_DIR/chisel > chisel.1
           gzip forge.1
           gzip cast.1
-          gzip anvil.1
-          gzip chisel.1
-          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
+          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz
           echo "foundry_man=foundry_man_${VERSION_NAME}.tar.gz" >> $GITHUB_OUTPUT
 
       # Creates the release for this specific version
@@ -242,9 +234,7 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            ${{ env.anvil_bin_path }}
             ${{ env.cast_bin_path }}
-            ${{ env.chisel_bin_path }}
             ${{ env.forge_bin_path }}
 
       # If this is a nightly release, it also updates the release
@@ -290,7 +280,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [ prepare, release-docker, release, cleanup ]
+    needs: [ prepare, release, cleanup ]
     if: failure()
     steps:
       - uses: actions/checkout@v4
