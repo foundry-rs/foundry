@@ -406,7 +406,7 @@ pub type FoundryEvm<'db, INSP> = Evm<
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
-    env: Env,
+    env: &mut Env,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
     new_evm_with_context(
@@ -415,9 +415,9 @@ pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
                 db,
                 JournalInner::new(env.evm_env.cfg_env.spec),
             ),
-            block: env.evm_env.block_env,
-            cfg: env.evm_env.cfg_env,
-            tx: env.tx,
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: env.tx.clone(),
             chain: (),
             error: Ok(()),
         },

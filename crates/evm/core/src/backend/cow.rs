@@ -20,7 +20,7 @@ use revm::{
     database::DatabaseRef,
     primitives::{hardfork::SpecId, HashMap as Map},
     state::{Account, AccountInfo},
-    Database, DatabaseCommit,
+    Database, DatabaseCommit, ExecuteEvm,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -65,18 +65,19 @@ impl<'a> CowBackend<'a> {
     #[instrument(name = "inspect", level = "debug", skip_all)]
     pub fn inspect<I: InspectorExt>(
         &mut self,
-        env: &mut EnvWithHandlerCfg,
+        env: &mut Env,
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
-        self.spec_id = env.handler_cfg.spec_id;
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+        self.spec_id = env.evm_env.cfg_env.spec;
 
-        let res = evm.transact().wrap_err("EVM error")?;
+        let mut evm = crate::utils::new_evm_with_inspector(self, env, inspector);
 
-        env.env = evm.context.evm.inner.env;
+        let res = evm.replay().wrap_err("EVM error")?;
+
+        *env = evm.data.ctx.as_env_mut().to_owned();
 
         Ok(res)
     }

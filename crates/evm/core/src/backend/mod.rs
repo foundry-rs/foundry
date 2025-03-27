@@ -5,7 +5,7 @@ use crate::{
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
-    Env, InspectorExt,
+    AsEnvMut, Env, InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
@@ -21,9 +21,9 @@ use revm::{
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{hardfork::SpecId, EnvWithHandlerCfg, HashMap as Map, Log, KECCAK_EMPTY},
+    primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
-    Database, DatabaseCommit, JournalEntry,
+    Database, DatabaseCommit, ExecuteEvm, JournalEntry,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -738,11 +738,11 @@ impl Backend {
     /// Initializes settings we need to keep track of.
     ///
     /// We need to track these mainly to prevent issues when switching between different evms
-    pub(crate) fn initialize(&mut self, env: &EnvWithHandlerCfg) {
+    pub(crate) fn initialize(&mut self, env: &Env) {
         self.set_caller(env.tx.caller);
-        self.set_spec_id(env.handler_cfg.spec_id);
+        self.set_spec_id(env.evm_env.cfg_env.spec);
 
-        let test_contract = match env.tx.transact_to {
+        let test_contract = match env.tx.kind {
             TxKind::Call(to) => to,
             TxKind::Create => {
                 let nonce = self
@@ -755,9 +755,11 @@ impl Backend {
         self.set_test_contract(test_contract);
     }
 
-    /// Returns the `EnvWithHandlerCfg` with the current `spec_id` set.
-    fn env_with_handler_cfg(&self, env: Env) -> EnvWithHandlerCfg {
-        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.inner.spec_id)
+    /// Returns the `Env` with the current `spec_id` set.
+    fn env_with_handler_cfg(&self, env: &Env) -> Env {
+        let mut env = env.clone();
+        env.evm_env.cfg_env.spec = self.inner.spec_id;
+        env.clone()
     }
 
     /// Executes the configured test call of the `env` without committing state changes.
@@ -767,15 +769,15 @@ impl Backend {
     #[instrument(name = "inspect", level = "debug", skip_all)]
     pub fn inspect<I: InspectorExt>(
         &mut self,
-        env: &mut EnvWithHandlerCfg,
+        env: &mut Env,
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+        let mut evm = crate::utils::new_evm_with_inspector(self, env, inspector);
 
-        let res = evm.transact().wrap_err("EVM error")?;
+        let res = evm.replay().wrap_err("EVM error")?;
 
-        env.env = evm.context.evm.inner.env;
+        *env = evm.data.ctx.as_env_mut().to_owned();
 
         Ok(res)
     }
@@ -878,9 +880,9 @@ impl Backend {
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let fork_id = self.ensure_fork_id(id)?.clone();
 
-        let env = self.env_with_handler_cfg(env);
+        let mut env = self.env_with_handler_cfg(&env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
+        let full_block = fork.db.db.get_full_block(env.evm_env.block_env.number)?;
 
         for tx in full_block.inner.transactions.txns() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
@@ -900,7 +902,7 @@ impl Backend {
 
             commit_transaction(
                 &tx.inner,
-                env.clone(),
+                &mut env,
                 journaled_state,
                 fork,
                 &fork_id,
@@ -1257,13 +1259,13 @@ impl DatabaseExt for Backend {
         // So we modify the env to match the transaction's block.
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
-        update_env_block(&mut env, &block);
+        update_env_block(env, &block);
 
-        let env = self.env_with_handler_cfg(env);
+        let mut env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
             &tx,
-            env,
+            &mut env,
             journaled_state,
             fork,
             &fork_id,
@@ -1284,13 +1286,13 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(&mut env, tx, None)?;
-            let env = self.env_with_handler_cfg(env);
+            configure_tx_req_env(env, tx, None)?;
+            let mut env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, env, inspector);
-            evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact()?
+            let mut evm = new_evm_with_inspector(&mut db, &mut env, inspector);
+            evm.data.ctx.journaled_state.depth = journaled_state.depth + 1;
+            evm.replay().wrap_err("EVM error")?
         };
 
         self.commit(res.state);
@@ -1935,14 +1937,14 @@ fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
 /// state, with an inspector.
 fn commit_transaction(
     tx: &Transaction<AnyTxEnvelope>,
-    mut env: EnvWithHandlerCfg,
+    env: &mut Env,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn InspectorExt,
 ) -> eyre::Result<()> {
-    configure_tx_env(&mut env.env, tx);
+    configure_tx_env(env, tx);
 
     let now = Instant::now();
     let res = {
@@ -1953,8 +1955,8 @@ fn commit_transaction(
 
         let mut evm = crate::utils::new_evm_with_inspector(&mut db as _, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
-        evm.context.evm.inner.journaled_state.depth = depth + 1;
-        evm.transact().wrap_err("backend: failed committing transaction")?
+        evm.data.ctx.journaled_state.depth = depth + 1;
+        evm.replay().wrap_err("EVM error")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
