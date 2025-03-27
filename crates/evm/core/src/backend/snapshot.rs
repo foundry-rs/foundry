@@ -4,7 +4,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
     B256, U256,
 };
-use revm::state::AccountInfo;
+use revm::{context::JournalInner, state::AccountInfo};
 use serde::{Deserialize, Serialize};
 
 /// A minimal abstraction of a state at a certain point in time
@@ -27,7 +27,7 @@ pub struct BackendStateSnapshot<T> {
 
 impl<T> BackendStateSnapshot<T> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState<'_>, env: Env) -> Self {
+    pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {
         Self { db, journaled_state, env }
     }
 
@@ -38,7 +38,7 @@ impl<T> BackendStateSnapshot<T> {
     /// those logs that are missing in the snapshot's journaled_state, since the current
     /// journaled_state includes the same logs, we can simply replace use that See also
     /// `DatabaseExt::revert`.
-    pub fn merge(&mut self, current: &JournaledState<'_>) {
+    pub fn merge(&mut self, current: JournalInner<T>) {
         self.journaled_state.logs.clone_from(&current.logs);
     }
 }
