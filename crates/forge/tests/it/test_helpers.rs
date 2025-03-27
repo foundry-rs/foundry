@@ -120,6 +120,7 @@ impl ForgeTestProfile {
                 max_fuzz_dictionary_values: 10_000,
             },
             gas_report_samples: 256,
+            corpus_dir: Some(tempfile::tempdir().unwrap().into_path()),
             failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
             failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,
@@ -140,6 +141,7 @@ impl ForgeTestProfile {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus_dir: Some(tempfile::tempdir().unwrap().into_path()),
             failure_persist_dir: Some(
                 tempfile::Builder::new()
                     .prefix(&format!("foundry-{self}"))

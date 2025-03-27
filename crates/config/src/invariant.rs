@@ -26,6 +26,8 @@ pub struct InvariantConfig {
     pub max_assume_rejects: u32,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// Path where invariant corpus is stored.
+    pub corpus_dir: Option<PathBuf>,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -45,6 +47,7 @@ impl Default for InvariantConfig {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus_dir: None,
             failure_persist_dir: None,
             show_metrics: false,
             timeout: None,
@@ -64,7 +67,8 @@ impl InvariantConfig {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
-            failure_persist_dir: Some(cache_dir),
+            corpus_dir: Some(cache_dir.join("invariant/corpus")),
+            failure_persist_dir: Some(cache_dir.join("invariant")),
             show_metrics: false,
             timeout: None,
         }

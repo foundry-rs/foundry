@@ -743,8 +743,8 @@ Compiler run successful!
 // checks that `clean` removes fuzz and invariant cache dirs
 forgetest_init!(can_clean_test_cache, |prj, cmd| {
     let config = Config {
-        fuzz: FuzzConfig::new("cache/fuzz".into()),
-        invariant: InvariantConfig::new("cache/invariant".into()),
+        fuzz: FuzzConfig::new("cache".into()),
+        invariant: InvariantConfig::new("cache".into()),
         ..Default::default()
     };
     prj.write_config(config);

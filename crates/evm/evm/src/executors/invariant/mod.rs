@@ -36,6 +36,7 @@ use std::{
     cell::RefCell,
     collections::{btree_map::Entry, HashMap as Map},
     sync::Arc,
+    time,
 };
 
 mod error;
@@ -386,10 +387,27 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
+                // TODO: history map tracked by fuzzer to determine what is "interesting"
+                // https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
                 if let Some(ref x) = call_result.edge_coverage {
                     if x.len() > 0 {
                         let non_zero_count = x.iter().filter(|&x| *x != 0).count();
 
+                        if let Some(corpus_dir) = &self.config.corpus_dir {
+                            let timestamp = time::SystemTime::now()
+                                .duration_since(time::UNIX_EPOCH)
+                                .expect("Time went backwards")
+                                .as_secs()
+                                .to_string();
+                            if let Err(err) = foundry_common::fs::create_dir_all(corpus_dir) {
+                                error!(%err, "Failed to create invariant corpus dir");
+                            } else if let Err(err) = foundry_common::fs::write_json_file(
+                                corpus_dir.join(timestamp).as_path(),
+                                &current_run.inputs.clone(),
+                            ) {
+                                error!(%err, "Failed to record call sequence");
+                            }
+                        }
                         panic!("got some coverage: {:?}", non_zero_count);
                     }
                 }
