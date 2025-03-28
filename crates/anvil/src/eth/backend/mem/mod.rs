@@ -2822,7 +2822,7 @@ impl TransactionValidator for Backend {
 
             // Ensure the tx does not exceed the max blobs per block.
             if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count))
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
             }
 
             // Check for any blob validation errors
