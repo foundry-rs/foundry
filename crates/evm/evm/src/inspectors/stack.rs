@@ -610,7 +610,7 @@ impl InspectorStackRefMut<'_> {
         let res = self.with_stack(|inspector| {
             let mut evm = crate::utils::new_evm_with_inspector(&mut ecx.db(), &mut env, inspector);
 
-            evm.journaled_state = {
+            evm.evm.journaled_state = {
                 let mut state = ecx.journaled_state.state.clone();
 
                 for (addr, acc_mut) in &mut state {
@@ -630,9 +630,9 @@ impl InspectorStackRefMut<'_> {
             };
 
             // set depth to 1 to make sure traces are collected correctly
-            evm.journaled_state.depth = 1;
+            evm.evm.journaled_state.depth = 1;
 
-            let res = evm.replay();
+            let res = evm.evm.replay();
 
             // need to reset the env in case it was modified via cheatcodes during execution
             ecx = cached_env;
