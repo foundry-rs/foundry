@@ -20,17 +20,24 @@ use solar_parse::{
 };
 
 use super::*;
+use rstest::*;
 
 impl MutatorTester for UnaryOperatorMutator {}
 
-#[test]
-fn test_mutator() {
+#[rstest]
+#[case("pre_inc", "function f() { ++x; }", Some(vec!["--x", "~x", "-x", "x++", "x--"]))]
+#[case("pre_dec", "function f() { --x; }", Some(vec!["++x", "~x", "-x", "x++", "x--"]))]
+#[case("neg", "function f() { -x; }",      Some(vec!["++x", "--x", "~x", "x++", "x--"]))]
+#[case("bit_not", "function f() { ~x; }",  Some(vec!["++x", "--x", "-x", "x++", "x--"]))]
+#[case("post_inc", "function f() { x++; }",Some(vec!["++x", "--x", "~x", "-x", "x--"]))]
+#[case("post_dec", "function f() { x--; }",Some(vec!["++x", "--x", "~x", "-x", "x++"]))]
+fn test_mutator_arithmetic(
+    #[case] name: &'static str,
+    #[case] input: &'static str,
+    #[case] expected_mutations: Option<Vec<&'static str>>,
+) {
     let mutator: UnaryOperatorMutator = UnaryOperatorMutator;
-    let test_case = MutatorTestCase {
-        name: "test_mutator",
-        input: "function f() { ++x; }",
-        expected_mutations: Some(vec!["--x", "~x", "-x", "x++", "x--"]),
-    };
+    let test_case = MutatorTestCase { name, input, expected_mutations };
     UnaryOperatorMutator::test_mutator(mutator, test_case);
 }
 

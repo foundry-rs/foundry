@@ -109,6 +109,7 @@ mockall = "0.13"
 globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
+rstest = "0.25.0"
 similar-asserts.workspace = true
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
