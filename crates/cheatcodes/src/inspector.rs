@@ -48,6 +48,7 @@ use revm::{
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
     context::BlockEnv,
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
+    handler::{FrameOrResult, FrameResult},
     interpreter::{
         interpreter_types::{Jumps, LoopControl},
         CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
@@ -100,27 +101,27 @@ pub trait CheatcodesExecutor {
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
-                    Box::new(EOFCreateInputs::new(
+                    &mut EOFCreateInputs::new(
                         inputs.caller,
                         inputs.value,
                         inputs.gas_limit,
                         EOFCreateKind::Tx { initdata: inputs.init_code },
-                    )),
+                    ),
                 )?
             } else {
-                evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
+                evm.handler.execution().create(&mut evm.context, &mut inputs)?
             };
 
             let mut result = match first_frame_or_result {
-                revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
-                revm::FrameOrResult::Result(result) => result,
+                FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
+                FrameOrResult::Result(result) => result,
             };
 
             evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
 
             let outcome = match result {
-                revm::FrameResult::Call(_) => unreachable!(),
-                revm::FrameResult::Create(create) | revm::FrameResult::EOFCreate(create) => create,
+                FrameResult::Call(_) => unreachable!(),
+                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
             evm.context.evm.inner.journaled_state.depth -= 1;
@@ -2223,11 +2224,11 @@ fn disallowed_mem_write(
         ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" U ")
     );
 
-    interpreter.instruction_result = InstructionResult::Revert;
-    interpreter.next_action = InterpreterAction::Return {
+    interpreter.control.instruction_result = InstructionResult::Revert;
+    interpreter.control.next_action = InterpreterAction::Return {
         result: InterpreterResult {
             output: Error::encode(revert_string),
-            gas: interpreter.gas,
+            gas: interpreter.control.gas,
             result: InstructionResult::Revert,
         },
     };
