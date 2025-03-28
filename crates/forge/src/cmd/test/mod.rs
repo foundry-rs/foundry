@@ -196,10 +196,17 @@ pub struct TestArgs {
     pub watch: WatchArgs,
 
     /// Enable mutation testing.
-    /// If passed without arguments, all contracts will be tested.
     /// If passed with file paths, only those files will be tested.
     #[arg(long, num_args(0..), value_name = "PATH")]
     pub mutate: Option<Vec<PathBuf>>,
+
+    /// Specify which files to mutate with glob pattern matching.
+    #[arg(long, value_name = "PATTERN", requires = "mutate")]
+    pub mutate_path: Option<GlobMatcher>,
+
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[arg(long, value_name = "REGEX", requires = "mutate")]
+    pub mutate_contract: Option<regex::Regex>,
 }
 
 impl TestArgs {
@@ -447,13 +454,29 @@ impl TestArgs {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
-            let mutate_paths = if self.mutate.as_ref().unwrap().is_empty() {
-                // If --mutate is passed without arguments, list all non-test contracts
+            let mutate_paths = if let Some(pattern) = &self.mutate_path {
+                // If --mutate-path is provided, use it to filter paths
                 source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
                     .filter(|entry| {
-                        entry.is_sol() && !entry.is_sol_test() // @todo filter out interfaces here?
-                                                               // we do it in lexing for now
+                        // @todo filter out interfaces here?
+                        // we do it in lexing for now
+                        entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry) 
                     })
+                    .collect()
+            } else if let Some(contract_pattern) = &self.mutate_contract {
+                // If --mutate-contract is provided, use it to filter contracts
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| {
+                        entry.is_sol() && !entry.is_sol_test() && 
+                        output.artifact_ids()
+                            .find(|(id, _)| id.source == *entry)
+                            .map_or(false, |(id, _)| contract_pattern.is_match(&id.name))
+                    })
+                    .collect()
+            } else if self.mutate.as_ref().unwrap().is_empty() {
+                // If --mutate is passed without arguments, use all Solidity files
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| entry.is_sol() && !entry.is_sol_test())
                     .collect()
             } else {
                 // If --mutate is passed with arguments, use those paths
