@@ -2,14 +2,17 @@ pub use crate::ic::*;
 use crate::{backend::DatabaseExt, precompiles::MaybeOdysseyPrecompiles, Env, InspectorExt};
 use alloy_evm::eth::EthEvmContext;
 use revm::{
-    context::{Evm, EvmData, JournalInner},
+    context::{
+        result::{EVMError, HaltReason},
+        ContextTr, Evm, EvmData, JournalInner,
+    },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
-        EvmTr,
+        EthFrame, EvmTr, Handler,
     },
     inspector::{inspect_instructions, InspectorEvmTr},
     interpreter::{interpreter::EthInterpreter, Interpreter, InterpreterTypes},
-    Journal,
+    Database, Journal,
 };
 
 /// [`revm::Context`] type used by Foundry.
@@ -128,6 +131,33 @@ pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
     // handler.append_handler_register_plain(create2_handler_register);
 
     FoundryEvm::new(ctx, inspector)
+}
+
+pub struct FoundryHandler<'db, I: InspectorExt> {
+    pub inner: FoundryEvm<'db, I>,
+}
+
+impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
+    pub fn new(ctx: FoundryEvmCtx<'db>, inspector: I) -> Self {
+        FoundryHandler { inner: FoundryEvm::new(ctx, inspector) }
+    }
+}
+
+impl<'db, I> Handler for FoundryHandler<'db, I>
+where
+    I: InspectorExt,
+{
+    type Evm = FoundryEvm<'db, I>;
+    type Error = EVMError<<<FoundryEvmCtx<'db> as ContextTr>::Db as Database>::Error>;
+    type Frame = EthFrame<
+    Self::Evm,
+    Self::Error,
+    <EthInstructions<
+        EthInterpreter,
+        FoundryEvmCtx<'db>,
+    > as InstructionProvider>::InterpreterTypes,
+>;
+    type HaltReason = HaltReason;
 }
 
 //  Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
