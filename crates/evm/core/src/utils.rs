@@ -14,15 +14,13 @@ use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    context::{result::HaltReason, ContextTr, Evm, EvmData, JournalInner},
+    context::{result::HaltReason, ContextTr, Evm, EvmData, JournalInner, Transaction as RevmTransaction},
     context_interface::{result::EVMError, CreateScheme},
     handler::{
-        instructions::EthInstructions, EthFrame, EthPrecompiles, FrameOrResult, FrameResult,
-        Handler, PrecompileProvider,
+        instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameOrResult, FrameResult, Handler, ItemOrResult, PrecompileProvider
     },
     interpreter::{
-        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
-        CreateInputs, CreateOutcome, Gas, InstructionResult, InterpreterResult,
+        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome, Gas, InitialAndFloorGas, InstructionResult, InterpreterResult
     },
     precompile::PrecompileError,
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
@@ -178,140 +176,6 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-fn get_create2_factory_call_inputs(
-    salt: U256,
-    inputs: CreateInputs,
-    deployer: Address,
-) -> CallInputs {
-    let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
-    CallInputs {
-        caller: inputs.caller,
-        bytecode_address: deployer,
-        target_address: deployer,
-        scheme: CallScheme::Call,
-        value: CallValue::Transfer(inputs.value),
-        input: calldata.into(),
-        gas_limit: inputs.gas_limit,
-        is_static: false,
-        return_memory_offset: 0..0,
-        is_eof: false,
-    }
-}
-
-/// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
-///
-/// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
-/// true. Keeps track of overridden frames and handles outcome in the overridden
-/// insert_call_outcome hook by inserting decoded address directly into interpreter.
-///
-/// Should be installed after [revm::inspector_handle_register] and before any other registers.
-// pub fn create2_handler_register<I: InspectorExt>(
-//     handler: &mut Handler<'_, I, &mut dyn DatabaseExt>,
-// ) {
-//     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
-
-//     let create2_overrides_inner = create2_overrides.clone();
-//     let old_handle = handler.execution.create.clone();
-//     handler.execution.create =
-//         Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DatabaseError>> {
-//             let CreateScheme::Create2 { salt } = inputs.scheme else {
-//                 return old_handle(ctx, inputs);
-//             };
-//             if !ctx.external.should_use_create2_factory(&mut ctx.evm, &mut inputs) {
-//                 return old_handle(ctx, inputs);
-//             }
-
-//             let gas_limit = inputs.gas_limit;
-
-//             // Get CREATE2 deployer.
-//             let create2_deployer = ctx.external.create2_deployer();
-//             // Generate call inputs for CREATE2 factory.
-//             let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs,
-// create2_deployer);
-
-//             // Call inspector to change input or return outcome.
-//             let outcome = ctx.external.call(&mut ctx.evm, &mut call_inputs);
-
-//             // Push data about current override to the stack.
-//             create2_overrides_inner
-//                 .borrow_mut()
-//                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
-
-//             // Sanity check that CREATE2 deployer exists.
-//             let code_hash = ctx.evm.load_account(create2_deployer)?.info.code_hash;
-//             if code_hash == KECCAK_EMPTY {
-//                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
-//                     result: InterpreterResult {
-//                         result: InstructionResult::Revert,
-//                         output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
-//                         gas: Gas::new(gas_limit),
-//                     },
-//                     memory_offset: 0..0,
-//                 })))
-//             } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
-//                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
-//                     result: InterpreterResult {
-//                         result: InstructionResult::Revert,
-//                         output: "invalid CREATE2 deployer bytecode".into(),
-//                         gas: Gas::new(gas_limit),
-//                     },
-//                     memory_offset: 0..0,
-//                 })))
-//             }
-
-//             // Handle potential inspector override.
-//             if let Some(outcome) = outcome {
-//                 return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
-//             }
-
-//             // Create CALL frame for CREATE2 factory invocation.
-//             let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
-
-//             if let Ok(FrameOrResult::Item(frame)) = &mut frame_or_result {
-//                 ctx.external
-//                     .initialize_interp(&mut frame.frame_data_mut().interpreter, &mut ctx.evm)
-//             }
-//             frame_or_result
-//         });
-
-//     let create2_overrides_inner = create2_overrides;
-//     let old_handle = handler.execution.insert_call_outcome.clone();
-//     handler.execution.insert_call_outcome =
-//         Arc::new(move |ctx, frame, shared_memory, mut outcome| {
-//             // If we are on the depth of the latest override, handle the outcome.
-//             if create2_overrides_inner
-//                 .borrow()
-//                 .last()
-//                 .is_some_and(|(depth, _)| *depth == ctx.evm.journaled_state.depth())
-//             {
-//                 let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
-//                 outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);
-
-//                 // Decode address from output.
-//                 let address = match outcome.instruction_result() {
-//                     return_ok!() => Address::try_from(outcome.output().as_ref())
-//                         .map_err(|_| {
-//                             outcome.result = InterpreterResult {
-//                                 result: InstructionResult::Revert,
-//                                 output: "invalid CREATE2 factory output".into(),
-//                                 gas: Gas::new(call_inputs.gas_limit),
-//                             };
-//                         })
-//                         .ok(),
-//                     _ => None,
-//                 };
-//                 frame
-//                     .frame_data_mut()
-//                     .interpreter
-//                     .insert_create_outcome(CreateOutcome { address, result: outcome.result });
-
-//                 Ok(())
-//             } else {
-//                 old_handle(ctx, frame, shared_memory, outcome)
-//             }
-//         });
-// }
-
 /// [`PrecompileProvider`] wrapper that enables [`P256VERIFY`] if `odyssey` is enabled.
 pub struct MaybeOdysseyPrecompiles {
     inner: EthPrecompiles,
@@ -415,23 +279,183 @@ impl<'db, INSP> Default for FoundryHandler<'db, INSP> {
 
 impl<'db, INSP> Handler for FoundryHandler<'db, INSP>
 where
-    FoundryEvm<'db, INSP>: revm::handler::EvmTr<
+    FoundryEvm<'db, INSP>: EvmTr<
         Context = FoundryEvmCtx<'db>,
         Precompiles = MaybeOdysseyPrecompiles,
-        Instructions = revm::handler::instructions::EthInstructions<
-            revm::interpreter::interpreter::EthInterpreter,
+        Instructions = EthInstructions<
+            EthInterpreter,
             FoundryEvmCtx<'db>,
         >,
     >,
     INSP: revm::inspector::Inspector<
         FoundryEvmCtx<'db>,
-        revm::interpreter::interpreter::EthInterpreter,
+        EthInterpreter,
     >,
 {
     type Evm = FoundryEvm<'db, INSP>;
     type Error = EVMError<<<FoundryEvmCtx<'db> as ContextTr>::Db as Database>::Error>;
     type Frame = EthFrame<Self::Evm, Self::Error, <EthInstructions<EthInterpreter, FoundryEvmCtx<'db>> as revm::handler::instructions::InstructionProvider>::InterpreterTypes>;
     type HaltReason = HaltReason;
+
+    // let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
+
+    /// Creates and executes the initial frame, then processes the execution loop.
+    ///
+    /// Always calls [Handler::last_frame_result] to handle returned gas from the call.
+    #[inline]
+    fn execution(
+        &mut self,
+        evm: &mut Self::Evm,
+        init_and_floor_gas: &InitialAndFloorGas,
+    ) -> Result<FrameResult, Self::Error> {
+        let gas_limit = evm.ctx().tx().gas_limit() - init_and_floor_gas.initial_gas;
+
+        // Create first frame action
+        let first_frame_input = self.first_frame_input(evm, gas_limit)?;
+        let first_frame = self.first_frame_init(evm, first_frame_input)?;
+        let mut frame_result = match first_frame {
+            ItemOrResult::Item(frame) => self.run_exec_loop(evm, frame)?,
+            ItemOrResult::Result(result) => result,
+        };
+
+        self.last_frame_result(evm, &mut frame_result)?;
+        Ok(frame_result)
+    }
+
+    /// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
+    ///
+    /// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
+    /// true. Keeps track of overridden frames and handles outcome in the overridden
+    /// insert_call_outcome hook by inserting decoded address directly into interpreter.
+    ///
+    /// Should be installed after [revm::inspector_handle_register] and before any other registers.
+    // pub fn create2_handler_register<I: InspectorExt>(
+    //     handler: &mut Handler<'_, I, &mut dyn DatabaseExt>,
+    // ) {
+    //     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
+
+    //     let create2_overrides_inner = create2_overrides.clone();
+    //     let old_handle = handler.execution.create.clone();
+    //     handler.execution.create =
+    //         Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DatabaseError>> {
+    //             let CreateScheme::Create2 { salt } = inputs.scheme else {
+    //                 return old_handle(ctx, inputs);
+    //             };
+    //             if !ctx.external.should_use_create2_factory(&mut ctx.evm, &mut inputs) {
+    //                 return old_handle(ctx, inputs);
+    //             }
+
+    //             let gas_limit = inputs.gas_limit;
+
+    //             // Get CREATE2 deployer.
+    //             let create2_deployer = ctx.external.create2_deployer();
+    //             // Generate call inputs for CREATE2 factory.
+    //             let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs,
+    // create2_deployer);
+
+    //             // Call inspector to change input or return outcome.
+    //             let outcome = ctx.external.call(&mut ctx.evm, &mut call_inputs);
+
+    //             // Push data about current override to the stack.
+    //             create2_overrides_inner
+    //                 .borrow_mut()
+    //                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
+
+    //             // Sanity check that CREATE2 deployer exists.
+    //             let code_hash = ctx.evm.load_account(create2_deployer)?.info.code_hash;
+    //             if code_hash == KECCAK_EMPTY {
+    //                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
+    //                     result: InterpreterResult {
+    //                         result: InstructionResult::Revert,
+    //                         output: format!("missing CREATE2 deployer:
+    // {create2_deployer}").into(),                         gas: Gas::new(gas_limit),
+    //                     },
+    //                     memory_offset: 0..0,
+    //                 })))
+    //             } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+    //                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
+    //                     result: InterpreterResult {
+    //                         result: InstructionResult::Revert,
+    //                         output: "invalid CREATE2 deployer bytecode".into(),
+    //                         gas: Gas::new(gas_limit),
+    //                     },
+    //                     memory_offset: 0..0,
+    //                 })))
+    //             }
+
+    //             // Handle potential inspector override.
+    //             if let Some(outcome) = outcome {
+    //                 return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
+    //             }
+
+    //             // Create CALL frame for CREATE2 factory invocation.
+    //             let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
+
+    //             if let Ok(FrameOrResult::Item(frame)) = &mut frame_or_result {
+    //                 ctx.external
+    //                     .initialize_interp(&mut frame.frame_data_mut().interpreter, &mut ctx.evm)
+    //             }
+    //             frame_or_result
+    //         });
+
+    //     let create2_overrides_inner = create2_overrides;
+    //     let old_handle = handler.execution.insert_call_outcome.clone();
+    //     handler.execution.insert_call_outcome =
+    //         Arc::new(move |ctx, frame, shared_memory, mut outcome| {
+    //             // If we are on the depth of the latest override, handle the outcome.
+    //             if create2_overrides_inner
+    //                 .borrow()
+    //                 .last()
+    //                 .is_some_and(|(depth, _)| *depth == ctx.evm.journaled_state.depth())
+    //             {
+    //                 let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
+    //                 outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);
+
+    //                 // Decode address from output.
+    //                 let address = match outcome.instruction_result() {
+    //                     return_ok!() => Address::try_from(outcome.output().as_ref())
+    //                         .map_err(|_| {
+    //                             outcome.result = InterpreterResult {
+    //                                 result: InstructionResult::Revert,
+    //                                 output: "invalid CREATE2 factory output".into(),
+    //                                 gas: Gas::new(call_inputs.gas_limit),
+    //                             };
+    //                         })
+    //                         .ok(),
+    //                     _ => None,
+    //                 };
+    //                 frame
+    //                     .frame_data_mut()
+    //                     .interpreter
+    //                     .insert_create_outcome(CreateOutcome { address, result: outcome.result
+    // });
+
+    //                 Ok(())
+    //             } else {
+    //                 old_handle(ctx, frame, shared_memory, outcome)
+    //             }
+    //         });
+    // }
+
+    // fn get_create2_factory_call_inputs(
+    //     salt: U256,
+    //     inputs: CreateInputs,
+    //     deployer: Address,
+    // ) -> CallInputs {
+    //     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
+    //     CallInputs {
+    //         caller: inputs.caller,
+    //         bytecode_address: deployer,
+    //         target_address: deployer,
+    //         scheme: CallScheme::Call,
+    //         value: CallValue::Transfer(inputs.value),
+    //         input: calldata.into(),
+    //         gas_limit: inputs.gas_limit,
+    //         is_static: false,
+    //         return_memory_offset: 0..0,
+    //         is_eof: false,
+    //     }
+    // }
 }
 
 /// Creates a new EVM with the given inspector.
