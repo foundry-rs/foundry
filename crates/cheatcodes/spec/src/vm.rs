@@ -2172,7 +2172,7 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
 
-    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce   
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
@@ -2799,13 +2799,13 @@ impl PartialEq for ForgeContext {
             (_, Self::ScriptGroup) => {
                 matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (Self::Test, Self::Test) |
-            (Self::Snapshot, Self::Snapshot) |
-            (Self::Coverage, Self::Coverage) |
-            (Self::ScriptDryRun, Self::ScriptDryRun) |
-            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
-            (Self::ScriptResume, Self::ScriptResume) |
-            (Self::Unknown, Self::Unknown) => true,
+            (Self::Test, Self::Test)
+            | (Self::Snapshot, Self::Snapshot)
+            | (Self::Coverage, Self::Coverage)
+            | (Self::ScriptDryRun, Self::ScriptDryRun)
+            | (Self::ScriptBroadcast, Self::ScriptBroadcast)
+            | (Self::ScriptResume, Self::ScriptResume)
+            | (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }
