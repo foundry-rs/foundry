@@ -460,17 +460,19 @@ impl TestArgs {
                     .filter(|entry| {
                         // @todo filter out interfaces here?
                         // we do it in lexing for now
-                        entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry) 
+                        entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry)
                     })
                     .collect()
             } else if let Some(contract_pattern) = &self.mutate_contract {
                 // If --mutate-contract is provided, use it to filter contracts
                 source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
                     .filter(|entry| {
-                        entry.is_sol() && !entry.is_sol_test() && 
-                        output.artifact_ids()
-                            .find(|(id, _)| id.source == *entry)
-                            .map_or(false, |(id, _)| contract_pattern.is_match(&id.name))
+                        entry.is_sol() &&
+                            !entry.is_sol_test() &&
+                            output
+                                .artifact_ids()
+                                .find(|(id, _)| id.source == *entry)
+                                .map_or(false, |(id, _)| contract_pattern.is_match(&id.name))
                     })
                     .collect()
             } else if self.mutate.as_ref().unwrap().is_empty() {

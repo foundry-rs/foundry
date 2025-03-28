@@ -8,24 +8,6 @@ pub struct UnaryOperatorMutator;
 
 impl Mutator for UnaryOperatorMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
-        // bool only have the Neg operator as possible mutation
-        if let Some(expr) = context.expr.as_ref().and_then(|expr| match &expr.kind {
-            ExprKind::Lit(expr, _) => Some(expr),
-            _ => None,
-        }) {
-            // Check if it's a boolean literal
-            if let LitKind::Bool(val) = expr.kind {
-                return Ok(vec![Mutant {
-                    span: expr.span,
-                    mutation: MutationType::UnaryOperator(UnaryOpMutated::new(
-                        format!("!{val}"),
-                        UnOpKind::Not,
-                    )),
-                    path: PathBuf::default(),
-                }]);
-            }
-        }
-
         let operations = vec![
             UnOpKind::PreInc, // number
             UnOpKind::PreDec, // n
@@ -65,6 +47,18 @@ impl Mutator for UnaryOperatorMutator {
             }
             _ => String::new(),
         };
+
+        // Bool has only the Not operator as possible target -> we try removing it
+        if op == UnOpKind::Not {
+            return Ok(vec![Mutant {
+                span: expr.span,
+                mutation: MutationType::UnaryOperator(UnaryOpMutated::new(
+                    format!("{}", target_content),
+                    UnOpKind::Not,
+                )),
+                path: PathBuf::default(),
+            }]);
+        }
 
         let mut mutations: Vec<Mutant>;
 

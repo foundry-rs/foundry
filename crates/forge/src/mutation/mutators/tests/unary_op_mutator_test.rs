@@ -35,6 +35,17 @@ fn test_mutator() {
 }
 
 #[test]
+fn test_mutator_bool() {
+    let mutator: UnaryOperatorMutator = UnaryOperatorMutator;
+    let test_case = MutatorTestCase {
+        name: "test_mutator",
+        input: "function f() { !a; }",
+        expected_mutations: Some(vec!["a"]),
+    };
+    UnaryOperatorMutator::test_mutator(mutator, test_case);
+}
+
+#[test]
 fn test_is_applicable_for_unary_expr() {
     let arena = Arena::new();
     let span = create_span(10, 20);
