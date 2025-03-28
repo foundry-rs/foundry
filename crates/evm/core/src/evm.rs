@@ -10,7 +10,7 @@ use revm::{
         instructions::{EthInstructions, InstructionProvider},
         EthFrame, EvmTr, Handler,
     },
-    inspector::{inspect_instructions, InspectorEvmTr, InspectorHandler},
+    inspector::{inspect_instructions, InspectorEvmTr},
     interpreter::{interpreter::EthInterpreter, Interpreter, InterpreterTypes},
     Database, Journal,
 };

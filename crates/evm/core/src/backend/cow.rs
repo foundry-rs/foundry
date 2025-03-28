@@ -7,7 +7,7 @@ use crate::{
         RevertStateSnapshotAction,
     },
     fork::{CreateFork, ForkId},
-    AsEnvMut, Env, EnvMut, InspectorExt,
+    AsEnvMut, AsEnvRef, Env, EnvRef, InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
@@ -92,7 +92,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend.
     ///
     /// If this is the first time this is called, the backed is cloned and initialized.
-    fn backend_mut(&mut self, env: EnvMut<'_>) -> &mut Backend {
+    fn backend_mut(&mut self, env: EnvRef<'_>) -> &mut Backend {
         if !self.is_initialized {
             let backend = self.backend.to_mut();
             let mut env = env.to_owned();
@@ -115,7 +115,7 @@ impl<'a> CowBackend<'a> {
 
 impl DatabaseExt for CowBackend<'_> {
     fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &mut Env) -> U256 {
-        self.backend_mut(env.as_env_mut()).snapshot_state(journaled_state, env)
+        self.backend_mut(env.as_env_ref()).snapshot_state(journaled_state, env)
     }
 
     fn revert_state(
@@ -125,7 +125,7 @@ impl DatabaseExt for CowBackend<'_> {
         current: &mut Env,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
-        self.backend_mut(current.as_env_mut()).revert_state(id, journaled_state, current, action)
+        self.backend_mut(current.as_env_ref()).revert_state(id, journaled_state, current, action)
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
@@ -160,7 +160,7 @@ impl DatabaseExt for CowBackend<'_> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut(env.as_env_mut()).select_fork(id, env, journaled_state)
+        self.backend_mut(env.as_env_ref()).select_fork(id, env, journaled_state)
     }
 
     fn roll_fork(
@@ -170,7 +170,7 @@ impl DatabaseExt for CowBackend<'_> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut(env.as_env_mut()).roll_fork(id, block_number, env, journaled_state)
+        self.backend_mut(env.as_env_ref()).roll_fork(id, block_number, env, journaled_state)
     }
 
     fn roll_fork_to_transaction(
@@ -180,7 +180,7 @@ impl DatabaseExt for CowBackend<'_> {
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut(env.as_env_mut()).roll_fork_to_transaction(
+        self.backend_mut(env.as_env_ref()).roll_fork_to_transaction(
             id,
             transaction,
             env,
@@ -196,7 +196,7 @@ impl DatabaseExt for CowBackend<'_> {
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(env.as_env_mut()).transact(
+        self.backend_mut(env.as_env_ref()).transact(
             id,
             transaction,
             env,
@@ -212,7 +212,7 @@ impl DatabaseExt for CowBackend<'_> {
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
-        self.backend_mut(env.as_env_mut()).transact_from_tx(
+        self.backend_mut(env.as_env_ref()).transact_from_tx(
             transaction,
             env,
             journaled_state,
@@ -249,7 +249,7 @@ impl DatabaseExt for CowBackend<'_> {
         allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
-        self.backend_mut(Env::default().as_env_mut()).load_allocs(allocs, journaled_state)
+        self.backend_mut(Env::default().as_env_ref()).load_allocs(allocs, journaled_state)
     }
 
     fn clone_account(
@@ -258,7 +258,7 @@ impl DatabaseExt for CowBackend<'_> {
         target: &Address,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
-        self.backend_mut(Env::default().as_env_mut()).clone_account(source, target, journaled_state)
+        self.backend_mut(Env::default().as_env_ref()).clone_account(source, target, journaled_state)
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {
