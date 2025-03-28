@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    utils::new_evm_with_context,
+    utils::{new_evm_with_context, FoundryEvmCtx},
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -148,9 +148,7 @@ fn with_evm<E, F, O>(
 ) -> Result<O, EVMError<DatabaseError>>
 where
     E: CheatcodesExecutor + ?Sized,
-    F: for<'a, 'b> FnOnce(
-        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
-    ) -> Result<O, EVMError<DatabaseError>>,
+    F: for<'a> FnOnce(&mut FoundryEvmCtx<'a>) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));

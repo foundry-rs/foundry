@@ -4,13 +4,17 @@ use super::{
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
-use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
+use foundry_evm_core::{
+    backend::DatabaseExt,
+    utils::{FoundryEvm, FoundryEvmCtx},
+    Env, InspectorExt,
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     context::{
         result::{ExecutionResult, Output},
-        BlockEnv,
+        BlockEnv, ContextTr,
     },
     context_interface::CreateScheme,
     inspectors::CustomPrintTracer,
@@ -20,7 +24,7 @@ use revm::{
     },
     primitives::{Env, EnvWithHandlerCfg, HashMap},
     state::{Account, AccountStatus},
-    EvmContext, Inspector, JournaledState,
+    EvmContext, ExecuteEvm, Inspector, JournaledState,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -498,16 +502,16 @@ impl InspectorStackRefMut<'_> {
 
     fn do_call_end(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmCtx,
         inputs: &CallInputs,
-        outcome: CallOutcome,
+        outcome: &mut CallOutcome,
     ) -> CallOutcome {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
             [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let new_outcome = inspector.call_end(ecx, inputs, outcome.clone());
+                let new_outcome = inspector.call_end(ecx, inputs, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -523,16 +527,16 @@ impl InspectorStackRefMut<'_> {
 
     fn do_create_end(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmCtx,
         call: &CreateInputs,
-        outcome: CreateOutcome,
+        outcome: &mut CreateOutcome,
     ) -> CreateOutcome {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let new_outcome = inspector.create_end(ecx, call, outcome.clone());
+                let new_outcome = inspector.create_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -548,16 +552,16 @@ impl InspectorStackRefMut<'_> {
 
     fn do_eofcreate_end(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmCtx,
         call: &EOFCreateInputs,
-        outcome: CreateOutcome,
+        outcome: &mut CreateOutcome,
     ) -> CreateOutcome {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
+                let new_outcome = inspector.eofcreate_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
@@ -573,40 +577,40 @@ impl InspectorStackRefMut<'_> {
 
     fn transact_inner(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
-        transact_to: TxKind,
+        ecx: &mut FoundryEvm<FoundryEvmCtx>,
+        kind: TxKind,
         caller: Address,
         input: Bytes,
         gas_limit: u64,
         value: U256,
     ) -> (InterpreterResult, Option<Address>) {
-        let ecx = &mut ecx.inner;
+        let cached_env = ecx.clone();
 
-        let cached_env = ecx.env.clone();
-
-        ecx.env.block.basefee = U256::ZERO;
-        ecx.env.tx.caller = caller;
-        ecx.env.tx.transact_to = transact_to;
-        ecx.env.tx.data = input;
-        ecx.env.tx.value = value;
+        ecx.block.basefee = U256::ZERO;
+        ecx.tx.caller = caller;
+        ecx.tx.kind = kind;
+        ecx.tx.data = input;
+        ecx.tx.value = value;
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx.env.tx.gas_limit = gas_limit + 21000;
+        ecx.tx.gas_limit = gas_limit + 21000;
+
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
-        if !ecx.env.cfg.disable_block_gas_limit {
-            ecx.env.tx.gas_limit =
-                std::cmp::min(ecx.env.tx.gas_limit, ecx.env.block.gas_limit.to());
+        if !ecx.cfg.disable_block_gas_limit {
+            ecx.tx.gas_limit = std::cmp::min(ecx.tx.gas_limit, ecx.block.gas_limit.to());
         }
-        ecx.env.tx.gas_price = U256::ZERO;
+        ecx.tx.gas_price = U256::ZERO;
 
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
-        let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
-        let res = self.with_stack(|inspector| {
-            let mut evm = crate::utils::new_evm_with_inspector(&mut ecx.db, env, inspector);
+        let env = Env::from(ecx);
+        env.evm_env.cfg_env.spec = ecx.spec_id();
 
-            evm.context.evm.inner.journaled_state.state = {
+        let res = self.with_stack(|inspector| {
+            let mut evm = crate::utils::new_evm_with_inspector(&mut ecx.db(), &mut env, inspector);
+
+            evm.journaled_state = {
                 let mut state = ecx.journaled_state.state.clone();
 
                 for (addr, acc_mut) in &mut state {
@@ -626,20 +630,19 @@ impl InspectorStackRefMut<'_> {
             };
 
             // set depth to 1 to make sure traces are collected correctly
-            evm.context.evm.inner.journaled_state.depth = 1;
+            evm.journaled_state.depth = 1;
 
-            let res = evm.transact();
+            let res = evm.replay();
 
             // need to reset the env in case it was modified via cheatcodes during execution
-            ecx.env = evm.context.evm.inner.env;
+            ecx = cached_env;
             res
         });
 
         self.in_inner_context = false;
         self.inner_context_data = None;
-
-        ecx.env.tx = cached_env.tx;
-        ecx.env.block.basefee = cached_env.block.basefee;
+        ecx.tx = cached_env.tx;
+        ecx.block.basefee = cached_env.block.basefee;
 
         let mut gas = Gas::new(gas_limit);
 
@@ -757,7 +760,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvm<FoundryEvmCtx>,
     ) {
         call_inspectors!(
             [&mut self.coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
@@ -765,7 +768,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvm<FoundryEvmCtx>) {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -778,11 +781,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         );
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
-    ) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvm<FoundryEvmCtx>) {
         call_inspectors!(
             [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
@@ -792,7 +791,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
     fn log(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvm<FoundryEvmCtx>,
         log: &Log,
     ) {
         call_inspectors!(
@@ -803,7 +802,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn call(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvm<FoundryEvmCtx>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
@@ -897,9 +896,9 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn call_end(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvm<FoundryEvmCtx>,
         inputs: &CallInputs,
-        outcome: CallOutcome,
+        outcome: &mut CallOutcome,
     ) -> CallOutcome {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
@@ -959,7 +958,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         &mut self,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
         call: &CreateInputs,
-        outcome: CreateOutcome,
+        outcome: &mut CreateOutcome,
     ) -> CreateOutcome {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
@@ -1024,7 +1023,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         &mut self,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
         call: &EOFCreateInputs,
-        outcome: CreateOutcome,
+        outcome: &mut CreateOutcome,
     ) -> CreateOutcome {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
@@ -1105,7 +1104,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         &mut self,
         context: &mut EvmContext<&mut dyn DatabaseExt>,
         inputs: &CallInputs,
-        outcome: CallOutcome,
+        outcome: &mut CallOutcome,
     ) -> CallOutcome {
         self.as_mut().call_end(context, inputs, outcome)
     }
@@ -1122,7 +1121,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         &mut self,
         context: &mut EvmContext<&mut dyn DatabaseExt>,
         call: &CreateInputs,
-        outcome: CreateOutcome,
+        outcome: &mut CreateOutcome,
     ) -> CreateOutcome {
         self.as_mut().create_end(context, call, outcome)
     }
@@ -1139,7 +1138,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         &mut self,
         context: &mut EvmContext<&mut dyn DatabaseExt>,
         call: &EOFCreateInputs,
-        outcome: CreateOutcome,
+        outcome: &mut CreateOutcome,
     ) -> CreateOutcome {
         self.as_mut().eofcreate_end(context, call, outcome)
     }

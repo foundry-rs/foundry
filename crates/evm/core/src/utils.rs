@@ -405,7 +405,7 @@ pub type FoundryEvm<'db, INSP> = Evm<
 >;
 
 /// Creates a new EVM with the given inspector.
-pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
     env: &mut Env,
     inspector: &'i mut I,
