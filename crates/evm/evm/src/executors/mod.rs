@@ -6,14 +6,17 @@
 // `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
-use crate::inspectors::{
-    cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
+use crate::{
+    inspectors::{
+        cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
+    },
+    Env,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     map::{AddressHashMap, HashMap},
-    Address, Bytes, Log, U256,
+    Address, Bytes, Log, TxKind, U256,
 };
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
@@ -24,19 +27,20 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
-    InspectorExt,
+    EvmEnv, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     bytecode::Bytecode,
     context::{BlockEnv, TxEnv},
-    context_interface::result::{ExecutionResult, Output, ResultAndState},
+    context_interface::{
+        result::{ExecutionResult, Output, ResultAndState},
+        transaction::SignedAuthorization,
+    },
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
-    primitives::{
-        hardfork::SpecId, AuthorizationList, Env, EnvWithHandlerCfg, SignedAuthorization, TxKind,
-    },
+    primitives::hardfork::SpecId,
 };
 use std::{
     borrow::Cow,
@@ -631,23 +635,25 @@ impl Executor {
     fn build_test_env(
         &self,
         caller: Address,
-        transact_to: TxKind,
+        kind: TxKind,
         data: Bytes,
         value: U256,
     ) -> EnvWithHandlerCfg {
         let env = Env {
-            cfg: self.env().cfg.clone(),
-            // We always set the gas price to 0 so we can execute the transaction regardless of
-            // network conditions - the actual gas price is kept in `self.block` and is applied by
-            // the cheatcode handler if it is enabled
-            block: BlockEnv {
-                basefee: U256::ZERO,
-                gas_limit: U256::from(self.gas_limit),
-                ..self.env().block.clone()
+            evm_env: EvmEnv {
+                cfg_env: self.env().evm_env.cfg_env.clone(),
+                // We always set the gas price to 0 so we can execute the transaction regardless of
+                // network conditions - the actual gas price is kept in `self.block` and is applied
+                // by the cheatcode handler if it is enabled
+                block_env: BlockEnv {
+                    basefee: U256::ZERO,
+                    gas_limit: U256::from(self.gas_limit),
+                    ..self.env().block.clone()
+                },
             },
             tx: TxEnv {
                 caller,
-                transact_to,
+                kind,
                 data,
                 value,
                 // As above, we set the gas price to 0.
@@ -939,6 +945,7 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
+        0,
         0,
     );
 
