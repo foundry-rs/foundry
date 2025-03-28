@@ -2162,7 +2162,7 @@ interface Vm {
 
     /// Sign an EIP-7702 authorization for delegation for specific nonce
     #[cheatcode(group = Scripting)]
-    function signDelegation(address implementation, uint256 privateKey,  uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+    function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]

@@ -54,7 +54,7 @@ impl Cheatcode for attachDelegationCall {
     }
 }
 
-impl Cheatcode for signDelegationCall {
+impl Cheatcode for signDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = self;
         let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
@@ -65,7 +65,7 @@ impl Cheatcode for signDelegationCall {
     }
 }
 
-impl Cheatcode for signDelegationWithNonceCall {
+impl Cheatcode for signDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = self;
         let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
@@ -75,7 +75,7 @@ impl Cheatcode for signDelegationWithNonceCall {
     }
 }
 
-impl Cheatcode for signAndAttachDelegationCall {
+impl Cheatcode for signAndAttachDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = self;
         let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
@@ -90,7 +90,7 @@ impl Cheatcode for signAndAttachDelegationCall {
 }
 
 
-impl Cheatcode for signAndAttachDelegationWithNonceCall {
+impl Cheatcode for signAndAttachDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = self;
         let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;

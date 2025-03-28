@@ -9316,7 +9316,7 @@
     },
     {
       "func": {
-        "id": "signAndAttachDelegation",
+        "id": "signAndAttachDelegation_0",
         "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction",
         "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
@@ -9336,18 +9336,18 @@
     },
     {
       "func": {
-        "id": "signAndAttachDelegationWithNonce",
+        "id": "signAndAttachDelegation_1",
         "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce",
-        "declaration": "function signAndAttachDelegationWithNonce(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
         "mutability": "",
-        "signature": "signAndAttachDelegationWithNonce(address,uint256,uint64)",
-        "selector": "0x6867c2f3",
+        "signature": "signAndAttachDelegation(address,uint256,uint64)",
+        "selector": "0xcde3e5be",
         "selectorBytes": [
-          104,
-          103,
-          194,
-          243
+          205,
+          227,
+          229,
+          190
         ]
       },
       "group": "scripting",
@@ -9436,7 +9436,7 @@
     },
     {
       "func": {
-        "id": "signDelegation",
+        "id": "signDelegation_0",
         "description": "Sign an EIP-7702 authorization for delegation",
         "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
@@ -9456,18 +9456,18 @@
     },
     {
       "func": {
-        "id": "signDelegationWithNonce",
+        "id": "signDelegation_1",
         "description": "Sign an EIP-7702 authorization for delegation for specific nonce",
-        "declaration": "function signDelegationWithNonce(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
         "mutability": "",
-        "signature": "signDelegationWithNonce(address,uint256,uint64)",
-        "selector": "0xb9ebba52",
+        "signature": "signDelegation(address,uint256,uint64)",
+        "selector": "0xceba2ec3",
         "selectorBytes": [
-          185,
-          235,
+          206,
           186,
-          82
+          46,
+          195
         ]
       },
       "group": "scripting",
