@@ -4,7 +4,7 @@ use crate::{
     Env, InspectorExt,
 };
 use alloy_consensus::BlockHeader;
-use alloy_evm::eth::EthEvmContext;
+use alloy_evm::{eth::EthEvmContext, EvmError};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, Bytes, Selector, TxKind, B256, U256};
@@ -14,11 +14,11 @@ use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    context::{ContextTr, Evm, EvmData, JournalInner},
+    context::{result::HaltReason, ContextTr, Evm, EvmData, JournalInner},
     context_interface::{result::EVMError, CreateScheme},
     handler::{
-        instructions::EthInstructions, EthPrecompiles, FrameOrResult, FrameResult, Handler,
-        PrecompileProvider,
+        instructions::EthInstructions, EthFrame, EthPrecompiles, FrameOrResult, FrameResult,
+        Handler, PrecompileProvider,
     },
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
@@ -26,7 +26,7 @@ use revm::{
     },
     precompile::PrecompileError,
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
-    Journal,
+    Database, Journal,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -393,16 +393,46 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for MaybeOdysseyPrecompiles {
     }
 }
 
-/// [`revm::Context`] type used by Foundry.
+/// The [`revm::Context`] type used by Foundry.
 pub type FoundryEvmCtx<'a> = EthEvmContext<&'a mut dyn DatabaseExt>;
 
-/// Type alias for revm's EVM used by Foundry.
+/// Type alias for Foundry's EVM.
 pub type FoundryEvm<'db, INSP> = Evm<
     FoundryEvmCtx<'db>,
     INSP,
     EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>,
     MaybeOdysseyPrecompiles,
 >;
+
+/// Handler for Foundry's EVM.
+pub struct FoundryHandler<'db, INSP>(core::marker::PhantomData<&'db INSP>);
+
+impl<'db, INSP> Default for FoundryHandler<'db, INSP> {
+    fn default() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
+
+impl<'db, INSP> Handler for FoundryHandler<'db, INSP>
+where
+    FoundryEvm<'db, INSP>: revm::handler::EvmTr<
+        Context = FoundryEvmCtx<'db>,
+        Precompiles = MaybeOdysseyPrecompiles,
+        Instructions = revm::handler::instructions::EthInstructions<
+            revm::interpreter::interpreter::EthInterpreter,
+            FoundryEvmCtx<'db>,
+        >,
+    >,
+    INSP: revm::inspector::Inspector<
+        FoundryEvmCtx<'db>,
+        revm::interpreter::interpreter::EthInterpreter,
+    >,
+{
+    type Evm = FoundryEvm<'db, INSP>;
+    type Error = EVMError<<<FoundryEvmCtx<'db> as ContextTr>::Db as Database>::Error>;
+    type Frame = EthFrame<Self::Evm, Self::Error, <EthInstructions<EthInterpreter, FoundryEvmCtx<'db>> as revm::handler::instructions::InstructionProvider>::InterpreterTypes>;
+    type HaltReason = HaltReason;
+}
 
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
