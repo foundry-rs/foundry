@@ -29,7 +29,7 @@ fn test_mutator() {
     let test_case = MutatorTestCase {
         name: "test_mutator",
         input: "function f() { ++x; }",
-        expected_mutations: Some(vec!["a", "a", "a", "a", "a"]),
+        expected_mutations: Some(vec!["--x", "~x", "-x", "x++", "x--"]),
     };
     UnaryOperatorMutator::test_mutator(mutator, test_case);
 }

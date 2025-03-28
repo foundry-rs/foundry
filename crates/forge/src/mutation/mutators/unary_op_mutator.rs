@@ -15,7 +15,6 @@ impl Mutator for UnaryOperatorMutator {
         }) {
             // Check if it's a boolean literal
             if let LitKind::Bool(val) = expr.kind {
-                // Return early with your vector
                 return Ok(vec![Mutant {
                     span: expr.span,
                     mutation: MutationType::UnaryOperator(UnaryOpMutated::new(

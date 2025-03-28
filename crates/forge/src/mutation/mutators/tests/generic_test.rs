@@ -58,6 +58,10 @@ pub trait MutatorTester {
                     "Wrong number of mutants generated for case: {}",
                     test_case.name
                 );
+
+                for mutation in mutations {
+                    assert!(expected.contains(&mutation.mutation.to_string().as_str()));
+                }
             } else {
                 assert_eq!(
                     mutations.len(),
