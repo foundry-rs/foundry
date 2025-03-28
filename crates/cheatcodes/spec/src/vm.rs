@@ -2162,7 +2162,7 @@ interface Vm {
 
     /// Sign an EIP-7702 authorization for delegation for specific nonce
     #[cheatcode(group = Scripting)]
-    function signDelegationWithNonce(address implementation, uint256 privateKey,  uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+    function signDelegation(address implementation, uint256 privateKey,  uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
@@ -2174,7 +2174,7 @@ interface Vm {
 
     /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce   
     #[cheatcode(group = Scripting)]
-    function signAndAttachDelegationWithNonce(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+    function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
