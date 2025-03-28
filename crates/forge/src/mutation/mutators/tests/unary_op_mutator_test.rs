@@ -1,7 +1,12 @@
 use crate::mutation::{
     mutant::{Mutant, MutationType, UnaryOpMutated},
     mutators::{
-        tests::helper::*, unary_op_mutator::UnaryOperatorMutator, MutationContext, Mutator,
+        tests::{
+            generic_test::{MutatorTestCase, MutatorTester},
+            helper::*,
+        },
+        unary_op_mutator::UnaryOperatorMutator,
+        MutationContext, Mutator,
     },
     visitor::AssignVarTypes,
     Session,
@@ -15,6 +20,19 @@ use solar_parse::{
 };
 
 use super::*;
+
+impl MutatorTester for UnaryOperatorMutator {}
+
+#[test]
+fn test_mutator() {
+    let mutator: UnaryOperatorMutator = UnaryOperatorMutator;
+    let test_case = MutatorTestCase {
+        name: "test_mutator",
+        input: "function f() { ++x; }",
+        expected_mutations: Some(vec!["a", "a", "a", "a", "a"]),
+    };
+    UnaryOperatorMutator::test_mutator(mutator, test_case);
+}
 
 #[test]
 fn test_is_applicable_for_unary_expr() {
@@ -67,7 +85,7 @@ fn test_generate_prefixed_mutants() {
         .iter()
         .map(|m| match &m.mutation {
             MutationType::UnaryOperator(mutated) => mutated.resulting_op_kind,
-            _ => panic!("Expected binary op mutant"),
+            _ => panic!("Expected unary op mutant"),
         })
         .collect::<Vec<_>>();
 
