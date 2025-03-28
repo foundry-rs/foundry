@@ -1,58 +1,55 @@
-use crate::mutation::{
-    mutant::{Mutant, MutationType},
-    mutators::{assignement_mutator::AssignmentMutator, MutationContext, Mutator},
-    visitor::AssignVarTypes,
-    Session,
-};
-use num_bigint::BigInt;
+use crate::mutation::{mutators::Mutator, visitor::MutantVisitor, Session};
 use solar_parse::{
-    ast::{Arena, Expr, ExprKind, Ident, Lit, LitKind, Span, Symbol},
-    interface::BytePos,
+    ast::{interface::source_map::FileName, visit::Visit, Arena},
+    Parser,
 };
-use std::{collections::HashMap, hash::Hash, path::PathBuf};
 
-// Create a span for test use
-pub fn create_span(start: u32, end: u32) -> Span {
-    Span::new(BytePos(start), BytePos(end))
+use std::path::PathBuf;
+pub struct MutatorTestCase<'a> {
+    /// @dev needs to be in a function, to avoid parsing error from solar
+    /// eg `let input = "function f() { x = 1; }"` to test x = 1
+    pub input: &'a str,
+    /// All the mutations expected for this input, using this mutator
+    pub expected_mutations: Option<Vec<&'static str>>,
 }
 
-// Create identifier with given name
-pub fn create_ident(name: &str) -> Ident {
-    Ident::from_str(name)
-}
+pub trait MutatorTester {
+    fn test_mutator<M: Mutator + 'static>(mutator: M, test_case: MutatorTestCase<'_>) {
+        let arena = Arena::new();
+        let sess = Session::builder().with_silent_emitter(None).build();
 
-// Create number literal
-pub fn create_number_lit(value: u32, span: Span) -> Lit {
-    Lit { span, symbol: Symbol::DUMMY, kind: LitKind::Number(value.into()) }
-}
+        // let mut mutations: Vec<Mutant> = Vec::new();
+        let mut mutant_visitor = MutantVisitor::new_with_mutators(vec![Box::new(mutator)]);
 
-// Create boolean literal
-pub fn create_bool_lit(value: bool, span: Span) -> Lit {
-    Lit { span, symbol: Symbol::DUMMY, kind: LitKind::Bool(value) }
-}
+        let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
+            let mut parser = Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::Real(PathBuf::from(test_case.input)),
+                || Ok(test_case.input.to_string()),
+            )?;
 
-pub fn all_but_one<T: Eq + Hash>(theoretic: &[T], observed: &[T]) -> bool {
-    if theoretic.len() != observed.len() + 1 {
-        return false;
-    }
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-    let mut counts = HashMap::new();
+            mutant_visitor.visit_source_unit(&ast);
 
-    for item in theoretic {
-        *counts.entry(item).or_insert(0) += 1;
-    }
+            let mutations = mutant_visitor.mutation_to_conduct;
 
-    for item in observed {
-        if let Some(count) = counts.get_mut(item) {
-            *count -= 1;
-            if *count == 0 {
-                counts.remove(item);
+            // @todo test mutants content...
+            if let Some(expected) = test_case.expected_mutations {
+                assert_eq!(mutations.len(), expected.len());
+
+                for mutation in mutations {
+                    assert!(expected.contains(&mutation.mutation.to_string().as_str()));
+                }
+            } else {
+                assert_eq!(mutations.len(), 0);
             }
-        } else {
-            return false; // observed has something not in theoretic
-        }
-    }
 
-    // Only one item should remain in the map
-    counts.len() == 1 && counts.values().all(|&v| v == 1)
+            Ok(())
+        });
+    }
 }
+
+// Implement for unit test module
+impl MutatorTester for () {}
