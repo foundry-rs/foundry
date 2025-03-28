@@ -10,7 +10,7 @@ use revm::{
         instructions::{EthInstructions, InstructionProvider},
         EthFrame, EvmTr, Handler,
     },
-    inspector::{inspect_instructions, InspectorEvmTr},
+    inspector::{inspect_instructions, InspectorEvmTr, InspectorHandler},
     interpreter::{interpreter::EthInterpreter, Interpreter, InterpreterTypes},
     Database, Journal,
 };
@@ -101,6 +101,33 @@ impl<INSP: InspectorExt> InspectorEvmTr for FoundryEvm<'_, INSP> {
     }
 }
 
+pub struct FoundryHandler<'db, I: InspectorExt> {
+    pub inner: FoundryEvm<'db, I>,
+}
+
+impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
+    pub fn new(ctx: FoundryEvmCtx<'db>, inspector: I) -> Self {
+        FoundryHandler { inner: FoundryEvm::new(ctx, inspector) }
+    }
+}
+
+impl<'db, I> Handler for FoundryHandler<'db, I>
+where
+    I: InspectorExt,
+{
+    type Evm = FoundryEvm<'db, I>;
+    type Error = EVMError<<<FoundryEvmCtx<'db> as ContextTr>::Db as Database>::Error>;
+    type Frame = EthFrame<
+    Self::Evm,
+    Self::Error,
+    <EthInstructions<
+        EthInterpreter,
+        FoundryEvmCtx<'db>,
+    > as InstructionProvider>::InterpreterTypes,
+>;
+    type HaltReason = HaltReason;
+}
+
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
@@ -128,36 +155,11 @@ pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
     ctx: FoundryEvmCtx<'db>,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
-    // handler.append_handler_register_plain(create2_handler_register);
+    let handler = FoundryHandler::new(ctx, inspector);
 
-    FoundryEvm::new(ctx, inspector)
-}
+    // TODO: add handles here
 
-pub struct FoundryHandler<'db, I: InspectorExt> {
-    pub inner: FoundryEvm<'db, I>,
-}
-
-impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
-    pub fn new(ctx: FoundryEvmCtx<'db>, inspector: I) -> Self {
-        FoundryHandler { inner: FoundryEvm::new(ctx, inspector) }
-    }
-}
-
-impl<'db, I> Handler for FoundryHandler<'db, I>
-where
-    I: InspectorExt,
-{
-    type Evm = FoundryEvm<'db, I>;
-    type Error = EVMError<<<FoundryEvmCtx<'db> as ContextTr>::Db as Database>::Error>;
-    type Frame = EthFrame<
-    Self::Evm,
-    Self::Error,
-    <EthInstructions<
-        EthInterpreter,
-        FoundryEvmCtx<'db>,
-    > as InstructionProvider>::InterpreterTypes,
->;
-    type HaltReason = HaltReason;
+    handler.inner
 }
 
 //  Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
