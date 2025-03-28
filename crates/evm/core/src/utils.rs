@@ -198,13 +198,13 @@ fn get_create2_factory_call_inputs(
     }
 }
 
-// /// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
-// ///
-// /// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
-// /// true. Keeps track of overridden frames and handles outcome in the overridden
-// insert_call_outcome /// hook by inserting decoded address directly into interpreter.
-// ///
-// /// Should be installed after [revm::inspector_handle_register] and before any other registers.
+/// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
+///
+/// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
+/// true. Keeps track of overridden frames and handles outcome in the overridden
+/// insert_call_outcome hook by inserting decoded address directly into interpreter.
+///
+/// Should be installed after [revm::inspector_handle_register] and before any other registers.
 // pub fn create2_handler_register<I: InspectorExt>(
 //     handler: &mut Handler<'_, I, &mut dyn DatabaseExt>,
 // ) {
@@ -267,7 +267,7 @@ fn get_create2_factory_call_inputs(
 //             // Create CALL frame for CREATE2 factory invocation.
 //             let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
 
-//             if let Ok(FrameOrResult::Frame(frame)) = &mut frame_or_result {
+//             if let Ok(FrameOrResult::Item(frame)) = &mut frame_or_result {
 //                 ctx.external
 //                     .initialize_interp(&mut frame.frame_data_mut().interpreter, &mut ctx.evm)
 //             }

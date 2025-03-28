@@ -8,7 +8,6 @@
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::Address;
 use auto_impl::auto_impl;
-use backend::DatabaseExt;
 use revm::{inspector::NoOpInspector, interpreter::CreateInputs, Inspector};
 use revm_inspectors::access_list::AccessListInspector;
 
@@ -40,7 +39,7 @@ pub mod utils;
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
 /// handlers.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
+pub trait InspectorExt: for<'a> Inspector<FoundryEvmCtx<'a>> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
@@ -71,5 +70,4 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
 
 impl InspectorExt for NoOpInspector {}
 
-// TODO: fix this
-// impl InspectorExt for AccessListInspector {}
+impl InspectorExt for AccessListInspector {}
