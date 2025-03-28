@@ -25,6 +25,7 @@ pub struct FoundryEvm<'db, INSP> {
     >,
 }
 
+/// Implementation of revm's [`Evm`] for Foundry.
 impl<'db, INSP: InspectorExt> FoundryEvm<'db, INSP> {
     pub fn new(ctx: FoundryEvmCtx<'db>, inspector: INSP) -> Self {
         let is_odyssey = inspector.is_odyssey();
@@ -37,6 +38,7 @@ impl<'db, INSP: InspectorExt> FoundryEvm<'db, INSP> {
     }
 }
 
+/// Implementation of revm's [`EvmTr`] for FoundryEvm.
 impl<'db, INSP: InspectorExt> EvmTr for FoundryEvm<'db, INSP> {
     type Context = FoundryEvmCtx<'db>;
     type Instructions = EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>;
@@ -69,6 +71,7 @@ impl<'db, INSP: InspectorExt> EvmTr for FoundryEvm<'db, INSP> {
     }
 }
 
+/// Implementation of revm's [`InspectorEvmTr`] for FoundryEvm.
 impl<INSP: InspectorExt> InspectorEvmTr for FoundryEvm<'_, INSP> {
     type Inspector = INSP;
 
