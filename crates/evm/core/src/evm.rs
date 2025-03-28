@@ -131,7 +131,7 @@ where
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
-    env: &mut Env,
+    env: Env,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
     new_evm_with_context(

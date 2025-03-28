@@ -73,7 +73,7 @@ impl<'a> CowBackend<'a> {
         self.is_initialized = false;
         self.spec_id = env.evm_env.cfg_env.spec;
 
-        let mut evm = crate::evm::new_evm_with_inspector(self, env, inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
         let res = evm.inner.replay().wrap_err("EVM error")?;
 
@@ -208,7 +208,7 @@ impl DatabaseExt for CowBackend<'_> {
     fn transact_from_tx(
         &mut self,
         transaction: &TransactionRequest,
-        env: &mut Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
