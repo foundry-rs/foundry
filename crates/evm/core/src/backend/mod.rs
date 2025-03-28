@@ -202,7 +202,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -774,7 +774,7 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(self, env, inspector);
 
         let res = evm.inner.replay().wrap_err("EVM error")?;
 
@@ -1238,7 +1238,7 @@ impl DatabaseExt for Backend {
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1260,9 +1260,9 @@ impl DatabaseExt for Backend {
         // So we modify the env to match the transaction's block.
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
-        update_env_block(env, &block);
+        update_env_block(&mut env, &block);
 
-        let env = self.env_with_handler_cfg(env);
+        let env = self.env_with_handler_cfg(&env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
             &tx,
@@ -1288,10 +1288,10 @@ impl DatabaseExt for Backend {
 
         let res = {
             configure_tx_req_env(&mut env, tx, None)?;
-            let env = self.env_with_handler_cfg(&mut env);
+            let env = self.env_with_handler_cfg(&env);
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, env, inspector);
+            let mut evm = new_evm_with_inspector(&mut db, &env, inspector);
             evm.inner.data.ctx.journaled_state.depth = journaled_state.depth + 1;
             evm.inner.replay().wrap_err("EVM error")?
         };
@@ -1954,7 +1954,7 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
 
-        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env, inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, &env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.inner.data.ctx.journaled_state.depth = depth + 1;
         evm.inner.replay().wrap_err("EVM error")?
