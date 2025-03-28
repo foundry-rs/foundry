@@ -311,7 +311,7 @@ vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 
 [patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "446a5d8" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "d27f6f4" }
 
 solar-parse  = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
 solar-sema  = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
