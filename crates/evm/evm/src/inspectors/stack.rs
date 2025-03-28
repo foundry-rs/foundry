@@ -487,7 +487,7 @@ impl InspectorStackRefMut<'_> {
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
     /// Updates tx.origin to the value before entering inner context
-    fn adjust_evm_data_for_inner_context(&mut self, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn adjust_evm_data_for_inner_context(&self, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
         ecx.env.tx.caller = inner_context_data.original_origin;
@@ -717,7 +717,7 @@ impl InspectorStackRefMut<'_> {
     }
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
-    fn top_level_frame_start(&mut self, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn top_level_frame_start(&mut self, ecx: &EvmContext<&mut dyn DatabaseExt>) {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert

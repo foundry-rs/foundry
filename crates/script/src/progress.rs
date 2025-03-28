@@ -121,7 +121,7 @@ impl SequenceProgressState {
     }
 
     /// Sets status for the current sequence progress.
-    pub fn set_status(&mut self, status: &str) {
+    pub fn set_status(&self, status: &str) {
         self.top_spinner.set_message(format!(" | {status}"));
     }
 

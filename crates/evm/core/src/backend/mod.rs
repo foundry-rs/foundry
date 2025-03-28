@@ -1835,7 +1835,7 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef>(
     active_journaled_state: &mut JournaledState,
     target_fork: &mut Fork,
 ) {
-    for addr in accounts.into_iter() {
+    for addr in accounts {
         merge_db_account_data(addr, active, &mut target_fork.db);
         merge_journaled_state_data(addr, active_journaled_state, &mut target_fork.journaled_state);
     }

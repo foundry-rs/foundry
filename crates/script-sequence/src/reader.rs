@@ -52,7 +52,7 @@ impl BroadcastReader {
     pub fn read(&self) -> eyre::Result<Vec<ScriptSequence>> {
         // 1. Recursively read all .json files in the broadcast directory
         let mut broadcasts = vec![];
-        for entry in walkdir::WalkDir::new(&self.broadcast_path).into_iter() {
+        for entry in walkdir::WalkDir::new(&self.broadcast_path) {
             let entry = entry?;
             let path = entry.path();
 
@@ -158,7 +158,7 @@ impl BroadcastReader {
             .collect::<Vec<_>>();
 
         let mut targets = Vec::new();
-        for tx in txs.into_iter() {
+        for tx in txs {
             let maybe_receipt = broadcast
                 .receipts
                 .iter()

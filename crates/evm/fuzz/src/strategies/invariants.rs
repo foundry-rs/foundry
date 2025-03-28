@@ -89,9 +89,7 @@ fn select_random_sender(
     senders: Rc<SenderFilters>,
     dictionary_weight: u32,
 ) -> impl Strategy<Value = Address> {
-    if !senders.targeted.is_empty() {
-        any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
-    } else {
+    if senders.targeted.is_empty() {
         assert!(dictionary_weight <= 100, "dictionary_weight must be <= 100");
         proptest::prop_oneof![
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
@@ -101,6 +99,8 @@ fn select_random_sender(
         // Too many exclusions can slow down testing.
         .prop_filter("excluded sender", move |addr| !senders.excluded.contains(addr))
         .boxed()
+    } else {
+        any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     }
 }
 

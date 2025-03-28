@@ -99,18 +99,18 @@ impl Parser {
     }
 
     /// Create new [ParseItem] with comments and formatted code.
-    fn new_item(&mut self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
+    fn new_item(&self, source: ParseSource, loc_start: usize) -> ParserResult<ParseItem> {
         let docs = self.parse_docs(loc_start)?;
         ParseItem::new(source).with_comments(docs).with_code(&self.source, self.fmt.clone())
     }
 
     /// Parse the doc comments from the current start location.
-    fn parse_docs(&mut self, end: usize) -> ParserResult<Comments> {
+    fn parse_docs(&self, end: usize) -> ParserResult<Comments> {
         self.parse_docs_range(self.context.doc_start_loc, end)
     }
 
     /// Parse doc comments from the within specified range.
-    fn parse_docs_range(&mut self, start: usize, end: usize) -> ParserResult<Comments> {
+    fn parse_docs_range(&self, start: usize, end: usize) -> ParserResult<Comments> {
         let mut res = vec![];
         for comment in parse_doccomments(&self.comments, start, end) {
             match comment {

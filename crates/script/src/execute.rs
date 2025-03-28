@@ -361,10 +361,10 @@ impl ExecutedState {
                             ty: "unknown".to_string(),
                         });
 
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
+                    let label = if output.name.is_empty() {
                         index.to_string()
+                    } else {
+                        output.name.to_string()
                     };
 
                     returns.insert(
@@ -454,10 +454,10 @@ impl PreSimulationState {
                                 ty: "unknown".to_string(),
                             });
 
-                        let label = if !output.name.is_empty() {
-                            output.name.to_string()
-                        } else {
+                        let label = if output.name.is_empty() {
                             index.to_string()
+                        } else {
+                            output.name.to_string()
                         };
                         sh_println!(
                             "{label}: {internal_type} {value}",

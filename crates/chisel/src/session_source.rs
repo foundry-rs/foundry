@@ -59,7 +59,7 @@ pub struct IntermediateContract {
 type IntermediateContracts = HashMap<String, IntermediateContract>;
 
 /// Full compilation output for the [SessionSource]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneratedOutput {
     /// The [IntermediateOutput] component
     pub intermediate: IntermediateOutput,
@@ -438,7 +438,7 @@ impl SessionSource {
         let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
 
         let script_import =
-            if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
+            if config.no_vm { "" } else { "import {Script} from \"forge-std/Script.sol\";\n" };
 
         format!(
             r#"

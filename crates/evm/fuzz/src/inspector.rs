@@ -60,7 +60,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
 
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    fn collect_data(&mut self, interpreter: &Interpreter) {
+    fn collect_data(&self, interpreter: &Interpreter) {
         self.fuzz_state.collect_values(interpreter.stack().data().iter().copied().map(Into::into));
 
         // TODO: disabled for now since it's flooding the dictionary

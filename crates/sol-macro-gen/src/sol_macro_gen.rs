@@ -194,7 +194,12 @@ edition = "2021"
 
         for instance in &self.instances {
             let name = instance.name.to_lowercase();
-            if !single_file {
+            if single_file {
+                // Single File
+                let mut contents = String::new();
+                write!(contents, "{}\n\n", instance.expansion.as_ref().unwrap())?;
+                write!(mod_contents, "{contents}")?;
+            } else {
                 // Module
                 write_mod_name(&mut mod_contents, &name)?;
                 let mut contents = String::new();
@@ -205,11 +210,6 @@ edition = "2021"
                 let contents = prettyplease::unparse(&file);
                 fs::write(bindings_path.join(format!("{name}.rs")), contents)
                     .wrap_err("Failed to write file")?;
-            } else {
-                // Single File
-                let mut contents = String::new();
-                write!(contents, "{}\n\n", instance.expansion.as_ref().unwrap())?;
-                write!(mod_contents, "{contents}")?;
             }
         }
 

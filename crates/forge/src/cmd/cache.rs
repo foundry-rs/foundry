@@ -60,7 +60,7 @@ impl CleanArgs {
         for chain_or_all in chains {
             match chain_or_all {
                 ChainOrAll::NamedChain(chain) => {
-                    clean_chain_cache(chain, blocks.to_vec(), etherscan)?
+                    clean_chain_cache(chain, blocks.clone(), etherscan)?
                 }
                 ChainOrAll::All => {
                     if etherscan {

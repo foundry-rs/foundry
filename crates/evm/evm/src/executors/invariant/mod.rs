@@ -663,7 +663,7 @@ impl<'a> InvariantExecutor<'a> {
     /// Makes sure that the contract exists in the project. If so, it returns its artifact
     /// identifier.
     fn validate_selected_contract(
-        &mut self,
+        &self,
         contract: String,
         selectors: &[FixedBytes<4>],
     ) -> Result<String> {
