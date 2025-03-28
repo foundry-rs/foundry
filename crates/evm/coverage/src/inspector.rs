@@ -3,7 +3,7 @@ use alloy_primitives::B256;
 use revm::{
     bytecode::Bytecode,
     interpreter::{interpreter_types::Jumps, Interpreter},
-    Database, EvmContext, Inspector,
+    Database, Inspector,
 };
 use std::ptr::NonNull;
 
@@ -58,7 +58,7 @@ impl CoverageCollector {
     /// See comments on `current_map` for more details.
     #[inline]
     fn get_or_insert_map(&mut self, interpreter: &mut Interpreter) -> &mut HitMap {
-        let hash = interpreter.bytecode.hash().unwrap_or_else(|| eof_panic());
+        let hash = get_or_insert_contract_hash(interpreter);
         if self.current_hash != *hash {
             self.insert_map(interpreter);
         }
