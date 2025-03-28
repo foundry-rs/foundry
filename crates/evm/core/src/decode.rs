@@ -4,7 +4,10 @@ use crate::abi::{console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
 use alloy_primitives::{hex, map::HashMap, Log, Selector};
-use alloy_sol_types::{SolEventInterface, SolInterface, SolValue};
+use alloy_sol_types::{
+    ContractError::Revert, RevertReason, RevertReason::ContractError, SolEventInterface,
+    SolInterface, SolValue,
+};
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
@@ -138,65 +141,91 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() else {
-            if let Some(status) = status {
-                if !status.is_ok() {
-                    return Some(format!("EvmError: {status:?}"));
-                }
-            }
-            return if err.is_empty() {
-                None
-            } else {
-                Some(format!("custom error bytes {}", hex::encode_prefixed(err)))
-            };
-        };
-
         if let Some(reason) = SkipReason::decode(err) {
             return Some(reason.to_string());
         }
 
-        // Solidity's `Error(string)` or `Panic(uint256)`, or `Vm`'s custom errors.
+        // Solidity's `Error(string)` (handled separately in order to strip revert: prefix)
+        if let Some(ContractError(Revert(revert))) = RevertReason::decode(err) {
+            return Some(revert.reason);
+        }
+
+        // Solidity's `Panic(uint256)` and `Vm`'s custom errors.
         if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err, false) {
             return Some(e.to_string());
         }
 
-        // Custom errors.
-        if let Some(errors) = self.errors.get(selector) {
-            for error in errors {
-                // If we don't decode, don't return an error, try to decode as a string later.
-                if let Ok(decoded) = error.abi_decode_input(data, false) {
-                    return Some(format!(
-                        "{}({})",
-                        error.name,
-                        decoded.iter().map(foundry_common::fmt::format_token).format(", ")
-                    ));
+        let string_decoded = decode_as_non_empty_string(err);
+
+        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
+            // Custom errors.
+            if let Some(errors) = self.errors.get(selector) {
+                for error in errors {
+                    // If we don't decode, don't return an error, try to decode as a string
+                    // later.
+                    if let Ok(decoded) = error.abi_decode_input(data, false) {
+                        return Some(format!(
+                            "{}({})",
+                            error.name,
+                            decoded.iter().map(foundry_common::fmt::format_token).format(", ")
+                        ));
+                    }
                 }
             }
+
+            if string_decoded.is_some() {
+                return string_decoded
+            }
+
+            // Generic custom error.
+            return Some({
+                let mut s = format!("custom error {}", hex::encode_prefixed(selector));
+                if !data.is_empty() {
+                    s.push_str(": ");
+                    match std::str::from_utf8(data) {
+                        Ok(data) => s.push_str(data),
+                        Err(_) => s.push_str(&hex::encode(data)),
+                    }
+                }
+                s
+            })
         }
 
-        // ABI-encoded `string`.
-        if let Ok(s) = String::abi_decode(err, true) {
+        if string_decoded.is_some() {
+            return string_decoded
+        }
+
+        if let Some(status) = status {
+            if !status.is_ok() {
+                return Some(format!("EvmError: {status:?}"));
+            }
+        }
+        if err.is_empty() {
+            None
+        } else {
+            Some(format!("custom error bytes {}", hex::encode_prefixed(err)))
+        }
+    }
+}
+
+/// Helper function that decodes provided error as an ABI encoded or an ASCII string (if not empty).
+fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
+    // ABI-encoded `string`.
+    if let Ok(s) = String::abi_decode(err, true) {
+        if !s.is_empty() {
             return Some(s);
         }
-
-        // ASCII string.
-        if err.is_ascii() {
-            return Some(std::str::from_utf8(err).unwrap().to_string());
-        }
-
-        // Generic custom error.
-        Some({
-            let mut s = format!("custom error {}", hex::encode_prefixed(selector));
-            if !data.is_empty() {
-                s.push_str(": ");
-                match std::str::from_utf8(data) {
-                    Ok(data) => s.push_str(data),
-                    Err(_) => s.push_str(&hex::encode(data)),
-                }
-            }
-            s
-        })
     }
+
+    // ASCII string.
+    if err.is_ascii() {
+        let msg = std::str::from_utf8(err).unwrap().to_string();
+        if !msg.is_empty() {
+            return Some(msg);
+        }
+    }
+
+    None
 }
 
 fn trimmed_hex(s: &[u8]) -> String {

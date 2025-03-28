@@ -32,11 +32,11 @@ async fn test_invariant_with_alias() {
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
             vec![
-                ("invariant_neverFalse()", false, Some("revert: false".into()), None, None),
+                ("invariant_neverFalse()", false, Some("false".into()), None, None),
                 (
                     "statefulFuzz_neverFalseWithInvariantAlias()",
                     false,
-                    Some("revert: false".into()),
+                    Some("false".into()),
                     None,
                     None,
                 ),
@@ -84,13 +84,7 @@ async fn test_invariant_filters() {
             ),
             (
                 "default/fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
-                vec![(
-                    "invariantTrueWorld()",
-                    false,
-                    Some("revert: false world".into()),
-                    None,
-                    None,
-                )],
+                vec![("invariantTrueWorld()", false, Some("false world".into()), None, None)],
             ),
         ]),
     );
@@ -104,7 +98,7 @@ async fn test_invariant_filters() {
         )),
         BTreeMap::from([(
             "default/fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldInterfaces",
-            vec![("invariantTrueWorld()", false, Some("revert: false world".into()), None, None)],
+            vec![("invariantTrueWorld()", false, Some("false world".into()), None, None)],
         )]),
     );
 
@@ -146,7 +140,7 @@ async fn test_invariant_filters() {
                     (
                         "invariantShouldFail()",
                         false,
-                        Some("revert: false world".into()),
+                        Some("false world".into()),
                         None,
                         None,
                     ),
@@ -161,7 +155,7 @@ async fn test_invariant_filters() {
                 vec![(
                     "invariantShouldFail()",
                     false,
-                    Some("revert: it's false".into()),
+                    Some("it's false".into()),
                     None,
                     None,
                 )],
@@ -182,7 +176,7 @@ async fn test_invariant_override() {
         &results,
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
-            vec![("invariantNotStolen()", false, Some("revert: stolen".into()), None, None)],
+            vec![("invariantNotStolen()", false, Some("stolen".into()), None, None)],
         )]),
     );
 }
@@ -203,7 +197,7 @@ async fn test_invariant_fail_on_revert() {
             vec![(
                 "statefulFuzz_BrokenInvariant()",
                 false,
-                Some("revert: failed on revert".into()),
+                Some("failed on revert".into()),
                 None,
                 None,
             )],
@@ -245,13 +239,7 @@ async fn test_invariant_inner_contract() {
         &results,
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
-            vec![(
-                "invariantHideJesus()",
-                false,
-                Some("revert: jesus betrayed".into()),
-                None,
-                None,
-            )],
+            vec![("invariantHideJesus()", false, Some("jesus betrayed".into()), None, None)],
         )]),
     );
 }
@@ -541,7 +529,7 @@ async fn test_invariant_fuzzed_selected_targets() {
                 vec![(
                     "invariant_dynamic_targets()",
                     false,
-                    Some("revert: wrong target selector called".into()),
+                    Some("wrong target selector called".into()),
                     None,
                     None,
                 )],
@@ -585,7 +573,7 @@ async fn test_invariant_scrape_values() {
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value from return found".into()),
+                    Some("value from return found".into()),
                     None,
                     None,
                 )],
@@ -595,7 +583,7 @@ async fn test_invariant_scrape_values() {
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value from logs found".into()),
+                    Some("value from logs found".into()),
                     None,
                     None,
                 )],
@@ -619,7 +607,7 @@ async fn test_invariant_roll_fork_handler() {
                 vec![(
                     "invariant_fork_handler_block()",
                     false,
-                    Some("revert: too many blocks mined".into()),
+                    Some("too many blocks mined".into()),
                     None,
                     None,
                 )],
@@ -629,7 +617,7 @@ async fn test_invariant_roll_fork_handler() {
                 vec![(
                     "invariant_fork_handler_state()",
                     false,
-                    Some("revert: wrong supply".into()),
+                    Some("wrong supply".into()),
                     None,
                     None,
                 )],
@@ -667,14 +655,14 @@ async fn test_invariant_after_invariant() {
                 (
                     "invariant_after_invariant_failure()",
                     false,
-                    Some("revert: afterInvariant failure".into()),
+                    Some("afterInvariant failure".into()),
                     None,
                     None,
                 ),
                 (
                     "invariant_failure()",
                     false,
-                    Some("revert: invariant failure".into()),
+                    Some("invariant failure".into()),
                     None,
                     None,
                 ),
@@ -734,7 +722,7 @@ contract AssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: revert: Invariant failure]
+[FAIL: Invariant failure]
 ...
 "#]]);
 
@@ -1096,7 +1084,7 @@ contract InvariantSequenceLenTest is Test {
 
     cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: revert: invariant increment failure]
+[FAIL: invariant increment failure]
 	[Sequence] (original: 4, shrunk: 1)
 ...
 "#]]);
@@ -1111,7 +1099,7 @@ contract InvariantSequenceLenTest is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
-[FAIL: revert: invariant increment failure]
+[FAIL: invariant increment failure]
 	[Sequence] (original: 4, shrunk: 4)
 		sender=0x00000000000000000000000000000000000018dE addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[1931387396117645594923 [1.931e21]]
 		sender=0x00000000000000000000000000000000000009d5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
@@ -1134,7 +1122,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
-[FAIL: revert: invariant increment failure]
+[FAIL: invariant increment failure]
 	[Sequence] (original: 4, shrunk: 4)
 		vm.prank(0x00000000000000000000000000000000000018dE);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(1931387396117645594923);
@@ -1220,7 +1208,7 @@ contract OwnableTest is Test {
 
     cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: revert: never owner]
+[FAIL: never owner]
 ...
 "#]]);
 
