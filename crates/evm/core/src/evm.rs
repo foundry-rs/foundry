@@ -240,3 +240,23 @@ pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
 //             }
 //         });
 // }
+
+// fn get_create2_factory_call_inputs(
+//     salt: U256,
+//     inputs: CreateInputs,
+//     deployer: Address,
+// ) -> CallInputs {
+//     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
+//     CallInputs {
+//         caller: inputs.caller,
+//         bytecode_address: deployer,
+//         target_address: deployer,
+//         scheme: CallScheme::Call,
+//         value: CallValue::Transfer(inputs.value),
+//         input: calldata.into(),
+//         gas_limit: inputs.gas_limit,
+//         is_static: false,
+//         return_memory_offset: 0..0,
+//         is_eof: false,
+//     }
+// }

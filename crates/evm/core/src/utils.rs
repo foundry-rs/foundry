@@ -1,37 +1,13 @@
 pub use crate::ic::*;
-use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
-    Env, InspectorExt,
-};
 use alloy_consensus::BlockHeader;
-use alloy_evm::eth::EthEvmContext;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, Bytes, Selector, TxKind, B256, U256};
+use alloy_primitives::{Address, Selector, TxKind, B256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
-use foundry_fork_db::DatabaseError;
-use revm::{
-    context::{ContextTr, Evm, EvmData, JournalInner},
-    context_interface::{result::EVMError, CreateScheme},
-    handler::{
-        instructions::{EthInstructions, InstructionProvider},
-        EthPrecompiles, EvmTr, FrameOrResult, FrameResult, Handler, PrecompileProvider,
-    },
-    inspector::{inspect_instructions, InspectorEvmTr},
-    interpreter::{
-        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
-        CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
-        InterpreterTypes,
-    },
-    precompile::PrecompileError,
-    primitives::{hardfork::SpecId, KECCAK_EMPTY},
-    Journal,
-};
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
+use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
@@ -178,24 +154,4 @@ pub fn configure_tx_req_env(
 pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     let refund_quotient = if SpecId::is_enabled_in(spec, SpecId::LONDON) { 5 } else { 2 };
     spent - (refunded).min(spent / refund_quotient)
-}
-
-fn get_create2_factory_call_inputs(
-    salt: U256,
-    inputs: CreateInputs,
-    deployer: Address,
-) -> CallInputs {
-    let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
-    CallInputs {
-        caller: inputs.caller,
-        bytecode_address: deployer,
-        target_address: deployer,
-        scheme: CallScheme::Call,
-        value: CallValue::Transfer(inputs.value),
-        input: calldata.into(),
-        gas_limit: inputs.gas_limit,
-        is_static: false,
-        return_memory_offset: 0..0,
-        is_eof: false,
-    }
 }
