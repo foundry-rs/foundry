@@ -28,6 +28,12 @@ pub struct MutationContext<'a> {
     pub var_definition: Option<&'a VariableDefinition<'a>>,
 }
 
+impl<'a> MutationContext<'a> {
+    pub fn builder() -> MutationContextBuilder<'a> {
+        MutationContextBuilder::new()
+    }
+}
+
 pub struct MutationContextBuilder<'a> {
     span: Option<Span>,
     expr: Option<&'a Expr<'a>>,

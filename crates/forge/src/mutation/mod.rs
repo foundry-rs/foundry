@@ -57,7 +57,7 @@ impl MutationHandler {
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            let mut mutant_visitor = MutantVisitor { mutation_to_conduct: Vec::new() };
+            let mut mutant_visitor = MutantVisitor::default();
             mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
 

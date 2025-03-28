@@ -12,7 +12,7 @@ pub struct MutatorRegistry {
 }
 
 impl MutatorRegistry {
-    pub fn new() -> Self {
+    pub fn default() -> Self {
         let mut registry = Self { mutators: Vec::new() };
 
         registry.mutators.push(Box::new(assignement_mutator::AssignmentMutator));
@@ -22,6 +22,10 @@ impl MutatorRegistry {
         registry.mutators.push(Box::new(unary_op_mutator::UnaryOperatorMutator));
 
         registry
+    }
+
+    pub fn new_with_mutators(mutators: Vec<Box<dyn Mutator>>) -> Self {
+        Self { mutators }
     }
 
     /// Find all applicable mutators for a given context and return the corresponding mutations
