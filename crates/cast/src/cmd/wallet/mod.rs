@@ -3,7 +3,7 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
+use alloy_signer::{k256::SecretKey, Signer};
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
@@ -210,7 +210,16 @@ pub enum WalletSubcommands {
         #[command(flatten)]
         wallet: WalletOpts,
     },
+    /// Get the public key for the given private key.
+    #[command(visible_aliases = &["pub"])]
+    PublicKey {
+        /// If provided, the public key will be derived from the specified private key.
+        #[arg(long = "private-key", value_name = "PRIVATE_KEY")]
+        private_key_override: Option<String>,
 
+        #[command(flatten)]
+        wallet: WalletOpts,
+    },
     /// Decrypt a keystore file to get the private key
     #[command(name = "decrypt-keystore", visible_alias = "dk")]
     DecryptKeystore {
@@ -397,6 +406,33 @@ impl WalletSubcommands {
                     .await?;
                 let addr = wallet.address();
                 sh_println!("{}", addr.to_checksum(None))?;
+            }
+            Self::PublicKey { wallet, private_key_override } => {
+                let wallet = private_key_override
+                    .map(|pk| WalletOpts {
+                        raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
+                        ..Default::default()
+                    })
+                    .unwrap_or(wallet)
+                    .signer()
+                    .await?;
+
+                let private_key_bytes = match wallet {
+                    WalletSigner::Local(wallet) => wallet.credential().to_bytes(),
+                    _ => eyre::bail!("Only local wallets are supported by this command"),
+                };
+
+                let secret_key = SecretKey::from_slice(&private_key_bytes)
+                    .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+                // Get the public key from the private key
+                let public_key = secret_key.public_key();
+
+                let pubkey_bytes = public_key.to_sec1_bytes();
+
+                let ethereum_pubkey = &pubkey_bytes[1..];
+
+                sh_println!("0x{}", hex::encode(ethereum_pubkey))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
