@@ -1,7 +1,7 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, PrimitiveSignature, B256, U256};
+use alloy_primitives::{Address, PrimitiveSignature, Uint, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -57,35 +57,21 @@ impl Cheatcode for attachDelegationCall {
 impl Cheatcode for signDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+        delegation_helper(ccx, privateKey, implementation, None)
     }
 }
 
 impl Cheatcode for signDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let auth = create_auth_with_nonce(ccx, *implementation, *nonce)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
+        delegation_helper(ccx, privateKey, implementation, Some(nonce))
     }
 }
 
 impl Cheatcode for signAndAttachDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        let signed_auth = sig_to_auth(sig, auth);
-        write_delegation(ccx, signed_auth.clone())?;
-        ccx.state.active_delegation = Some(signed_auth);
-        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+        attach_delegation_helper(ccx, privateKey, implementation, None)
     }
 }
 
@@ -93,13 +79,47 @@ impl Cheatcode for signAndAttachDelegation_0Call {
 impl Cheatcode for signAndAttachDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let auth = create_auth_with_nonce(ccx, *implementation, *nonce)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        let signed_auth = sig_to_auth(sig, auth);
-        write_delegation_skip_nonce(ccx, signed_auth.clone())?;
-        ccx.state.active_delegation = Some(signed_auth);
-        Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
+        attach_delegation_helper(ccx, privateKey, implementation, Some(nonce))
+    }
+}
+
+fn delegation_helper(ccx: &mut CheatsCtxt, private_key: &Uint<256, 4>, implementation: &Address, nonce: Option<&u64>) -> Result<Vec<u8>> {
+    let signer = PrivateKeySigner::from_bytes(&B256::from(*private_key))?;
+        let authority = signer.address();
+        match nonce {
+            Some(nonce) => {
+                let auth = create_auth_with_nonce(ccx, *implementation, *nonce)?;
+                let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+                Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
+            },
+            None => {
+                let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
+                let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+                Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+            }
+        }
+}
+
+fn attach_delegation_helper(ccx: &mut CheatsCtxt, private_key: &Uint<256, 4>, implementation: &Address, nonce: Option<&u64>) -> Result<Vec<u8>> {
+    let signer = PrivateKeySigner::from_bytes(&B256::from(*private_key))?;
+    match nonce {
+        Some(nonce) => {
+            let auth = create_auth_with_nonce(ccx, *implementation, *nonce)?;
+            let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+            let signed_auth = sig_to_auth(sig, auth);
+            write_delegation_skip_nonce(ccx, signed_auth.clone())?;
+            ccx.state.active_delegation = Some(signed_auth);
+            Ok(sig_to_delegation(sig, *nonce, *implementation).abi_encode())
+        }
+        None => {        
+            let authority = signer.address();
+            let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
+            let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+            let signed_auth = sig_to_auth(sig, auth);
+            write_delegation(ccx, signed_auth.clone())?;
+            ccx.state.active_delegation = Some(signed_auth);
+            Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+        }
     }
 }
 
