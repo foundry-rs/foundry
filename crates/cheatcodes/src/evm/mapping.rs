@@ -5,7 +5,10 @@ use alloy_primitives::{
     Address, B256, U256,
 };
 use alloy_sol_types::SolValue;
-use revm::{bytecode::opcode, interpreter::Interpreter};
+use revm::{
+    bytecode::opcode,
+    interpreter::{interpreter_types::Jumps, Interpreter},
+};
 
 /// Recorded mapping slots.
 #[derive(Clone, Debug, Default)]
@@ -117,10 +120,10 @@ fn slot_child<'a>(
 
 #[cold]
 pub(crate) fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    match interpreter.current_opcode() {
+    match interpreter.bytecode.opcode() {
         opcode::KECCAK256 => {
             if interpreter.stack.peek(1) == Ok(U256::from(0x40)) {
-                let address = interpreter.contract.target_address;
+                let address = interpreter.input.target_address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
                 let data = interpreter.shared_memory.slice(offset, 0x40);
                 let low = B256::from_slice(&data[..0x20]);
@@ -131,8 +134,7 @@ pub(crate) fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.target_address)
-            {
+            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address) {
                 if let Ok(slot) = interpreter.stack.peek(0) {
                     mapping_slots.insert(slot.into());
                 }
