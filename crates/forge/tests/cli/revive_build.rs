@@ -11,7 +11,7 @@ forgetest_init!(force_buid_with_revive, |prj, cmd| {
 });
 
 forgetest!(code_size_exceeds_limit_with_revive, |prj, cmd| {
-    prj.add_source("LargeContract.sol", generate_large_init_contract(25_000).as_str()).unwrap();
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
     cmd.args(["build", "--revive-compile", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with Resolc and [SOLC_VERSION]
 Resolc and [SOLC_VERSION] [ELAPSED]
@@ -20,7 +20,7 @@ Compiler run successful!
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +=================================================================================================+
-| LargeContract | 268,040          | 268,040           | -18,040            | -18,040             |
+| LargeContract | 264,700          | 264,700           | -14,700            | -14,700             |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -33,10 +33,10 @@ Compiler run successful!
             str![[r#"
 {
   "LargeContract": {
-    "runtime_size": 268040,
-    "init_size": 268040,
-    "runtime_margin": -18040,
-    "init_margin": -18040
+    "runtime_size": 264700,
+    "init_size": 264700,
+    "runtime_margin": -14700,
+    "init_margin": -14700
   }
 }
 "#]]
