@@ -298,7 +298,11 @@ pub struct InvariantExecutor<'a> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
+    /// History of binned hitcount of edges seen during fuzzing.
+    history_map: std::cell::RefCell<Vec<u8>>, /* proptest's TestRunner requires   test: impl
+                                               * Fn(S::Value) -> TestCaseResult :( */
 }
+const COVERAGE_MAP_SIZE: usize = 65536;
 
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
@@ -316,6 +320,7 @@ impl<'a> InvariantExecutor<'a> {
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
+            history_map: RefCell::new(vec![0u8; COVERAGE_MAP_SIZE]),
         }
     }
 
@@ -387,28 +392,62 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
-                // TODO: history map tracked by fuzzer to determine what is "interesting"
-                // https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
-                if let Some(ref x) = call_result.edge_coverage {
+                // Cribbed from https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
+                if let Some(ref mut x) = call_result.edge_coverage {
                     if x.len() > 0 {
-                        let non_zero_count = x.iter().filter(|&x| *x != 0).count();
+                        let mut new_coverage = false;
 
-                        if let Some(corpus_dir) = &self.config.corpus_dir {
-                            let timestamp = time::SystemTime::now()
-                                .duration_since(time::UNIX_EPOCH)
-                                .expect("Time went backwards")
-                                .as_secs()
-                                .to_string();
-                            if let Err(err) = foundry_common::fs::create_dir_all(corpus_dir) {
-                                error!(%err, "Failed to create invariant corpus dir");
-                            } else if let Err(err) = foundry_common::fs::write_json_file(
-                                corpus_dir.join(timestamp).as_path(),
-                                &current_run.inputs.clone(),
-                            ) {
-                                error!(%err, "Failed to record call sequence");
+                        // Iterate over the current map and the history map together and update
+                        // the history map, if we discover some new coverage, report true
+                        x.iter_mut()
+                            // Use zip to add history map to the iterator, now we get tuple back
+                            .zip(self.history_map.borrow_mut().iter_mut())
+                            // For the tuple pair
+                            .for_each(|(curr, hist)| {
+                                // If we got a hitcount of at least 1
+                                if *curr > 0 {
+                                    // Convert hitcount into bucket count
+                                    // Convert hitcount into bucket count
+                                    let bucket = match *curr {
+                                        0 => 0,
+                                        1 => 1,
+                                        2 => 2,
+                                        3 => 4,
+                                        4..=7 => 8,
+                                        8..=15 => 16,
+                                        16..=31 => 32,
+                                        32..=127 => 64,
+                                        128..=255 => 128,
+                                    };
+
+                                    // If the old record for this edge pair is lower, update
+                                    if *hist < bucket {
+                                        *hist = bucket;
+                                        new_coverage = true;
+                                    }
+
+                                    // Zero out the current map for next fuzzing iteration
+                                    *curr = 0;
+                                }
+                            });
+
+                        if new_coverage {
+                            if let Some(corpus_dir) = &self.config.corpus_dir {
+                                let timestamp = time::SystemTime::now()
+                                    .duration_since(time::UNIX_EPOCH)
+                                    .expect("Time went backwards")
+                                    .as_secs()
+                                    .to_string();
+                                if let Err(err) = foundry_common::fs::create_dir_all(corpus_dir) {
+                                    error!(%err, "Failed to create invariant corpus dir");
+                                } else if let Err(err) = foundry_common::fs::write_json_file(
+                                    corpus_dir.join(timestamp).as_path(),
+                                    &current_run.inputs.clone(),
+                                ) {
+                                    error!(%err, "Failed to record call sequence");
+                                }
                             }
                         }
-                        panic!("got some coverage: {:?}", non_zero_count);
                     }
                 }
 
