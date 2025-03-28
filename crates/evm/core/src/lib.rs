@@ -23,7 +23,8 @@ mod ic;
 
 pub mod env;
 pub use env::*;
-use utils::FoundryEvmCtx;
+pub mod evm;
+use evm::FoundryEvmCtx;
 
 pub mod backend;
 pub mod buffer;

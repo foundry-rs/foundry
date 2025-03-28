@@ -2,9 +2,10 @@
 
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
+    evm::new_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
+    utils::{configure_tx_env, configure_tx_req_env},
     AsEnvMut, Env, InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
@@ -773,7 +774,7 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env, inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(self, env, inspector);
 
         let res = evm.inner.replay().wrap_err("EVM error")?;
 
@@ -1953,7 +1954,7 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
 
-        let mut evm = crate::utils::new_evm_with_inspector(&mut db as _, env, inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.inner.data.ctx.journaled_state.depth = depth + 1;
         evm.inner.replay().wrap_err("EVM error")?
