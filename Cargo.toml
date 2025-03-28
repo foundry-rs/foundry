@@ -39,6 +39,7 @@ exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [workspace.lints.clippy]
 dbg-macro = "warn"
+explicit_iter_loop = "warn"
 manual-string-new = "warn"
 uninlined-format-args = "warn"
 use-self = "warn"

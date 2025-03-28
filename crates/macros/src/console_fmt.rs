@@ -101,7 +101,7 @@ fn derive_enum(e: &DataEnum) -> TokenStream {
             match self {
                 #(#arms)*
 
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code)]
                 _ => String::new(),
             }
         }
