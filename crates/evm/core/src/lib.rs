@@ -45,9 +45,9 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
-    fn should_use_create2_factory<'a>(
+    fn should_use_create2_factory(
         &mut self,
-        _context: FoundryEvmCtx<'a>,
+        _context: FoundryEvmCtx<'_>,
         _inputs: &mut CreateInputs,
     ) -> bool {
         false
@@ -71,4 +71,5 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
 
 impl InspectorExt for NoOpInspector {}
 
-impl InspectorExt for AccessListInspector {}
+// TODO: fix this
+// impl InspectorExt for AccessListInspector {}
