@@ -38,7 +38,7 @@ impl EvmFuzzState {
         deployed_libs: &[Address],
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
-        let mut accs = db.accounts.iter().collect::<Vec<_>>();
+        let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
 
         // Create fuzz dictionary and insert values from db state.
