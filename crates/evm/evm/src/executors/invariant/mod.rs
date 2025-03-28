@@ -26,7 +26,8 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
-    strategy::{Strategy, ValueTree},
+    prelude::Rng,
+    strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_after_invariant, assert_invariants, can_continue};
@@ -35,6 +36,7 @@ use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
     collections::{btree_map::Entry, HashMap as Map},
+    path::PathBuf,
     sync::Arc,
     time,
 };
@@ -299,10 +301,101 @@ pub struct InvariantExecutor<'a> {
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
     /// History of binned hitcount of edges seen during fuzzing.
-    history_map: std::cell::RefCell<Vec<u8>>, /* proptest's TestRunner requires   test: impl
-                                               * Fn(S::Value) -> TestCaseResult :( */
+    history_map: Vec<u8>,
 }
 const COVERAGE_MAP_SIZE: usize = 65536;
+
+pub struct Corpus {
+    pub corpus_dir: Option<PathBuf>,
+    pub corpus: Vec<Vec<BasicTxDetails>>,
+    pub tx_generator: BoxedStrategy<BasicTxDetails>,
+}
+
+impl Corpus {
+    pub fn new(corpus_dir: PathBuf, tx_generator: BoxedStrategy<BasicTxDetails>) -> Self {
+        // assert!(corpus_dir.is_dir());
+        let mut corpus = vec![];
+        if let Ok(entries) = std::fs::read_dir(&corpus_dir) {
+            for entry in entries {
+                let path = entry.expect("msg").path();
+                if path.is_file() && path.extension() == Some(std::ffi::OsStr::new("json")) {
+                    let tx_seq: Vec<BasicTxDetails> =
+                        foundry_common::fs::read_json_file(&path).expect("msg");
+                    corpus.push(tx_seq);
+                }
+            }
+        }
+        Self { corpus_dir: Some(corpus_dir), corpus, tx_generator }
+    }
+
+    // pub fn save(&self) -> Result<()> { TODO order or key by timestamp?
+    //     for (i, tx_seq) in self.corpus.iter().enumerate() {
+    //         let path = self.corpus_dir.join(format!("{}.json", i));
+    //         foundry_common::fs::write_json_file(&path, tx_seq)?;
+    //     }
+    //     Ok(())
+    // }
+
+    pub fn insert(&mut self, tx_seq: Vec<BasicTxDetails>) {
+        self.corpus.push(tx_seq);
+    }
+
+    pub fn new_sequence(&self, test_runnner: &mut TestRunner) -> Vec<BasicTxDetails> {
+        let rng = test_runnner.rng();
+
+        if self.corpus.len() > 1 {
+            let idx1 = rng.gen_range(0..self.corpus.len());
+            let idx2 = rng.gen_range(0..self.corpus.len());
+            let one = &self.corpus[idx1];
+            let two = &self.corpus[idx2];
+            let mut new_seq = vec![];
+            match rng.gen_range(0..3) {
+                // splice
+                0 => {
+                    let start = rng.gen_range(0..one.len());
+                    let end = rng.gen_range(start..one.len());
+
+                    let two_start = start.min(two.len().saturating_sub(1));
+                    let two_end = end.min(two.len());
+
+                    for i in 0..start {
+                        new_seq.push(one[i].clone());
+                    }
+
+                    for i in two_start..two_end {
+                        new_seq.push(two[i].clone());
+                    }
+                    return new_seq;
+                }
+                // repeat
+                1 => {
+                    let tx = if rng.gen_bool(0.5) { one } else { two };
+                    new_seq = tx.clone();
+                    let start = rng.gen_range(0..tx.len());
+                    let end = rng.gen_range(start..tx.len());
+                    let item_idx = rng.gen_range(0..tx.len());
+                    let item = &tx[item_idx];
+                    for i in start..end {
+                        new_seq[i] = item.clone();
+                    }
+                }
+                // interleave
+                2 => {
+                    for (tx1, tx2) in one.iter().zip(two.iter()) {
+                        // chunks?
+                        let tx = if rng.gen_bool(0.5) { tx1.clone() } else { tx2.clone() };
+                        new_seq.push(tx);
+                    }
+                    return new_seq;
+                }
+                _ => {
+                    unreachable!();
+                }
+            }
+        }
+        return vec![self.tx_generator.new_tree(test_runnner).unwrap().current()];
+    }
+}
 
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
@@ -320,7 +413,7 @@ impl<'a> InvariantExecutor<'a> {
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
-            history_map: RefCell::new(vec![0u8; COVERAGE_MAP_SIZE]),
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
         }
     }
 
@@ -340,23 +433,30 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
+        if let Some(corpus_dir) = &self.config.corpus_dir {
+            if !corpus_dir.is_dir() {
+                foundry_common::fs::create_dir_all(corpus_dir)?;
+            }
+        }
+        let generator = invariant_strategy.boxed();
+
+        let mut corpus: Corpus =
+            Corpus::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
+
         // Start timer for this invariant test.
         let timer = FuzzTestTimer::new(self.config.timeout);
+        let mut runs = 0;
 
-        let _ = self.runner.run(&invariant_strategy, |first_input| {
+        'stop: while runs < self.config.runs {
+            let initial_seq = corpus.new_sequence(&mut self.runner);
+            // println!("initial_seq: {:?}", initial_seq);
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
-                first_input,
+                initial_seq[0].clone(),
                 // Before each run, we must reset the backend state.
                 self.executor.clone(),
                 self.config.depth as usize,
             );
-
-            // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
-            if self.config.fail_on_revert && invariant_test.reverts() > 0 {
-                return Err(TestCaseError::fail("Revert occurred."));
-            }
-
             while current_run.depth < self.config.depth {
                 // Check if the timeout has been reached.
                 if timer.is_timed_out() {
@@ -364,12 +464,13 @@ impl<'a> InvariantExecutor<'a> {
                     // successful even though it timed out. We *want*
                     // this behavior for now, so that's ok, but
                     // future developers should be aware of this.
-                    return Err(TestCaseError::fail(TEST_TIMEOUT));
+                    break 'stop;
                 }
 
-                let tx = current_run.inputs.last().ok_or_else(|| {
-                    TestCaseError::fail("No input generated to call fuzzed target.")
-                })?;
+                let tx = current_run
+                    .inputs
+                    .last()
+                    .ok_or_else(|| eyre!("No input generated to call fuzzed target."))?;
 
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
@@ -381,9 +482,7 @@ impl<'a> InvariantExecutor<'a> {
                         tx.call_details.calldata.clone(),
                         U256::ZERO,
                     )
-                    .map_err(|e| {
-                        TestCaseError::fail(format!("Could not make raw evm call: {e}"))
-                    })?;
+                    .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
 
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
@@ -394,6 +493,7 @@ impl<'a> InvariantExecutor<'a> {
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
                 // Cribbed from https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
                 if let Some(ref mut x) = call_result.edge_coverage {
+                    // TODO don't save when discarded == true
                     if x.len() > 0 {
                         let mut new_coverage = false;
 
@@ -401,7 +501,7 @@ impl<'a> InvariantExecutor<'a> {
                         // the history map, if we discover some new coverage, report true
                         x.iter_mut()
                             // Use zip to add history map to the iterator, now we get tuple back
-                            .zip(self.history_map.borrow_mut().iter_mut())
+                            .zip(self.history_map.iter_mut())
                             // For the tuple pair
                             .for_each(|(curr, hist)| {
                                 // If we got a hitcount of at least 1
@@ -431,7 +531,8 @@ impl<'a> InvariantExecutor<'a> {
                                 }
                             });
 
-                        if new_coverage {
+                        if !discarded && new_coverage {
+                            // TODO save at very end
                             if let Some(corpus_dir) = &self.config.corpus_dir {
                                 let timestamp = time::SystemTime::now()
                                     .duration_since(time::UNIX_EPOCH)
@@ -442,11 +543,12 @@ impl<'a> InvariantExecutor<'a> {
                                     error!(%err, "Failed to create invariant corpus dir");
                                 } else if let Err(err) = foundry_common::fs::write_json_file(
                                     corpus_dir.join(timestamp).as_path(),
-                                    &current_run.inputs.clone(),
+                                    &current_run.inputs,
                                 ) {
                                     error!(%err, "Failed to record call sequence");
                                 }
                             }
+                            corpus.insert(current_run.inputs.clone());
                         }
                     }
                 }
@@ -458,7 +560,7 @@ impl<'a> InvariantExecutor<'a> {
                         invariant_test.set_error(InvariantFuzzError::MaxAssumeRejects(
                             self.config.max_assume_rejects,
                         ));
-                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."));
+                        break 'stop;
                     }
                 } else {
                     // Commit executed call result.
@@ -504,13 +606,13 @@ impl<'a> InvariantExecutor<'a> {
                         call_result,
                         &state_changeset,
                     )
-                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
+                    .map_err(|e| eyre!(e.to_string()))?;
                     if !result.can_continue || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
-                        return Err(TestCaseError::fail("Test cannot continue."));
+                        break 'stop;
                     }
 
                     invariant_test.set_last_call_results(result.call_result);
@@ -518,13 +620,18 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 // Generates the next call from the run using the recently updated
-                // dictionary.
-                current_run.inputs.push(
-                    invariant_strategy
-                        .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
-                        .map_err(|_| TestCaseError::Fail("Could not generate case".into()))?
-                        .current(),
-                );
+                // dictionary if initial seq isn't `depth` long.
+                if current_run.depth as usize > initial_seq.len().saturating_sub(1) {
+                    // TOOD rng.rand_bool(X)
+                    current_run.inputs.push(
+                        generator
+                            .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
+                            .map_err(|_| eyre!("Could not generate case"))?
+                            .current(),
+                    );
+                } else {
+                    current_run.inputs.push(initial_seq[current_run.depth as usize].clone());
+                }
             }
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
@@ -535,7 +642,7 @@ impl<'a> InvariantExecutor<'a> {
                     &current_run,
                     &self.config,
                 )
-                .map_err(|_| TestCaseError::Fail("Failed to call afterInvariant".into()))?;
+                .map_err(|_| eyre!("Failed to call afterInvariant"))?;
             }
 
             // End current invariant test run.
@@ -546,8 +653,8 @@ impl<'a> InvariantExecutor<'a> {
                 progress.inc(1);
             }
 
-            Ok(())
-        });
+            runs += 1;
+        }
 
         trace!(?fuzz_fixtures);
         invariant_test.fuzz_state.log_stats();

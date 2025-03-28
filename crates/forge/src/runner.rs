@@ -634,6 +634,7 @@ impl<'a> FunctionRunner<'a> {
 
         let progress =
             start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, invariant_config.runs);
+        // TODO: rerun corpus. need some sort of corpus management (limit in-memory and flush).
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
