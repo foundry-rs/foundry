@@ -9,6 +9,7 @@ impl MutatorTester for DeleteExpressionMutator {}
 
 #[rstest]
 #[case::delete_expr("delete x", Some(vec!["x"]))]
+#[case::non_delete("function f() { a = b + c; }", None)]
 fn test_mutator_delete_expr(
     #[case] input: &'static str,
     #[case] expected_mutations: Option<Vec<&'static str>>,

@@ -13,6 +13,7 @@ impl MutatorTester for AssignmentMutator {}
 #[case::assign_bool("x = true", Some(vec!["x = false"]))]
 #[case::assign_bool("x = false", Some(vec!["x = true"]))]
 #[case::assign_declare("uint256 x = 123", Some(vec!["uint256 x = 0", "uint256 x = -123"]))]
+#[case::non_assign("function f() { a = b + c; }", None)]
 fn test_mutator_assignment(
     #[case] input: &'static str,
     #[case] expected_mutations: Option<Vec<&'static str>>,
