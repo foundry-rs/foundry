@@ -14,8 +14,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-anvil-rpc = { path = "../rpc" }
-
 # axum related
 axum = { workspace = true, features = ["ws"] }
 tower-http = { workspace = true, features = ["trace", "cors"] }
@@ -28,9 +26,9 @@ parking_lot.workspace = true
 futures.workspace = true
 
 # ipc
-interprocess = { version = "2", optional = true, features = ["tokio"] }
+interprocess = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
-tokio-util = { version = "0.7", features = ["codec"], optional = true }
+tokio-util = { workspace = true, features = ["codec"], optional = true }
 
 # misc
 serde_json.workspace = true
@@ -41,6 +39,14 @@ thiserror.workspace = true
 clap = { version = "4", features = ["derive", "env"], optional = true }
 pin-project = "1"
 
+# anvil crates
+anvil-rpc = { path = "../rpc" }
+
+[dev-dependencies]
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+
 [features]
 default = ["ipc"]
 ipc = ["dep:interprocess", "dep:bytes", "dep:tokio-util"]
+clap = ["dep:clap"]
