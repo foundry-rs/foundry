@@ -13,9 +13,9 @@ CARGO_TARGET_DIR ?= target
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
 ifeq ($(OS),Windows_NT)
-    FEATURES ?= rustls aws-kms cli asm-keccak
+    FEATURES ?= aws-kms cli asm-keccak
 else
-    FEATURES ?= jemalloc rustls aws-kms cli asm-keccak
+    FEATURES ?= jemalloc aws-kms cli asm-keccak
 endif
 
 ##@ Help
@@ -64,7 +64,7 @@ docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker im
 
 .PHONY: docker-build-prepare
 docker-build-prepare: ## Prepare the Docker build environment.
-	docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64
+	docker run --privileged --rm tonistiigi/binfmt:qemu-v7.0.0-28 --install amd64,arm64
 	@if ! docker buildx inspect cross-builder &> /dev/null; then \
 		echo "Creating a new buildx builder instance"; \
 		docker buildx create --use --driver docker-container --name cross-builder; \
@@ -105,7 +105,7 @@ lint: ## Run all linters.
 ## Testing
 
 test-foundry:
-	cargo nextest run -E 'kind(test) & !test(/issue|forge_std|ext_integration/)'
+	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
 
 test-doc:
 	cargo test --doc --workspace

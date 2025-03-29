@@ -3,7 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{map::B256HashSet, Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
@@ -90,7 +90,7 @@ async fn can_order_transactions() {
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
 
     // get the block, await receipts
-    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
@@ -129,7 +129,7 @@ async fn can_respect_nonces() {
     // this will unblock the currently pending tx
     let higher_tx = higher_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
-    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(2, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![tx.transaction_hash, higher_tx.transaction_hash]),
@@ -170,7 +170,7 @@ async fn can_replace_transaction() {
     // mine exactly one block
     api.mine_one().await;
 
-    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
@@ -286,7 +286,7 @@ async fn can_reject_underpriced_replacement() {
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
-    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(1, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
@@ -551,13 +551,7 @@ async fn call_past_state() {
         contract.getValue().block(BlockId::Number(deployed_block.into())).call().await.unwrap();
     assert_eq!(value._0, "initial value");
 
-    let hash = provider
-        .get_block(BlockId::Number(1.into()), false.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .hash;
+    let hash = provider.get_block(BlockId::Number(1.into())).await.unwrap().unwrap().header.hash;
     let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
     assert_eq!(value._0, "initial value");
 }
@@ -1234,4 +1228,19 @@ async fn can_mine_multiple_in_block() {
 
     let txs = block.transactions.hashes().collect::<Vec<_>>();
     assert_eq!(txs, vec![first, second]);
+}
+
+// ensures that the gas estimate is running on pending block by default
+#[tokio::test(flavor = "multi_thread")]
+async fn estimates_gas_prague() {
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    // {"data":"0xcafebabe","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"
+    // 0x70997970c51812dc3a010c7d01b50e0d17dc79c8"}
+    let req = TransactionRequest::default()
+        .with_input(hex!("0xcafebabe"))
+        .with_from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+        .with_to(address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"));
+    api.estimate_gas(WithOtherFields::new(req), None, None).await.unwrap();
 }

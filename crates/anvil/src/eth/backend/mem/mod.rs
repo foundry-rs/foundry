@@ -35,7 +35,8 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+    transaction::Recovered, Account, Header, Receipt, ReceiptWithBloom, Signed,
+    Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_network::{
@@ -93,7 +94,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use maili_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
@@ -212,7 +213,7 @@ pub struct Backend {
 
 impl Backend {
     /// Initialises the balance of the given accounts
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<Box<dyn Db>>>,
         env: Arc<RwLock<EnvWithHandlerCfg>>,
@@ -240,6 +241,7 @@ impl Backend {
                 env.handler_cfg.spec_id,
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
+                genesis.number,
             )
         };
 
@@ -529,19 +531,17 @@ impl Backend {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    // Set the fork block number
-                    let mut node_config = self.node_config.write().await;
-                    node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
-
-                    let mut env = self.env.read().clone();
-                    let (forked_db, client_fork_config) =
-                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
-
-                    *self.db.write().await = Box::new(forked_db);
-                    let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
-                    *self.fork.write() = Some(fork);
-                    *self.env.write() = env;
+                    self.reset_block_number(fork_url, fork_block_number).await?;
                 } else {
+                    // If rpc url is unspecified, then update the fork with the new block number and
+                    // existing rpc url, this updates the cache path
+                    {
+                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        if let Some(fork_url) = maybe_fork_url {
+                            self.reset_block_number(fork_url, fork_block_number).await?;
+                        }
+                    }
+
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
 
@@ -590,6 +590,26 @@ impl Backend {
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
+    }
+
+    async fn reset_block_number(
+        &self,
+        fork_url: String,
+        fork_block_number: u64,
+    ) -> Result<(), BlockchainError> {
+        let mut node_config = self.node_config.write().await;
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+
+        let mut env = self.env.read().clone();
+        let (forked_db, client_fork_config) =
+            node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await?;
+
+        *self.db.write().await = Box::new(forked_db);
+        let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+        *self.fork.write() = Some(fork);
+        *self.env.write() = env;
+
+        Ok(())
     }
 
     /// Returns the `TimeManager` responsible for timestamps
@@ -756,12 +776,12 @@ impl Backend {
     }
 
     /// Returns the block gas limit
-    pub fn gas_limit(&self) -> u128 {
-        self.env.read().block.gas_limit.to()
+    pub fn gas_limit(&self) -> u64 {
+        self.env.read().block.gas_limit.saturating_to()
     }
 
     /// Sets the block gas limit
-    pub fn set_gas_limit(&self, gas_limit: u128) {
+    pub fn set_gas_limit(&self, gas_limit: u64) {
         self.env.write().block.gas_limit = U256::from(gas_limit);
     }
 
@@ -1002,7 +1022,7 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn new_evm_with_inspector_ref<'i, 'db>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
@@ -1567,20 +1587,8 @@ impl Backend {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        let from = request.from.unwrap_or_default();
-        let to = if let Some(TxKind::Call(to)) = request.to {
-            to
-        } else {
-            let nonce = state.basic_ref(from)?.unwrap_or_default().nonce;
-            from.create(nonce)
-        };
-
-        let mut inspector = AccessListInspector::new(
-            request.access_list.clone().unwrap_or_default(),
-            from,
-            to,
-            self.precompiles(),
-        );
+        let mut inspector =
+            AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -1921,7 +1929,7 @@ impl Backend {
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
 
-        block
+        AnyRpcBlock::from(block)
     }
 
     /// Converts the `BlockNumber` into a numeric value
@@ -2418,7 +2426,6 @@ impl Backend {
             to: info.to,
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used,
-            authorization_list: None,
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
@@ -2869,7 +2876,6 @@ impl TransactionValidator for Backend {
 }
 
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
-#[allow(clippy::too_many_arguments)]
 pub fn transaction_build(
     tx_hash: Option<B256>,
     eth_transaction: MaybeImpersonatedTransaction,
@@ -2879,9 +2885,9 @@ pub fn transaction_build(
 ) -> AnyRpcTransaction {
     if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
         let DepositTransaction {
-            nonce: _,
+            nonce,
             source_hash,
-            from,
+            from: deposit_from,
             kind,
             mint,
             gas_limit,
@@ -2893,7 +2899,7 @@ pub fn transaction_build(
         let dep_tx = TxDeposit {
             source_hash,
             input,
-            from,
+            from: deposit_from,
             mint: Some(mint.to()),
             to: kind,
             is_system_transaction: is_system_tx,
@@ -2905,7 +2911,17 @@ pub fn transaction_build(
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
-            Ok(fields) => {
+            Ok(mut fields) => {
+                // Add zeroed signature fields for backwards compatibility
+                // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
+                fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
+                fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+                fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
+                fields.insert(
+                    String::from("nonce"),
+                    serde_json::to_value(format!("0x{nonce}")).unwrap(),
+                );
+
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
                     fields,
@@ -2918,17 +2934,16 @@ pub fn transaction_build(
                 });
 
                 let tx = Transaction {
-                    inner: envelope,
+                    inner: Recovered::new_unchecked(envelope, deposit_from),
                     block_hash: block
                         .as_ref()
                         .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
                     block_number: block.as_ref().map(|block| block.header.number),
                     transaction_index: info.as_ref().map(|info| info.transaction_index),
                     effective_gas_price: None,
-                    from,
                 };
 
-                return WithOtherFields::new(tx);
+                return AnyRpcTransaction::from(WithOtherFields::new(tx));
             }
             Err(_) => {
                 error!(target: "backend", "failed to serialize deposit transaction");
@@ -2963,7 +2978,7 @@ pub fn transaction_build(
     // there's // no `info` yet.
     let hash = tx_hash.unwrap_or(*envelope.tx_hash());
 
-    let envelope = match envelope {
+    let envelope = match envelope.into_inner() {
         TxEnvelope::Legacy(signed_tx) => {
             let (t, sig, _) = signed_tx.into_parts();
             let new_signed = Signed::new_unchecked(t, sig, hash);
@@ -2992,17 +3007,19 @@ pub fn transaction_build(
     };
 
     let tx = Transaction {
-        inner: envelope,
+        inner: Recovered::new_unchecked(
+            envelope,
+            eth_transaction.recover().expect("can recover signed tx"),
+        ),
         block_hash: block
             .as_ref()
             .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
         block_number: block.as_ref().map(|block| block.header.number),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
-        from: eth_transaction.recover().expect("can recover signed tx"),
         // deprecated
         effective_gas_price: Some(effective_gas_price),
     };
-    WithOtherFields::new(tx)
+    AnyRpcTransaction::from(WithOtherFields::new(tx))
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.

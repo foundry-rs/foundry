@@ -71,6 +71,7 @@ impl Future for NodeService {
         // this drives block production and feeds new sets of ready transactions to the block
         // producer
         loop {
+            // advance block production until pending
             while let Poll::Ready(Some(outcome)) = pin.block_producer.poll_next_unpin(cx) {
                 trace!(target: "node", "mined block {}", outcome.block_number);
                 // prune the transactions from the pool
@@ -93,7 +94,6 @@ impl Future for NodeService {
             let filters = pin.filters.clone();
 
             // evict filters that timed out
-            #[allow(clippy::redundant_async_block)]
             tokio::task::spawn(async move { filters.evict().await });
         }
 
@@ -125,10 +125,11 @@ impl Stream for BlockProducer {
         let pin = self.get_mut();
 
         if !pin.queued.is_empty() {
+            // only spawn a building task if there's none in progress already
             if let Some(backend) = pin.idle_backend.take() {
                 let transactions = pin.queued.pop_front().expect("not empty; qed");
 
-                // we spawn this on as blocking task because in this can be blocking for a while in
+                // we spawn this on as blocking task because this can be blocking for a while in
                 // forking mode, because of all the rpc calls to fetch the required state
                 let handle = tokio::runtime::Handle::current();
                 let mining = tokio::task::spawn_blocking(move || {

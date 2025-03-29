@@ -164,7 +164,7 @@ impl TestOutcome {
         }
 
         sh_println!("\nFailing tests:")?;
-        for (suite_name, suite) in outcome.results.iter() {
+        for (suite_name, suite) in &outcome.results {
             let failed = suite.failed();
             if failed == 0 {
                 continue;
@@ -446,10 +446,16 @@ impl fmt::Display for TestResult {
                             CounterExample::Single(ex) => {
                                 write!(s, "; counterexample: {ex}]").unwrap();
                             }
-                            CounterExample::Sequence(sequence) => {
-                                s.push_str("]\n\t[Sequence]\n");
+                            CounterExample::Sequence(original, sequence) => {
+                                s.push_str(
+                                    format!(
+                                        "]\n\t[Sequence] (original: {original}, shrunk: {})\n",
+                                        sequence.len()
+                                    )
+                                    .as_str(),
+                                );
                                 for ex in sequence {
-                                    writeln!(s, "\t\t{ex}").unwrap();
+                                    writeln!(s, "{ex}").unwrap();
                                 }
                             }
                         }
@@ -593,7 +599,7 @@ impl TestResult {
         } else {
             Some(format!("{invariant_name} persisted failure revert"))
         };
-        self.counterexample = Some(CounterExample::Sequence(call_sequence));
+        self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 
     /// Returns the fail result for invariant test setup.
@@ -605,7 +611,7 @@ impl TestResult {
     }
 
     /// Returns the invariant test result.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn invariant_result(
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
@@ -759,6 +765,8 @@ pub struct TestSetup {
     pub reason: Option<String>,
     /// Whether setup and entire test suite is skipped.
     pub skipped: bool,
+    /// Whether the test failed to deploy.
+    pub deployment_failure: bool,
 }
 
 impl TestSetup {

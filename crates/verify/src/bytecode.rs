@@ -138,6 +138,7 @@ impl VerifyBytecodeArgs {
         // Etherscan client
         let etherscan = EtherscanVerificationProvider.client(
             self.etherscan.chain.unwrap_or_default(),
+            &self.verifier.verifier,
             self.verifier.verifier_url.as_deref(),
             self.etherscan.key().as_deref(),
             &config,
@@ -243,7 +244,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             env.block.number = U256::ZERO; // Genesis block
-            let genesis_block = provider.get_block(gen_blk_num.into(), true.into()).await?;
+            let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
             let deployer = Address::with_last_byte(0x1);
@@ -336,8 +337,8 @@ impl VerifyBytecodeArgs {
             );
         };
 
-        let mut transaction: TransactionRequest = match transaction.inner.inner {
-            AnyTxEnvelope::Ethereum(tx) => tx.into(),
+        let mut transaction: TransactionRequest = match transaction.inner.inner.inner() {
+            AnyTxEnvelope::Ethereum(tx) => tx.clone().into(),
             AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
         };
 
@@ -445,7 +446,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
             env.block.number = U256::from(simulation_block);
-            let block = provider.get_block(simulation_block.into(), true.into()).await?;
+            let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
             // block.

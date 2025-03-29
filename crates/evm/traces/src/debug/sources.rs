@@ -13,7 +13,8 @@ use foundry_linking::Linker;
 use rayon::prelude::*;
 use solar_parse::{interface::Session, Parser};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -181,8 +182,14 @@ impl ContractSources {
         // Not all source files produce artifacts, so we are populating sources by using build
         // infos.
         let mut files: BTreeMap<PathBuf, Arc<SourceData>> = BTreeMap::new();
+        let mut removed_files = HashSet::new();
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
+                if !path.exists() {
+                    removed_files.insert(path);
+                    continue;
+                }
+
                 let source_data = match files.entry(path.clone()) {
                     std::collections::btree_map::Entry::Vacant(entry) => {
                         let source = Source::read(path).wrap_err_with(|| {
@@ -204,6 +211,16 @@ impl ContractSources {
                     .or_default()
                     .insert(*source_id, source_data);
             }
+        }
+
+        if !removed_files.is_empty() {
+            let mut warning = "Detected artifacts built from source files that no longer exist. \
+                Run `forge clean` to make sure builds are in sync with project files."
+                .to_string();
+            for file in removed_files {
+                write!(warning, "\n - {}", file.display())?;
+            }
+            let _ = sh_warn!("{}", warning);
         }
 
         Ok(())
