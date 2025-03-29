@@ -129,6 +129,8 @@ pub struct EthApi {
     net_listening: bool,
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
+    /// Custom headers to include in HTTP responses
+    anvil_headers: Option<Vec<String>>,
 }
 
 impl EthApi {
@@ -158,6 +160,7 @@ impl EthApi {
             net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
             instance_id: Arc::new(RwLock::new(B256::random())),
+            anvil_headers: None,
         }
     }
 
@@ -3165,5 +3168,18 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
             },
         }
+    }
+}
+
+impl EthApi {
+    /// Sets the custom anvil headers to include in HTTP responses
+    pub fn with_anvil_headers(mut self, anvil_headers: Vec<String>) -> Self {
+        self.anvil_headers = Some(anvil_headers);
+        self
+    }
+    
+    /// Get the anvil custom headers if available
+    pub fn get_anvil_headers(&self) -> Option<&Vec<String>> {
+        self.anvil_headers.as_ref()
     }
 }
