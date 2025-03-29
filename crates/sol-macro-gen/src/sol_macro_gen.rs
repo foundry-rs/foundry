@@ -106,6 +106,8 @@ impl MultiSolMacroGen {
         &mut self,
         name: &str,
         version: &str,
+        description: &str,
+        license: &str,
         bindings_path: &Path,
         single_file: bool,
         alloy_version: Option<String>,
@@ -115,7 +117,6 @@ impl MultiSolMacroGen {
         self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
-
         let _ = fs::create_dir_all(&src);
 
         // Write Cargo.toml
@@ -125,10 +126,18 @@ impl MultiSolMacroGen {
 name = "{name}"
 version = "{version}"
 edition = "2021"
-
-[dependencies]
 "#
         );
+
+        if !description.is_empty() {
+            toml_contents.push_str(&format!("description = \"{}\"\n", description));
+        }
+
+        if !license.is_empty() {
+            toml_contents.push_str(&format!("license = \"{}\"\n", license));
+        }
+
+        toml_contents.push_str("\n[dependencies]\n");
 
         let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
