@@ -258,7 +258,10 @@ impl ChiselDispatcher {
                         self.session.id.as_ref().unwrap()
                     )))
                 } else {
-                    DispatchResult::CommandFailed(Self::make_error("Too many arguments supplied! Please check command syntax."))
+                    DispatchResult::CommandFailed(Self::make_error(format!(
+                        "Too many arguments supplied: [{}]. Please check command syntax.",
+                        args.join(", ")
+                    )))
                 }
             }
             ChiselCommand::Load => {
