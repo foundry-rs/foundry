@@ -349,20 +349,22 @@ impl Corpus {
             let one = &self.corpus[idx1];
             let two = &self.corpus[idx2];
             let mut new_seq = vec![];
+            // TOOD rounds of mutations on elements?
             match rng.gen_range(0..3) {
+                // TODO expose config and add tests
                 // splice
                 0 => {
-                    let start = rng.gen_range(0..one.len());
-                    let end = rng.gen_range(start..one.len());
+                    let start1 = rng.gen_range(0..one.len());
+                    let end1 = rng.gen_range(start1..one.len());
 
-                    let two_start = start.min(two.len().saturating_sub(1));
-                    let two_end = end.min(two.len());
+                    let start2 = rng.gen_range(0..two.len());
+                    let end2 = rng.gen_range(start2..two.len());
 
-                    for i in 0..start {
+                    for i in start1..end1 {
                         new_seq.push(one[i].clone());
                     }
 
-                    for i in two_start..two_end {
+                    for i in start2..end2 {
                         new_seq.push(two[i].clone());
                     }
                     return new_seq;
@@ -388,6 +390,10 @@ impl Corpus {
                     }
                     return new_seq;
                 }
+
+                // 3. Overwrite prefix with new or mutated sequence
+                // 4. Overwrite suffix with new or mutated sequence
+                // 5. Select idx to mutate and change its args according to its ABI
                 _ => {
                     unreachable!();
                 }
@@ -622,7 +628,7 @@ impl<'a> InvariantExecutor<'a> {
                 // Generates the next call from the run using the recently updated
                 // dictionary if initial seq isn't `depth` long.
                 if current_run.depth as usize > initial_seq.len().saturating_sub(1) {
-                    // TOOD rng.rand_bool(X)
+                    // TOOD rng.rand_ratio(X) to occassionally intermix new txs
                     current_run.inputs.push(
                         generator
                             .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
