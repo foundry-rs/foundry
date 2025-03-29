@@ -97,8 +97,9 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    db::WrapDatabaseRef,
-    primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
+    context_interface::block::BlobExcessGasAndPrice,
+    database::WrapDatabaseRef,
+    primitives::{HashMap, OptimismFields, ResultAndState},
 };
 use std::{
     collections::BTreeMap,
@@ -2821,7 +2822,7 @@ impl TransactionValidator for Backend {
 
             // Ensure the tx does not exceed the max blobs per block.
             if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count))
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
             }
 
             // Check for any blob validation errors

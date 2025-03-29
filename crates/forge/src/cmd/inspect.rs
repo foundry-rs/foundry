@@ -1,4 +1,3 @@
-use crate::revm::primitives::Eof;
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
@@ -19,6 +18,7 @@ use foundry_compilers::artifacts::{
     CompactBytecode, StorageLayout,
 };
 use regex::Regex;
+use revm::bytecode::Eof;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
 

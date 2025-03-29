@@ -2,7 +2,7 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
+use forge::{MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
     compilers::multi::MultiCompiler,
@@ -18,6 +18,7 @@ use foundry_test_utils::{
     fd_lock, init_tracing,
     rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
 };
+use revm::primitives::harfork::SpecId;
 use std::{
     env, fmt,
     io::Write,

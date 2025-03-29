@@ -366,9 +366,9 @@ fn deploy_code(
     }
 
     let scheme = if let Some(salt) = salt {
-        revm::primitives::CreateScheme::Create2 { salt }
+        revm::context_interface::CreateScheme::Create2 { salt }
     } else {
-        revm::primitives::CreateScheme::Create
+        revm::context_interface::CreateScheme::Create
     };
 
     let address = executor

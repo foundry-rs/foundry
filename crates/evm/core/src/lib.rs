@@ -8,8 +8,7 @@
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::Address;
 use auto_impl::auto_impl;
-use backend::DatabaseExt;
-use revm::{inspectors::NoOpInspector, interpreter::CreateInputs, EvmContext, Inspector};
+use revm::{inspector::NoOpInspector, interpreter::CreateInputs, Inspector};
 use revm_inspectors::access_list::AccessListInspector;
 
 #[macro_use]
@@ -21,6 +20,11 @@ pub mod abi {
 }
 
 mod ic;
+
+pub mod env;
+pub use env::*;
+pub mod evm;
+use evm::FoundryEvmCtx;
 
 pub mod backend;
 pub mod buffer;
@@ -36,14 +40,14 @@ pub mod utils;
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
 /// handlers.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
+pub trait InspectorExt: for<'a> Inspector<FoundryEvmCtx<'a>> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
     fn should_use_create2_factory(
         &mut self,
-        _context: &mut EvmContext<&mut dyn DatabaseExt>,
+        _context: FoundryEvmCtx<'_>,
         _inputs: &mut CreateInputs,
     ) -> bool {
         false

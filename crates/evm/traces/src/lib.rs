@@ -15,7 +15,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
 };
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::{
     types::{DecodedTraceStep, TraceMemberOrder},
     OpcodeFilter,
