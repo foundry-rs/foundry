@@ -301,7 +301,7 @@ impl ChiselDispatcher {
                         self.session.id.as_ref().unwrap()
                     )))
                 } else {
-                    DispatchResult::CommandFailed(Self::make_error("Failed to load session! The session ID may not exist or might be corrupted."))
+                    DispatchResult::CommandFailed(Self::make_error("Failed to load session!"))
                 }
             }
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
