@@ -37,7 +37,6 @@ revm = { workspace = true, features = [
 ] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
-alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true

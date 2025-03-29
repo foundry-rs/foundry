@@ -134,7 +134,6 @@ dependencies = [
  "alloy-network-primitives",
  "alloy-primitives",
  "alloy-provider",
- "alloy-pubsub",
  "alloy-rpc-types-eth",
  "alloy-sol-types",
  "alloy-transport",
@@ -962,7 +961,6 @@ version = "1.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
- "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-genesis",
