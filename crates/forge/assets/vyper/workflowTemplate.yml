@@ -1,0 +1,79 @@
+name: test
+
+on: [push, pull_request, workflow_dispatch]
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        python_version:
+          - 3.12
+        architecture:
+          - x64
+        node_version:
+          - 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          architecture: ${{ matrix.architecture }}
+
+      - name: Install latest Vyper
+        run: pip install --force-reinstall vyper
+
+      - name: Show the Vyper version
+        run: vyper --version
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: latest
+          run_install: false
+
+      - name: Get pnpm cache directory path
+        id: pnpm-cache-dir-path
+        run: echo "dir=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Restore pnpm cache
+        uses: actions/cache@v4
+        id: pnpm-cache
+        with:
+          path: ${{ steps.pnpm-cache-dir-path.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+
+      - name: Use Node.js ${{ matrix.node_version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node_version }}
+
+      - name: Install pnpm project with a clean slate
+        run: pnpm install --prefer-offline --frozen-lockfile
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Show the Foundry CI config
+        run: forge config
+        env:
+          FOUNDRY_PROFILE: ci
+
+      - name: Foundry tests
+        run: forge test
+        env:
+          FOUNDRY_PROFILE: ci

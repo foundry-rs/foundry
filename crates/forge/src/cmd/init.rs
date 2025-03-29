@@ -57,13 +57,6 @@ impl InitArgs {
         let root = dunce::canonicalize(root)?;
         let git = Git::new(&root).shallow(shallow);
 
-        // If vyper flag is set, use the Vyper template
-        let template = if vyper {
-            Some("https://github.com/Patronum-Labs/foundry-vyper".to_string())
-        } else {
-            template
-        };
-
         // if a template is provided, then this command initializes a git repo,
         // fetches the template repo, and resets the git history to the head of the fetched
         // repo with no other history
@@ -129,30 +122,71 @@ impl InitArgs {
             let script = root.join("script");
             fs::create_dir_all(&script)?;
 
-            // write the contract file
-            let contract_path = src.join("Counter.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.sol"))?;
-            // write the tests
-            let contract_path = test.join("Counter.t.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.t.sol"))?;
-            // write the script
-            let contract_path = script.join("Counter.s.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.s.sol"))?;
-            // Write the default README file
-            let readme_path = root.join("README.md");
-            fs::write(readme_path, include_str!("../../assets/README.md"))?;
+            // Determine file paths and content based on vyper flag
+            if vyper {
+                // Vyper template files
+                let interface_path = src.join("interface");
+                fs::create_dir_all(&interface_path)?;
+                let utils_path = src.join("utils");
+                fs::create_dir_all(&utils_path)?;
+                let readme_path = root.join("README.md");
+                let test_path = test.join("Counter.t.sol");
+                let script_path = script.join("Counter.s.sol");
+
+                let contract_path = src.join("Counter.vy");
+                let contract_interface_path = interface_path.join("ICounter.sol");
+                let vyper_deployer_path = utils_path.join("VyperDeployer.sol");
+
+                fs::write(test_path, include_str!("../../assets/vyper/CounterTemplate.t.sol"))?;
+                fs::write(script_path, include_str!("../../assets/vyper/CounterTemplate.s.sol"))?;
+                fs::write(readme_path, include_str!("../../assets/vyper/README.md"))?;
+
+                fs::write(contract_path, include_str!("../../assets/vyper/CounterTemplate.vy"))?;
+                fs::write(
+                    contract_interface_path,
+                    include_str!("../../assets/vyper/ICounterTemplate.sol"),
+                )?;
+                fs::write(
+                    vyper_deployer_path,
+                    include_str!("../../assets/vyper/VyperDeployerTemplate.sol"),
+                )?;
+            } else {
+                // Solidity template files
+                let contract_path = src.join("Counter.sol");
+                let readme_path = root.join("README.md");
+                let test_path = test.join("Counter.t.sol");
+                let script_path = script.join("Counter.s.sol");
+
+                fs::write(test_path, include_str!("../../assets/solidity/CounterTemplate.t.sol"))?;
+                fs::write(
+                    script_path,
+                    include_str!("../../assets/solidity/CounterTemplate.s.sol"),
+                )?;
+                fs::write(readme_path, include_str!("../../assets/solidity/README.md"))?;
+
+                fs::write(
+                    contract_path,
+                    include_str!("../../assets/solidity/CounterTemplate.sol"),
+                )?;
+            }
 
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root)?;
-            if !dest.exists() {
+            if vyper {
+                // Write the full config with FFI enabled to foundry.toml
+                if !dest.exists() {
+                    let toml_content = "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = [\"lib\"]\nffi = true\n\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options".to_string();
+                    fs::write(dest, toml_content)?;
+                }
+            } else if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
             let git = self.install.git(&config);
 
             // set up the repo
             if !no_git {
-                init_git_repo(git, commit)?;
+                init_git_repo(git, commit, vyper)?;
             }
 
             // install forge-std
@@ -182,7 +216,7 @@ impl InitArgs {
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
 ///
 /// Commits everything in `root` if `commit` is true.
-fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
+fn init_git_repo(git: Git<'_>, commit: bool, vyper: bool) -> Result<()> {
     // git init
     if !git.is_in_repo()? {
         git.init()?;
@@ -191,14 +225,18 @@ fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
     // .gitignore
     let gitignore = git.root.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(gitignore, include_str!("../../assets/.gitignoreTemplate"))?;
+        fs::write(gitignore, include_str!("../../assets/solidity/.gitignoreTemplate"))?;
     }
 
     // github workflow
     let workflow = git.root.join(".github/workflows/test.yml");
     if !workflow.exists() {
         fs::create_dir_all(workflow.parent().unwrap())?;
-        fs::write(workflow, include_str!("../../assets/workflowTemplate.yml"))?;
+        if vyper {
+            fs::write(workflow, include_str!("../../assets/vyper/workflowTemplate.yml"))?;
+        } else {
+            fs::write(workflow, include_str!("../../assets/solidity/workflowTemplate.yml"))?;
+        }
     }
 
     // commit everything
