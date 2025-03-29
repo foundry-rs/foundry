@@ -3,6 +3,7 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
+use alloy_signer::k256::elliptic_curve::sec1::ToEncodedPoint;
 use alloy_signer::{k256::SecretKey, Signer};
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
@@ -211,10 +212,10 @@ pub enum WalletSubcommands {
         wallet: WalletOpts,
     },
     /// Get the public key for the given private key.
-    #[command(visible_aliases = &["pub"])]
+    #[command(visible_aliases = &["pubkey"])]
     PublicKey {
         /// If provided, the public key will be derived from the specified private key.
-        #[arg(long = "private-key", value_name = "PRIVATE_KEY")]
+        #[arg(long = "raw-private-key", value_name = "PRIVATE_KEY")]
         private_key_override: Option<String>,
 
         #[command(flatten)]
@@ -428,9 +429,8 @@ impl WalletSubcommands {
                 // Get the public key from the private key
                 let public_key = secret_key.public_key();
 
-                let pubkey_bytes = public_key.to_sec1_bytes();
-
-                let ethereum_pubkey = &pubkey_bytes[1..];
+                let pubkey_bytes = public_key.to_encoded_point(false);
+                let ethereum_pubkey = &pubkey_bytes.as_bytes()[1..];
 
                 sh_println!("0x{}", hex::encode(ethereum_pubkey))?;
             }
