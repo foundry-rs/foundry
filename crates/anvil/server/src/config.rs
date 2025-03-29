@@ -17,6 +17,17 @@ pub struct ServerConfig {
     /// Disable the default request body size limit. At time of writing the default limit is 2MB.
     #[cfg_attr(feature = "clap", arg(long))]
     pub no_request_size_limit: bool,
+
+    /// Headers to include in each response, e.g. "User-Agent: anvil/v1.0.0"
+    #[cfg_attr(
+        feature = "clap", 
+        arg(
+            long = "anvil-header", 
+            value_name = "HEADERS", 
+            help_heading = "Server options"
+        )
+    )]
+    pub anvil_headers: Vec<String>,
 }
 
 impl ServerConfig {
@@ -31,6 +42,12 @@ impl ServerConfig {
         self.no_cors = !cors;
         self
     }
+
+    /// Sets the custom anvil headers to include in responses
+    pub fn with_anvil_headers(mut self, headers: Vec<String>) -> Self {
+        self.anvil_headers = headers;
+        self
+    }
 }
 
 impl Default for ServerConfig {
@@ -39,6 +56,7 @@ impl Default for ServerConfig {
             allow_origin: "*".parse::<HeaderValue>().unwrap().into(),
             no_cors: false,
             no_request_size_limit: false,
+            anvil_headers: vec![],
         }
     }
 }
