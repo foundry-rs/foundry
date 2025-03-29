@@ -57,7 +57,7 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
     root_method_router: MethodRouter<S>,
     state: S,
 ) -> Router {
-    let ServerConfig { allow_origin, no_cors, no_request_size_limit } = config;
+    let ServerConfig { allow_origin, no_cors, no_request_size_limit, anvil_headers: _ } = config;
 
     let mut router = Router::new()
         .route("/", root_method_router)
@@ -88,14 +88,19 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// Invoked when the request was received
     async fn on_request(&self, request: Self::Request) -> ResponseResult;
 
+    /// Get the anvil custom headers if available
+    fn get_anvil_headers(&self) -> Option<&Vec<String>> {
+        None
+    }
+
     /// Invoked for every incoming `RpcMethodCall`
     ///
-    /// This will attempt to deserialize a `{ "method" : "<name>", "params": "<params>" }` message
+    /// This will attempt to deserialize a `{ "method" : "<n>", "params": "<params>" }` message
     /// into the `Request` type of this handler. If a `Request` instance was deserialized
     /// successfully, [`Self::on_request`] will be invoked.
     ///
     /// **Note**: override this function if the expected `Request` deviates from `{ "method" :
-    /// "<name>", "params": "<params>" }`
+    /// "<n>", "params": "<params>" }`
     async fn on_call(&self, call: RpcMethodCall) -> RpcResponse {
         trace!(target: "rpc",  id = ?call.id , method = ?call.method, params = ?call.params, "received method call");
         let RpcMethodCall { method, params, id, .. } = call;
