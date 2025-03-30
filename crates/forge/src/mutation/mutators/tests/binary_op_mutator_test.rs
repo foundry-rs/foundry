@@ -20,7 +20,7 @@ impl MutatorTester for BinaryOpMutator {}
 #[case::bit_and("x & y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x | y", "x ^ y"]))]
 #[case::bit_or("x | y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x ^ y"]))]
 #[case::bit_xor("x ^ y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y"]))]
-#[case::non_binary("function f() { a = true; }", None)]
+#[case::non_binary("a = true", None)]
 fn test_mutator_bitwise(
     #[case] input: &'static str,
     #[case] expected_mutations: Option<Vec<&'static str>>,

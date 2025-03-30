@@ -18,7 +18,7 @@ pub enum AssignVarTypes {
 /// of the fn we override in MutantVisitor
 pub struct SolarVisitorWrapper {}
 
-impl<'_> Visit<'_> for SolarVisitorWrapper {
+impl Visit<'_> for SolarVisitorWrapper {
     type BreakValue = ();
 }
 

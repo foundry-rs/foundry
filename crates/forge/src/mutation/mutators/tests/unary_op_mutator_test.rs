@@ -8,14 +8,14 @@ use rstest::*;
 impl MutatorTester for UnaryOperatorMutator {}
 
 #[rstest]
-#[case::pre_inc("function f() { ++x; }", Some(vec!["--x", "~x", "-x", "x++", "x--"]))]
-#[case::pre_dec("function f() { --x; }", Some(vec!["++x", "~x", "-x", "x++", "x--"]))]
-#[case::neg("function f() { -x; }",      Some(vec!["++x", "--x", "~x", "x++", "x--"]))]
-#[case::bit_not("function f() { ~x; }",  Some(vec!["++x", "--x", "-x", "x++", "x--"]))]
-#[case::post_inc("function f() { x++; }",Some(vec!["++x", "--x", "~x", "-x", "x--"]))]
-#[case::post_dec("function f() { x--; }",Some(vec!["++x", "--x", "~x", "-x", "x++"]))]
-#[case::bool("function f() { !x; }", Some(vec!["x"]))]
-#[case::non_unary("function f() { a = b + c; }", None)]
+#[case::pre_inc("++x", Some(vec!["--x", "~x", "-x", "x++", "x--"]))]
+#[case::pre_dec("--x", Some(vec!["++x", "~x", "-x", "x++", "x--"]))]
+#[case::neg("-x",      Some(vec!["++x", "--x", "~x", "x++", "x--"]))]
+#[case::bit_not("~x",  Some(vec!["++x", "--x", "-x", "x++", "x--"]))]
+#[case::post_inc("x++",Some(vec!["++x", "--x", "~x", "-x", "x--"]))]
+#[case::post_dec("x--",Some(vec!["++x", "--x", "~x", "-x", "x++"]))]
+#[case::bool("!x", Some(vec!["x"]))]
+#[case::non_unary("a = b + c", None)]
 fn test_unary_op_mutator_arithmetic(
     #[case] input: &'static str,
     #[case] expected_mutations: Option<Vec<&'static str>>,
