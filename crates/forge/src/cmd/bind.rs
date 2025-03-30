@@ -15,6 +15,7 @@ impl_figment_convert!(BindArgs, build);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
+const DEFAULT_CRATE_DESCRIPTION: &str = "";
 
 /// CLI arguments for `forge bind`.
 #[derive(Clone, Debug, Parser)]
@@ -55,13 +56,18 @@ pub struct BindArgs {
     /// The description of the Rust crate to generate.
     ///
     /// This will be added to the package.description field in Cargo.toml.
-    #[arg(long, value_name = "DESCRIPTION")]
+    #[arg(long, default_value = DEFAULT_CRATE_DESCRIPTION, value_name = "DESCRIPTION")]
     crate_description: String,
 
     /// The license of the Rust crate to generate.
     ///
     /// This will be added to the package.license field in Cargo.toml.
-    #[arg(long, value_name = "LICENSE")]
+    #[arg(
+        long, 
+        value_name = "LICENSE",
+        value_parser = parse_license_alias,
+        default_value = ""
+    )]
     crate_license: String,
 
     /// Generate the bindings as a module instead of a crate.
@@ -109,6 +115,17 @@ pub struct BindArgs {
 
     #[command(flatten)]
     build: BuildOpts,
+}
+
+fn parse_license_alias(license: &str) -> Result<String, String> {
+    match license.to_lowercase().as_str() {
+        "mit" => Ok("MIT".to_string()),
+        "apache" | "apache2" => Ok("Apache-2.0".to_string()),
+        "gpl" | "gpl3" => Ok("GPL-3.0".to_string()),
+        "lgpl" | "lgpl3" => Ok("LGPL-3.0".to_string()),
+        "bsd" | "bsd3" => Ok("BSD-3-Clause".to_string()),
+        _ => Ok(license.to_string()),
+    }
 }
 
 impl BindArgs {

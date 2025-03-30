@@ -134,7 +134,27 @@ edition = "2021"
         }
 
         if !license.is_empty() {
-            toml_contents.push_str(&format!("license = \"{}\"\n", license));
+            let formatted_licenses: Vec<String> = license
+                .split(',')
+                .map(|part| match part.trim().to_lowercase().as_str() {
+                    "mit" => "MIT".to_string(),
+                    "apache" | "apache2" => "Apache-2.0".to_string(),
+                    "gpl" | "gpl3" => "GPL-3.0".to_string(),
+                    "lgpl" | "lgpl3" => "LGPL-3.0".to_string(),
+                    "agpl" | "agpl3" => "AGPL-3.0".to_string(),
+                    "bsd" | "bsd3" => "BSD-3-Clause".to_string(),
+                    "bsd2" => "BSD-2-Clause".to_string(),
+                    "mpl" | "mpl2" => "MPL-2.0".to_string(),
+                    "isc" => "ISC".to_string(),
+                    "unlicense" => "Unlicense".to_string(),
+                    _ => part.trim().to_string(),
+                })
+                .collect();
+
+            if !formatted_licenses.is_empty() {
+                let formatted_license = formatted_licenses.join(" OR ");
+                toml_contents.push_str(&format!("license = \"{}\"\n", formatted_license));
+            }
         }
 
         toml_contents.push_str("\n[dependencies]\n");
