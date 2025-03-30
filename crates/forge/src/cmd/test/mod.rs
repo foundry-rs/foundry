@@ -472,7 +472,7 @@ impl TestArgs {
                             output
                                 .artifact_ids()
                                 .find(|(id, _)| id.source == *entry)
-                                .map_or(false, |(id, _)| contract_pattern.is_match(&id.name))
+                                .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
                     })
                     .collect()
             } else if self.mutate.as_ref().unwrap().is_empty() {

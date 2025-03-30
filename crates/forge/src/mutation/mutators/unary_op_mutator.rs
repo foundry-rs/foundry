@@ -53,7 +53,7 @@ impl Mutator for UnaryOperatorMutator {
             return Ok(vec![Mutant {
                 span: expr.span,
                 mutation: MutationType::UnaryOperator(UnaryOpMutated::new(
-                    format!("{}", target_content),
+                    target_content.to_string(),
                     UnOpKind::Not,
                 )),
                 path: PathBuf::default(),

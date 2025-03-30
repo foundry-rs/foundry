@@ -1,5 +1,5 @@
 use crate::mutation::mutators::Mutator;
-use solar_parse::ast::{visit::Visit, Expr, ExprKind, IndexKind, LitKind, VariableDefinition};
+use solar_parse::ast::{visit::Visit, Expr, LitKind, VariableDefinition};
 use std::ops::ControlFlow;
 
 use crate::mutation::{
@@ -18,7 +18,7 @@ pub enum AssignVarTypes {
 /// of the fn we override in MutantVisitor
 pub struct SolarVisitorWrapper {}
 
-impl<'ast> Visit<'ast> for SolarVisitorWrapper {
+impl<'_> Visit<'_> for SolarVisitorWrapper {
     type BreakValue = ();
 }
 
