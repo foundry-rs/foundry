@@ -255,7 +255,7 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
-derive_more = { version = "2.0", features = ["full"] }
+derive_more = { version = "1.0", features = ["full"] }
 thiserror = "2"
 
 # bench

@@ -170,9 +170,8 @@ pub enum VerificationProviderType {
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
     pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
-        let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
-        // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
-        if !has_key && self.is_sourcify() {
+        // 1. If `--verifier sourcify` is set, always use Sourcify.
+        if matches!(self, Self::Sourcify) {
             sh_println!(
             "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
@@ -181,8 +180,8 @@ impl VerificationProviderType {
         }
 
         // 2. If `--verifier etherscan` is explicitly set, enforce the API key requirement.
-        if self.is_etherscan() {
-            if !has_key {
+        if matches!(self, Self::Etherscan) {
+            if key.as_ref().is_none_or(|key| key.is_empty()) {
                 eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")
             }
             return Ok(Box::<EtherscanVerificationProvider>::default());
@@ -195,19 +194,11 @@ impl VerificationProviderType {
         }
 
         // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
-        if has_key {
+        if key.as_ref().is_some_and(|k| !k.is_empty()) {
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 
         // 5. If no valid provider is specified, bail.
         eyre::bail!("No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier.")
-    }
-
-    pub fn is_sourcify(&self) -> bool {
-        matches!(self, Self::Sourcify)
-    }
-
-    pub fn is_etherscan(&self) -> bool {
-        matches!(self, Self::Etherscan)
     }
 }

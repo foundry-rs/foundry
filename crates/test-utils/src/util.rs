@@ -1019,10 +1019,7 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
             ("[ESTIMATED_GAS_PRICE]", r"Estimated gas price:\s*(\d+(\.\d+)?)\s*gwei"),
             ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
-            (
-                "[ESTIMATED_AMOUNT_REQUIRED]",
-                r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
-            ),
+            ("[ESTIMATED_AMOUNT_REQUIRED]", r"Estimated amount required:\s*(\d+(\.\d+)?)\s*ETH"),
         ];
         for (placeholder, re) in redactions {
             r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
