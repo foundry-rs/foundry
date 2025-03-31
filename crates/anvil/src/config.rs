@@ -185,7 +185,7 @@ pub struct NodeConfig {
     pub silent: bool,
     /// The path where states are cached.
     pub cache_path: Option<PathBuf>,
-    /// Пользовательские заголовки для HTTP-ответов
+    /// Custom headers for HTTP responses
     pub headers: Vec<String>,
 }
 
@@ -1345,7 +1345,7 @@ latest block number: {latest_block}"
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
     }
 
-    /// Добавляет пользовательские заголовки
+    /// Adds custom headers
     pub fn with_headers(mut self, headers: Vec<String>) -> Self {
         self.headers = headers;
         self
