@@ -1,15 +1,24 @@
 //! Contains the code to launch an Ethereum RPC server.
 
-use crate::{EthApi, IpcTask};
-use anvil_server::{ipc::IpcEndpoint, ServerConfig};
+use crate::{
+    eth::EthApi,
+    NodeConfig,
+    IpcTask,
+};
+use anvil_server::{
+    http_ws_router,
+    ipc::IpcEndpoint,
+    ServerConfig,
+};
 use axum::Router;
+use std::{io, future::Future, net::SocketAddr};
 use futures::StreamExt;
 use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
-use std::{future::Future, io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
 pub mod error;
-mod handler;
+pub mod handler;
+pub mod server_config;
 
 /// Configures a server that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 ///
@@ -35,34 +44,26 @@ pub async fn serve_on(
 
 /// Configures an [`axum::Router`] that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 pub fn router(api: EthApi, config: ServerConfig) -> Router {
-    let http = HttpEthRpcHandler::new(api.clone());
+    let http = HttpEthRpcHandler::new(api.clone()).with_headers(config.anvil_headers.clone());
     let ws = PubSubEthRpcHandler::new(api);
-    anvil_server::http_ws_router(config, http, ws)
+    http_ws_router(config, http, ws)
 }
 
-/// Launches an ipc server at the given path in a new task
-///
-/// # Panics
-///
-/// Panics if setting up the IPC connection was unsuccessful.
-#[track_caller]
+/// Spawns the IPC server endpoint
 pub fn spawn_ipc(api: EthApi, path: String) -> IpcTask {
-    try_spawn_ipc(api, path).expect("failed to establish ipc connection")
+    try_spawn_ipc(api, path).expect("Failed to spawn IPC server")
 }
 
-/// Launches an ipc server at the given path in a new task.
+/// Attempts to spawn the IPC server endpoint
 pub fn try_spawn_ipc(api: EthApi, path: String) -> io::Result<IpcTask> {
     let handler = PubSubEthRpcHandler::new(api);
-    let ipc = IpcEndpoint::new(handler, path);
-    let incoming = ipc.incoming()?;
-
-    let task = tokio::task::spawn(async move {
-        let mut incoming = pin!(incoming);
-        while let Some(stream) = incoming.next().await {
-            trace!(target: "ipc", "new ipc connection");
-            tokio::task::spawn(stream);
+    let endpoint = IpcEndpoint::new(handler, path);
+    let incoming = endpoint.incoming()?;
+    
+    Ok(tokio::spawn(async move {
+        let mut incoming = Box::pin(incoming);
+        while let Some(connection) = incoming.next().await {
+            tokio::spawn(connection);
         }
-    });
-
-    Ok(task)
+    }))
 }
