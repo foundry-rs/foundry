@@ -48,8 +48,8 @@ pub trait InspectorExt: for<'a> Inspector<FoundryEvmCtx<'a>> {
     /// factory.
     fn should_use_create2_factory(
         &mut self,
-        _context: FoundryEvmCtx<'_>,
-        _inputs: &mut CreateInputs,
+        _context: &mut FoundryEvmCtx<'_>,
+        _inputs: &CreateInputs,
     ) -> bool {
         false
     }

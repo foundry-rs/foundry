@@ -1,25 +1,18 @@
-use std::{cell::RefCell, rc::Rc};
-
 pub use crate::ic::*;
 use crate::{
     backend::DatabaseExt, handler::FoundryHandler, precompiles::MaybeOdysseyPrecompiles, Env,
     InspectorExt,
 };
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::map::foldhash::HashMap;
 use revm::{
-    context::{
-        result::{EVMError, HaltReason},
-        Cfg, ContextTr, Evm, EvmData, JournalInner, Transaction,
-    },
+    context::{Evm, EvmData, JournalInner},
     handler::{
-        execution,
         instructions::{EthInstructions, InstructionProvider},
-        EthFrame, EvmTr, Handler, ItemOrResult,
+        EvmTr,
     },
     inspector::{inspect_instructions, InspectorEvmTr},
-    interpreter::{interpreter::EthInterpreter, FrameInput, Interpreter, InterpreterTypes},
-    Database, Journal,
+    interpreter::{interpreter::EthInterpreter, Interpreter, InterpreterTypes},
+    Journal,
 };
 
 /// [`revm::Context`] type used by Foundry.

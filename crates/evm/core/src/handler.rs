@@ -4,17 +4,20 @@ use crate::{
     InspectorExt,
 };
 
-use alloy_primitives::map::foldhash::HashMap;
+use alloy_primitives::{map::foldhash::HashMap, Address, U256};
 use revm::{
     context::{
         result::{EVMError, HaltReason},
-        ContextTr, CreateScheme, Transaction,
+        ContextTr, CreateScheme,
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
-        EthFrame, EvmTr, Frame, FrameOrResult, Handler, ItemOrResult,
+        EthFrame, EvmTr, Frame, FrameOrResult, Handler,
     },
-    interpreter::{interpreter::EthInterpreter, FrameInput},
+    inspector::InspectorEvmTr,
+    interpreter::{
+        interpreter::EthInterpreter, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput,
+    },
     Database,
 };
 
@@ -75,12 +78,47 @@ where
     ) -> Result<FrameOrResult<Self::Frame>, Self::Error> {
         if self.is_enabled(Features::Create2Handler) {
             if let FrameInput::Create(inputs) = &frame_input {
+                // Early return if we are not using CREATE2.
                 let CreateScheme::Create2 { salt } = inputs.scheme else {
                     return Self::Frame::init_first(evm, frame_input);
                 };
+
+                // Early return if we should not use the create2 factory.
+                let ctx = evm.inner.ctx();
+                if !self.inner.inspector().should_use_create2_factory(ctx, inputs) {
+                    return Self::Frame::init_first(evm, frame_input);
+                }
+
+                let gas_limit = inputs.gas_limit;
+                let create2_deployer = self.inner.inspector().create2_deployer();
+                let mut call_inputs =
+                    get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+                let outcome = self.inner.inspector().call(ctx, &mut call_inputs);
             }
         }
 
         Self::Frame::init_first(evm, frame_input)
+    }
+}
+
+/// Creates the call inputs for the CREATE2 factory call.
+/// This is used to deploy a contract using the CREATE2 factory.
+fn get_create2_factory_call_inputs(
+    salt: U256,
+    inputs: &CreateInputs,
+    deployer: Address,
+) -> CallInputs {
+    let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
+    CallInputs {
+        caller: inputs.caller,
+        bytecode_address: deployer,
+        target_address: deployer,
+        scheme: CallScheme::Call,
+        value: CallValue::Transfer(inputs.value),
+        input: calldata.into(),
+        gas_limit: inputs.gas_limit,
+        is_static: false,
+        return_memory_offset: 0..0,
+        is_eof: false,
     }
 }
