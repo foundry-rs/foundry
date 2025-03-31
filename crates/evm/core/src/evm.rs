@@ -1,4 +1,3 @@
-pub use crate::ic::*;
 use crate::{
     backend::DatabaseExt, handler::FoundryHandler, precompiles::ODYSSEY_P256, Env, InspectorExt,
 };

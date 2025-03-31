@@ -1,4 +1,3 @@
-pub use crate::ic::*;
 use alloy_primitives::{address, Address, Bytes, B256};
 use revm::precompile::{
     secp256r1::p256_verify as revm_p256_verify, PrecompileResult, PrecompileWithAddress,

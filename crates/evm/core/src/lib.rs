@@ -19,19 +19,17 @@ pub mod abi {
     pub use foundry_evm_abi::*;
 }
 
-mod ic;
-
 pub mod env;
 pub use env::*;
 pub mod evm;
-use evm::FoundryEvmCtx;
-pub mod handler;
-
+use evm::*;
 pub mod backend;
 pub mod buffer;
 pub mod constants;
 pub mod decode;
 pub mod fork;
+pub mod handler;
+pub mod ic;
 pub mod opcodes;
 pub mod opts;
 pub mod precompiles;

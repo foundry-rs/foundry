@@ -1,4 +1,3 @@
-pub use crate::ic::*;
 use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvm, FoundryEvmCtx},
@@ -42,11 +41,11 @@ pub enum Features {
 /// This is a wrapper around the EVM that allows us to conditionally override certain
 /// execution paths based on the enabled features.
 pub struct FoundryHandler<'db, INSP: InspectorExt> {
-    /// A map of enabled features.
-    pub enabled: HashMap<Features, bool>,
     /// The inner EVM instance.
     pub inner: FoundryEvm<'db, INSP>,
 
+    /// A map of enabled features.
+    pub enabled: HashMap<Features, bool>,
     /// A list of overridden `CREATE2` frames.
     pub create2_overrides: Rc<RefCell<Vec<(usize, CallInputs)>>>,
 }
