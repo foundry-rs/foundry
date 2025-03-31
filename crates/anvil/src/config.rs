@@ -694,7 +694,6 @@ impl NodeConfig {
 
     /// Sets both the genesis accounts and the signer accounts
     /// so that `genesis_accounts == accounts`
-    #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> eyre::Result<Self> {
         let accounts = generator.gen()?;
         self.account_generator = Some(generator);
