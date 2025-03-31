@@ -62,7 +62,7 @@ pub struct BindArgs {
     ///
     /// This will be added to the package.license field in Cargo.toml.
     #[arg(
-        long, 
+        long,
         value_name = "LICENSE",
         value_parser = parse_license_alias,
         default_value = ""

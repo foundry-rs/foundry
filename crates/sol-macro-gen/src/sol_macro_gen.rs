@@ -130,7 +130,7 @@ edition = "2021"
         );
 
         if !description.is_empty() {
-            toml_contents.push_str(&format!("description = \"{}\"\n", description));
+            toml_contents.push_str(&format!("description = \"{description}\"\n"));
         }
 
         if !license.is_empty() {
@@ -139,7 +139,7 @@ edition = "2021"
 
             if !formatted_licenses.is_empty() {
                 let formatted_license = formatted_licenses.join(" OR ");
-                toml_contents.push_str(&format!("license = \"{}\"\n", formatted_license));
+                toml_contents.push_str(&format!("license = \"{formatted_license}\"\n"));
             }
         }
 
