@@ -48,6 +48,13 @@ impl ServerConfig {
         self.anvil_headers = headers;
         self
     }
+
+    /// Returns the custom headers that should be included in each response.
+    /// These headers will be exposed in CORS responses and included in all HTTP responses.
+    /// Headers should be in the format "Name: Value".
+    pub fn get_anvil_headers(&self) -> &[String] {
+        &self.anvil_headers
+    }
 }
 
 impl Default for ServerConfig {
