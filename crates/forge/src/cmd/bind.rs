@@ -15,7 +15,6 @@ impl_figment_convert!(BindArgs, build);
 
 const DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 const DEFAULT_CRATE_VERSION: &str = "0.1.0";
-const DEFAULT_CRATE_DESCRIPTION: &str = "";
 
 /// CLI arguments for `forge bind`.
 #[derive(Clone, Debug, Parser)]
@@ -56,7 +55,7 @@ pub struct BindArgs {
     /// The description of the Rust crate to generate.
     ///
     /// This will be added to the package.description field in Cargo.toml.
-    #[arg(long, default_value = DEFAULT_CRATE_DESCRIPTION, value_name = "DESCRIPTION")]
+    #[arg(long, default_value = "", value_name = "DESCRIPTION")]
     crate_description: String,
 
     /// The license of the Rust crate to generate.
