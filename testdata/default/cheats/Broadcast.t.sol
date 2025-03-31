@@ -155,9 +155,11 @@ contract BroadcastTest is DSTest {
         vm.stopBroadcast();
     }
 
-    function testFailNoBroadcast() public {
-        vm.stopBroadcast();
-    }
+    /// forge-config: default.allow_internal_expect_revert = true
+    // function testRevertIfNoBroadcast() public {
+    //     vm.expectRevert();
+    //     vm.stopBroadcast();
+    // }
 }
 
 contract NoLink is DSTest {

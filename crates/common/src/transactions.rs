@@ -10,7 +10,6 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
 use eyre::Result;
 use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
@@ -35,7 +34,7 @@ impl TransactionReceiptWithRevertReason {
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+    pub async fn update_revert_reason<P: Provider<AnyNetwork>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -43,7 +42,7 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+    async fn fetch_revert_reason<P: Provider<AnyNetwork>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
@@ -58,11 +57,10 @@ impl TransactionReceiptWithRevertReason {
             .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
         if let Some(block_hash) = self.receipt.block_hash {
-            match provider
-                .call(&transaction.inner.inner.into())
-                .block(BlockId::Hash(block_hash.into()))
-                .await
-            {
+            let mut call_request: WithOtherFields<TransactionRequest> =
+                transaction.inner.inner.clone_inner().into();
+            call_request.set_from(transaction.inner.inner.signer());
+            match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }

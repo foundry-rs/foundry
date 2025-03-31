@@ -196,7 +196,7 @@ pub struct Wallets {
 }
 
 impl Wallets {
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
         Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
@@ -244,8 +244,9 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
+    let depth = ccx.ecx.journaled_state.depth();
     ensure!(
-        ccx.state.prank.is_none(),
+        ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
     );
     ensure!(ccx.state.broadcast.is_none(), "a broadcast is active already");
@@ -269,7 +270,7 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
         new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
         original_caller: ccx.caller,
         original_origin: ccx.ecx.env.tx.caller,
-        depth: ccx.ecx.journaled_state.depth(),
+        depth,
         single_call,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");

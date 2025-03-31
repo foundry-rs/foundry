@@ -4,7 +4,7 @@ use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-        TxEip7702,
+        Recovered, TxEip7702,
     },
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
     TxReceipt, Typed2718,
@@ -22,7 +22,7 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use maili_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use revm::{
     interpreter::InstructionResult,
     primitives::{OptimismFields, TxEnv},
@@ -194,10 +194,6 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::recover] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
             return Ok(sender);
@@ -206,19 +202,11 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Returns whether the transaction is impersonated
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::hash] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn is_impersonated(&self) -> bool {
         self.impersonated_sender.is_some()
     }
 
     /// Returns the hash of the transaction
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::hash] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
         if let Some(sender) = self.impersonated_sender {
             return self.transaction.impersonated_hash(sender)
@@ -285,9 +273,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP2930(t) => {
@@ -296,9 +286,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP1559(t) => {
@@ -307,9 +299,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP4844(t) => {
@@ -318,9 +312,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP7702(t) => {
@@ -329,9 +325,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::Deposit(_t) => {
@@ -358,7 +356,6 @@ impl PendingTransaction {
         Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
     }
 
-    #[cfg(feature = "impersonated-tx")]
     pub fn with_impersonated(transaction: TypedTransaction, sender: Address) -> Self {
         let hash = transaction.impersonated_hash(sender);
         Self {
@@ -610,9 +607,9 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
     type Error = ConversionError;
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let AnyRpcTransaction { inner, .. } = value;
-        let from = inner.from;
-        match inner.inner {
+        let WithOtherFields { inner, .. } = value.0;
+        let from = inner.inner.signer();
+        match inner.inner.into_inner() {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
                 TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
@@ -926,7 +923,6 @@ impl TypedTransaction {
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
     /// This appends the `address` before hashing it
-    #[cfg(feature = "impersonated-tx")]
     pub fn impersonated_hash(&self, sender: Address) -> B256 {
         let mut buffer = Vec::new();
         Encodable::encode(self, &mut buffer);
@@ -1011,11 +1007,13 @@ impl Decodable for TypedTransaction {
     }
 }
 
-impl Encodable2718 for TypedTransaction {
-    fn type_flag(&self) -> Option<u8> {
-        self.r#type()
+impl Typed2718 for TypedTransaction {
+    fn ty(&self) -> u8 {
+        self.r#type().unwrap_or(0)
     }
+}
 
+impl Encodable2718 for TypedTransaction {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
@@ -1379,18 +1377,20 @@ impl Decodable for TypedReceipt {
     }
 }
 
-impl Encodable2718 for TypedReceipt {
-    fn type_flag(&self) -> Option<u8> {
+impl Typed2718 for TypedReceipt {
+    fn ty(&self) -> u8 {
         match self {
-            Self::Legacy(_) => None,
-            Self::EIP2930(_) => Some(1),
-            Self::EIP1559(_) => Some(2),
-            Self::EIP4844(_) => Some(3),
-            Self::EIP7702(_) => Some(4),
-            Self::Deposit(_) => Some(0x7E),
+            Self::Legacy(_) => alloy_consensus::constants::LEGACY_TX_TYPE_ID,
+            Self::EIP2930(_) => alloy_consensus::constants::EIP2930_TX_TYPE_ID,
+            Self::EIP1559(_) => alloy_consensus::constants::EIP1559_TX_TYPE_ID,
+            Self::EIP4844(_) => alloy_consensus::constants::EIP4844_TX_TYPE_ID,
+            Self::EIP7702(_) => alloy_consensus::constants::EIP7702_TX_TYPE_ID,
+            Self::Deposit(_) => DEPOSIT_TX_TYPE_ID,
         }
     }
+}
 
+impl Encodable2718 for TypedReceipt {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
@@ -1456,7 +1456,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                 blob_gas_price,
                 blob_gas_used,
                 inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
-                authorization_list,
             },
         other,
     } = receipt;
@@ -1473,7 +1472,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         to,
         blob_gas_price,
         blob_gas_used,
-        authorization_list,
         inner: match r#type {
             0x00 => TypedReceipt::Legacy(receipt_with_bloom),
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),

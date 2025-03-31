@@ -67,9 +67,9 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(&mut self) -> Result<()> {
+    pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
         for instance in &mut self.instances {
-            Self::generate_binding(instance).wrap_err_with(|| {
+            Self::generate_binding(instance, all_derives).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -81,7 +81,7 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    fn generate_binding(instance: &mut SolMacroGen) -> Result<()> {
+    fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
         let input = instance.get_sol_input()?.normalize_json()?;
 
         let SolInput { attrs: _, path: _, kind } = input;
@@ -89,7 +89,7 @@ impl MultiSolMacroGen {
         let tokens = match kind {
             SolInputKind::Sol(mut file) => {
                 let sol_attr: syn::Attribute = syn::parse_quote! {
-                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
+                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract, all_derives = #all_derives)]
                 };
                 file.attrs.push(sol_attr);
                 expand(file).wrap_err("failed to expand")?
@@ -101,6 +101,7 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_to_crate(
         &mut self,
         name: &str,
@@ -108,8 +109,10 @@ impl MultiSolMacroGen {
         bindings_path: &Path,
         single_file: bool,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
+        all_derives: bool,
     ) -> Result<()> {
-        self.generate_bindings()?;
+        self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
 
@@ -127,13 +130,7 @@ edition = "2021"
 "#
         );
 
-        let alloy_dep = if let Some(alloy_version) = alloy_version {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_version}", features = ["sol-types", "contract"] }}"#
-            )
-        } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
-        };
+        let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
@@ -165,7 +162,7 @@ edition = "2021"
                 write!(&mut lib_contents, "{contents}")?;
             } else {
                 fs::write(path, contents).wrap_err("failed to write to file")?;
-                writeln!(&mut lib_contents, "pub mod {name};")?;
+                write_mod_name(&mut lib_contents, &name)?;
             }
         }
 
@@ -177,8 +174,13 @@ edition = "2021"
         Ok(())
     }
 
-    pub fn write_to_module(&mut self, bindings_path: &Path, single_file: bool) -> Result<()> {
-        self.generate_bindings()?;
+    pub fn write_to_module(
+        &mut self,
+        bindings_path: &Path,
+        single_file: bool,
+        all_derives: bool,
+    ) -> Result<()> {
+        self.generate_bindings(all_derives)?;
 
         let _ = fs::create_dir_all(bindings_path);
 
@@ -194,12 +196,7 @@ edition = "2021"
             let name = instance.name.to_lowercase();
             if !single_file {
                 // Module
-                write!(
-                    mod_contents,
-                    r#"pub mod {};
-                "#,
-                    instance.name.to_lowercase()
-                )?;
+                write_mod_name(&mut mod_contents, &name)?;
                 let mut contents = String::new();
 
                 write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
@@ -230,7 +227,7 @@ edition = "2021"
     ///
     /// Returns `Ok(())` if the generated bindings are up to date, otherwise it returns
     /// `Err(_)`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn check_consistency(
         &self,
         name: &str,
@@ -240,9 +237,10 @@ edition = "2021"
         check_cargo_toml: bool,
         is_mod: bool,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         if check_cargo_toml {
-            self.check_cargo_toml(name, version, crate_path, alloy_version)?;
+            self.check_cargo_toml(name, version, crate_path, alloy_version, alloy_rev)?;
         }
 
         let mut super_contents = String::new();
@@ -270,12 +268,7 @@ edition = "2021"
                     .to_string();
 
                 self.check_file_contents(&path, &tokens)?;
-
-                write!(
-                    &mut super_contents,
-                    r#"pub mod {name};
-                    "#
-                )?;
+                write_mod_name(&mut super_contents, &name)?;
             }
 
             let super_path =
@@ -314,6 +307,7 @@ edition = "2021"
         version: &str,
         crate_path: &Path,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         eyre::ensure!(crate_path.is_dir(), "Crate path must be a directory");
 
@@ -325,13 +319,7 @@ edition = "2021"
 
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
-        let alloy_dep_check = if let Some(version) = alloy_version {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{version}", features = ["sol-types", "contract"] }}"#,
-            )
-        } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
-        };
+        let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
         let toml_consistent = cargo_toml_contents.contains(&name_check) &&
             cargo_toml_contents.contains(&version_check) &&
             cargo_toml_contents.contains(&alloy_dep_check);
@@ -343,4 +331,30 @@ edition = "2021"
 
         Ok(())
     }
+
+    /// Returns the `alloy` dependency string for the Cargo.toml file.
+    /// If `alloy_version` is provided, it will use that version from crates.io.
+    /// If `alloy_rev` is provided, it will use that revision from the GitHub repository.
+    fn get_alloy_dep(alloy_version: Option<String>, alloy_rev: Option<String>) -> String {
+        if let Some(alloy_version) = alloy_version {
+            format!(
+                r#"alloy = {{ version = "{alloy_version}", features = ["sol-types", "contract"] }}"#,
+            )
+        } else if let Some(alloy_rev) = alloy_rev {
+            format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
+            )
+        } else {
+            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+        }
+    }
+}
+
+fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
+    if syn::parse_str::<syn::Ident>(&format!("pub mod {name};")).is_ok() {
+        write!(contents, "pub mod {name};")?;
+    } else {
+        write!(contents, "pub mod r#{name};")?;
+    }
+    Ok(())
 }

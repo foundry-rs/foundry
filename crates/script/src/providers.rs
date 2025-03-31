@@ -66,7 +66,7 @@ impl ProviderInfo {
             )
         } else {
             GasPrice::EIP1559(
-                provider.estimate_eip1559_fees(None).await.wrap_err("Failed to get EIP-1559 fees"),
+                provider.estimate_eip1559_fees().await.wrap_err("Failed to get EIP-1559 fees"),
             )
         };
 

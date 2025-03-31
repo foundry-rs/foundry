@@ -15,7 +15,7 @@ use foundry_common::{
     abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
-    abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
+    abi::{console, Vm},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
@@ -153,23 +153,6 @@ impl CallTraceDecoder {
     }
 
     fn init() -> Self {
-        /// All functions from the Hardhat console ABI.
-        ///
-        /// See [`HARDHAT_CONSOLE_SELECTOR_PATCHES`] for more details.
-        fn hh_funcs() -> impl Iterator<Item = (Selector, Function)> {
-            let functions = HardhatConsole::abi::functions();
-            let mut functions: Vec<_> =
-                functions.into_values().flatten().map(|func| (func.selector(), func)).collect();
-            let len = functions.len();
-            // `functions` is the list of all patched functions; duplicate the unpatched ones
-            for (unpatched, patched) in HARDHAT_CONSOLE_SELECTOR_PATCHES.iter() {
-                if let Some((_, func)) = functions[..len].iter().find(|(sel, _)| sel == patched) {
-                    functions.push((unpatched.into(), func.clone()));
-                }
-            }
-            functions.into_iter()
-        }
-
         Self {
             contracts: Default::default(),
             labels: HashMap::from_iter([
@@ -192,16 +175,13 @@ impl CallTraceDecoder {
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
 
-            functions: hh_funcs()
-                .chain(
-                    Vm::abi::functions()
-                        .into_values()
-                        .flatten()
-                        .map(|func| (func.selector(), func)),
-                )
-                .map(|(selector, func)| (selector, vec![func]))
+            functions: console::hh::abi::functions()
+                .into_values()
+                .chain(Vm::abi::functions().into_values())
+                .flatten()
+                .map(|func| (func.selector(), vec![func]))
                 .collect(),
-            events: Console::abi::events()
+            events: console::ds::abi::events()
                 .into_values()
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
@@ -338,7 +318,7 @@ impl CallTraceDecoder {
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
             node.trace.decoded = self.decode_function(&node.trace).await;
-            for log in node.logs.iter_mut() {
+            for log in &mut node.logs {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }
 
@@ -386,7 +366,12 @@ impl CallTraceDecoder {
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
                     label,
-                    call_data: None,
+                    call_data: self.fallback_contracts.get(&trace.address).map(|_| {
+                        DecodedCallData {
+                            signature: "fallback()".to_string(),
+                            args: vec![cdata.to_string()],
+                        }
+                    }),
                     return_data: self.default_return_data(trace),
                 };
             };
@@ -396,7 +381,7 @@ impl CallTraceDecoder {
             let mut call_data = self.decode_function_input(trace, func);
             if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
                 if !fallback_functions.contains(&func.signature()) {
-                    call_data.signature = "fallback()".into();
+                    call_data.signature = "fallback()".to_string();
                 }
             }
 
@@ -408,7 +393,8 @@ impl CallTraceDecoder {
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
             let signature =
-                if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
+                if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }
+                    .to_string();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
             DecodedCallTrace {
                 label,
@@ -476,6 +462,14 @@ impl CallTraceDecoder {
                     decoded[0] = DynSolValue::String("<pk>".to_string());
                 }
 
+                Some(decoded.iter().map(format_token).collect())
+            }
+            "signDelegation" | "signAndAttachDelegation" => {
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                // Redact private key and replace in trace for
+                // signAndAttachDelegation(address implementation, uint256 privateKey)
+                // signDelegation(address implementation, uint256 privateKey)
+                decoded[1] = DynSolValue::String("<pk>".to_string());
                 Some(decoded.iter().map(format_token).collect())
             }
             "parseJson" |
@@ -688,7 +682,7 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
     let mut indexed = 0;
     let mut unindexed = 0;
     let mut inputs = vec![];
-    for input in event.inputs.iter() {
+    for input in &event.inputs {
         // Prevent panic of event `Transfer(from, to)` decoded with a signature
         // `Transfer(address indexed from, address indexed to, uint256 indexed tokenId)` by making
         // sure the event inputs is not higher than decoded indexed / un-indexed values.

@@ -1,4 +1,7 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    fmt::{self, Display},
+};
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
@@ -72,6 +75,8 @@ pub struct ExpectedRevert {
     pub reverter: Option<Address>,
     /// Address that reverted the call.
     pub reverted_by: Option<Address>,
+    /// Max call depth reached during next call execution.
+    pub max_depth: u64,
     /// Number of times this revert is expected.
     pub count: u64,
     /// Actual number of times this revert has been seen.
@@ -100,6 +105,41 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExpectedCreate {
+    /// The address that deployed the contract
+    pub deployer: Address,
+    /// Runtime bytecode of the contract
+    pub bytecode: Bytes,
+    /// Whether deployed with CREATE or CREATE2
+    pub create_scheme: CreateScheme,
+}
+
+#[derive(Clone, Debug)]
+pub enum CreateScheme {
+    Create,
+    Create2,
+}
+
+impl Display for CreateScheme {
+    fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Create => write!(f, "CREATE"),
+            Self::Create2 => write!(f, "CREATE2"),
+        }
+    }
+}
+
+impl CreateScheme {
+    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+        matches!(
+            (self, create_scheme),
+            (Self::Create, revm::primitives::CreateScheme::Create) |
+                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+        )
+    }
 }
 
 impl Cheatcode for expectCall_0Call {
@@ -333,6 +373,20 @@ impl Cheatcode for expectEmitAnonymous_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true, 1)
+    }
+}
+
+impl Cheatcode for expectCreateCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bytecode, deployer } = self;
+        expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create)
+    }
+}
+
+impl Cheatcode for expectCreate2Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bytecode, deployer } = self;
+        expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
     }
 }
 
@@ -618,7 +672,7 @@ impl RevertParameters for ExpectedRevert {
 ///   `vm.expectCall(address(0xc4f3), abi.encodeWithSelector(0xd34db33f))` will expect the call to
 ///   address(0xc4f3) and selector `0xd34db33f` to be made at least once. If the amount of calls is
 ///   0, the test will fail. If the call is made more than once, the test will pass.
-#[allow(clippy::too_many_arguments)] // It is what it is
+#[expect(clippy::too_many_arguments)] // It is what it is
 fn expect_call(
     state: &mut Cheatcodes,
     target: &Address,
@@ -887,6 +941,18 @@ impl LogCountMap {
     }
 }
 
+fn expect_create(
+    state: &mut Cheatcodes,
+    bytecode: Bytes,
+    deployer: Address,
+    create_scheme: CreateScheme,
+) -> Result {
+    let expected_create = ExpectedCreate { bytecode, deployer, create_scheme };
+    state.expected_creates.push(expected_create);
+
+    Ok(Default::default())
+}
+
 fn expect_revert(
     state: &mut Cheatcodes,
     reason: Option<&[u8]>,
@@ -911,6 +977,7 @@ fn expect_revert(
         partial_match,
         reverter,
         reverted_by: None,
+        max_depth: depth,
         count,
         actual_count: 0,
     });
@@ -943,7 +1010,7 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {
     ensure!(start < end, "memory range start ({start}) is greater than end ({end})");
-    #[allow(clippy::single_range_in_vec_init)] // Wanted behaviour
+    #[expect(clippy::single_range_in_vec_init)] // Wanted behaviour
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Default::default())

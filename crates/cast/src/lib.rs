@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
+
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use alloy_consensus::TxEnvelope;
@@ -18,10 +19,9 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -38,7 +38,6 @@ use std::{
     borrow::Cow,
     fmt::Write,
     io,
-    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -50,11 +49,19 @@ use utils::decode_instructions;
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 
+pub mod args;
+pub mod cmd;
+pub mod opts;
+
 pub mod base;
 pub mod errors;
 mod rlp_converter;
+pub mod tx;
 
 use rlp_converter::Item;
+
+#[macro_use]
+extern crate tracing;
 
 #[macro_use]
 extern crate foundry_common;
@@ -69,16 +76,11 @@ sol! {
     }
 }
 
-pub struct Cast<P, T> {
+pub struct Cast<P> {
     provider: P,
-    transport: PhantomData<T>,
 }
 
-impl<T, P> Cast<P, T>
-where
-    T: Transport + Clone,
-    P: Provider<T, AnyNetwork>,
-{
+impl<P: Provider<AnyNetwork>> Cast<P> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -95,7 +97,7 @@ where
     /// # }
     /// ```
     pub fn new(provider: P) -> Self {
-        Self { provider, transport: PhantomData }
+        Self { provider }
     }
 
     /// Makes a read-only call to the specified address
@@ -134,7 +136,7 @@ where
         func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
+        let res = self.provider.call(req.clone()).block(block.unwrap_or_default()).await?;
 
         let mut decoded = vec![];
 
@@ -280,7 +282,7 @@ where
     pub async fn send(
         &self,
         tx: WithOtherFields<TransactionRequest>,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         let res = self.provider.send_transaction(tx).await?;
 
         Ok(res)
@@ -306,7 +308,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -347,7 +349,8 @@ where
 
         let block = self
             .provider
-            .get_block(block, full.into())
+            .get_block(block)
+            .full()
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -438,9 +441,13 @@ where
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
-            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon",
-            "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
-                "polygon-mumbai"
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
+            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
+                "polygon-pos-amoy-testnet"
+            }
+            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
+            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
+                "polygon-zkevm-cardona-testnet"
             }
             "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
             "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
@@ -844,7 +851,7 @@ where
     /// ```
     pub async fn rpc<V>(&self, method: &str, params: V) -> Result<String>
     where
-        V: alloy_json_rpc::RpcParam,
+        V: alloy_json_rpc::RpcSend,
     {
         let res = self
             .provider
@@ -953,8 +960,7 @@ where
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block =
-                        self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
+                    let block = self.provider.get_block_by_hash(hash.block_hash).await?;
                     Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
                 }
             },
@@ -1770,10 +1776,11 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(calldata))
     }
 
-    /// Prints the slot number for the specified mapping type and input data.
+    /// Returns the slot number for a given mapping key and slot.
     ///
-    /// For value types `v`, slot number of `v` is `keccak256(concat(h(v), p))` where `h` is the
-    /// padding function for `v`'s type, and `p` is slot number of the mapping.
+    /// Given `mapping(k => v) m`, for a key `k` the slot number of its associated `v` is
+    /// `keccak256(concat(h(k), p))`, where `h` is the padding function for `k`'s type, and `p`
+    /// is slot number of the mapping `m`.
     ///
     /// See [the Solidity documentation](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays)
     /// for more details.
@@ -1800,12 +1807,12 @@ impl SimpleCast {
     /// );
     /// # Ok::<_, eyre::Report>(())
     /// ```
-    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+    pub fn index(key_type: &str, key: &str, slot_number: &str) -> Result<String> {
         let mut hasher = Keccak256::new();
 
-        let v_ty = DynSolType::parse(from_type).wrap_err("Could not parse type")?;
-        let v = v_ty.coerce_str(from_value).wrap_err("Could not parse value")?;
-        match v_ty {
+        let k_ty = DynSolType::parse(key_type).wrap_err("Could not parse type")?;
+        let k = k_ty.coerce_str(key).wrap_err("Could not parse value")?;
+        match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
             DynSolType::Bool |
@@ -1813,16 +1820,16 @@ impl SimpleCast {
             DynSolType::Uint(_) |
             DynSolType::FixedBytes(_) |
             DynSolType::Address |
-            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+            DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
-            DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
+            DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
             DynSolType::Array(..) |
             DynSolType::FixedArray(..) |
             DynSolType::Tuple(..) |
             DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
+                eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }
 
@@ -1937,7 +1944,9 @@ impl SimpleCast {
     ///     Cast::etherscan_source(
     ///         NamedChain::Mainnet.into(),
     ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///         "<etherscan_api_key>".to_string()
+    ///         Some("<etherscan_api_key>".to_string()),
+    ///         None,
+    ///         None
     ///     )
     ///     .await
     ///     .unwrap()
@@ -1949,9 +1958,11 @@ impl SimpleCast {
     pub async fn etherscan_source(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<String> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         Ok(metadata.source_code())
     }
@@ -1969,8 +1980,10 @@ impl SimpleCast {
     /// Cast::expand_etherscan_source_to_directory(
     ///     NamedChain::Mainnet.into(),
     ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///     "<etherscan_api_key>".to_string(),
+    ///     Some("<etherscan_api_key>".to_string()),
     ///     PathBuf::from("output_dir"),
+    ///     None,
+    ///     None,
     /// )
     /// .await?;
     /// # Ok(())
@@ -1979,10 +1992,12 @@ impl SimpleCast {
     pub async fn expand_etherscan_source_to_directory(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_directory: PathBuf,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> eyre::Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
@@ -1994,10 +2009,12 @@ impl SimpleCast {
     pub async fn etherscan_source_flatten(
         chain: Chain,
         contract_address: String,
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
         output_path: Option<PathBuf>,
+        explorer_api_url: Option<String>,
+        explorer_url: Option<String>,
     ) -> Result<()> {
-        let client = Client::new(chain, etherscan_api_key)?;
+        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
             eyre::bail!("Empty contract source code")
@@ -2189,6 +2206,33 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+fn explorer_client(
+    chain: Chain,
+    api_key: Option<String>,
+    api_url: Option<String>,
+    explorer_url: Option<String>,
+) -> Result<Client> {
+    let mut builder = Client::builder().with_chain_id(chain);
+
+    let deduced = chain.etherscan_urls();
+
+    let explorer_url = explorer_url
+        .or(deduced.map(|d| d.1.to_string()))
+        .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
+    builder = builder.with_url(explorer_url)?;
+
+    let api_url = api_url
+        .or(deduced.map(|d| d.0.to_string()))
+        .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
+    builder = builder.with_api_url(api_url)?;
+
+    if let Some(api_key) = api_key {
+        builder = builder.with_api_key(api_key);
+    }
+
+    builder.build().map_err(Into::into)
 }
 
 #[cfg(test)]

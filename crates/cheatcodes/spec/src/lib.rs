@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Cheatcode specification for Foundry.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
@@ -89,6 +90,7 @@ impl Cheatcodes<'static> {
                 Vm::BroadcastTxSummary::STRUCT.clone(),
                 Vm::SignedDelegation::STRUCT.clone(),
                 Vm::PotentialRevert::STRUCT.clone(),
+                Vm::AccessListItem::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
@@ -105,7 +107,7 @@ impl Cheatcodes<'static> {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use std::{fs, path::Path};

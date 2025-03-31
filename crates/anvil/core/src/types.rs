@@ -1,12 +1,10 @@
 use alloy_primitives::{Bytes, B256, U256};
-
 use alloy_rpc_types::TransactionRequest;
-use serde::Deserialize;
-#[cfg(feature = "serde")]
-use serde::Serializer;
+use serde::{Deserialize, Serialize, Serializer};
 
-/// Represents the result of `eth_getWork`
-/// This may or may not include the block number
+/// Represents the result of `eth_getWork`.
+///
+/// This may or may not include the block number.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Work {
     pub pow_hash: B256,
@@ -15,8 +13,7 @@ pub struct Work {
     pub number: Option<u64>,
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for Work {
+impl Serialize for Work {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -40,6 +37,7 @@ pub struct ReorgOptions {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
+#[expect(clippy::large_enum_variant)]
 pub enum TransactionData {
     JSON(TransactionRequest),
     Raw(Bytes),

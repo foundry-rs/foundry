@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable, Error as DecodeError, Header as RlpHeader};
-use maili_consensus::TxDeposit;
+use op_alloy_consensus::TxDeposit;
 use serde::{Deserialize, Serialize};
 
 pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;
@@ -21,7 +21,7 @@ impl From<DepositTransaction> for TxDeposit {
 }
 
 /// An op-stack deposit transaction.
-/// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
+/// See <https://github.com/ethereum-optimism/optimistic-specs/blob/main/specs/deposits.md#the-deposited-transaction-type>
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
     pub nonce: u64,

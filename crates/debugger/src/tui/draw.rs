@@ -351,7 +351,7 @@ impl TUIContext<'_> {
             .contracts_sources
             .find_source_mapping(
                 contract_name,
-                self.current_step().pc,
+                self.current_step().pc as u32,
                 self.debug_call().kind.is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))

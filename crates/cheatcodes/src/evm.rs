@@ -16,6 +16,7 @@ use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
 use foundry_evm_traces::StackSnapshotType;
+use itertools::Itertools;
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
 use std::{
@@ -516,7 +517,8 @@ impl Cheatcode for etchCall {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
         ccx.ecx.load_account(*target)?;
-        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode));
+        let bytecode = Bytecode::new_raw_checked(Bytes::copy_from_slice(newRuntimeBytecode))
+            .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }
@@ -584,10 +586,52 @@ impl Cheatcode for coolCall {
     }
 }
 
+impl Cheatcode for accessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { access } = self;
+        let access_list = access
+            .iter()
+            .map(|item| {
+                let keys = item.storageKeys.iter().map(|key| B256::from(*key)).collect_vec();
+                alloy_rpc_types::AccessListItem { address: item.target, storage_keys: keys }
+            })
+            .collect_vec();
+        state.access_list = Some(alloy_rpc_types::AccessList::from(access_list));
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for noAccessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        // Set to empty option in order to override previous applied access list.
+        if state.access_list.is_some() {
+            state.access_list = Some(alloy_rpc_types::AccessList::default());
+        }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for warmSlotCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), false);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for coolSlotCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), true);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.env.tx.caller)
+        read_callers(ccx.state, &ccx.ecx.env.tx.caller, ccx.ecx.journaled_state.depth())
     }
 }
 
@@ -1067,19 +1111,17 @@ fn derive_snapshot_name(
 /// - If no caller modification is active:
 ///     - caller_mode will be equal to [CallerMode::None],
 ///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
-fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
-    let Cheatcodes { prank, broadcast, .. } = state;
-
+fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -> Result {
     let mut mode = CallerMode::None;
     let mut new_caller = default_sender;
     let mut new_origin = default_sender;
-    if let Some(prank) = prank {
+    if let Some(prank) = state.get_prank(call_depth) {
         mode = if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
         new_caller = &prank.new_caller;
         if let Some(new) = &prank.new_origin {
             new_origin = new;
         }
-    } else if let Some(broadcast) = broadcast {
+    } else if let Some(broadcast) = &state.broadcast {
         mode = if broadcast.single_call {
             CallerMode::Broadcast
         } else {
@@ -1195,4 +1237,13 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
             });
     }
     state_diffs
+}
+
+/// Helper function to set / unset cold storage slot of the target address.
+fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
+    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target) {
+        if let Some(storage_slot) = account.storage.get_mut(&slot) {
+            storage_slot.is_cold = cold;
+        }
+    }
 }

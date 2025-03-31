@@ -7,10 +7,7 @@ use super::CreateFork;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{map::HashMap, U256};
 use alloy_provider::network::BlockResponse;
-use alloy_transport::layers::RetryBackoffService;
-use foundry_common::provider::{
-    runtime_transport::RuntimeTransport, ProviderBuilder, RetryProvider,
-};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
 use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
 use futures::{
@@ -184,7 +181,7 @@ impl MultiFork {
     }
 }
 
-type Handler = BackendHandler<RetryBackoffService<RuntimeTransport>, Arc<RetryProvider>>;
+type Handler = BackendHandler<Arc<RetryProvider>>;
 
 type CreateFuture =
     Pin<Box<dyn Future<Output = eyre::Result<(ForkId, CreatedFork, Handler)>> + Send>>;
@@ -258,9 +255,9 @@ impl MultiForkHandler {
     }
 
     /// Returns the list of additional senders of a matching task for the given id, if any.
+    #[expect(irrefutable_let_patterns)]
     fn find_in_progress_task(&mut self, id: &ForkId) -> Option<&mut Vec<CreateSender>> {
-        for task in self.pending_tasks.iter_mut() {
-            #[allow(irrefutable_let_patterns)]
+        for task in &mut self.pending_tasks {
             if let ForkTask::Create(_, in_progress, _, additional) = task {
                 if in_progress == id {
                     return Some(additional);

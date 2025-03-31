@@ -48,8 +48,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::mpsc::{self, RecvTimeoutError},
-    time::Duration,
 };
 
 mod macros;
@@ -122,7 +120,7 @@ mod bind_json;
 use bind_json::BindJsonConfig;
 
 mod compilation;
-use compilation::{CompilationRestrictions, SettingsOverrides};
+pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 /// Foundry configuration
 ///
@@ -200,6 +198,10 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// where the gas snapshots are stored
     pub snapshots: PathBuf,
+    /// whether to check for differences against previously stored gas snapshots
+    pub gas_snapshot_check: bool,
+    /// whether to emit gas snapshots to disk
+    pub gas_snapshot_emit: bool,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -226,8 +228,11 @@ pub struct Config {
     ///
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
     /// file, see `BackwardsCompatTomlProvider`.
+    ///
+    /// Avoid using this field directly; call the related `solc` methods instead.
+    #[doc(hidden)]
     pub solc: Option<SolcReq>,
-    /// whether to autodetect the solc compiler version to use
+    /// Whether to autodetect the solc compiler version to use.
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
     ///
@@ -317,6 +322,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to allow `expectRevert` for internal functions.
+    pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
     /// Sets a timeout in seconds for vm.prompt cheatcodes
@@ -578,9 +585,6 @@ impl Config {
     pub const DEFAULT_CREATE2_DEPLOYER: Address =
         address!("4e59b44847b379578588920ca78fbf26c0b4956c");
 
-    /// Docker image with eof-enabled solc binary
-    pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
-
     /// Loads the `Config` from the current directory.
     ///
     /// See [`figment`](Self::figment) for more details.
@@ -799,7 +803,7 @@ impl Config {
 
         self.fs_permissions.join_all(&root);
 
-        if let Some(ref mut model_checker) = self.model_checker {
+        if let Some(model_checker) = &mut self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
                 .into_iter()
                 .map(|(path, contracts)| {
@@ -848,12 +852,9 @@ impl Config {
         }
     }
 
-    /// Returns the normalized [EvmVersion] if a [SolcReq] is set to a valid version or if the solc
-    /// path is a valid solc binary.
-    ///
-    /// Otherwise it returns the configured [EvmVersion].
+    /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc.as_ref().and_then(|solc| solc.try_version().ok()) {
+        if let Some(version) = self.solc_version() {
             if let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
                 return evm_version;
             }
@@ -895,16 +896,20 @@ impl Config {
 
     /// Adjusts settings if EOF compilation is enabled.
     ///
-    /// This includes enabling via_ir, eof_version and ensuring that evm_version is not lower than
-    /// Prague.
+    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
+    /// lower than Osaka.
     pub fn sanitize_eof_settings(&mut self) {
         if self.eof {
-            self.via_ir = true;
+            self.optimizer = Some(true);
+            self.normalize_optimizer_settings();
+
             if self.eof_version.is_none() {
                 self.eof_version = Some(EofVersion::V1);
             }
-            if self.evm_version < EvmVersion::Prague {
-                self.evm_version = EvmVersion::Prague;
+
+            self.via_ir = true;
+            if self.evm_version < EvmVersion::Osaka {
+                self.evm_version = EvmVersion::Osaka;
             }
         }
     }
@@ -940,7 +945,7 @@ impl Config {
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
-    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+    pub fn ephemeral_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(false, true)
     }
 
@@ -1011,7 +1016,9 @@ impl Config {
         Ok(map)
     }
 
-    /// Creates a [Project] with the given `cached` and `no_artifacts` flags
+    /// Creates a [`Project`] with the given `cached` and `no_artifacts` flags.
+    ///
+    /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
@@ -1080,45 +1087,8 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
-    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
-        if self.eof {
-            let (tx, rx) = mpsc::channel();
-            let root = self.root.clone();
-            std::thread::spawn(move || {
-                tx.send(
-                    Solc::new_with_args(
-                        "docker",
-                        [
-                            "run",
-                            "--rm",
-                            "-i",
-                            "-v",
-                            &format!("{}:/app/root", root.display()),
-                            Self::EOF_SOLC_IMAGE,
-                        ],
-                    )
-                    .map(Some),
-                )
-            });
-            // If it takes more than 1 second, this likely means we are pulling the image.
-            return match rx.recv_timeout(Duration::from_secs(1)) {
-                Ok(res) => res,
-                Err(RecvTimeoutError::Timeout) => {
-                    // `sh_warn!` is a circular dependency, preventing us from using it here.
-                    eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(
-                            "Pulling Docker image for eof-solc, this might take some time..."
-                        )
-                    );
-
-                    rx.recv().expect("sender dropped")
-                }
-                Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
-            };
-        }
-        if let Some(ref solc) = self.solc {
+        if let Some(solc) = &self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
                     if let Some(solc) = Solc::find_svm_installed_version(version)? {
@@ -1214,6 +1184,11 @@ impl Config {
         } else {
             Ok(SolcCompiler::AutoDetect)
         }
+    }
+
+    /// Returns the solc version, if any.
+    pub fn solc_version(&self) -> Option<Version> {
+        self.solc.as_ref().and_then(|solc| solc.try_version().ok())
     }
 
     /// Returns configured [Vyper] compiler.
@@ -1832,7 +1807,7 @@ impl Config {
 
     /// Returns the path to foundry's config dir: `~/.foundry/`.
     pub fn foundry_dir() -> Option<PathBuf> {
-        dirs_next::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
+        dirs::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
     }
 
     /// Returns the path to foundry's cache dir: `~/.foundry/cache`.
@@ -1885,7 +1860,7 @@ impl Config {
     /// | macOS    | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
     /// | Windows  | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry           |
     pub fn data_dir() -> eyre::Result<PathBuf> {
-        let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
+        let path = dirs::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
         Ok(path)
     }
@@ -2310,6 +2285,8 @@ impl Default for Config {
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
+            gas_snapshot_check: false,
+            gas_snapshot_emit: true,
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
@@ -2343,6 +2320,7 @@ impl Default for Config {
             invariant: InvariantConfig::new("cache".into()),
             always_use_create_2_factory: false,
             ffi: false,
+            allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
@@ -4602,7 +4580,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
-    #[allow(clippy::disallowed_macros)]
+    #[expect(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {
@@ -4628,7 +4606,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unknown_lints, non_local_definitions)]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {

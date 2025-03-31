@@ -10,7 +10,6 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
-        TEST_TIMEOUT,
     },
     precompiles::PRECOMPILES,
 };
@@ -28,7 +27,7 @@ use parking_lot::RwLock;
 use proptest::{
     prelude::Rng,
     strategy::{BoxedStrategy, Strategy, ValueTree},
-    test_runner::{TestCaseError, TestRunner},
+    test_runner::TestRunner,
 };
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::primitives::HashMap;
@@ -367,7 +366,9 @@ impl Corpus {
                     for i in start2..end2 {
                         new_seq.push(two[i].clone());
                     }
-                    return new_seq;
+                    if !new_seq.is_empty() {
+                        return new_seq;
+                    }
                 }
                 // repeat
                 1 => {
@@ -463,6 +464,12 @@ impl<'a> InvariantExecutor<'a> {
                 self.executor.clone(),
                 self.config.depth as usize,
             );
+
+            // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
+            if self.config.fail_on_revert && invariant_test.reverts() > 0 {
+                return Err(eyre!("call reverted"))
+            }
+
             while current_run.depth < self.config.depth {
                 // Check if the timeout has been reached.
                 if timer.is_timed_out() {
@@ -476,7 +483,7 @@ impl<'a> InvariantExecutor<'a> {
                 let tx = current_run
                     .inputs
                     .last()
-                    .ok_or_else(|| eyre!("No input generated to call fuzzed target."))?;
+                    .ok_or_else(|| eyre!("no input generated to call fuzzed target."))?;
 
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
@@ -500,7 +507,7 @@ impl<'a> InvariantExecutor<'a> {
                 // Cribbed from https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
                 if let Some(ref mut x) = call_result.edge_coverage {
                     // TODO don't save when discarded == true
-                    if x.len() > 0 {
+                    if !x.is_empty() {
                         let mut new_coverage = false;
 
                         // Iterate over the current map and the history map together and update
@@ -573,6 +580,12 @@ impl<'a> InvariantExecutor<'a> {
                     current_run.executor.commit(&mut call_result);
 
                     // Collect data for fuzzing from the state changeset.
+                    // This step updates the state dictionary and therefore invalidates the
+                    // ValueTree in use by the current run. This manifestsitself in proptest
+                    // observing a different input case than what it was called with, and creates
+                    // inconsistencies whenever proptest tries to use the input case after test
+                    // execution.
+                    // See <https://github.com/foundry-rs/foundry/issues/9764>.
                     let mut state_changeset = call_result.state_changeset.clone();
                     if !call_result.reverted {
                         collect_data(
@@ -627,7 +640,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Generates the next call from the run using the recently updated
                 // dictionary if initial seq isn't `depth` long.
-                if current_run.depth as usize > initial_seq.len().saturating_sub(1) {
+                if discarded || (current_run.depth as usize > initial_seq.len().saturating_sub(1)) {
                     // TOOD rng.rand_ratio(X) to occassionally intermix new txs
                     current_run.inputs.push(
                         generator
@@ -972,7 +985,7 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        for (address, (identifier, _)) in self.setup_contracts.iter() {
+        for (address, (identifier, _)) in self.setup_contracts {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
