@@ -118,7 +118,7 @@ test_repro!(3220);
 test_repro!(3221);
 
 // https://github.com/foundry-rs/foundry/issues/3223
-test_repro!(3223, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
+test_repro!(3223, false, address!("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
 // https://github.com/foundry-rs/foundry/issues/3347
 test_repro!(3347, false, None, |res| {
@@ -131,7 +131,7 @@ test_repro!(3347, false, None, |res| {
         decoded,
         DecodedEvent {
             selector: Some(b256!(
-                "78b9a1f3b55d6797ab2c4537e83ee04ff0c65a1ca1bb39d79a62e0a78d5a8a57"
+                "0x78b9a1f3b55d6797ab2c4537e83ee04ff0c65a1ca1bb39d79a62e0a78d5a8a57"
             )),
             indexed: vec![],
             body: vec![
@@ -156,7 +156,7 @@ test_repro!(3653);
 test_repro!(3661);
 
 // https://github.com/foundry-rs/foundry/issues/3674
-test_repro!(3674, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
+test_repro!(3674, false, address!("0xF0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 
 // https://github.com/foundry-rs/foundry/issues/3685
 test_repro!(3685);

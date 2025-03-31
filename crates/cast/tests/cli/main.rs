@@ -199,7 +199,7 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
     cmd.cast_fuse()
@@ -529,7 +529,7 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
     cmd.cast_fuse()
@@ -585,7 +585,7 @@ casttest!(wallet_change_password, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key with initial password
     cmd.cast_fuse()
@@ -2223,8 +2223,8 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 
     // send impersonated tx
     let tx = TransactionRequest::default()
-        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
-        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
         .with_input(
             Bytes::from_str(
                 "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
@@ -2246,7 +2246,7 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 casttest!(fetch_src_blockscout, |_prj, cmd| {
     let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
     cmd.args([
         "source",
@@ -2268,7 +2268,7 @@ contract WETH9 {
 });
 
 casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     let etherscan_api_key = next_mainnet_etherscan_api_key();
 
     cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
