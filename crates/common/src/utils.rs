@@ -30,7 +30,7 @@ pub fn block_on_handle<F: std::future::Future>(
 ///
 /// assert_eq!(
 ///     erc7201("example.main"),
-///     b256!("183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500"),
+///     b256!("0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500"),
 /// );
 /// ```
 pub fn erc7201(id: &str) -> B256 {

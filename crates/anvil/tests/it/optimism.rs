@@ -28,7 +28,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 
     let op_fields = OpTransactionFields {
         source_hash: Some(b256!(
-            "0000000000000000000000000000000000000000000000000000000000000000"
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
         )),
         mint: Some(0),
         is_system_tx: Some(true),
@@ -65,7 +65,7 @@ async fn test_send_value_deposit_transaction() {
 
     let op_fields = OpTransactionFields {
         source_hash: Some(b256!(
-            "0000000000000000000000000000000000000000000000000000000000000000"
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
         )),
         mint: Some(0),
         is_system_tx: Some(true),
@@ -125,7 +125,7 @@ async fn test_send_value_raw_deposit_transaction() {
 
     let op_fields = OpTransactionFields {
         source_hash: Some(b256!(
-            "0000000000000000000000000000000000000000000000000000000000000000"
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
         )),
         mint: Some(0),
         is_system_tx: Some(true),
@@ -209,7 +209,7 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
     assert_eq!(recipient_prev_balance, U256::from(0));
 
     let deposit_tx = DepositTransaction {
-        source_hash: b256!("0000000000000000000000000000000000000000000000000000000000000000"),
+        source_hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000000"),
         from: sender,
         nonce: 0,
         kind: TxKind::Call(recipient),
