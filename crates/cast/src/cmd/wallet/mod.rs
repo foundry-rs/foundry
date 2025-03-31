@@ -3,8 +3,10 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
-use alloy_signer::k256::elliptic_curve::sec1::ToEncodedPoint;
-use alloy_signer::{k256::SecretKey, Signer};
+use alloy_signer::{
+    k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
+    Signer,
+};
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
