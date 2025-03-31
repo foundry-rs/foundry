@@ -24,6 +24,7 @@ tracing.workspace = true
 # async
 parking_lot.workspace = true
 futures.workspace = true
+tokio = { version = "1", features = ["full"] }
 
 # ipc
 interprocess = { workspace = true, optional = true }
