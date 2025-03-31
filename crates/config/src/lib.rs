@@ -576,14 +576,14 @@ impl Config {
     /// Default address for tx.origin
     ///
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
-    pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
+    pub const DEFAULT_SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
 
     /// Default create2 deployer
     pub const DEFAULT_CREATE2_DEPLOYER: Address =
-        address!("4e59b44847b379578588920ca78fbf26c0b4956c");
+        address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
 
     /// Loads the `Config` from the current directory.
     ///

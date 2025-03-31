@@ -205,7 +205,7 @@ async fn can_impersonate_gnosis_safe() {
     let provider = handle.http_provider();
 
     // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
-    let safe = address!("A063Cb7CFd8E57c30c788A0572CBbf2129ae56B6");
+    let safe = address!("0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6");
 
     let code = provider.get_code_at(safe).await.unwrap();
     assert!(!code.is_empty());
@@ -419,7 +419,7 @@ async fn test_can_set_storage_bsc_fork() {
         spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
     let provider = handle.http_provider();
 
-    let busd_addr = address!("e9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
+    let busd_addr = address!("0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
     let idx = U256::from_str("0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49")
         .unwrap();
     let value = fixed_bytes!("0000000000000000000000000000000000000000000000000000000000003039");
@@ -431,7 +431,7 @@ async fn test_can_set_storage_bsc_fork() {
     let busd_contract = BUSD::new(busd_addr, &provider);
 
     let BUSD::balanceOfReturn { _0 } = busd_contract
-        .balanceOf(address!("0000000000000000000000000000000000000000"))
+        .balanceOf(address!("0x0000000000000000000000000000000000000000"))
         .call()
         .await
         .unwrap();
@@ -623,7 +623,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.evm_revert(state_snapshot).await.unwrap();
 
     let multicall_contract =
-        Multicall::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
+        Multicall::new(address!("0xeefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
 
     let Multicall::getCurrentBlockTimestampReturn { timestamp } =
         multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
@@ -892,7 +892,7 @@ async fn can_add_capability() {
 async fn can_set_executor() {
     let (api, _handle) = spawn(NodeConfig::test().with_odyssey(true)).await;
 
-    let expected_addr = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let expected_addr = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
 
     let executor = api.anvil_set_executor(pk).unwrap();

@@ -200,7 +200,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "run manually"]
     async fn test_etherscan_keys() {
-        let address = address!("dAC17F958D2ee523a2206206994597C13D831ec7");
+        let address = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
         let mut first_abi = None;
         let mut failed = Vec::new();
         for (i, &key) in ETHERSCAN_MAINNET_KEYS.iter().enumerate() {
