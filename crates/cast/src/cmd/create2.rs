@@ -405,10 +405,10 @@ mod tests {
             "-j1",
         ]);
         let out = args.run().unwrap();
-        assert_eq!(out.address, address!("00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
+        assert_eq!(out.address, address!("0x00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
         assert_eq!(
             out.salt,
-            b256!("322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d"),
+            b256!("0x322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d"),
         );
     }
 
@@ -422,10 +422,10 @@ mod tests {
             "-j1",
         ]);
         let out = args.run().unwrap();
-        assert_eq!(out.address, address!("00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
+        assert_eq!(out.address, address!("0x00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
         assert_eq!(
             out.salt,
-            b256!("000000000000000000000000000000000000000000000000df00000000000000"),
+            b256!("0x000000000000000000000000000000000000000000000000df00000000000000"),
         );
     }
 

@@ -399,11 +399,16 @@ impl CreateArgs {
 
         sh_println!("Starting contract verification...")?;
 
-        let num_of_optimizations = if self.build.compiler.optimize.unwrap_or_default() {
-            self.build.compiler.optimizer_runs
+        let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
+            if optimizer {
+                Some(self.build.compiler.optimizer_runs.unwrap_or(200))
+            } else {
+                None
+            }
         } else {
-            None
+            self.build.compiler.optimizer_runs
         };
+
         let verify = VerifyArgs {
             address,
             contract: Some(self.contract),

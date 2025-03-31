@@ -1873,6 +1873,46 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
+
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
@@ -2777,6 +2817,14 @@ interface Vm {
     /// Utility cheatcode to set arbitrary storage for given target address.
     #[cheatcode(group = Utilities)]
     function setArbitraryStorage(address target) external;
+
+    /// Sorts an array in ascending order.
+    #[cheatcode(group = Utilities)]
+    function sort(uint256[] calldata array) external returns (uint256[] memory);
+
+    /// Randomly shuffles an array.
+    #[cheatcode(group = Utilities)]
+    function shuffle(uint256[] calldata array) external returns (uint256[] memory);
 }
 }
 

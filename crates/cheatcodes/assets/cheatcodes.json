@@ -3990,6 +3990,126 @@
     },
     {
       "func": {
+        "id": "deployCode_2",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,uint256)",
+        "selector": "0x0af6a701",
+        "selectorBytes": [
+          10,
+          246,
+          167,
+          1
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_3",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,uint256)",
+        "selector": "0xff5d64e4",
+        "selectorBytes": [
+          255,
+          93,
+          100,
+          228
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_4",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes32)",
+        "selector": "0x17ab1d79",
+        "selectorBytes": [
+          23,
+          171,
+          29,
+          121
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_5",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,bytes32)",
+        "selector": "0x016155bf",
+        "selectorBytes": [
+          1,
+          97,
+          85,
+          191
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_6",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,uint256,bytes32)",
+        "selector": "0x002cb687",
+        "selectorBytes": [
+          0,
+          44,
+          182,
+          135
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_7",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,uint256,bytes32)",
+        "selector": "0x3aa773ea",
+        "selectorBytes": [
+          58,
+          167,
+          115,
+          234
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deriveKey_0",
         "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
@@ -9316,6 +9436,26 @@
     },
     {
       "func": {
+        "id": "shuffle",
+        "description": "Randomly shuffles an array.",
+        "declaration": "function shuffle(uint256[] calldata array) external returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "shuffle(uint256[])",
+        "selector": "0x54f1469c",
+        "selectorBytes": [
+          84,
+          241,
+          70,
+          156
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signAndAttachDelegation",
         "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction",
         "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
@@ -9715,6 +9855,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "sort",
+        "description": "Sorts an array in ascending order.",
+        "declaration": "function sort(uint256[] calldata array) external returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "sort(uint256[])",
+        "selector": "0x9ec8b026",
+        "selectorBytes": [
+          158,
+          200,
+          176,
+          38
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
