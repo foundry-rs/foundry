@@ -722,7 +722,7 @@ mod tests {
     fn can_verify_signed_hex_message() {
         let message = "hello";
         let signature = Signature::from_str("f2dd00eac33840c04b6fc8a5ec8c4a47eff63575c2bc7312ecb269383de0c668045309c423484c8d097df306e690c653f8e1ec92f7f6f45d1f517027771c3e801c").unwrap();
-        let address = address!("28A4F420a619974a2393365BCe5a7b560078Cc13");
+        let address = address!("0x28A4F420a619974a2393365BCe5a7b560078Cc13");
         let recovered_address =
             WalletSubcommands::recover_address_from_message(message, &signature);
         assert!(recovered_address.is_ok());

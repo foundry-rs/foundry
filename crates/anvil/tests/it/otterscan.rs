@@ -105,8 +105,8 @@ async fn ots_get_internal_operations_contract_create2() {
         res,
         [InternalOperation {
             r#type: OperationType::OpCreate2,
-            from: address!("4e59b44847b379578588920cA78FbF26c0B4956C"),
-            to: address!("347bcdad821abc09b8c275881b368de36476b62c"),
+            from: address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"),
+            to: address!("0x347bcdad821abc09b8c275881b368de36476b62c"),
             value: U256::from(0),
         }],
     );
@@ -145,7 +145,7 @@ async fn ots_get_internal_operations_contract_selfdestruct(hardfork: EthereumHar
 
     let receipt = contract.goodbye().send().await.unwrap().get_receipt().await.unwrap();
 
-    let expected_to = address!("DcDD539DA22bfFAa499dBEa4d37d086Dde196E75");
+    let expected_to = address!("0xDcDD539DA22bfFAa499dBEa4d37d086Dde196E75");
     let expected_value = value;
 
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
