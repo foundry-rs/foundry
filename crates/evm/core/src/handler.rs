@@ -41,19 +41,19 @@ pub enum Features {
 /// A [`Handler`] registry for the Foundry EVM.
 /// This is a wrapper around the EVM that allows us to conditionally override certain
 /// execution paths based on the enabled features.
-pub struct FoundryHandler<'db, I: InspectorExt> {
+pub struct FoundryHandler<'db, INSP: InspectorExt> {
     /// A map of enabled features.
     pub enabled: HashMap<Features, bool>,
     /// The inner EVM instance.
-    pub inner: FoundryEvm<'db, I>,
+    pub inner: FoundryEvm<'db, INSP>,
 
     /// A list of overridden `CREATE2` frames.
     pub create2_overrides: Rc<RefCell<Vec<(usize, CallInputs)>>>,
 }
 
-impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
+impl<'db, INSP: InspectorExt> FoundryHandler<'db, INSP> {
     /// Creates a new [`FoundryHandler`] with the given context and inspector.
-    pub fn new(ctx: FoundryEvmCtx<'db>, inspector: I) -> Self {
+    pub fn new(ctx: FoundryEvmCtx<'db>, inspector: INSP) -> Self {
         // By default we enable the `CREATE2` handler.
         let mut enabled = HashMap::default();
         enabled.insert(Features::Create2Factory, true);
@@ -76,11 +76,11 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
     }
 }
 
-impl<'db, I> Handler for FoundryHandler<'db, I>
+impl<'db, INSP> Handler for FoundryHandler<'db, INSP>
 where
-    I: InspectorExt,
+    INSP: InspectorExt,
 {
-    type Evm = FoundryEvm<'db, I>;
+    type Evm = FoundryEvm<'db, INSP>;
     type Error = EVMError<<<FoundryEvmCtx<'db> as ContextTr>::Db as Database>::Error>;
     type Frame = EthFrame<
     Self::Evm,
