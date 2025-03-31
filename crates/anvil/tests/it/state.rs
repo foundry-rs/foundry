@@ -169,8 +169,8 @@ async fn test_fork_load_state() {
     )
     .await;
 
-    let bob = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let alice = address!("9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
+    let bob = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let alice = address!("0x9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
 
     let provider = handle.http_provider();
 
