@@ -2,8 +2,10 @@ use crate::{HitMap, HitMaps};
 use alloy_primitives::B256;
 use revm::{
     bytecode::Bytecode,
+    context::ContextTr,
+    inspector::JournalExt,
     interpreter::{interpreter_types::Jumps, Interpreter},
-    Database, Inspector,
+    Inspector,
 };
 use std::ptr::NonNull;
 
@@ -33,14 +35,17 @@ impl Default for CoverageCollector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for CoverageCollector {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut EvmContext<DB>) {
+impl<CTX> Inspector<CTX> for CoverageCollector
+where
+    CTX: ContextTr<Journal: JournalExt>,
+{
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         get_or_insert_contract_hash(interpreter);
         self.insert_map(interpreter);
     }
 
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter, _context: &mut EvmContext<DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         let map = self.get_or_insert_map(interpreter);
         map.hit(interpreter.bytecode.pc() as u32);
     }

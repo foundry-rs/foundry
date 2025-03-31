@@ -1,7 +1,9 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use revm::{
+    context::{ContextTr, Transaction},
+    inspector::JournalExt,
     interpreter::{CallInputs, CallOutcome, CallScheme, Interpreter},
-    Database, EvmContext, Inspector,
+    Inspector,
 };
 
 /// An inspector that can fuzz and collect data for that effect.
@@ -15,9 +17,12 @@ pub struct Fuzzer {
     pub fuzz_state: EvmFuzzState,
 }
 
-impl<DB: Database> Inspector<DB> for Fuzzer {
+impl<CTX> Inspector<CTX> for Fuzzer
+where
+    CTX: ContextTr<Journal: JournalExt>,
+{
     #[inline]
-    fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
+    fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
@@ -26,9 +31,9 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     }
 
     #[inline]
-    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && ecx.env.tx.caller != inputs.caller {
+        if self.call_generator.is_some() && ecx.tx().caller() != inputs.caller {
             self.override_call(inputs);
         }
 
@@ -40,12 +45,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     }
 
     #[inline]
-    fn call_end(
-        &mut self,
-        _context: &mut EvmContext<DB>,
-        _inputs: &CallInputs,
-        outcome: CallOutcome,
-    ) -> CallOutcome {
+    fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
         if let Some(ref mut call_generator) = self.call_generator {
             call_generator.used = false;
         }
@@ -53,8 +53,6 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
         self.collect = true;
-
-        outcome
     }
 }
 
