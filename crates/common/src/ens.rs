@@ -30,7 +30,7 @@ sol! {
 }
 
 /// ENS registry address (`0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`)
-pub const ENS_ADDRESS: Address = address!("00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
+pub const ENS_ADDRESS: Address = address!("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
 
 pub const ENS_REVERSE_REGISTRAR_DOMAIN: &str = "addr.reverse";
 
