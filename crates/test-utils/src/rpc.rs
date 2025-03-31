@@ -159,6 +159,10 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://mainnet.base.org".to_string();
     }
 
+    if matches!(chain, BinanceSmartChainTestnet) {
+        return "https://bsc-testnet-rpc.publicnode.com".to_string();
+    }
+
     let domain = if matches!(chain, Mainnet) {
         // For Mainnet pick one of Reth nodes.
         let idx = next_idx() % RETH_HOSTS.len();
@@ -178,7 +182,6 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
             Arbitrum => "arbitrum",
             Polygon => "polygon",
             Sepolia => "sepolia",
-            BinanceSmartChainTestnet => "bsc-testnet",
             _ => "",
         };
         format!("lb.drpc.org/ogrpc?network={network}&dkey={key}")
