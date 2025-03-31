@@ -1,12 +1,9 @@
-use std::{cell::RefCell, rc::Rc};
-
 pub use crate::ic::*;
 use crate::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvm, FoundryEvmCtx},
     InspectorExt,
 };
-
 use alloy_primitives::{map::foldhash::HashMap, Address, U256};
 use revm::{
     context::{
@@ -26,6 +23,7 @@ use revm::{
     primitives::KECCAK_EMPTY,
     Database,
 };
+use std::{cell::RefCell, rc::Rc};
 
 /// A list of features that can be enabled or disabled in the [`FoundryHandler`].
 /// This is used to conditionally override certain execution paths in the EVM.
@@ -37,7 +35,7 @@ pub enum Features {
     /// hook is overridden with a `CALL` frame targeting the deployer. The handler tracks
     /// these overridden frames and, in the `insert_call_outcome` hook, inserts the decoded
     /// contract address directly into the EVM interpreter.
-    OverrideCreate2,
+    Create2Factory,
 }
 
 /// A [`Handler`] registry for the Foundry EVM.
@@ -58,7 +56,7 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
     pub fn new(ctx: FoundryEvmCtx<'db>, inspector: I) -> Self {
         // By default we enable the `CREATE2` handler.
         let mut enabled = HashMap::default();
-        enabled.insert(Features::OverrideCreate2, true);
+        enabled.insert(Features::Create2Factory, true);
 
         FoundryHandler {
             inner: FoundryEvm::new(ctx, inspector),
@@ -100,7 +98,7 @@ where
         evm: &mut Self::Evm,
         frame_input: <Self::Frame as Frame>::FrameInit,
     ) -> Result<FrameOrResult<Self::Frame>, Self::Error> {
-        if self.is_enabled(Features::OverrideCreate2) {
+        if self.is_enabled(Features::Create2Factory) {
             if let FrameInput::Create(inputs) = &frame_input {
                 // Early return if we are not using CREATE2.
                 let CreateScheme::Create2 { salt } = inputs.scheme else {
@@ -170,9 +168,8 @@ where
 
                 if let Ok(FrameOrResult::Item(frame)) = &mut frame_or_result {
                     self.inner.inspector().initialize_interp(&mut frame.interpreter, evm.ctx());
+                    return frame_or_result;
                 }
-
-                return frame_or_result;
             }
         }
 
@@ -185,11 +182,11 @@ where
         evm: &mut Self::Evm,
         result: <Self::Frame as Frame>::FrameResult,
     ) -> Result<(), Self::Error> {
-        if self
-            .create2_overrides
-            .borrow()
-            .last()
-            .is_some_and(|(depth, _)| *depth == evm.ctx().journaled_state.depth)
+        if self.is_enabled(Features::Create2Factory) &&
+            self.create2_overrides
+                .borrow()
+                .last()
+                .is_some_and(|(depth, _)| *depth == evm.ctx().journaled_state.depth)
         {
             let (_, call_inputs) = self.create2_overrides.borrow_mut().pop().unwrap();
 

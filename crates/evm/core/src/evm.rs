@@ -107,7 +107,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     env: &Env,
     inspector: &'i mut I,
 ) -> FoundryHandler<'db, &'i mut I> {
-    new_evm_with_context(
+    FoundryHandler::new(
         FoundryEvmCtx {
             journaled_state: Journal::new_with_inner(
                 db,
@@ -128,6 +128,5 @@ pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
     ctx: FoundryEvmCtx<'db>,
     inspector: &'i mut I,
 ) -> FoundryHandler<'db, &'i mut I> {
-    let handler = FoundryHandler::new(ctx, inspector);
-    handler
+    FoundryHandler::new(ctx, inspector)
 }
