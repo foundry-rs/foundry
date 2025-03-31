@@ -19,8 +19,9 @@ use revm::{
     },
     inspector::InspectorEvmTr,
     interpreter::{
-        interpreter::EthInterpreter, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs,
-        FrameInput, Gas, Host, InstructionResult, InterpreterResult, EMPTY_SHARED_MEMORY,
+        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
+        CreateInputs, CreateOutcome, FrameInput, Gas, Host, InstructionResult, InterpreterResult,
+        EMPTY_SHARED_MEMORY,
     },
     primitives::KECCAK_EMPTY,
     Database,
@@ -47,6 +48,9 @@ pub struct FoundryHandler<'db, I: InspectorExt> {
     pub enabled: HashMap<Features, bool>,
     /// The inner EVM instance.
     pub inner: FoundryEvm<'db, I>,
+
+    /// A list of overridden `CREATE2` frames.
+    pub create2_overrides: Rc<RefCell<Vec<(usize, CallInputs)>>>,
 }
 
 impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
@@ -56,7 +60,11 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         let mut enabled = HashMap::default();
         enabled.insert(Features::OverrideCreate2, true);
 
-        FoundryHandler { inner: FoundryEvm::new(ctx, inspector), enabled }
+        FoundryHandler {
+            inner: FoundryEvm::new(ctx, inspector),
+            enabled,
+            create2_overrides: Rc::new(RefCell::new(Vec::new())),
+        }
     }
 
     /// Set the enabled state of a handler feature.
@@ -86,6 +94,7 @@ where
 >;
     type HaltReason = HaltReason;
 
+    #[inline]
     fn first_frame_init(
         &mut self,
         evm: &mut Self::Evm,
@@ -109,10 +118,9 @@ where
                     get_create2_factory_call_inputs(salt, inputs, create2_deployer);
                 let outcome = self.inner.inspector().call(evm.ctx(), &mut call_inputs);
 
-                // TODO: insert in an overrides map
-                // create2_overrides_inner
-                // .borrow_mut()
-                // .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
+                self.create2_overrides
+                    .borrow_mut()
+                    .push((evm.inner.journaled_state.depth, call_inputs.clone()));
 
                 if let Some(code_hash) = evm.ctx().load_account_code_hash(create2_deployer) {
                     if code_hash.data == KECCAK_EMPTY {
@@ -169,6 +177,47 @@ where
         }
 
         Self::Frame::init_first(evm, frame_input)
+    }
+
+    fn frame_return_result(
+        &mut self,
+        frame: &mut Self::Frame,
+        evm: &mut Self::Evm,
+        result: <Self::Frame as Frame>::FrameResult,
+    ) -> Result<(), Self::Error> {
+        if self
+            .create2_overrides
+            .borrow()
+            .last()
+            .is_some_and(|(depth, _)| *depth == evm.ctx().journaled_state.depth)
+        {
+            let (_, call_inputs) = self.create2_overrides.borrow_mut().pop().unwrap();
+
+            if let FrameResult::Call(outcome) = &result {
+                let mut outcome = outcome.clone();
+                self.inner.inspector().call_end(evm.ctx(), &call_inputs, &mut outcome);
+                let address = match outcome.instruction_result() {
+                    return_ok!() => Address::try_from(outcome.output().as_ref())
+                        .map_err(|_| {
+                            outcome.result = InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: "invalid CREATE2 factory output".into(),
+                                gas: Gas::new(call_inputs.gas_limit),
+                            };
+                        })
+                        .ok(),
+                    _ => None,
+                };
+
+                return Self::Frame::return_result(
+                    frame,
+                    evm,
+                    FrameResult::Create(CreateOutcome { result: outcome.result, address }),
+                )
+            }
+        }
+
+        Self::Frame::return_result(frame, evm, result)
     }
 }
 
