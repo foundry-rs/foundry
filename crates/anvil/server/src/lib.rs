@@ -24,7 +24,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 mod config;
 pub use config::ServerConfig;
 
-mod error;
+pub mod error;
 mod handler;
 
 mod pubsub;
@@ -57,7 +57,7 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
     root_method_router: MethodRouter<S>,
     state: S,
 ) -> Router {
-    let ServerConfig { allow_origin, no_cors, no_request_size_limit, anvil_headers: _ } = config;
+    let ServerConfig { allow_origin, no_cors, no_request_size_limit, anvil_headers } = config;
 
     let mut router = Router::new()
         .route("/", root_method_router)
@@ -66,12 +66,25 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
     if !no_cors {
         // See [`tower_http::cors`](https://docs.rs/tower-http/latest/tower_http/cors/index.html)
         // for more details.
-        router = router.layer(
-            CorsLayer::new()
-                .allow_origin(allow_origin.0)
-                .allow_headers([header::CONTENT_TYPE])
-                .allow_methods([Method::GET, Method::POST]),
-        );
+        let mut cors = CorsLayer::new()
+            .allow_origin(allow_origin.0)
+            .allow_headers([header::CONTENT_TYPE])
+            .allow_methods([Method::GET, Method::POST]);
+
+        // Add custom headers to CORS if they exist
+        let mut expose_headers = Vec::new();
+        for header in anvil_headers {
+            if let Some((name, _)) = header.split_once(':') {
+                if let Ok(name) = name.trim().parse::<header::HeaderName>() {
+                    expose_headers.push(name);
+                }
+            }
+        }
+        if !expose_headers.is_empty() {
+            cors = cors.expose_headers(expose_headers);
+        }
+
+        router = router.layer(cors);
     }
     if no_request_size_limit {
         router = router.layer(DefaultBodyLimit::disable());
