@@ -105,6 +105,7 @@ alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
 
 op-alloy-rpc-types.workspace = true
 
