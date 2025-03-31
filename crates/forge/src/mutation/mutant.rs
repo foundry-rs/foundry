@@ -164,3 +164,33 @@ impl Mutant {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solar_parse::ast::{BinOpKind, LitKind, Span, UnOpKind};
+
+    #[test]
+    fn test_mutation_type_get_name() {
+        assert_eq!(MutationType::DeleteExpression.get_name(), "DeleteExpression");
+        assert_eq!(MutationType::ElimDelegate.get_name(), "ElimDelegate");
+        assert_eq!(MutationType::FunctionCall.get_name(), "FunctionCall");
+        assert_eq!(MutationType::Require.get_name(), "Require");
+        assert_eq!(MutationType::SwapArgumentsFunction.get_name(), "SwapArgumentsFunction");
+        assert_eq!(MutationType::SwapArgumentsOperator.get_name(), "SwapArgumentsOperator");
+
+        assert_eq!(MutationType::BinaryOp(BinOpKind::Add).get_name(), "BinaryOp_Add");
+
+        let lit_num = LitKind::Number(123.into());
+        assert_eq!(
+            MutationType::Assignment(AssignVarTypes::Literal(lit_num)).get_name(),
+            "Assignment_number"
+        );
+
+        let ident = AssignVarTypes::Identifier("myVar".to_string());
+        assert_eq!(MutationType::Assignment(ident).get_name(), "Assignment_myVar");
+
+        let unary_mutated = UnaryOpMutated::new("a--".to_string(), UnOpKind::PreInc);
+        assert_eq!(MutationType::UnaryOperator(unary_mutated).get_name(), "UnaryOperator_PreInc");
+    }
+}

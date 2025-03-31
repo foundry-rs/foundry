@@ -190,11 +190,6 @@ impl MutationHandler {
         new_content.push_str(&replacement);
         new_content.push_str(after);
 
-        dbg!(mutation);
-        dbg!(span);
-        dbg!(replacement);
-        dbg!(&new_content);
-
         std::fs::write(&target_path, new_content)
             .unwrap_or_else(|_| panic!("Failed to write to target file {:?}", &target_path));
     }

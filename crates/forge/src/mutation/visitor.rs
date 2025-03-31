@@ -22,7 +22,6 @@ impl Visit<'_> for SolarVisitorWrapper {
     type BreakValue = ();
 }
 
-
 /// A visitor which collect all expression to mutate as well as the mutation types
 pub struct MutantVisitor {
     pub mutation_to_conduct: Vec<Mutant>,
@@ -33,7 +32,11 @@ pub struct MutantVisitor {
 impl MutantVisitor {
     /// Use all mutator from registry::default
     pub fn default() -> Self {
-        Self { mutation_to_conduct: Vec::new(), mutator_registry: MutatorRegistry::default(), default_visitor: SolarVisitorWrapper {} }
+        Self {
+            mutation_to_conduct: Vec::new(),
+            mutator_registry: MutatorRegistry::default(),
+            default_visitor: SolarVisitorWrapper {},
+        }
     }
 
     /// Use only a set of mutators
@@ -41,14 +44,14 @@ impl MutantVisitor {
         Self {
             mutation_to_conduct: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
-            default_visitor: SolarVisitorWrapper {}
+            default_visitor: SolarVisitorWrapper {},
         }
     }
 }
 
 impl<'ast> Visit<'ast> for MutantVisitor {
     type BreakValue = ();
-    
+
     fn visit_variable_definition(
         &mut self,
         var: &'ast VariableDefinition<'ast>,
