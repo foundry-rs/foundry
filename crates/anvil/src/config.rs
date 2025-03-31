@@ -185,6 +185,8 @@ pub struct NodeConfig {
     pub silent: bool,
     /// The path where states are cached.
     pub cache_path: Option<PathBuf>,
+    /// Пользовательские заголовки для HTTP-ответов
+    pub headers: Vec<String>,
 }
 
 impl NodeConfig {
@@ -474,6 +476,7 @@ impl Default for NodeConfig {
             odyssey: false,
             silent: false,
             cache_path: None,
+            headers: vec![],
         }
     }
 }
@@ -992,10 +995,16 @@ impl NodeConfig {
     ///
     /// *Note*: only memory based backend for now
     pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
-        // configure the revm environment
+        let mut server_config = ServerConfig::default();
+        
+        if !self.headers.is_empty() {
+            server_config = server_config.with_anvil_headers(self.headers.clone());
+        }
+        
+        self.server_config = server_config;
 
-        let mut cfg =
-            CfgEnvWithHandlerCfg::new_with_spec_id(CfgEnv::default(), self.get_hardfork().into());
+        // configure the revm environment
+        let mut cfg = CfgEnvWithHandlerCfg::new_with_spec_id(CfgEnv::default(), self.get_hardfork().into());
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
@@ -1334,6 +1343,12 @@ latest block number: {latest_block}"
         }
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
+    }
+
+    /// Добавляет пользовательские заголовки
+    pub fn with_headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = headers;
+        self
     }
 }
 
