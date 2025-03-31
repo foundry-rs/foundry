@@ -174,13 +174,12 @@ impl ProjectCompiler {
                 project.paths.read_input_files()?
             };
 
-            let compiler =
+            let mut compiler =
                 foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
             if preprocess {
-                compiler.with_preprocessor(TestOptimizerPreprocessor).compile().map_err(Into::into)
-            } else {
-                compiler.compile().map_err(Into::into)
+                compiler = compiler.with_preprocessor(TestOptimizerPreprocessor);
             }
+            compiler.compile().map_err(Into::into)
         })
     }
 
