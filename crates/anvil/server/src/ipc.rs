@@ -4,13 +4,15 @@ use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
 use anvil_rpc::request::Request;
 use bytes::{BufMut, BytesMut};
 use futures::{ready, Sink, Stream, StreamExt};
-use interprocess::local_socket::{self as ls, tokio::prelude::*};
+use futures::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use interprocess::local_socket::tokio::LocalSocketListener;
 use std::{
     future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
 };
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 /// An IPC connection for anvil
 ///
@@ -45,8 +47,7 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
             }
         }
 
-        let name = to_name(path.as_ref())?;
-        let listener = ls::ListenerOptions::new().name(name).create_tokio()?;
+        let listener = LocalSocketListener::bind(path)?;
         let connections = futures::stream::unfold(listener, |listener| async move {
             let conn = listener.accept().await;
             Some((conn, listener))
@@ -60,8 +61,7 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
                 match stream {
                     Ok(stream) => {
                         trace!("successful incoming IPC connection");
-                        let framed = tokio_util::codec::Decoder::framed(JsonRpcCodec, stream);
-                        Some(PubSubConnection::new(IpcConn(framed), handler))
+                        Some(PubSubConnection::new(IpcConn(stream), handler))
                     }
                     Err(err) => {
                         trace!(%err, "unsuccessful incoming IPC connection");
@@ -73,49 +73,45 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     }
 }
 
-#[pin_project::pin_project]
-struct IpcConn<T>(#[pin] T);
+struct IpcConn(interprocess::local_socket::tokio::LocalSocketStream);
 
-impl<T> Stream for IpcConn<T>
-where
-    T: Stream<Item = io::Result<String>>,
-{
+impl Stream for IpcConn {
     type Item = Result<Option<Request>, RequestError>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        fn on_request(msg: io::Result<String>) -> Result<Option<Request>, RequestError> {
-            let text = msg?;
-            Ok(Some(serde_json::from_str(&text)?))
-        }
-        match ready!(self.project().0.poll_next(cx)) {
-            Some(req) => Poll::Ready(Some(on_request(req))),
-            _ => Poll::Ready(None),
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut buf = BytesMut::new();
+        match ready!(Pin::new(&mut self.0).poll_read(cx, &mut buf)) {
+            Ok(0) => Poll::Ready(None),
+            Ok(_) => {
+                let text = String::from_utf8_lossy(&buf).to_string();
+                Poll::Ready(Some(Ok(Some(serde_json::from_str(&text)?))))
+            }
+            Err(e) => Poll::Ready(Some(Err(e.into()))),
         }
     }
 }
 
-impl<T> Sink<String> for IpcConn<T>
-where
-    T: Sink<String, Error = io::Error>,
-{
+impl Sink<String> for IpcConn {
     type Error = io::Error;
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // NOTE: we always flush here this prevents any backpressure buffer in the underlying
-        // `Framed` impl that would cause stalled requests
-        self.project().0.poll_flush(cx)
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn start_send(self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
-        self.project().0.start_send(item)
+    fn start_send(mut self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(item.as_bytes());
+        buf.put_u8(b'\n');
+        futures::executor::block_on(self.0.write_all(&buf))?;
+        Ok(())
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().0.poll_flush(cx)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().0.poll_close(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_close(cx)
     }
 }
 
@@ -174,13 +170,5 @@ impl tokio_util::codec::Encoder<String> for JsonRpcCodec {
         // Add newline character
         buf.put_u8(b'\n');
         Ok(())
-    }
-}
-
-fn to_name(path: &std::ffi::OsStr) -> io::Result<ls::Name<'_>> {
-    if cfg!(windows) && !path.as_encoded_bytes().starts_with(br"\\.\pipe\") {
-        ls::ToNsName::to_ns_name::<ls::GenericNamespaced>(path)
-    } else {
-        ls::ToFsName::to_fs_name::<ls::GenericFilePath>(path)
     }
 }
