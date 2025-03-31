@@ -8,13 +8,13 @@ use alloy_primitives::map::foldhash::HashMap;
 use revm::{
     context::{
         result::{EVMError, HaltReason},
-        ContextTr, Transaction,
+        ContextTr, CreateScheme, Transaction,
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
-        EthFrame, EvmTr, Handler, ItemOrResult,
+        EthFrame, EvmTr, Frame, FrameOrResult, Handler, ItemOrResult,
     },
-    interpreter::interpreter::EthInterpreter,
+    interpreter::{interpreter::EthInterpreter, FrameInput},
     Database,
 };
 
@@ -68,22 +68,19 @@ where
 >;
     type HaltReason = HaltReason;
 
-    fn execution(
+    fn first_frame_init(
         &mut self,
         evm: &mut Self::Evm,
-        init_and_floor_gas: &revm::interpreter::InitialAndFloorGas,
-    ) -> Result<revm::handler::FrameResult, Self::Error> {
-        let gas_limit = evm.ctx().tx().gas_limit() - init_and_floor_gas.initial_gas;
+        frame_input: <Self::Frame as Frame>::FrameInit,
+    ) -> Result<FrameOrResult<Self::Frame>, Self::Error> {
+        if self.is_enabled(Features::Create2Handler) {
+            if let FrameInput::Create(inputs) = &frame_input {
+                let CreateScheme::Create2 { salt } = inputs.scheme else {
+                    return Self::Frame::init_first(evm, frame_input);
+                };
+            }
+        }
 
-        // Create first frame action
-        let first_frame_input = self.first_frame_input(evm, gas_limit)?;
-        let first_frame = self.first_frame_init(evm, first_frame_input)?;
-        let mut frame_result = match first_frame {
-            ItemOrResult::Item(frame) => self.run_exec_loop(evm, frame)?,
-            ItemOrResult::Result(result) => result,
-        };
-
-        self.last_frame_result(evm, &mut frame_result)?;
-        Ok(frame_result)
+        Self::Frame::init_first(evm, frame_input)
     }
 }
