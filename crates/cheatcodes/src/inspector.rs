@@ -167,7 +167,7 @@ where
 
     let mut evm = new_evm_with_context(inner, &mut *inspector);
 
-    let res = f(&mut evm)?;
+    let res = f(&mut evm.inner)?;
 
     ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
     ccx.ecx.env = evm.context.evm.inner.env;

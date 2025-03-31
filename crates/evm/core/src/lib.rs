@@ -25,6 +25,7 @@ pub mod env;
 pub use env::*;
 pub mod evm;
 use evm::FoundryEvmCtx;
+pub mod handler;
 
 pub mod backend;
 pub mod buffer;
