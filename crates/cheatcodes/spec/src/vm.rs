@@ -2847,13 +2847,13 @@ impl PartialEq for ForgeContext {
             (_, Self::ScriptGroup) => {
                 matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (Self::Test, Self::Test)
-            | (Self::Snapshot, Self::Snapshot)
-            | (Self::Coverage, Self::Coverage)
-            | (Self::ScriptDryRun, Self::ScriptDryRun)
-            | (Self::ScriptBroadcast, Self::ScriptBroadcast)
-            | (Self::ScriptResume, Self::ScriptResume)
-            | (Self::Unknown, Self::Unknown) => true,
+            (Self::Test, Self::Test) |
+            (Self::Snapshot, Self::Snapshot) |
+            (Self::Coverage, Self::Coverage) |
+            (Self::ScriptDryRun, Self::ScriptDryRun) |
+            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
+            (Self::ScriptResume, Self::ScriptResume) |
+            (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }
