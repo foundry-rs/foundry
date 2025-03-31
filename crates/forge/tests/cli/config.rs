@@ -84,12 +84,14 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
             failure_persist_file: Some("failures".to_string()),
+            corpus_dir: Some("cache/fuzz/corpus".into()),
             show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
+            corpus_dir: Some("cache/invariant/corpus".into()),
             ..Default::default()
         },
         ffi: true,
@@ -1080,6 +1082,7 @@ include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
+corpus_dir = "cache/fuzz/corpus"
 failure_persist_dir = "cache/fuzz"
 failure_persist_file = "failures"
 show_logs = false
@@ -1097,6 +1100,7 @@ max_fuzz_dictionary_values = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
+corpus_dir = "cache/invariant/corpus"
 failure_persist_dir = "cache/invariant"
 show_metrics = false
 show_solidity = false
@@ -1184,6 +1188,7 @@ exclude = []
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
+    "corpus_dir": "cache/fuzz/corpus",
     "failure_persist_dir": "cache/fuzz",
     "failure_persist_file": "failures",
     "show_logs": false,
@@ -1202,6 +1207,7 @@ exclude = []
     "shrink_run_limit": 5000,
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
+    "corpus_dir": "cache/invariant/corpus",
     "failure_persist_dir": "cache/invariant",
     "show_metrics": false,
     "timeout": null,

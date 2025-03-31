@@ -348,7 +348,7 @@ impl Corpus {
             let one = &self.corpus[idx1];
             let two = &self.corpus[idx2];
             let mut new_seq = vec![];
-            // TOOD rounds of mutations on elements?
+            // TODO rounds of mutations on elements?
             match rng.gen_range(0..3) {
                 // TODO expose config and add tests
                 // splice
@@ -359,13 +359,14 @@ impl Corpus {
                     let start2 = rng.gen_range(0..two.len());
                     let end2 = rng.gen_range(start2..two.len());
 
-                    for i in start1..end1 {
-                        new_seq.push(one[i].clone());
+                    for tx in one.iter().take(end1).skip(start1) {
+                        new_seq.push(tx.clone());
                     }
 
-                    for i in start2..end2 {
-                        new_seq.push(two[i].clone());
+                    for tx in two.iter().take(end2).skip(start2) {
+                        new_seq.push(tx.clone());
                     }
+
                     if !new_seq.is_empty() {
                         return new_seq;
                     }
@@ -641,7 +642,7 @@ impl<'a> InvariantExecutor<'a> {
                 // Generates the next call from the run using the recently updated
                 // dictionary if initial seq isn't `depth` long.
                 if discarded || (current_run.depth as usize > initial_seq.len().saturating_sub(1)) {
-                    // TOOD rng.rand_ratio(X) to occassionally intermix new txs
+                    // TODO rng.rand_ratio(X) to occasionally intermix new txs
                     current_run.inputs.push(
                         generator
                             .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)

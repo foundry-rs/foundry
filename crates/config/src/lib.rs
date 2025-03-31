@@ -4433,6 +4433,7 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    corpus_dir: Some(PathBuf::from("cache/invariant/corpus"),),
                     ..Default::default()
                 }
             );
