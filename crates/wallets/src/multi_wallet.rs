@@ -440,10 +440,7 @@ mod tests {
 
         let (_, unlocked) = args.keystores().unwrap().unwrap();
         assert_eq!(unlocked.len(), 1);
-        assert_eq!(
-            unlocked[0].address(),
-            Address::from_str("0xec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
-        );
+        assert_eq!(unlocked[0].address(), address!("0xec554aeafe75601aaab43bd4621a22284db566c2"));
     }
 
     // https://github.com/foundry-rs/foundry/issues/5179
