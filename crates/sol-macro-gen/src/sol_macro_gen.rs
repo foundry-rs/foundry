@@ -137,10 +137,8 @@ edition = "2021"
             let formatted_licenses: Vec<String> =
                 license.split(',').map(Self::parse_license_alias).collect();
 
-            if !formatted_licenses.is_empty() {
-                let formatted_license = formatted_licenses.join(" OR ");
-                toml_contents.push_str(&format!("license = \"{formatted_license}\"\n"));
-            }
+            let formatted_license = formatted_licenses.join(" OR ");
+            toml_contents.push_str(&format!("license = \"{formatted_license}\"\n"));
         }
 
         toml_contents.push_str("\n[dependencies]\n");
