@@ -116,15 +116,8 @@ pub struct BindArgs {
     build: BuildOpts,
 }
 
-fn parse_license_alias(license: &str) -> Result<String, String> {
-    match license.to_lowercase().as_str() {
-        "mit" => Ok("MIT".to_string()),
-        "apache" | "apache2" => Ok("Apache-2.0".to_string()),
-        "gpl" | "gpl3" => Ok("GPL-3.0".to_string()),
-        "lgpl" | "lgpl3" => Ok("LGPL-3.0".to_string()),
-        "bsd" | "bsd3" => Ok("BSD-3-Clause".to_string()),
-        _ => Ok(license.to_string()),
-    }
+fn parse_license_alias(s: &str) -> Result<String, String> {
+    Ok(MultiSolMacroGen::parse_license_alias(s))
 }
 
 impl BindArgs {
