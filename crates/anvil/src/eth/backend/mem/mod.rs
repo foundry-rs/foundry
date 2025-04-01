@@ -627,7 +627,7 @@ impl Backend {
     pub fn skip_blob_validation(&self, impersonator: Option<Address>) -> bool {
         self.cheats().auto_impersonate_accounts() ||
             impersonator
-                .map_or(false, |addr| self.cheats().impersonated_accounts().contains(&addr))
+                .is_some_and(|addr| self.cheats().impersonated_accounts().contains(&addr))
     }
 
     /// Returns the `FeeManager` that manages fee/pricings
