@@ -1004,6 +1004,7 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "revm",
+ "revm-inspectors",
  "serde",
  "serde_json",
  "tempfile",
