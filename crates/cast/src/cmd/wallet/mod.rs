@@ -431,7 +431,9 @@ impl WalletSubcommands {
                 // Get the public key from the private key
                 let public_key = secret_key.public_key();
 
+                // Serialize it as uncompressed (65 bytes: 0x04 || X (32 bytes) || Y (32 bytes))
                 let pubkey_bytes = public_key.to_encoded_point(false);
+                // Strip the 1-byte prefix (0x04) to get 64 bytes for Ethereum use
                 let ethereum_pubkey = &pubkey_bytes.as_bytes()[1..];
 
                 sh_println!("0x{}", hex::encode(ethereum_pubkey))?;
