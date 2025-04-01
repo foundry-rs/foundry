@@ -283,7 +283,7 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{fixed_bytes, map::HashMap};
+    use alloy_primitives::{address, fixed_bytes, map::HashMap};
     use foundry_compilers::{
         multi::MultiCompiler,
         solc::{Solc, SolcCompiler},
@@ -427,14 +427,14 @@ mod tests {
                     "default/linking/simple/Simple.t.sol:LibraryConsumer".to_string(),
                     vec![(
                         "default/linking/simple/Simple.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
                     "default/linking/simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                     vec![(
                         "default/linking/simple/Simple.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .test_with_sender_and_nonce(Address::default(), 1);
@@ -450,7 +450,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
@@ -505,14 +505,14 @@ mod tests {
                     "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                     vec![(
                         "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
                     "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                     vec![(
                         "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
@@ -642,7 +642,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74").unwrap(),
+                        address!("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74"),
                     )],
                 )
                 .assert_dependencies(
