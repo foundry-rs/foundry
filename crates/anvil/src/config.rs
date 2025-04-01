@@ -1,5 +1,4 @@
 use crate::{
-    cmd::StateFile,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -50,7 +49,7 @@ use std::{
     fs::File,
     io,
     net::{IpAddr, Ipv4Addr},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -331,6 +330,17 @@ Genesis Timestamp
             self.get_genesis_timestamp().green()
         );
 
+        let _ = write!(
+            s,
+            r#"
+Genesis Number
+==================
+
+{}
+"#,
+            self.get_genesis_number().green()
+        );
+
         s
     }
 
@@ -408,7 +418,8 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
+        let genesis_accounts =
+            AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen().expect("Invalid mnemonic.");
         Self {
             chain_id: None,
             gas_limit: None,
@@ -536,8 +547,9 @@ impl NodeConfig {
 
     /// Loads the init state from a file if it exists
     #[must_use]
-    pub fn with_init_state_path(mut self, path: impl AsRef<Path>) -> Self {
-        self.init_state = StateFile::parse_path(path).ok().and_then(|file| file.state);
+    #[cfg(feature = "cmd")]
+    pub fn with_init_state_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.init_state = crate::cmd::StateFile::parse_path(path).ok().and_then(|file| file.state);
         self
     }
 
@@ -654,6 +666,11 @@ impl NodeConfig {
         self
     }
 
+    /// Returns the genesis number
+    pub fn get_genesis_number(&self) -> u64 {
+        self.genesis.as_ref().and_then(|g| g.number).unwrap_or(0)
+    }
+
     /// Sets the hardfork
     #[must_use]
     pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
@@ -677,11 +694,10 @@ impl NodeConfig {
 
     /// Sets both the genesis accounts and the signer accounts
     /// so that `genesis_accounts == accounts`
-    #[must_use]
-    pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
-        let accounts = generator.gen();
+    pub fn with_account_generator(mut self, generator: AccountGenerator) -> eyre::Result<Self> {
+        let accounts = generator.gen()?;
         self.account_generator = Some(generator);
-        self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
+        Ok(self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts))
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
@@ -1033,6 +1049,7 @@ impl NodeConfig {
         }
 
         let genesis = GenesisConfig {
+            number: self.get_genesis_number(),
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
@@ -1479,7 +1496,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> Vec<PrivateKeySigner> {
+    pub fn gen(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path
@@ -1489,10 +1506,10 @@ impl AccountGenerator {
         for idx in 0..self.amount {
             let builder =
                 builder.clone().derivation_path(format!("{derivation_path}{idx}")).unwrap();
-            let wallet = builder.build().unwrap().with_chain_id(Some(self.chain_id));
+            let wallet = builder.build()?.with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
-        wallets
+        Ok(wallets)
     }
 }
 

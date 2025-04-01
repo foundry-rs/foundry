@@ -3245,37 +3245,169 @@ Compiler run successful!
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_stackPrank() ([GAS])
 Traces:
-  [237176] CounterTest::test_stackPrank()
-    ├─ [0] VM::addr(<pk>) [staticcall]
+  [..] CounterTest::test_stackPrank()
+    ├─ [..] VM::addr(<pk>) [staticcall]
     │   └─ ← [Return] player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C]
-    ├─ [0] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
+    ├─ [..] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
     │   └─ ← [Return]
-    ├─ [51097] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [..] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 255 bytes of code
-    ├─ [108551] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [..] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 542 bytes of code
-    ├─ [1761] SenderLogger::log()
+    ├─ [..] SenderLogger::log()
     │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])
     │   └─ ← [Stop]
-    ├─ [0] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Return]
-    ├─ [1761] SenderLogger::log()
+    ├─ [..] SenderLogger::log()
     │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Stop]
-    ├─ [674] Contract::f()
-    │   ├─ [0] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    ├─ [..] Contract::f()
+    │   ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   │   └─ ← [Return]
     │   └─ ← [Stop]
-    ├─ [1761] SenderLogger::log()
+    ├─ [..] SenderLogger::log()
     │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Stop]
-    ├─ [0] VM::stopPrank()
+    ├─ [..] VM::stopPrank()
     │   └─ ← [Return]
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10060>
+forgetest_init!(should_redact_pk_in_sign_delegation, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract CounterTest is Test {
+    function testCheckDelegation() external {
+        (address alice, uint256 key) = makeAddrAndKey("alice");
+        vm.signDelegation(address(0), key);
+        vm.signAndAttachDelegation(address(0), key);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "testCheckDelegation", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testCheckDelegation() ([GAS])
+Traces:
+  [..] CounterTest::testCheckDelegation()
+    ├─ [0] VM::addr(<pk>) [staticcall]
+    │   └─ ← [Return] alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6]
+    ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
+    │   └─ ← [Return]
+    ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    └─ ← [Stop]
+...
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10068>
+forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
+    prj.add_source(
+        "CounterV1.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumberV1(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV1() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CounterV2.sol",
+        r#"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Upload Counter without path fails as there are multiple contracts with same name.
+    cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
+...
+Error: Multiple contracts found with the name `Counter`
+...
+
+"#]]);
+
+    // Upload without contract name should fail.
+    cmd.forge_fuse().args(["selectors", "upload", "src/Counter.sol"]).assert_failure().stderr_eq(
+        str![[r#"
+...
+Error: No contract name provided.
+...
+
+"#]],
+    );
+
+    // Upload single CounterV2.
+    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Uploading selectors for CounterV2...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#
+    ]]);
+
+    // Upload CounterV1 with path.
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "src/CounterV1.sol:Counter"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Uploading selectors for Counter...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#]]);
+
+    // Upload Counter with path.
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "src/Counter.sol:Counter"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Uploading selectors for Counter...
+...
+Selectors successfully uploaded to OpenChain
+...
 
 "#]]);
 });

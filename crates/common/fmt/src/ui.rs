@@ -291,7 +291,7 @@ impl UIfmt for OtherFields {
         if !self.is_empty() {
             s.push('\n');
         }
-        for (key, value) in self.iter() {
+        for (key, value) in self {
             let val = EthValue::from(value.clone()).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);
@@ -781,7 +781,7 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
 /// Various numerical ethereum types used for pretty printing
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum EthValue {
     U64(U64),
     U256(U256),

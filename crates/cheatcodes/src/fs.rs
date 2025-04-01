@@ -297,46 +297,95 @@ impl Cheatcode for getDeployedCodeCall {
 impl Cheatcode for deployCode_0Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { artifactPath: path } = self;
-        let bytecode = get_artifact_code(ccx.state, path, false)?;
-        let address = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode,
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )?
-            .address
-            .ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-        Ok(address.abi_encode())
+        deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
 impl Cheatcode for deployCode_1Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Self { artifactPath: path, constructorArgs } = self;
-        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-        bytecode.extend_from_slice(constructorArgs);
-        let address = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode.into(),
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )?
-            .address
-            .ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-        Ok(address.abi_encode())
+        let Self { artifactPath: path, constructorArgs: args } = self;
+        deploy_code(ccx, executor, path, Some(args), None, None)
     }
+}
+
+impl Cheatcode for deployCode_2Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_3Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_4Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, salt } = self;
+        deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_5Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_6Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value, salt } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_7Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
+    }
+}
+
+/// Helper function to deploy contract from artifact code.
+/// Uses CREATE2 scheme if salt specified.
+fn deploy_code(
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
+    path: &str,
+    constructor_args: Option<&Bytes>,
+    value: Option<U256>,
+    salt: Option<U256>,
+) -> Result {
+    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    if let Some(args) = constructor_args {
+        bytecode.extend_from_slice(args);
+    }
+
+    let scheme = if let Some(salt) = salt {
+        revm::primitives::CreateScheme::Create2 { salt }
+    } else {
+        revm::primitives::CreateScheme::Create
+    };
+
+    let address = executor
+        .exec_create(
+            CreateInputs {
+                caller: ccx.caller,
+                scheme,
+                value: value.unwrap_or(U256::ZERO),
+                init_code: bytecode.into(),
+                gas_limit: ccx.gas_limit,
+            },
+            ccx,
+        )?
+        .address
+        .ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+    Ok(address.abi_encode())
 }
 
 /// Returns the path to the json artifact depending on the input
