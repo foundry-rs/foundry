@@ -979,7 +979,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function rpcUrlStructs() external view returns (Rpc[] memory urls);
 
-    /// Returns a Chain struct for specific alias    
+    /// Returns a Chain struct for specific alias
     #[cheatcode(group = Testing, safety = Safe)]
     function getChain(string calldata chainAlias) external view returns (Chain memory chain);
 

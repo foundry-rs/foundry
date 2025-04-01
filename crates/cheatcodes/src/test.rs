@@ -115,13 +115,10 @@ fn get_chain_data(state: &Cheatcodes, alias: &str) -> Result<Chain> {
     if alias.is_empty() {
         bail!("Chain alias cannot be empty");
     }
-    
     // Get chain data from alias
     let chain_data = state.config.get_chain_data_by_alias_non_mut(alias)?;
-    
     // Get RPC URL
     let rpc_url = state.config.get_rpc_url_non_mut(alias)?;
-    
     // Create the Chain struct
     Ok(Chain {
         name: chain_data.name,
@@ -130,4 +127,3 @@ fn get_chain_data(state: &Cheatcodes, alias: &str) -> Result<Chain> {
         rpcUrl: rpc_url,
     })
 }
-
