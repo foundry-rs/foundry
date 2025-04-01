@@ -1,8 +1,5 @@
 pub use crate::ic::*;
-use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
-    InspectorExt,
-};
+use crate::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, InspectorExt};
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
