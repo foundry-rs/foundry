@@ -175,6 +175,7 @@ where
         Self::Frame::init_first(evm, frame_input)
     }
 
+    #[inline]
     fn frame_return_result(
         &mut self,
         frame: &mut Self::Frame,
