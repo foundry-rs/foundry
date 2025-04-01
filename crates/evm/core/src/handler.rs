@@ -76,6 +76,16 @@ where
     pub fn is_enabled(&self, name: Features) -> bool {
         self.enabled.get(&name).copied().unwrap_or(false)
     }
+
+    /// Returns a mutable reference to the inner EVM instance.
+    pub fn env(&mut self) -> &mut FoundryEvmCtx<'db> {
+        &mut self.inner.inner
+    }
+
+    /// Returns a mutable reference to the inner database.
+    pub fn db(&mut self) -> &mut <FoundryEvmCtx<'db> as ContextTr>::Db {
+        &mut self.inner.inner.journaled_state.database
+    }
 }
 
 impl<'db, INSP> Handler for FoundryHandler<'db, INSP>

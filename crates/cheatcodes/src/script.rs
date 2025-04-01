@@ -97,7 +97,7 @@ fn sign_delegation(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let authority_acc = ccx.ecx.inner.inner.journaled_state.load_account(signer.address())?;
+        let authority_acc = ccx.ecx.env().journaled_state.load_account(signer.address())?;
         authority_acc.data.info.nonce
     };
     let auth = Authorization {
@@ -124,13 +124,13 @@ fn sign_delegation(
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let authority_acc = ccx.ecx.inner.inner.journaled_state.load_account(authority)?;
+    let authority_acc = ccx.ecx.env().journaled_state.load_account(authority)?;
     if authority_acc.data.info.nonce != auth.nonce {
         return Err("invalid nonce".into());
     }
     authority_acc.data.info.nonce += 1;
     let bytecode = Bytecode::new_eip7702(*auth.address());
-    ccx.ecx.inner.inner.journaled_state.set_code(authority, bytecode);
+    ccx.ecx.env().journaled_state.set_code(authority, bytecode);
     Ok(())
 }
 
@@ -252,7 +252,7 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
-    let depth = ccx.ecx.inner.inner.journaled_state.depth().try_into()?;
+    let depth = ccx.ecx.env().journaled_state.depth().try_into()?;
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
