@@ -153,8 +153,8 @@ pub enum EthRequest {
         #[serde(default)] Option<StateOverride>,
     ),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_simulateV1"))]
-    EthSimulateV1(SimulatePayload, #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>),
+    #[serde(rename = "eth_simulateV1")]
+    EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_createAccessList")]
     EthCreateAccessList(WithOtherFields<TransactionRequest>, #[serde(default)] Option<BlockId>),

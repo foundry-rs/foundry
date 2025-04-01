@@ -32,8 +32,7 @@ use crate::{
 };
 use alloy_consensus::{
     transaction::{eip4844::TxEip4844Variant, Recovered},
-    Account,
-    Header,
+    Account, Header,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
@@ -54,13 +53,13 @@ use alloy_rpc_types::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
     request::TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
-    simulate::{SimulatePayload, SimulatedBlock},
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
@@ -71,8 +70,8 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
-            TypedTransactionRequest,
+            transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
+            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
         },
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
@@ -104,8 +103,10 @@ pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum SimulatedBlockResponse {
-    AnvilInternal(Vec<SimulatedBlock<alloy_rpc_types::Block<alloy_rpc_types::Transaction, Header>>>),
-    Forked(Vec<SimulatedBlock<AnyRpcBlock>>)
+    AnvilInternal(
+        Vec<SimulatedBlock<alloy_rpc_types::Block<MaybeImpersonatedTransaction, Header>>>,
+    ),
+    Forked(Vec<SimulatedBlock<AnyRpcBlock>>),
 }
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
@@ -1129,7 +1130,9 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(SimulatedBlockResponse::Forked(fork.simulate_v1(&request, Some(number.into())).await?))
+                    return Ok(SimulatedBlockResponse::Forked(
+                        fork.simulate_v1(&request, Some(number.into())).await?,
+                    ))
                 }
             }
         }
@@ -1137,8 +1140,7 @@ impl EthApi {
         // this can be blocking for a bit, especially in forking mode
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
-            let simulated_blocks =
-                this.backend.simulate(request, Some(block_request)).await?;
+            let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
             trace!(target : "node", "Simulate status {:?}", simulated_blocks);
 
             Ok(SimulatedBlockResponse::AnvilInternal(simulated_blocks))

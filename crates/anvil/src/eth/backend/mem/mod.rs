@@ -1,8 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
-use super::super::sign::build_typed_transaction;
+use super::{super::sign::build_typed_transaction, executor::new_evm_with_inspector_ref};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -36,7 +35,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    transaction::Recovered, Account, Header, Receipt, ReceiptWithBloom, Signed,
+    transaction::Recovered, Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEip1559, TxEnvelope,
 };
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
@@ -45,13 +44,14 @@ use alloy_network::{
     UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, PrimitiveSignature, B256, U256, U64,
+    address, hex, keccak256, utils::Unit, Address, Bytes, PrimitiveSignature, TxHash, TxKind, B256,
+    U256, U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
-    simulate::{SimulatePayload, SimulatedBlock, SimCallResult},
+    simulate::{SimCallResult, SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
         filter::TraceFilter,
@@ -72,7 +72,8 @@ use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
         optimism::DepositTransaction, DepositReceipt, MaybeImpersonatedTransaction,
-        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction, TypedTransactionRequest
+        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction,
+        TypedTransactionRequest,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -1469,132 +1470,255 @@ impl Backend {
         &self,
         request: SimulatePayload,
         block_request: Option<BlockRequest>,
-    ) -> Result<Vec<SimulatedBlock<alloy_rpc_types::Block<Transaction, alloy_consensus::Header>>>, BlockchainError> {
-        // first, snapshot the current state
-        let state_id = self.db.write().await.snapshot_state();
+    ) -> Result<
+        Vec<
+            SimulatedBlock<
+                alloy_rpc_types::Block<MaybeImpersonatedTransaction, alloy_consensus::Header>,
+            >,
+        >,
+        BlockchainError,
+    > {
+        self.with_database_at(block_request, |state, base_block| {
+            async {
+                let mut gas_used = 0;
 
-        // set zero address to have a balance so that read calls dont fail
-        // (this seems to be part of the standard)
-        self.set_balance(Address::ZERO, U256::MAX).await?;
-        
-        // then, execute each block in the way that it is given
-        let mut simulated_blocks = Vec::new();
-        for block in request.block_state_calls {
-            // if the next block number is larger than the current next block height,
-            // we should mint an empty block and continue
-            if let Some(overrides) = block.block_overrides {
+                // TODO: is this necessary?
+                // set zero address to have a balance so that read calls dont fail
+                // (this seems to be part of the standard)
+                self.set_balance(Address::ZERO, U256::MAX).await?;
 
-                if let Some(needed_number) = overrides.number {
-                    let best_number = self.best_number();
-                    while 
-                        best_number < needed_number.to() {
+                // then, execute each block in the way that it is given
+                let mut simulated_blocks = Vec::with_capacity(request.block_state_calls.len());
+                for block in request.block_state_calls {
+                    if !request.validation {
+                        self.env.write().cfg.disable_base_fee = true;
+                        self.env.write().block.basefee = U256::ZERO;
+                    }
 
-                        // mint an empty block per spec
-                        self.do_mine_block(Vec::new()).await;
-                        // TODO: add simulated block
-                        if simulated_blocks.len() > 256 {
-                            // exceeded block simulation limit
-                            return Err(RpcError::internal_error_with("exceeded block simulation limit").into());
+                    if let Some(overrides) = block.block_overrides {
+                        // if the next block number is larger than the current next block height,
+                        // we should mint an empty block and continue
+                        if let Some(needed_number) = overrides.number {
+                            let best_number = self.best_number();
+                            while best_number < needed_number.to::<u64>() {
+                                // mint an empty block per spec
+                                let empty_block = self.do_mine_block(vec![]).await;
+                                simulated_blocks.push(SimulatedBlock {
+                                    inner: alloy_rpc_types::Block {
+                                        header: self
+                                            .get_block(empty_block.block_number)
+                                            .unwrap()
+                                            .header,
+                                        transactions: BlockTransactions::Hashes::<
+                                            MaybeImpersonatedTransaction,
+                                        >(
+                                            vec![]
+                                        ),
+                                        uncles: vec![],
+                                        withdrawals: Some(alloy_rpc_types::Withdrawals(vec![])),
+                                    },
+                                    calls: vec![],
+                                });
+
+                                if simulated_blocks.len() > 256 {
+                                    // exceeded block simulation limit
+                                    return Err(RpcError::internal_error_with(
+                                        "exceeded block simulation limit",
+                                    )
+                                    .into());
+                                }
+                            }
+
+                            if let Some(block_hashes) = overrides.block_hash {
+                                // TODO override block hashes
+                            }
+
+                            if let Some(number) = overrides.number {
+                                self.env.write().block.number = number.saturating_to();
+                            }
+                            if let Some(difficulty) = overrides.difficulty {
+                                self.env.write().block.difficulty = difficulty;
+                            }
+                            if let Some(time) = overrides.time {
+                                self.env.write().block.timestamp = U256::from(time);
+                            }
+                            if let Some(gas_limit) = overrides.gas_limit {
+                                self.env.write().block.gas_limit = U256::from(gas_limit);
+                            }
+                            if let Some(coinbase) = overrides.coinbase {
+                                self.env.write().block.coinbase = coinbase;
+                            }
+                            if let Some(random) = overrides.random {
+                                self.env.write().block.prevrandao = Some(random);
+                            }
+                            if let Some(base_fee) = overrides.base_fee {
+                                self.env.write().block.basefee = base_fee.saturating_to();
+                            }
                         }
                     }
-                }
-            }
 
-            if let Some(state_overrides) = block.state_overrides {
-                for (addr, addr_overrides) in state_overrides {
-                    if let Some(new_balance) = addr_overrides.balance {
-                        self.set_balance(addr, new_balance).await?;
-                    }
-                    if let Some(new_code) = addr_overrides.code {
-                        self.set_code(addr, new_code).await?;
-                    }
-                    if let Some(new_nonce) = addr_overrides.nonce {
-                        self.set_nonce(addr, U256::from(new_nonce)).await?;
-                    }
-                    if let Some(new_state) = addr_overrides.state {
-                        for (k,v) in new_state {
-                            self.set_storage_at(addr, k.into(), v).await?;
+                    if let Some(state_overrides) = block.state_overrides {
+                        for (addr, addr_overrides) in state_overrides {
+                            if let Some(new_balance) = addr_overrides.balance {
+                                self.set_balance(addr, new_balance).await?;
+                            }
+                            if let Some(new_code) = addr_overrides.code {
+                                self.set_code(addr, new_code).await?;
+                            }
+                            if let Some(new_nonce) = addr_overrides.nonce {
+                                self.set_nonce(addr, U256::from(new_nonce)).await?;
+                            }
+                            if let Some(new_state) = addr_overrides.state {
+                                for (k, v) in new_state {
+                                    self.set_storage_at(addr, k.into(), v).await?;
+                                }
+                            }
                         }
                     }
+
+                    // TODO
+                    // if (self.call_gas_limit() - gas_used) < evm_env.block_env.gas_limit {
+                    //     return Err(
+                    //         EthApiError::Other(Box::new(EthSimulateError::GasLimitReached)).
+                    // into()     )
+                    // }
+
+                    let default_gas_limit = {
+                        let total_specified_gas =
+                            block.calls.iter().filter_map(|tx| tx.gas).sum::<u64>();
+                        let txs_without_gas_limit =
+                            block.calls.iter().filter(|tx| tx.gas.is_none()).count();
+                        let block_gas_limit = self.env.read().block.gas_limit.to::<u64>();
+
+                        if total_specified_gas > block_gas_limit {
+                            return Err(RpcError::internal_error_with("gas limit exceeded").into());
+                        }
+
+                        if txs_without_gas_limit > 0 {
+                            (block_gas_limit - total_specified_gas) / txs_without_gas_limit as u64
+                        } else {
+                            0
+                        }
+                    };
+
+                    // TODO
+                    // if tx.buildable_type().is_none() && validation {
+                    //     return Err(EthApiError::TransactionConversionError);
+                    // }
+
+                    let mut transactions = Vec::with_capacity(block.calls.len());
+                    for transaction in &block.calls {
+                        let (from, nonce) = if let Some(from) = transaction.from {
+                            (from, self.db.read().await.basic_ref(from)?.unwrap_or_default().nonce)
+                        } else {
+                            (Address::ZERO, 0)
+                        };
+
+                        transactions.push(Arc::new(PoolTransaction::new(
+                            PendingTransaction::with_impersonated(
+                                build_typed_transaction(
+                                    TypedTransactionRequest::EIP1559(TxEip1559 {
+                                        nonce,
+                                        max_fee_per_gas: transaction
+                                            .max_fee_per_gas
+                                            .unwrap_or_default(),
+                                        max_priority_fee_per_gas: transaction
+                                            .max_priority_fee_per_gas
+                                            .unwrap_or_default(),
+                                        gas_limit: transaction.gas.unwrap_or(default_gas_limit),
+                                        value: transaction.value.unwrap_or_default(),
+                                        input: transaction
+                                            .input
+                                            .clone()
+                                            .into_input()
+                                            .unwrap_or_default(),
+                                        to: transaction.to.unwrap_or_default(),
+                                        chain_id: self.env.read().cfg.chain_id,
+                                        access_list: transaction
+                                            .access_list
+                                            .clone()
+                                            .unwrap_or_default(),
+                                    }),
+                                    PrimitiveSignature::from_scalars_and_parity(
+                                        B256::with_last_byte(1),
+                                        B256::with_last_byte(1),
+                                        false,
+                                    ),
+                                )?,
+                                from,
+                            ),
+                        )));
+                    }
+
+                    let outcome = self.do_mine_block(transactions).await;
+                    if outcome.invalid.len() > 0 {
+                        return Err(RpcError::internal_error_with("txn was invalid").into());
+                    }
+
+                    let executed_block = self.get_block(outcome.block_number).unwrap();
+
+                    let transactions = if request.return_full_transactions {
+                        BlockTransactions::Full(executed_block.transactions)
+                    } else {
+                        BlockTransactions::Hashes(
+                            outcome.included.iter().map(|t| t.hash()).collect(),
+                        )
+                    };
+
+                    let mut simulated_block = SimulatedBlock {
+                        inner: alloy_rpc_types::Block {
+                            header: executed_block.header,
+                            transactions,
+                            uncles: vec![],
+                            withdrawals: Some(alloy_rpc_types::Withdrawals(Vec::new())),
+                        },
+                        calls: Vec::new(),
+                    };
+
+                    for tx in outcome.included {
+                        let MinedTransaction { info, receipt: raw_receipt, .. } =
+                            self.blockchain.get_transaction_by_hash(&tx.hash()).unwrap();
+                        let receipt = raw_receipt.as_receipt_with_bloom().receipt.clone();
+
+                        let status = match receipt.status {
+                            alloy_consensus::Eip658Value::Eip658(true) => true,
+                            _ => false,
+                        };
+
+                        simulated_block.calls.push(SimCallResult {
+                            return_data: info.out.unwrap_or_default(),
+                            // TODO: fill actual error
+                            error: match status {
+                                false => Some(alloy_rpc_types::simulate::SimulateError {
+                                    code: -3200,
+                                    message: "execution failed".to_string(),
+                                }),
+                                true => None,
+                            },
+                            gas_used: receipt.cumulative_gas_used,
+                            // TODO: fill actual logs
+                            logs: Vec::new(),
+                            status,
+                        });
+                    }
+
+                    gas_used += simulated_block.inner.header.gas_used();
+                    simulated_blocks.push(simulated_block);
+
+                    if simulated_blocks.len() >= 256 {
+                        // exceeded block simulation limit
+                        return Err(RpcError::internal_error_with(
+                            "exceeded block simulation limit",
+                        )
+                        .into());
+                    }
                 }
+
+                Ok(simulated_blocks)
             }
-
-            let pool_transactions = block.calls.iter().map(|t| Arc::new(PoolTransaction {
-                pending_transaction: PendingTransaction::with_impersonated(
-                                         build_typed_transaction(TypedTransactionRequest::EIP1559(TxEip1559 {
-                                            nonce: t.nonce.unwrap_or_default(),
-                                            // TODO: how to do gwei conversion? the number below
-                                            // for now should be 100 gwei
-                                            max_fee_per_gas: t.max_fee_per_gas.unwrap_or(100000000000),
-                                            max_priority_fee_per_gas: t.max_priority_fee_per_gas.unwrap_or_default(),
-                                            // TODO: seems like it would be best to estimate the
-                                            // amount of gas needed here if not provided? or
-                                            // otherwise, not bound the block by the total required
-                                            // gas. for now I set to 1 million for testing
-                                            gas_limit: t.gas.unwrap_or(1000000),
-                                            value: t.value.unwrap_or_default(),
-                                            input: t.input.clone().into_input().unwrap_or_default(),
-                                            to: t.to.unwrap_or_default(),
-                                            chain_id: self.env.read().cfg.chain_id,
-                                            access_list: t.access_list.clone().unwrap_or_default(),
-                                         }), PrimitiveSignature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            )).unwrap(), 
-                                         t.from.unwrap_or(Address::default())
-                                         ),
-                requires: Vec::new(),
-                provides: Vec::new(),
-                priority: TransactionPriority(0)
-                // TODO: priority is by highest first, so just doing a sort of reverse here
-                //priority: TransactionPriority((1000000000 - i).try_into().unwrap())
-            })).collect();
-
-            // TODO: it may be possible to be more lightweight with our handling of blot.ck mining
-            // here, but for now this should be pretty foolproof (in theory)
-            let outcome = self.do_mine_block(pool_transactions).await;
-            if outcome.invalid.len() > 0 {
-                return Err(RpcError::internal_error_with("txn was invalid").into());
-            }
-
-            let executed_block = self.get_block(outcome.block_number).unwrap();
-
-            let mut simulated_block = SimulatedBlock {
-                inner: alloy_rpc_types::Block { header: executed_block.header, transactions: BlockTransactions::Hashes(outcome.included.iter().map(|t| t.hash()).collect()), uncles: Vec::new(), withdrawals: Some(alloy_rpc_types::Withdrawals(Vec::new())) },
-                calls: Vec::new()
-            };
-
-            for tx in outcome.included {
-                let MinedTransaction { info, receipt: raw_receipt, .. } =
-                    self.blockchain.get_transaction_by_hash(&tx.hash()).unwrap();
-                let receipt = raw_receipt.as_receipt_with_bloom().receipt.clone();
-
-                let status = match receipt.status { alloy_consensus::Eip658Value::Eip658(true) => true, _ => false};
-
-                simulated_block.calls.push(SimCallResult {
-                    return_data: info.out.unwrap_or_default(),
-                    // TODO: fill actual error
-                    error: match status { false => Some(alloy_rpc_types::simulate::SimulateError { code: -3200, message: "execution failed".to_string() }), true => None },
-                    gas_used: receipt.cumulative_gas_used,
-                    // TODO: fill actual logs
-                    logs: Vec::new(),
-                    status
-                });
-            }
-
-            simulated_blocks.push(simulated_block);
-
-            if simulated_blocks.len() >= 256 {
-                // exceeded block simulation limit
-                return Err(RpcError::internal_error_with("exceeded block simulation limit").into());
-            }
-        }
-
-        // finally, revert back to the previous state
-        self.db.write().await.revert_state(state_id, RevertStateSnapshotAction::RevertRemove);
-
-        Ok(simulated_blocks)
+        })
+        .await?
+        .await
     }
 
     pub fn call_with_state(
