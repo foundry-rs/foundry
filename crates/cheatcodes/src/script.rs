@@ -1,7 +1,7 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, PrimitiveSignature, B256, U256};
+use alloy_primitives::{Address, Uint, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -54,46 +54,71 @@ impl Cheatcode for attachDelegationCall {
     }
 }
 
-impl Cheatcode for signDelegationCall {
+impl Cheatcode for signDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, privateKey } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+        let Self { implementation, privateKey } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, false)
     }
 }
 
-impl Cheatcode for signAndAttachDelegationCall {
+impl Cheatcode for signDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, privateKey } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        let signed_auth = sig_to_auth(sig, auth);
+        let Self { implementation, privateKey, nonce } = *self;
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), false)
+    }
+}
+
+impl Cheatcode for signAndAttachDelegation_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, true)
+    }
+}
+
+impl Cheatcode for signAndAttachDelegation_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, nonce } = *self;
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), true)
+    }
+}
+
+/// Helper function to sign and attach (if needed) an EIP-7702 delegation.
+/// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
+fn sign_delegation(
+    ccx: &mut CheatsCtxt,
+    private_key: Uint<256, 4>,
+    implementation: Address,
+    nonce: Option<u64>,
+    attach: bool,
+) -> Result<Vec<u8>> {
+    let signer = PrivateKeySigner::from_bytes(&B256::from(private_key))?;
+    let nonce = if let Some(nonce) = nonce {
+        nonce
+    } else {
+        let authority_acc =
+            ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
+        authority_acc.data.info.nonce
+    };
+    let auth = Authorization {
+        address: implementation,
+        nonce,
+        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+    };
+    let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+    // Attach delegation.
+    if attach {
+        let signed_auth = SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s());
         write_delegation(ccx, signed_auth.clone())?;
         ccx.state.active_delegation = Some(signed_auth);
-        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
     }
-}
-
-fn create_auth(
-    ccx: &mut CheatsCtxt,
-    implementation: Address,
-    authority: Address,
-) -> Result<(Authorization, u64)> {
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
-    let nonce = authority_acc.data.info.nonce;
-    Ok((
-        Authorization {
-            address: implementation,
-            nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
-        },
+    Ok(SignedDelegation {
+        v: sig.v() as u8,
+        r: sig.r().into(),
+        s: sig.s().into(),
         nonce,
-    ))
+        implementation,
+    }
+    .abi_encode())
 }
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
@@ -106,24 +131,6 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     let bytecode = Bytecode::new_eip7702(*auth.address());
     ccx.ecx.journaled_state.set_code(authority, bytecode);
     Ok(())
-}
-
-fn sig_to_delegation(
-    sig: PrimitiveSignature,
-    nonce: u64,
-    implementation: Address,
-) -> SignedDelegation {
-    SignedDelegation {
-        v: sig.v() as u8,
-        r: sig.r().into(),
-        s: sig.s().into(),
-        nonce,
-        implementation,
-    }
-}
-
-fn sig_to_auth(sig: PrimitiveSignature, auth: Authorization) -> SignedAuthorization {
-    SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s())
 }
 
 impl Cheatcode for startBroadcast_0Call {

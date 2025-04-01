@@ -37,7 +37,7 @@ mod tests {
 
     #[test]
     fn build_evm_with_extra_precompiles() {
-        const PRECOMPILE_ADDR: Address = address!("0000000000000000000000000000000000000071");
+        const PRECOMPILE_ADDR: Address = address!("0x0000000000000000000000000000000000000071");
 
         fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
             Ok(PrecompileOutput { bytes: Bytes::new(), gas_used: 0 })

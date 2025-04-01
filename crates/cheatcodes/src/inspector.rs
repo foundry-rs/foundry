@@ -1014,8 +1014,8 @@ where {
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
-                if prank.delegate_call {
+            if prank.delegate_call && curr_depth == prank.depth {
+                if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
                     call.target_address = prank.new_caller;
                     call.caller = prank.new_caller;
                     let acc = ecx.journaled_state.account(prank.new_caller);
