@@ -13,7 +13,7 @@ use revm::{
         instructions::{EthInstructions, InstructionProvider},
         EthFrame, EvmTr, Frame, FrameOrResult, FrameResult, Handler,
     },
-    inspector::InspectorEvmTr,
+    inspector::{InspectorEvmTr, NoOpInspector},
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
         CreateInputs, CreateOutcome, FrameInput, Gas, Host, InstructionResult, InterpreterResult,
@@ -40,7 +40,7 @@ pub enum Features {
 /// A [`Handler`] registry for the Foundry EVM.
 /// This is a wrapper around the EVM that allows us to conditionally override certain
 /// execution paths based on the enabled features.
-pub struct FoundryHandler<'db, INSP: InspectorExt> {
+pub struct FoundryHandler<'db, INSP: InspectorExt = NoOpInspector> {
     /// The inner EVM instance.
     pub inner: FoundryEvm<'db, INSP>,
 
@@ -50,7 +50,10 @@ pub struct FoundryHandler<'db, INSP: InspectorExt> {
     pub create2_overrides: Rc<RefCell<Vec<(usize, CallInputs)>>>,
 }
 
-impl<'db, INSP: InspectorExt> FoundryHandler<'db, INSP> {
+impl<'db, INSP> FoundryHandler<'db, INSP>
+where
+    INSP: InspectorExt,
+{
     /// Creates a new [`FoundryHandler`] with the given context and inspector.
     pub fn new(ctx: FoundryEvmCtx<'db>, inspector: INSP) -> Self {
         // By default we enable the `CREATE2` handler.

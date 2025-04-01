@@ -8,7 +8,9 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::{bytecode::Bytecode, context_interface::transaction::SignedAuthorization};
+use revm::{
+    bytecode::Bytecode, context::JournalTr, context_interface::transaction::SignedAuthorization,
+};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -40,7 +42,7 @@ impl Cheatcode for attachDelegationCall {
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+            chain_id: U256::from(ccx.ecx.inner.inner.cfg.chain_id),
         };
         let signed_auth = SignedAuthorization::new_unchecked(
             auth,
@@ -95,14 +97,13 @@ fn sign_delegation(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let authority_acc =
-            ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
+        let authority_acc = ccx.ecx.inner.inner.journaled_state.load_account(signer.address())?;
         authority_acc.data.info.nonce
     };
     let auth = Authorization {
         address: implementation,
         nonce,
-        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+        chain_id: U256::from(ccx.ecx.inner.inner.cfg.chain_id),
     };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
     // Attach delegation.
@@ -123,13 +124,13 @@ fn sign_delegation(
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
+    let authority_acc = ccx.ecx.inner.inner.journaled_state.load_account(authority)?;
     if authority_acc.data.info.nonce != auth.nonce {
         return Err("invalid nonce".into());
     }
     authority_acc.data.info.nonce += 1;
     let bytecode = Bytecode::new_eip7702(*auth.address());
-    ccx.ecx.journaled_state.set_code(authority, bytecode);
+    ccx.ecx.inner.inner.journaled_state.set_code(authority, bytecode);
     Ok(())
 }
 
@@ -251,7 +252,7 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth = ccx.ecx.inner.inner.journaled_state.depth().try_into()?;
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
@@ -274,9 +275,9 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
     }
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.ecx.inner.inner.tx.caller),
         original_caller: ccx.caller,
-        original_origin: ccx.ecx.env.tx.caller,
+        original_origin: ccx.ecx.inner.inner.tx.caller,
         depth,
         single_call,
     };

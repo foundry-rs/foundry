@@ -596,13 +596,7 @@ impl Cheatcodes {
 
         apply_dispatch(
             &decoded,
-            &mut CheatsCtxt {
-                state: self,
-                ecx: &mut ecx.inner,
-                precompiles: &mut ecx.precompiles,
-                gas_limit: call.gas_limit,
-                caller,
-            },
+            &mut CheatsCtxt { state: self, ecx: &mut ecx.inner, gas_limit: call.gas_limit, caller },
             executor,
         )
     }
