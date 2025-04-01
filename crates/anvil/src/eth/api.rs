@@ -32,7 +32,7 @@ use crate::{
 };
 use alloy_consensus::{
     transaction::{eip4844::TxEip4844Variant, Recovered},
-    Account, Header,
+    Account,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
@@ -70,8 +70,8 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
-            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
+            TypedTransactionRequest,
         },
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
@@ -94,20 +94,8 @@ use parking_lot::RwLock;
 use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
 
-use serde::Serialize;
-
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
-
-// TODO: I feel like this enum should go somewhere more proper. Where would be best?
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum SimulatedBlockResponse {
-    AnvilInternal(
-        Vec<SimulatedBlock<alloy_rpc_types::Block<MaybeImpersonatedTransaction, Header>>>,
-    ),
-    Forked(Vec<SimulatedBlock<AnyRpcBlock>>),
-}
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -1123,16 +1111,14 @@ impl EthApi {
         &self,
         request: SimulatePayload,
         block_number: Option<BlockId>,
-    ) -> Result<SimulatedBlockResponse> {
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         node_info!("eth_simulateV1");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(SimulatedBlockResponse::Forked(
-                        fork.simulate_v1(&request, Some(number.into())).await?,
-                    ))
+                    return Ok(fork.simulate_v1(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1143,7 +1129,7 @@ impl EthApi {
             let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
             trace!(target : "node", "Simulate status {:?}", simulated_blocks);
 
-            Ok(SimulatedBlockResponse::AnvilInternal(simulated_blocks))
+            Ok(simulated_blocks)
         })
         .await
     }
