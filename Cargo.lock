@@ -3738,6 +3738,7 @@ dependencies = [
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
+ "foundry-evm-core",
  "foundry-linking",
  "foundry-test-utils",
  "foundry-wallets",

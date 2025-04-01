@@ -69,7 +69,7 @@ impl<'db, INSP: InspectorExt> FoundryHandler<'db, INSP> {
         self.enabled.insert(name, enabled);
     }
 
-    /// Whether a feature is enabled or not.
+    /// Whether a handler feature is enabled or not.
     pub fn is_enabled(&self, name: Features) -> bool {
         self.enabled.get(&name).copied().unwrap_or(false)
     }

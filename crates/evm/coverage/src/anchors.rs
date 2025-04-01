@@ -3,7 +3,7 @@ use crate::analysis::SourceAnalysis;
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
-use foundry_evm_core::utils::IcPcMap;
+use foundry_evm_core::ic::IcPcMap;
 use revm::bytecode::opcode;
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
