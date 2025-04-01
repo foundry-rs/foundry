@@ -623,6 +623,13 @@ impl Backend {
         &self.cheats
     }
 
+    /// Whether to skip blob validation
+    pub fn skip_blob_validation(&self, impersonator: Option<Address>) -> bool {
+        self.cheats().auto_impersonate_accounts() ||
+            impersonator
+                .is_some_and(|addr| self.cheats().impersonated_accounts().contains(&addr))
+    }
+
     /// Returns the `FeeManager` that manages fee/pricings
     pub fn fees(&self) -> &FeeManager {
         &self.fees
@@ -2825,9 +2832,11 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::TooManyBlobs(blob_count))
             }
 
-            // Check for any blob validation errors
-            if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
-                return Err(InvalidTransactionError::BlobTransactionValidationError(err))
+            // Check for any blob validation errors if not impersonating.
+            if !self.skip_blob_validation(Some(*pending.sender())) {
+                if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
+                    return Err(InvalidTransactionError::BlobTransactionValidationError(err))
+                }
             }
         }
 

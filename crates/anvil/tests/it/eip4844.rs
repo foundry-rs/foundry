@@ -1,8 +1,11 @@
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
-use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
-use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844};
-use alloy_primitives::U256;
+use alloy_eips::{
+    eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK},
+    Typed2718,
+};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
+use alloy_primitives::{b256, Address, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -292,4 +295,53 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() 
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
         DATA_GAS_PER_BLOB
     );
+}
+
+// <https://github.com/foundry-rs/foundry/issues/9924>
+#[tokio::test]
+async fn can_bypass_sidecar_requirement() {
+    tracing_subscriber::fmt::init();
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_auto_impersonate(true);
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let from = Address::random();
+    let to = Address::random();
+
+    api.anvil_set_balance(from, U256::from(60262144030131080_u128)).await.unwrap();
+
+    let tx = TransactionRequest {
+        from: Some(from),
+        to: Some(alloy_primitives::TxKind::Call(to)),
+        nonce: Some(0),
+        value: Some(U256::from(0)),
+        max_fee_per_blob_gas: Some(gas_price + 1),
+        max_fee_per_gas: Some(eip1559_est.max_fee_per_gas),
+        max_priority_fee_per_gas: Some(eip1559_est.max_priority_fee_per_gas),
+        blob_versioned_hashes: Some(vec![b256!(
+            "0x01d5446006b21888d0267829344ab8624fdf1b425445a8ae1ca831bf1b8fbcd4"
+        )]),
+        sidecar: None,
+        transaction_type: Some(3),
+        ..Default::default()
+    };
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert!(receipt.status());
+
+    let tx = provider.get_transaction_by_hash(receipt.transaction_hash).await.unwrap().unwrap();
+
+    assert_eq!(tx.inner.ty(), 3);
 }
