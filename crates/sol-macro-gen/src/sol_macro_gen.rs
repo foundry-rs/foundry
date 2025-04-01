@@ -106,6 +106,8 @@ impl MultiSolMacroGen {
         &mut self,
         name: &str,
         version: &str,
+        description: &str,
+        license: &str,
         bindings_path: &Path,
         single_file: bool,
         alloy_version: Option<String>,
@@ -115,7 +117,6 @@ impl MultiSolMacroGen {
         self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
-
         let _ = fs::create_dir_all(&src);
 
         // Write Cargo.toml
@@ -125,10 +126,22 @@ impl MultiSolMacroGen {
 name = "{name}"
 version = "{version}"
 edition = "2021"
-
-[dependencies]
 "#
         );
+
+        if !description.is_empty() {
+            toml_contents.push_str(&format!("description = \"{description}\"\n"));
+        }
+
+        if !license.is_empty() {
+            let formatted_licenses: Vec<String> =
+                license.split(',').map(Self::parse_license_alias).collect();
+
+            let formatted_license = formatted_licenses.join(" OR ");
+            toml_contents.push_str(&format!("license = \"{formatted_license}\"\n"));
+        }
+
+        toml_contents.push_str("\n[dependencies]\n");
 
         let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
@@ -172,6 +185,23 @@ edition = "2021"
         fs::write(lib_path, lib_contents).wrap_err("Failed to write lib.rs")?;
 
         Ok(())
+    }
+
+    /// Attempts to detect the appropriate license.
+    pub fn parse_license_alias(license: &str) -> String {
+        match license.trim().to_lowercase().as_str() {
+            "mit" => "MIT".to_string(),
+            "apache" | "apache2" | "apache20" | "apache2.0" => "Apache-2.0".to_string(),
+            "gpl" | "gpl3" => "GPL-3.0".to_string(),
+            "lgpl" | "lgpl3" => "LGPL-3.0".to_string(),
+            "agpl" | "agpl3" => "AGPL-3.0".to_string(),
+            "bsd" | "bsd3" => "BSD-3-Clause".to_string(),
+            "bsd2" => "BSD-2-Clause".to_string(),
+            "mpl" | "mpl2" => "MPL-2.0".to_string(),
+            "isc" => "ISC".to_string(),
+            "unlicense" => "Unlicense".to_string(),
+            _ => license.trim().to_string(),
+        }
     }
 
     pub fn write_to_module(

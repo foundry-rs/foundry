@@ -52,6 +52,18 @@ pub struct BindArgs {
     #[arg(long, default_value = DEFAULT_CRATE_VERSION, value_name = "VERSION")]
     crate_version: String,
 
+    /// The description of the Rust crate to generate.
+    ///
+    /// This will be added to the package.description field in Cargo.toml.
+    #[arg(long, default_value = "", value_name = "DESCRIPTION")]
+    crate_description: String,
+
+    /// The license of the Rust crate to generate.
+    ///
+    /// This will be added to the package.license field in Cargo.toml.
+    #[arg(long, value_name = "LICENSE", default_value = "")]
+    crate_license: String,
+
     /// Generate the bindings as a module instead of a crate.
     #[arg(long)]
     module: bool,
@@ -232,6 +244,8 @@ impl BindArgs {
             solmacrogen.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
+                &self.crate_description,
+                &self.crate_license,
                 bindings_root,
                 self.single_file,
                 self.alloy_version.clone(),
