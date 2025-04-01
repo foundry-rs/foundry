@@ -189,10 +189,11 @@ edition = "2021"
         Ok(())
     }
 
+    /// Attempts to detect the appropriate license.
     pub fn parse_license_alias(license: &str) -> String {
         match license.trim().to_lowercase().as_str() {
             "mit" => "MIT".to_string(),
-            "apache" | "apache2" => "Apache-2.0".to_string(),
+            "apache" | "apache2" | "apache20" | "apache2.0" => "Apache-2.0".to_string(),
             "gpl" | "gpl3" => "GPL-3.0".to_string(),
             "lgpl" | "lgpl3" => "LGPL-3.0".to_string(),
             "agpl" | "agpl3" => "AGPL-3.0".to_string(),

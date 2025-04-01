@@ -61,12 +61,7 @@ pub struct BindArgs {
     /// The license of the Rust crate to generate.
     ///
     /// This will be added to the package.license field in Cargo.toml.
-    #[arg(
-        long,
-        value_name = "LICENSE",
-        value_parser = parse_license_alias,
-        default_value = ""
-    )]
+    #[arg(long, value_name = "LICENSE", default_value = "")]
     crate_license: String,
 
     /// Generate the bindings as a module instead of a crate.
@@ -114,10 +109,6 @@ pub struct BindArgs {
 
     #[command(flatten)]
     build: BuildOpts,
-}
-
-fn parse_license_alias(s: &str) -> Result<String, String> {
-    Ok(MultiSolMacroGen::parse_license_alias(s))
 }
 
 impl BindArgs {
