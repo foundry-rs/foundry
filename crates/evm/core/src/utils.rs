@@ -1,6 +1,6 @@
 pub use crate::ic::*;
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     InspectorExt,
 };
 use alloy_consensus::BlockHeader;
@@ -312,7 +312,7 @@ pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandle
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
 
-        loaded_precompiles.extend([ODYSSEY_P256, P256VERIFY]);
+        loaded_precompiles.extend([P256VERIFY]);
 
         loaded_precompiles
     });
