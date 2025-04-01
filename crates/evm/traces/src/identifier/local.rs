@@ -86,15 +86,15 @@ impl<'a> LocalTraceIdentifier<'a> {
         let idx = self.find_index(min_len);
         for i in idx..same_length_idx {
             let (id, _) = self.ordered_ids[i];
-            if let found @ Some(_) = check(id, true, &mut min_score) {
+            if let found @ Some(_) = check(id, false, &mut min_score) {
                 return found;
             }
         }
 
-        // Fallback to comparing deployed code if min score greater than threshold.
+        // Fallback to comparing creation code if min score greater than threshold.
         if min_score >= 0.85 {
             for (artifact, _) in &self.ordered_ids {
-                if let found @ Some(_) = check(artifact, false, &mut min_score) {
+                if let found @ Some(_) = check(artifact, true, &mut min_score) {
                     return found;
                 }
             }
