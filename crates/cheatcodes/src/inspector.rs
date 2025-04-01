@@ -23,7 +23,7 @@ use crate::{
 };
 use alloy_primitives::{
     hex,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, HashMap, HashSet},
     Address, Bytes, Log, TxKind, B256, U256,
 };
 use alloy_rpc_types::{
@@ -59,7 +59,7 @@ use revm::{
 use serde_json::Value;
 use std::{
     cmp::max,
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -1220,7 +1220,11 @@ where {
     /// Whether the given slot of address with arbitrary storage should be overwritten.
     /// True if address is marked as and overwrite and if no value was previously generated for
     /// given slot.
-    pub fn overwrite_arbitrary_storage(&self, address: &Address, storage_slot: U256) -> bool {
+    pub fn should_overwrite_arbitrary_storage(
+        &self,
+        address: &Address,
+        storage_slot: U256,
+    ) -> bool {
         match &self.arbitrary_storage {
             Some(storage) => {
                 storage.overwrites.contains(address) &&
@@ -1869,7 +1873,7 @@ impl Cheatcodes {
         };
 
         if (value.is_cold && value.data.is_zero()) ||
-            self.overwrite_arbitrary_storage(&target_address, key)
+            self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
                 let arbitrary_value = self.rng().gen();
