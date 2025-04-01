@@ -77,7 +77,6 @@ pub fn is_impersonated_sig(sig: &PrimitiveSignature, ty: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn test_constant_sender() {

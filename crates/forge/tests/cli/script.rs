@@ -12,7 +12,7 @@ use foundry_test_utils::{
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, str::FromStr};
+use std::{env, fs, path::PathBuf};
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(

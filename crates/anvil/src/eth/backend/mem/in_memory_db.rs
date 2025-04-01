@@ -143,9 +143,9 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{address, Bytes};
     use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account
     // is dumped and reloaded

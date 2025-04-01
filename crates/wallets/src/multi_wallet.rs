@@ -402,7 +402,8 @@ impl MultiWalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, str::FromStr};
+    use alloy_primitives::address;
+    use std::path::Path;
 
     #[test]
     fn parse_keystore_args() {

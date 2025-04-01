@@ -283,7 +283,7 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{fixed_bytes, map::HashMap};
+    use alloy_primitives::{address, fixed_bytes, map::HashMap};
     use foundry_compilers::{
         multi::MultiCompiler,
         solc::{Solc, SolcCompiler},
