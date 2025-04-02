@@ -1,5 +1,4 @@
 use crate::{
-    backend::JournaledState,
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvm, FoundryEvmCtx},
     InspectorExt,
@@ -8,7 +7,7 @@ use alloy_primitives::{map::foldhash::HashMap, Address, U256};
 use revm::{
     context::{
         result::{EVMError, HaltReason},
-        ContextTr, CreateScheme, JournalInner,
+        ContextTr, CreateScheme,
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
@@ -21,7 +20,7 @@ use revm::{
         EMPTY_SHARED_MEMORY,
     },
     primitives::KECCAK_EMPTY,
-    Database, JournalEntry,
+    Database,
 };
 use std::{cell::RefCell, rc::Rc};
 

@@ -1,20 +1,13 @@
-use crate::{
-    backend::DatabaseExt, handler::FoundryHandler, precompiles::ODYSSEY_P256, Env, InspectorExt,
-};
+use crate::{backend::DatabaseExt, handler::FoundryHandler, Env, InspectorExt};
 use alloy_evm::eth::EthEvmContext;
-use alloy_primitives::{Address, Bytes};
 use revm::{
-    context::{ContextTr, Evm, EvmData, JournalInner},
+    context::{Evm, EvmData, JournalInner},
     handler::{
         instructions::{EthInstructions, InstructionProvider},
-        EthPrecompiles, EvmTr, PrecompileProvider,
+        EthPrecompiles, EvmTr,
     },
     inspector::{inspect_instructions, InspectorEvmTr},
-    interpreter::{
-        interpreter::EthInterpreter, Gas, InstructionResult, Interpreter, InterpreterResult,
-        InterpreterTypes,
-    },
-    precompile::PrecompileError,
+    interpreter::{interpreter::EthInterpreter, Interpreter, InterpreterTypes},
     Journal,
 };
 
@@ -27,18 +20,17 @@ pub struct FoundryEvm<'db, INSP = ()> {
         FoundryEvmCtx<'db>,
         INSP,
         EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>,
-        FoundryPrecompiles,
+        EthPrecompiles,
     >,
 }
 
 /// Implementation of revm's [`Evm`] for Foundry.
 impl<'db, INSP: InspectorExt> FoundryEvm<'db, INSP> {
     pub fn new(ctx: FoundryEvmCtx<'db>, inspector: INSP) -> Self {
-        let is_odyssey = inspector.is_odyssey();
         let evm = Evm {
             data: EvmData { ctx, inspector },
             instruction: EthInstructions::default(),
-            precompiles: FoundryPrecompiles::new(is_odyssey),
+            precompiles: EthPrecompiles::default(),
         };
         FoundryEvm { inner: evm }
     }
@@ -48,7 +40,7 @@ impl<'db, INSP: InspectorExt> FoundryEvm<'db, INSP> {
 impl<'db, INSP: InspectorExt> EvmTr for FoundryEvm<'db, INSP> {
     type Context = FoundryEvmCtx<'db>;
     type Instructions = EthInstructions<EthInterpreter, FoundryEvmCtx<'db>>;
-    type Precompiles = FoundryPrecompiles;
+    type Precompiles = EthPrecompiles;
 
     fn ctx(&mut self) -> &mut Self::Context {
         &mut self.inner.data.ctx
@@ -132,87 +124,4 @@ pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
     inspector: &'i mut I,
 ) -> FoundryHandler<'db, &'i mut I> {
     FoundryHandler::new(ctx, inspector)
-}
-
-/// [`PrecompileProvider`] wrapper for Foundry's precompiles.
-/// Adds support for:
-/// - [`ODYSSEY_P256`], if `odyssey` is enabled.
-pub struct FoundryPrecompiles {
-    inner: EthPrecompiles,
-    odyssey: bool,
-}
-
-impl FoundryPrecompiles {
-    /// Creates a new instance of the [`FoundryPrecompiles`].
-    pub fn new(odyssey: bool) -> Self {
-        Self { inner: EthPrecompiles::default(), odyssey }
-    }
-}
-
-impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
-    type Output = InterpreterResult;
-
-    fn set_spec(&mut self, spec: <<CTX as ContextTr>::Cfg as revm::context::Cfg>::Spec) {
-        PrecompileProvider::<CTX>::set_spec(&mut self.inner, spec);
-    }
-
-    fn run(
-        &mut self,
-        context: &mut CTX,
-        address: &Address,
-        bytes: &Bytes,
-        gas_limit: u64,
-    ) -> Result<Option<Self::Output>, String> {
-        if self.odyssey && address == ODYSSEY_P256.address() {
-            let mut result = InterpreterResult {
-                result: InstructionResult::Return,
-                gas: Gas::new(gas_limit),
-                output: Bytes::new(),
-            };
-
-            match ODYSSEY_P256.precompile()(bytes, gas_limit) {
-                Ok(output) => {
-                    let underflow = result.gas.record_cost(output.gas_used);
-                    if underflow {
-                        result.result = InstructionResult::PrecompileOOG;
-                    } else {
-                        result.result = InstructionResult::Return;
-                        result.output = output.bytes;
-                    }
-                }
-                Err(e) => {
-                    if let PrecompileError::Fatal(_) = e {
-                        return Err(e.to_string());
-                    }
-                    result.result = if e.is_oog() {
-                        InstructionResult::PrecompileOOG
-                    } else {
-                        InstructionResult::PrecompileError
-                    };
-                }
-            }
-        }
-
-        self.inner.run(context, address, bytes, gas_limit)
-    }
-
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        let warm_addresses = self.inner.warm_addresses() as Box<dyn Iterator<Item = Address>>;
-
-        let iter = if self.odyssey {
-            Box::new(warm_addresses.chain(core::iter::once(*ODYSSEY_P256.address())))
-        } else {
-            warm_addresses
-        };
-
-        Box::new(iter)
-    }
-
-    fn contains(&self, address: &Address) -> bool {
-        if self.odyssey && address == ODYSSEY_P256.address() {
-            true
-        } else {
-            self.inner.contains(address)
-        }
-    }
 }
