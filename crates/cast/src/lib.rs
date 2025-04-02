@@ -403,6 +403,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         .await?;
 
         Ok(match &genesis_hash[..] {
+            "0x67f9723393ef76214df0118c34bbbd3dbebc8ed46a10973a8c969d48fe7598c9" => {
+                "westend-assethub"
+            }
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
                 match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
