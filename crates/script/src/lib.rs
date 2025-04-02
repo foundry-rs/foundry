@@ -25,7 +25,7 @@ use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
-use forge_verify::{RetryArgs, VerifierArgs};
+use forge_verify::{install_missing_dependencies, RetryArgs, VerifierArgs};
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::LoadConfig,
@@ -222,7 +222,13 @@ impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
 
-        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
+
+        // install missing dependencies
+        if install_missing_dependencies(&mut config) && config.auto_detect_remappings {
+            // need to re-configure here to also catch additional remappings
+            config = self.load_config()?;
+        }
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
