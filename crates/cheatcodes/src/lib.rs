@@ -16,7 +16,8 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::Address;
-use foundry_evm_core::{backend::DatabaseExt, handler::FoundryHandler};
+use foundry_evm_core::{backend::DatabaseExt, handler::FoundryHandler, InspectorExt};
+use revm::inspector::NoOpInspector;
 use spec::Status;
 
 pub use config::CheatsConfig;
@@ -133,19 +134,28 @@ impl dyn DynCheatcode {
 }
 
 /// The cheatcode context, used in `Cheatcode`.
-pub struct CheatsCtxt<'cheats, 'evm, 'db> {
+pub struct CheatsCtxt<'cheats, 'evm, 'db, INSP = NoOpInspector>
+where
+    INSP: InspectorExt,
+{
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut FoundryHandler<'db>,
+    pub(crate) ecx: &'evm mut FoundryHandler<'db, INSP>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
 
-impl<'db> std::ops::Deref for CheatsCtxt<'_, '_, 'db> {
-    type Target = FoundryHandler<'db>;
+impl<'db, INSP> std::ops::Deref for CheatsCtxt<'_, '_, 'db, INSP>
+where
+    INSP: InspectorExt,
+{
+    type Target
+        = FoundryHandler<'db, INSP>
+    where
+        INSP: InspectorExt;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {

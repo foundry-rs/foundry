@@ -958,19 +958,20 @@ fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
 }
 
 fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let env = Env::from(
+    let mut env = Env::from(
         ccx.ecx.inner.inner.cfg.clone(),
         ccx.ecx.inner.inner.block.clone(),
         ccx.ecx.inner.inner.tx.clone(),
     );
+    let journaled_state = ccx.ecx.inner.inner.journaled_state.clone();
     let result = if let Some(journaled_state) = ccx.ecx.inner.inner.db().revert_state(
         snapshot_id,
-        &ccx.ecx.inner.inner.journaled_state,
+        &journaled_state,
         &mut env,
         RevertStateSnapshotAction::RevertKeep,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.inner.inner.journaled_state = journaled_state;
+        ccx.ecx.inner.inner.journaled_state.inner = journaled_state;
         true
     } else {
         false
@@ -979,19 +980,20 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
 }
 
 fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let env = Env::from(
+    let mut env = Env::from(
         ccx.ecx.inner.inner.cfg.clone(),
         ccx.ecx.inner.inner.block.clone(),
         ccx.ecx.inner.inner.tx.clone(),
     );
+    let journaled_state = ccx.ecx.inner.inner.journaled_state.clone();
     let result = if let Some(journaled_state) = ccx.ecx.inner.inner.db().revert_state(
         snapshot_id,
-        &ccx.ecx.inner.inner.journaled_state,
+        &journaled_state,
         &mut env,
         RevertStateSnapshotAction::RevertRemove,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.inner.inner.journaled_state = journaled_state;
+        ccx.ecx.inner.inner.journaled_state.inner = journaled_state;
         true
     } else {
         false

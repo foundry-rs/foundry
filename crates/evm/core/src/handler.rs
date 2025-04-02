@@ -13,7 +13,7 @@ use revm::{
         instructions::{EthInstructions, InstructionProvider},
         EthFrame, EvmTr, Frame, FrameOrResult, FrameResult, Handler,
     },
-    inspector::{InspectorEvmTr, NoOpInspector},
+    inspector::InspectorEvmTr,
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
         CreateInputs, CreateOutcome, FrameInput, Gas, Host, InstructionResult, InterpreterResult,
@@ -40,7 +40,7 @@ pub enum Features {
 /// A [`Handler`] registry for the Foundry EVM.
 /// This is a wrapper around the EVM that allows us to conditionally override certain
 /// execution paths based on the enabled features.
-pub struct FoundryHandler<'db, INSP: InspectorExt = NoOpInspector> {
+pub struct FoundryHandler<'db, INSP: InspectorExt> {
     /// The inner EVM instance.
     pub inner: FoundryEvm<'db, INSP>,
 

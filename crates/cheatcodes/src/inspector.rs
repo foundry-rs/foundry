@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_context, FoundryEvmCtx},
+    evm::new_evm_with_context,
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -50,7 +50,7 @@ use revm::{
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
     handler::{FrameOrResult, FrameResult},
     interpreter::{
-        interpreter_types::{Jumps, LoopControl},
+        interpreter_types::{Jumps, LoopControl, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
@@ -92,7 +92,7 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.journaled_state.depth += 1;
+            evm.context.evm.inner.journaled_state.depth += 1;
 
             // Handle EOF bytecode
             let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA) &&
@@ -101,19 +101,19 @@ pub trait CheatcodesExecutor {
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
-                    &mut EOFCreateInputs::new(
+                    Box::new(EOFCreateInputs::new(
                         inputs.caller,
                         inputs.value,
                         inputs.gas_limit,
                         EOFCreateKind::Tx { initdata: inputs.init_code },
-                    ),
+                    )),
                 )?
             } else {
                 evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
             };
 
             let mut result = match first_frame_or_result {
-                FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
+                FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
                 FrameOrResult::Result(result) => result,
             };
 
@@ -124,7 +124,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
-            evm.journaled_state.depth -= 1;
+            evm.context.evm.inner.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -148,7 +148,9 @@ fn with_evm<E, F, O>(
 ) -> Result<O, EVMError<DatabaseError>>
 where
     E: CheatcodesExecutor + ?Sized,
-    F: for<'db> FnOnce(&mut FoundryEvmCtx<'db>) -> Result<O, EVMError<DatabaseError>>,
+    F: for<'a, 'b> FnOnce(
+        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
+    ) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
@@ -2124,7 +2126,7 @@ impl Cheatcodes {
                         // If the offset being loaded is >= than the memory size, the
                         // memory is being expanded. If none of the allowed ranges contain
                         // [offset, offset + 32), memory has been unexpectedly mutated.
-                        if offset >= interpreter.shared_memory.len() as u64 && !ranges.iter().any(|range| {
+                        if offset >= interpreter.memory.size() as u64 && !ranges.iter().any(|range| {
                             range.contains(&offset) && range.contains(&(offset + 31))
                         }) {
                             disallowed_mem_write(offset, 32, interpreter, ranges);
@@ -2161,7 +2163,7 @@ impl Cheatcodes {
                             if to == CHEATCODE_ADDRESS {
                                 let args_offset = try_or_return!(interpreter.stack.peek(3)).saturating_to::<usize>();
                                 let args_size = try_or_return!(interpreter.stack.peek(4)).saturating_to::<usize>();
-                                let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
+                                let memory_word = interpreter.memory.slice_len(args_offset, args_size);
                                 if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                     return
                                 }
@@ -2187,7 +2189,7 @@ impl Cheatcodes {
                                     range.contains(&(dest_offset + size.saturating_sub(1)))
                             }) && ($writes ||
                                 [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
-                                    offset >= interpreter.shared_memory.len() as u64
+                                    offset >= interpreter.memory.size() as u64
                                 })
                             );
 

@@ -15,7 +15,7 @@ use revm::{
 pub type FoundryEvmCtx<'db> = EthEvmContext<&'db mut dyn DatabaseExt>;
 
 /// Type alias for revm's EVM used by Foundry.
-pub struct FoundryEvm<'db, INSP = ()> {
+pub struct FoundryEvm<'db, INSP> {
     pub inner: Evm<
         FoundryEvmCtx<'db>,
         INSP,
@@ -97,11 +97,11 @@ impl<INSP: InspectorExt> InspectorEvmTr for FoundryEvm<'_, INSP> {
 }
 
 /// Creates a new EVM with the given context and inspector inside of a handler.
-pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_inspector<'i, 'db, INSP: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
     env: &Env,
-    inspector: &'i mut I,
-) -> FoundryHandler<'db, &'i mut I> {
+    inspector: &'i mut INSP,
+) -> FoundryHandler<'db, &'i mut INSP> {
     FoundryHandler::new(
         FoundryEvmCtx {
             journaled_state: Journal::new_with_inner(
@@ -119,9 +119,9 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
 }
 
 /// Creates a new EVM with with the given context inside of a handler.
-pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_context<'db, 'i, INSP: InspectorExt + ?Sized>(
     ctx: FoundryEvmCtx<'db>,
-    inspector: &'i mut I,
-) -> FoundryHandler<'db, &'i mut I> {
+    inspector: &'i mut INSP,
+) -> FoundryHandler<'db, &'i mut INSP> {
     FoundryHandler::new(ctx, inspector)
 }
