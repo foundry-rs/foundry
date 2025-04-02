@@ -338,7 +338,7 @@ impl<'a> CommentStateCharIndices<'a> {
     }
 
     #[inline]
-    pub fn peek(&mut self) -> Option<(usize, char)> {
+    pub fn peek(&self) -> Option<(usize, char)> {
         self.iter.clone().next()
     }
 }

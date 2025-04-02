@@ -241,7 +241,7 @@ impl<'a> ContractRunner<'a> {
     /// `function fixture_owner() public returns (address[] memory){}`
     /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
-    fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
+    fn fuzz_fixtures(&self, address: Address) -> FuzzFixtures {
         let mut fixtures = HashMap::default();
         let fixture_functions = self.contract.abi.functions().filter(|func| func.is_fixture());
         for func in fixture_functions {
@@ -352,10 +352,10 @@ impl<'a> ContractRunner<'a> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
-            let fail_msg = if !setup.deployment_failure {
-                "setUp()".to_string()
-            } else {
+            let fail_msg = if setup.deployment_failure {
                 "constructor()".to_string()
+            } else {
+                "setUp()".to_string()
             };
             return SuiteResult::new(
                 start.elapsed(),

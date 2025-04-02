@@ -331,15 +331,13 @@ impl CompiledState {
             // those.
             let Some(schema) = resolver.resolve_struct_eip712(id)? else { continue };
 
-            if !include.is_empty() {
-                if !include.iter().any(|matcher| matcher.is_match(path)) {
-                    continue;
-                }
-            } else {
+            if include.is_empty() {
                 // Exclude library files by default
                 if project.paths.has_library_ancestor(path) {
                     continue;
                 }
+            } else if !include.iter().any(|matcher| matcher.is_match(path)) {
+                continue;
             }
 
             if exclude.iter().any(|matcher| matcher.is_match(path)) {

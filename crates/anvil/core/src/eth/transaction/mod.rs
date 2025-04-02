@@ -1004,10 +1004,10 @@ impl Decodable for TypedTransaction {
         // Check byte after header
         let ty = *h_decode_copy.first().ok_or(alloy_rlp::Error::Custom("empty slice"))?;
 
-        if ty != 0x7E {
-            Ok(TxEnvelope::decode(buf)?.into())
-        } else {
+        if ty == 0x7E {
             Ok(Self::Deposit(DepositTransaction::decode_2718(buf)?))
+        } else {
+            Ok(TxEnvelope::decode(buf)?.into())
         }
     }
 }

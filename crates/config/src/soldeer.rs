@@ -41,7 +41,7 @@ pub enum SoldeerDependencyValue {
 }
 
 /// Location where to store the remappings, either in `remappings.txt` or in the `foundry.toml`
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RemappingsLocation {
     #[default]
@@ -54,7 +54,7 @@ fn default_true() -> bool {
 }
 
 /// Type for Soldeer configs, under soldeer tag in the foundry.toml
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SoldeerConfig {
     #[serde(default = "default_true")]
     pub remappings_generate: bool,

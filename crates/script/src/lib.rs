@@ -414,7 +414,6 @@ impl ScriptArgs {
                 bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                 unknown_c += 1;
             }
-            continue;
         }
 
         let mut prompt_user = false;

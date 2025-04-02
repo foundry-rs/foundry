@@ -127,15 +127,15 @@ impl<'a> Parser<'a> {
         self.input[start..end].parse().ok()
     }
 
-    fn current_pos(&mut self) -> usize {
+    fn current_pos(&self) -> usize {
         self.peek().map(|(n, _)| n).unwrap_or(self.input.len())
     }
 
-    fn peek(&mut self) -> Option<(usize, char)> {
+    fn peek(&self) -> Option<(usize, char)> {
         self.peek_n(0)
     }
 
-    fn peek_n(&mut self, n: usize) -> Option<(usize, char)> {
+    fn peek_n(&self, n: usize) -> Option<(usize, char)> {
         self.chars.clone().nth(n)
     }
 }
@@ -222,10 +222,10 @@ impl ConsoleFmt for U256 {
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{integer}.{decimal}e{log}")
-                } else {
+                if decimal.is_empty() {
                     format!("{integer}e{log}")
+                } else {
+                    format!("{integer}.{decimal}e{log}")
                 }
             }
             FormatSpec::Exponential(Some(precision)) => {
@@ -234,10 +234,10 @@ impl ConsoleFmt for U256 {
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
                 let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{integer}.{decimal}")
-                } else {
+                if decimal.is_empty() {
                     format!("{integer}")
+                } else {
+                    format!("{integer}.{decimal}")
                 }
             }
         }
@@ -266,10 +266,10 @@ impl ConsoleFmt for I256 {
                 let integer = (amount / exp10).twos_complement();
                 let decimal = (amount % exp10).twos_complement().to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{sign}{integer}.{decimal}e{log}")
-                } else {
+                if decimal.is_empty() {
                     format!("{sign}{integer}e{log}")
+                } else {
+                    format!("{sign}{integer}.{decimal}e{log}")
                 }
             }
             FormatSpec::Exponential(Some(precision)) => {
@@ -279,10 +279,10 @@ impl ConsoleFmt for I256 {
                 let integer = (amount / exp10).twos_complement();
                 let decimal = (amount % exp10).twos_complement().to_string();
                 let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if !decimal.is_empty() {
-                    format!("{sign}{integer}.{decimal}")
-                } else {
+                if decimal.is_empty() {
                     format!("{sign}{integer}")
+                } else {
+                    format!("{sign}{integer}.{decimal}")
                 }
             }
         }

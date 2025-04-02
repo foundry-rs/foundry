@@ -172,7 +172,7 @@ impl VerifyBytecodeArgs {
         let source_code = etherscan.contract_source_code(self.address).await?;
 
         // Check if the contract name matches.
-        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
+        let name = source_code.items.first().map(|item| item.contract_name.clone());
         if name.as_ref() != Some(&self.contract.name) {
             eyre::bail!("Contract name mismatch");
         }
@@ -198,15 +198,15 @@ impl VerifyBytecodeArgs {
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
+        let provided_constructor_args = if let Some(path) = self.constructor_args_path.clone() {
             // Read from file
             Some(read_constructor_args_file(path)?)
         } else {
-            self.constructor_args.to_owned()
+            self.constructor_args.clone()
         }
         .map(|args| check_and_encode_args(&artifact, args))
         .transpose()?
-        .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
+        .or(self.encoded_constructor_args.clone().map(hex::decode).transpose()?);
 
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
             provided.into()

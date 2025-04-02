@@ -239,7 +239,7 @@ impl Cheatcode for envOr_12Call {
 impl Cheatcode for envOr_13Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { name, delim, defaultValue } = self;
-        let default = defaultValue.to_vec();
+        let default = defaultValue.clone();
         env_array_default(name, delim, &default, &DynSolType::Bytes)
     }
 }
