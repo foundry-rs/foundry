@@ -397,7 +397,7 @@ pub struct Cheatcodes {
     pub labels: AddressHashMap<String>,
 
     /// Prank information, mapped to the call depth where pranks were added.
-    pub pranks: BTreeMap<u64, Prank>,
+    pub pranks: BTreeMap<usize, Prank>,
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
@@ -554,7 +554,7 @@ impl Cheatcodes {
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
     /// For example, if pranks configured for depth 1, 3 and 5, the prank for depth 4 is the one
     /// configured at depth 3.
-    pub fn get_prank(&self, depth: u64) -> Option<&Prank> {
+    pub fn get_prank(&self, depth: usize) -> Option<&Prank> {
         self.pranks.range(..=depth).last().map(|(_, prank)| prank)
     }
 

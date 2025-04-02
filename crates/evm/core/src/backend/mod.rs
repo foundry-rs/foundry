@@ -1469,9 +1469,9 @@ impl DatabaseExt for Backend {
 
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
         if let Some(db) = self.active_fork_db_mut() {
-            db.cache.block_hashes.insert(block_number, block_hash);
+            db.cache.block_hashes.insert(block_number.saturating_to(), block_hash);
         } else {
-            self.mem_db.cache.block_hashes.insert(block_number, block_hash);
+            self.mem_db.cache.block_hashes.insert(block_number.saturating_to(), block_hash);
         }
     }
 }

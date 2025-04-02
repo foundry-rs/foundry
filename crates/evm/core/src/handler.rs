@@ -1,4 +1,5 @@
 use crate::{
+    backend::JournaledState,
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvm, FoundryEvmCtx},
     InspectorExt,
@@ -7,7 +8,7 @@ use alloy_primitives::{map::foldhash::HashMap, Address, U256};
 use revm::{
     context::{
         result::{EVMError, HaltReason},
-        ContextTr, CreateScheme,
+        ContextTr, CreateScheme, JournalInner,
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
@@ -20,7 +21,7 @@ use revm::{
         EMPTY_SHARED_MEMORY,
     },
     primitives::KECCAK_EMPTY,
-    Database,
+    Database, JournalEntry,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -80,11 +81,6 @@ where
     /// Returns a mutable reference to the inner EVM instance.
     pub fn env(&mut self) -> &mut FoundryEvmCtx<'db> {
         &mut self.inner.inner
-    }
-
-    /// Returns a mutable reference to the inner database.
-    pub fn db(&mut self) -> &mut <FoundryEvmCtx<'db> as ContextTr>::Db {
-        &mut self.inner.inner.journaled_state.database
     }
 }
 
