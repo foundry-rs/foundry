@@ -16,7 +16,7 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::Address;
-use foundry_evm_core::{backend::DatabaseExt, evm::FoundryEvmCtx};
+use foundry_evm_core::{backend::DatabaseExt, handler::FoundryHandler};
 use spec::Status;
 
 pub use config::CheatsConfig;
@@ -137,7 +137,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut FoundryEvmCtx<'db>,
+    pub(crate) ecx: &'evm mut FoundryHandler<'db>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
@@ -145,7 +145,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db> {
 }
 
 impl<'db> std::ops::Deref for CheatsCtxt<'_, '_, 'db> {
-    type Target = FoundryEvmCtx<'db>;
+    type Target = FoundryHandler<'db>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -163,6 +163,6 @@ impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_> {
 impl CheatsCtxt<'_, '_, '_> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.ecx.journaled_state.precompiles.contains(address)
+        self.ecx.inner.inner.journaled_state.precompiles.contains(address)
     }
 }

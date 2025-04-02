@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::new_evm_with_context,
+    evm::{new_evm_with_context, FoundryEvmCtx},
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -92,7 +92,7 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.context.evm.inner.journaled_state.depth += 1;
+            evm.journaled_state.depth += 1;
 
             // Handle EOF bytecode
             let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA) &&
@@ -101,19 +101,19 @@ pub trait CheatcodesExecutor {
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
-                    Box::new(EOFCreateInputs::new(
+                    &mut EOFCreateInputs::new(
                         inputs.caller,
                         inputs.value,
                         inputs.gas_limit,
                         EOFCreateKind::Tx { initdata: inputs.init_code },
-                    )),
+                    ),
                 )?
             } else {
                 evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
             };
 
             let mut result = match first_frame_or_result {
-                FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+                FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
                 FrameOrResult::Result(result) => result,
             };
 
@@ -124,7 +124,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
-            evm.context.evm.inner.journaled_state.depth -= 1;
+            evm.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -148,9 +148,7 @@ fn with_evm<E, F, O>(
 ) -> Result<O, EVMError<DatabaseError>>
 where
     E: CheatcodesExecutor + ?Sized,
-    F: for<'a, 'b> FnOnce(
-        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
-    ) -> Result<O, EVMError<DatabaseError>>,
+    F: for<'db> FnOnce(&mut FoundryEvmCtx<'db>) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));

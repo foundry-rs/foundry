@@ -11,6 +11,13 @@ pub struct Env {
     pub tx: TxEnv,
 }
 
+/// Helper container type for [`EvmEnv`] and [`TxEnv`].
+impl Env {
+    pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
+        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
+    }
+}
+
 /// Helper struct with references to the block and cfg environments.
 pub struct EnvRef<'a> {
     pub block: &'a BlockEnv,

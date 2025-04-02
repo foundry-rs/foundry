@@ -191,7 +191,7 @@ fn handle_assertion_result<ERR>(
                 Err(msg.into())
             } else {
                 executor.console_log(ccx, &msg);
-                ccx.ecx.journaled_state.sstore(
+                ccx.ecx.inner.inner.journaled_state.sstore(
                     CHEATCODE_ADDRESS,
                     GLOBAL_FAIL_SLOT,
                     U256::from(1),
