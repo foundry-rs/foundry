@@ -81,7 +81,7 @@ pub fn transaction_request_to_typed(
         access_list.as_ref(),
         max_fee_per_blob_gas,
         blob_versioned_hashes.as_ref(),
-        sidecar,
+        sidecar.as_ref(),
         to,
     ) {
         // legacy transaction
@@ -130,7 +130,7 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, _, Some(_), Some(sidecar), to) => {
+        (Some(3), None, _, _, _, _, Some(_), _, to) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
@@ -147,9 +147,14 @@ pub fn transaction_request_to_typed(
                 access_list: access_list.unwrap_or_default(),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
             };
-            Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
-                TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
-            )))
+
+            if let Some(sidecar) = sidecar {
+                Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
+                    TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
+                )))
+            } else {
+                Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844(tx)))
+            }
         }
         _ => None,
     }

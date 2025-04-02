@@ -77,13 +77,12 @@ pub fn is_impersonated_sig(sig: &PrimitiveSignature, ty: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn test_constant_sender() {
-        let arb = Address::from_str("0x00000000000000000000000000000000000a4b05").unwrap();
+        let arb = address!("0x00000000000000000000000000000000000a4b05");
         assert_eq!(arb, ARBITRUM_SENDER);
-        let base = Address::from_str("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001").unwrap();
+        let base = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
         assert_eq!(base, OPTIMISM_SYSTEM_ADDRESS);
     }
 }
