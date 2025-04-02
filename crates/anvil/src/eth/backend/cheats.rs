@@ -40,11 +40,16 @@ impl CheatsManager {
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        if self.state.read().auto_impersonate_accounts {
+        if self.auto_impersonate_accounts() {
             true
         } else {
             self.state.read().impersonated_accounts.contains(&addr)
         }
+    }
+
+    /// Returns true is auto impersonation is enabled
+    pub fn auto_impersonate_accounts(&self) -> bool {
+        self.state.read().auto_impersonate_accounts
     }
 
     /// Sets the auto impersonation flag which if set to true will make the `is_impersonated`

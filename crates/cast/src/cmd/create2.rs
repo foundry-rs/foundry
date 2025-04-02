@@ -336,10 +336,7 @@ mod tests {
         ]);
         let create2_out = args.run().unwrap();
         let address = create2_out.address;
-        assert_eq!(
-            address,
-            Address::from_str("0x533AE9D683B10C02EBDB05471642F85230071FC3").unwrap()
-        );
+        assert_eq!(address, address!("0x533AE9D683B10C02EBDB05471642F85230071FC3"));
     }
 
     #[test]

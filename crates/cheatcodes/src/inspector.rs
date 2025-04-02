@@ -23,7 +23,7 @@ use crate::{
 };
 use alloy_primitives::{
     hex,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, HashMap, HashSet},
     Address, Bytes, Log, TxKind, B256, U256,
 };
 use alloy_rpc_types::{
@@ -301,12 +301,19 @@ pub struct ArbitraryStorage {
     pub values: HashMap<Address, HashMap<U256, U256>>,
     /// Mapping of address with storage copied to arbitrary storage address source.
     pub copies: HashMap<Address, Address>,
+    /// Address with storage slots that should be overwritten even if previously set.
+    pub overwrites: HashSet<Address>,
 }
 
 impl ArbitraryStorage {
     /// Marks an address with arbitrary storage.
-    pub fn mark_arbitrary(&mut self, address: &Address) {
+    pub fn mark_arbitrary(&mut self, address: &Address, overwrite: bool) {
         self.values.insert(*address, HashMap::default());
+        if overwrite {
+            self.overwrites.insert(*address);
+        } else {
+            self.overwrites.remove(address);
+        }
     }
 
     /// Maps an address that copies storage with the arbitrary storage address.
@@ -1210,6 +1217,27 @@ where {
         }
     }
 
+    /// Whether the given slot of address with arbitrary storage should be overwritten.
+    /// True if address is marked as and overwrite and if no value was previously generated for
+    /// given slot.
+    pub fn should_overwrite_arbitrary_storage(
+        &self,
+        address: &Address,
+        storage_slot: U256,
+    ) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => {
+                storage.overwrites.contains(address) &&
+                    storage
+                        .values
+                        .get(address)
+                        .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
+                        .is_none()
+            }
+            None => false,
+        }
+    }
+
     /// Whether the given address is a copy of an address with arbitrary storage.
     pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
         match &self.arbitrary_storage {
@@ -1844,7 +1872,9 @@ impl Cheatcodes {
             return;
         };
 
-        if value.is_cold && value.data.is_zero() {
+        if (value.is_cold && value.data.is_zero()) ||
+            self.should_overwrite_arbitrary_storage(&target_address, key)
+        {
             if self.has_arbitrary_storage(&target_address) {
                 let arbitrary_value = self.rng().gen();
                 self.arbitrary_storage.as_mut().unwrap().save(

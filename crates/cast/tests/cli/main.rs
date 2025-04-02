@@ -500,7 +500,20 @@ casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
 
 "#]]);
 });
+// tests that `cast wallet public-key` correctly derives and outputs the public key
+casttest!(wallet_public_key_with_private_key, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "public-key",
+        "--raw-private-key",
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4
 
+"#]]);
+});
 // tests that `cast wallet private-key` with derivation path outputs the private key
 casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
     cmd.args([
