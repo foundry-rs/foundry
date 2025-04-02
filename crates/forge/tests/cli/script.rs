@@ -152,7 +152,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: revert: failed
+Error: script failed: failed
 
 "#]]);
 });
@@ -168,7 +168,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: revert: failed
+Error: script failed: failed
 
 "#]]);
 });
