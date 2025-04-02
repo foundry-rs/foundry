@@ -364,7 +364,7 @@ fn transact(
     ccx.ecx.db().transact(
         fork_id,
         transaction,
-        (*ccx.ecx.env).clone(),
+        ccx.ecx.clone(),
         &mut ccx.ecx.journaled_state,
         &mut *executor.get_inspector(ccx.state),
     )?;
