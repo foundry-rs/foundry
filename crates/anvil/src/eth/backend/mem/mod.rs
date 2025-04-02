@@ -102,6 +102,7 @@ use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     db::WrapDatabaseRef,
+    interpreter::Host,
     primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
     DatabaseCommit,
 };
@@ -1555,13 +1556,16 @@ impl Backend {
                         let mut inspector = TransferInspector::new(false).with_logs(true);
                         let mut evm =
                             self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
+                        trace!(target: "backend", env=?evm.context.env(), spec=?evm.spec_id(), "simulate evm env");
                         evm.transact()?
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm =
                             self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
+                        trace!(target: "backend", env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
                         evm.transact()?
                     };
+                    trace!(target: "backend", ?result, ?request, "simulate call");
 
                     // commit the transaction
                     cache_db.commit(state);
@@ -1569,6 +1573,7 @@ impl Backend {
 
                     // TODO: this is likely incomplete
                     // create the transaction from a request
+                    let from = request.from.unwrap_or_default();
                     let request =
                         transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
                     let tx = build_typed_transaction(
@@ -1577,7 +1582,7 @@ impl Backend {
                     )?;
                     let rpc_tx = transaction_build(
                         None,
-                        MaybeImpersonatedTransaction::new(tx),
+                        MaybeImpersonatedTransaction::impersonated(tx, from),
                         None,
                         None,
                         Some(block_env.basefee.to()),
