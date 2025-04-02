@@ -50,10 +50,9 @@ use revm::{
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
     handler::{FrameOrResult, FrameResult},
     interpreter::{
-        interpreter_types::{Jumps, LoopControl},
-        CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        interpreter_types::LoopControl, CallInputs, CallOutcome, CallScheme, CallValue,
+        CreateInputs, CreateOutcome, EOFCreateInputs, EOFCreateKind, Gas, InstructionResult,
+        Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::hardfork::SpecId,
     state::EvmStorageSlot,
