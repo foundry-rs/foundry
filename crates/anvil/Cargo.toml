@@ -35,6 +35,7 @@ revm = { workspace = true, features = [
     "memory_limit",
     "c-kzg",
 ] }
+revm-inspectors.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
