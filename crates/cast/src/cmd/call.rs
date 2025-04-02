@@ -205,6 +205,10 @@ impl CallArgs {
             let input = tx.inner.input.into_input().unwrap_or_default();
             let tx_kind = tx.inner.to.expect("set by builder");
 
+            if let Some(access_list) = tx.inner.access_list {
+                executor.env_mut().tx.access_list = access_list.0
+            }
+
             let trace = match tx_kind {
                 TxKind::Create => {
                     let deploy_result = executor.deploy(from, input, value, None);
