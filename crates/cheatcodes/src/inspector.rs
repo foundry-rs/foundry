@@ -57,7 +57,7 @@ use revm::{
     },
     primitives::hardfork::SpecId,
     state::EvmStorageSlot,
-    EvmContext, InnerEvmContext, Inspector,
+    Inspector,
 };
 use serde_json::Value;
 use std::{
