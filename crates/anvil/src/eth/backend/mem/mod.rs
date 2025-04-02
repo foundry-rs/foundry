@@ -23,6 +23,7 @@ use crate::{
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
+        sign::build_typed_transaction,
         util::get_precompiles_for,
     },
     inject_precompiles,
@@ -44,8 +45,7 @@ use alloy_network::{
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256,
-    U256, U64,
+    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
@@ -66,6 +66,7 @@ use alloy_rpc_types::{
     FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+use alloy_signer::Signature;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
@@ -113,10 +114,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use alloy_signer::Signature;
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
-use crate::eth::sign::build_typed_transaction;
 
 pub mod cache;
 pub mod fork_db;
@@ -1570,10 +1569,18 @@ impl Backend {
 
                     // TODO: this is likely incomplete
                     // create the transaction from a request
-                    let request = transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
-                    let tx = build_typed_transaction(request, Signature::new(Default::default(), Default::default(), false))?;
+                    let request =
+                        transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
+                    let tx = build_typed_transaction(
+                        request,
+                        Signature::new(Default::default(), Default::default(), false),
+                    )?;
                     let rpc_tx = transaction_build(
-                        None, MaybeImpersonatedTransaction::new(tx), None, None, Some(block_env.basefee.to())
+                        None,
+                        MaybeImpersonatedTransaction::new(tx),
+                        None,
+                        None,
+                        Some(block_env.basefee.to()),
                     );
                     transactions.push(rpc_tx);
 
