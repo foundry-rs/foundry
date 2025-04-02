@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    utils::new_evm_with_existing_context,
+    evm::new_evm_with_context,
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -45,15 +45,18 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
+    bytecode::{opcode as op, EOF_MAGIC_BYTES},
+    context::BlockEnv,
+    context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
+    handler::{FrameOrResult, FrameResult},
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        interpreter_types::{Jumps, LoopControl},
+        CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{
-        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId,
-        EOF_MAGIC_BYTES,
-    },
+    primitives::hardfork::SpecId,
+    state::EvmStorageSlot,
     EvmContext, InnerEvmContext, Inspector,
 };
 use serde_json::Value;
@@ -110,15 +113,15 @@ pub trait CheatcodesExecutor {
             };
 
             let mut result = match first_frame_or_result {
-                revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
-                revm::FrameOrResult::Result(result) => result,
+                FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+                FrameOrResult::Result(result) => result,
             };
 
             evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
 
             let outcome = match result {
-                revm::FrameResult::Call(_) => unreachable!(),
-                revm::FrameResult::Create(create) | revm::FrameResult::EOFCreate(create) => create,
+                FrameResult::Call(_) => unreachable!(),
+                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
             evm.context.evm.inner.journaled_state.depth -= 1;
@@ -164,7 +167,7 @@ where
         l1_block_info,
     };
 
-    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
+    let mut evm = new_evm_with_context(inner, &mut *inspector);
 
     let res = f(&mut evm)?;
 

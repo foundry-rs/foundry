@@ -1,17 +1,17 @@
-use std::{
-    collections::VecDeque,
-    fmt::{self, Display},
-};
-
+use super::revert_handlers::RevertParameters;
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
     map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
 use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
+use std::{
+    collections::VecDeque,
+    fmt::{self, Display},
+};
 
-use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
+///
 ///
 /// For each address, we track the expected calls per call data. We track it in such manner
 /// so that we don't mix together calldatas that only contain selectors and calldatas that contain
@@ -133,11 +133,10 @@ impl Display for CreateScheme {
 }
 
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+    pub fn eq(&self, create_scheme: CreateScheme) -> bool {
         matches!(
             (self, create_scheme),
-            (Self::Create, revm::primitives::CreateScheme::Create) |
-                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, CreateScheme::Create) | (Self::Create2, CreateScheme::Create2 { .. })
         )
     }
 }
@@ -812,11 +811,11 @@ pub(crate) fn handle_expect_emit(
                 .expected_emits
                 .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
-            interpreter.instruction_result = InstructionResult::Revert;
-            interpreter.next_action = InterpreterAction::Return {
+            interpreter.control.instruction_result = InstructionResult::Revert;
+            interpreter.control.next_action = InterpreterAction::Return {
                 result: InterpreterResult {
                     output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                    gas: interpreter.gas,
+                    gas: interpreter.control.gas,
                     result: InstructionResult::Revert,
                 },
             };
