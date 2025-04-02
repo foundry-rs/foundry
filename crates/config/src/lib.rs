@@ -1194,7 +1194,7 @@ impl Config {
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
         // Only instantiate Vyper if there are any Vyper files in the project.
-        if self.project_paths::<VyperLanguage>().input_files_iter().next().is_none() {
+        if !self.project_paths::<VyperLanguage>().has_input_files() {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
@@ -1202,7 +1202,6 @@ impl Config {
         } else {
             Vyper::new("vyper").ok()
         };
-
         Ok(vyper)
     }
 
