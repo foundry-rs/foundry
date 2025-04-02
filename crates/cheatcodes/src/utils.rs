@@ -8,7 +8,6 @@ use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
-use revm::context::JournalTr;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -194,10 +193,19 @@ impl Cheatcode for resumeTracingCall {
     }
 }
 
-impl Cheatcode for setArbitraryStorageCall {
+impl Cheatcode for setArbitraryStorage_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target } = self;
-        ccx.state.arbitrary_storage().mark_arbitrary(target);
+        ccx.state.arbitrary_storage().mark_arbitrary(target, false);
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for setArbitraryStorage_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, overwrite } = self;
+        ccx.state.arbitrary_storage().mark_arbitrary(target, *overwrite);
 
         Ok(Default::default())
     }
@@ -212,9 +220,9 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        if let Ok(from_account) = ccx.ecx.env().journaled_state.load_account(*from) {
+        if let Ok(from_account) = ccx.load_account(*from) {
             let from_storage = from_account.storage.clone();
-            if let Ok(mut to_account) = ccx.ecx.env().journaled_state.load_account(*to) {
+            if let Ok(mut to_account) = ccx.load_account(*to) {
                 to_account.storage = from_storage;
                 if let Some(ref mut arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);

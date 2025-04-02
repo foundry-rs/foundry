@@ -1,6 +1,5 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
-use revm::context::ContextTr;
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -14,7 +13,7 @@ pub struct Prank {
     /// The address to assign to `tx.origin`
     pub new_origin: Option<Address>,
     /// The depth at which the prank was called
-    pub depth: usize,
+    pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
     /// Whether the prank should be be applied to delegate call
@@ -30,7 +29,7 @@ impl Prank {
         prank_origin: Address,
         new_caller: Address,
         new_origin: Option<Address>,
-        depth: usize,
+        depth: u64,
         single_call: bool,
         delegate_call: bool,
     ) -> Self {
@@ -116,7 +115,7 @@ impl Cheatcode for startPrank_3Call {
 impl Cheatcode for stopPrankCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.pranks.remove(&ccx.ecx.env().journaled_state.depth);
+        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
     }
 }
@@ -130,11 +129,11 @@ fn prank(
 ) -> Result {
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
-        let code = ccx.ecx.env().journaled_state.load_code(ccx.ecx.env().db(), *new_caller)?;
+        let code = ccx.code(*new_caller)?;
         ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
     }
 
-    let depth = ccx.ecx.env().journaled_state.depth;
+    let depth = ccx.ecx.journaled_state.depth();
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
@@ -148,7 +147,7 @@ fn prank(
 
     let prank = Prank::new(
         ccx.caller,
-        ccx.ecx.env().tx.caller,
+        ccx.ecx.env.tx.caller,
         *new_caller,
         new_origin.copied(),
         depth,

@@ -23,7 +23,7 @@ use crate::{
 };
 use alloy_primitives::{
     hex,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, HashMap, HashSet},
     Address, Bytes, Log, TxKind, B256, U256,
 };
 use alloy_rpc_types::{
@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_context, FoundryEvmCtx},
+    utils::new_evm_with_existing_context,
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -45,18 +45,15 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::BlockEnv,
-    context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
-    handler::{FrameOrResult, FrameResult},
     interpreter::{
-        interpreter_types::{Jumps, LoopControl},
-        CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::hardfork::SpecId,
-    state::EvmStorageSlot,
+    primitives::{
+        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId,
+        EOF_MAGIC_BYTES,
+    },
     EvmContext, InnerEvmContext, Inspector,
 };
 use serde_json::Value;
@@ -101,27 +98,27 @@ pub trait CheatcodesExecutor {
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
-                    &mut EOFCreateInputs::new(
+                    Box::new(EOFCreateInputs::new(
                         inputs.caller,
                         inputs.value,
                         inputs.gas_limit,
                         EOFCreateKind::Tx { initdata: inputs.init_code },
-                    ),
+                    )),
                 )?
             } else {
-                evm.handler.execution().create(&mut evm.context, &mut inputs)?
+                evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
             };
 
             let mut result = match first_frame_or_result {
-                FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
-                FrameOrResult::Result(result) => result,
+                revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+                revm::FrameOrResult::Result(result) => result,
             };
 
             evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
 
             let outcome = match result {
-                FrameResult::Call(_) => unreachable!(),
-                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
+                revm::FrameResult::Call(_) => unreachable!(),
+                revm::FrameResult::Create(create) | revm::FrameResult::EOFCreate(create) => create,
             };
 
             evm.context.evm.inner.journaled_state.depth -= 1;
@@ -148,7 +145,9 @@ fn with_evm<E, F, O>(
 ) -> Result<O, EVMError<DatabaseError>>
 where
     E: CheatcodesExecutor + ?Sized,
-    F: for<'a> FnOnce(&mut FoundryEvmCtx<'a>) -> Result<O, EVMError<DatabaseError>>,
+    F: for<'a, 'b> FnOnce(
+        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
+    ) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
@@ -165,9 +164,9 @@ where
         l1_block_info,
     };
 
-    let mut evm = new_evm_with_context(inner, &mut *inspector);
+    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
 
-    let res = f(&mut evm.inner)?;
+    let res = f(&mut evm)?;
 
     ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
     ccx.ecx.env = evm.context.evm.inner.env;
@@ -302,12 +301,19 @@ pub struct ArbitraryStorage {
     pub values: HashMap<Address, HashMap<U256, U256>>,
     /// Mapping of address with storage copied to arbitrary storage address source.
     pub copies: HashMap<Address, Address>,
+    /// Address with storage slots that should be overwritten even if previously set.
+    pub overwrites: HashSet<Address>,
 }
 
 impl ArbitraryStorage {
     /// Marks an address with arbitrary storage.
-    pub fn mark_arbitrary(&mut self, address: &Address) {
+    pub fn mark_arbitrary(&mut self, address: &Address, overwrite: bool) {
         self.values.insert(*address, HashMap::default());
+        if overwrite {
+            self.overwrites.insert(*address);
+        } else {
+            self.overwrites.remove(address);
+        }
     }
 
     /// Maps an address that copies storage with the arbitrary storage address.
@@ -397,7 +403,7 @@ pub struct Cheatcodes {
     pub labels: AddressHashMap<String>,
 
     /// Prank information, mapped to the call depth where pranks were added.
-    pub pranks: BTreeMap<usize, Prank>,
+    pub pranks: BTreeMap<u64, Prank>,
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
@@ -554,7 +560,7 @@ impl Cheatcodes {
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
     /// For example, if pranks configured for depth 1, 3 and 5, the prank for depth 4 is the one
     /// configured at depth 3.
-    pub fn get_prank(&self, depth: usize) -> Option<&Prank> {
+    pub fn get_prank(&self, depth: u64) -> Option<&Prank> {
         self.pranks.range(..=depth).last().map(|(_, prank)| prank)
     }
 
@@ -596,7 +602,13 @@ impl Cheatcodes {
 
         apply_dispatch(
             &decoded,
-            &mut CheatsCtxt { state: self, ecx: &mut ecx.inner, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx: &mut ecx.inner,
+                precompiles: &mut ecx.precompiles,
+                gas_limit: call.gas_limit,
+                caller,
+            },
             executor,
         )
     }
@@ -1205,6 +1217,27 @@ where {
         }
     }
 
+    /// Whether the given slot of address with arbitrary storage should be overwritten.
+    /// True if address is marked as and overwrite and if no value was previously generated for
+    /// given slot.
+    pub fn should_overwrite_arbitrary_storage(
+        &self,
+        address: &Address,
+        storage_slot: U256,
+    ) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => {
+                storage.overwrites.contains(address) &&
+                    storage
+                        .values
+                        .get(address)
+                        .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
+                        .is_none()
+            }
+            None => false,
+        }
+    }
+
     /// Whether the given address is a copy of an address with arbitrary storage.
     pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
         match &self.arbitrary_storage {
@@ -1228,7 +1261,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
         // Record gas for current frame.
         if self.gas_metering.paused {
-            self.gas_metering.paused_frames.push(interpreter.control.gas);
+            self.gas_metering.paused_frames.push(interpreter.gas);
         }
 
         // `expectRevert`: track the max call depth during `expectRevert`
@@ -1239,7 +1272,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
-        self.pc = interpreter.bytecode.pc();
+        self.pc = interpreter.program_counter();
 
         // `pauseGasMetering`: pause / resume interpreter gas.
         if self.gas_metering.paused {
@@ -1764,32 +1797,29 @@ impl Cheatcodes {
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
-            interpreter.control.gas = *paused_gas;
+            interpreter.gas = *paused_gas;
         } else {
             // Record frame paused gas.
-            self.gas_metering.paused_frames.push(interpreter.control.gas);
+            self.gas_metering.paused_frames.push(interpreter.gas);
         }
     }
 
     #[cold]
     fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
-        if matches!(interpreter.control.instruction_result, InstructionResult::Continue) {
+        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
                     if self.gas_metering.last_gas_used != 0 {
-                        let gas_diff = interpreter
-                            .control
-                            .gas
-                            .spent()
-                            .saturating_sub(self.gas_metering.last_gas_used);
+                        let gas_diff =
+                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
                     // Update `last_gas_used` to the current spent gas for the next iteration to
                     // compare against.
-                    self.gas_metering.last_gas_used = interpreter.control.gas.spent();
+                    self.gas_metering.last_gas_used = interpreter.gas.spent();
                 }
             });
         }
@@ -1798,27 +1828,27 @@ impl Cheatcodes {
     #[cold]
     fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
         // Remove recorded gas if we exit frame.
-        if will_exit(interpreter.control.instruction_result) {
+        if will_exit(interpreter.instruction_result) {
             self.gas_metering.paused_frames.pop();
         }
     }
 
     #[cold]
     fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
-        interpreter.control.gas = Gas::new(interpreter.control.gas().limit());
+        interpreter.gas = Gas::new(interpreter.gas().limit());
         self.gas_metering.reset = false;
     }
 
     #[cold]
     fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
-        if will_exit(interpreter.control.instruction_result) {
+        if will_exit(interpreter.instruction_result) {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.control.gas.spent() <
-                u64::try_from(interpreter.control.gas.refunded()).unwrap_or_default()
+            if interpreter.gas.spent() <
+                u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
-                interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
+                interpreter.gas = Gas::new(interpreter.gas.limit());
             }
         }
     }
@@ -1832,8 +1862,8 @@ impl Cheatcodes {
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
     fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
-        let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
-            (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
+        let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
+            (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
         } else {
             return
         };
@@ -1842,7 +1872,9 @@ impl Cheatcodes {
             return;
         };
 
-        if value.is_cold && value.data.is_zero() {
+        if (value.is_cold && value.data.is_zero()) ||
+            self.should_overwrite_arbitrary_storage(&target_address, key)
+        {
             if self.has_arbitrary_storage(&target_address) {
                 let arbitrary_value = self.rng().gen();
                 self.arbitrary_storage.as_mut().unwrap().save(
@@ -1867,14 +1899,14 @@ impl Cheatcodes {
     #[cold]
     fn record_accesses(&mut self, interpreter: &mut Interpreter) {
         let Some(access) = &mut self.accesses else { return };
-        match interpreter.bytecode.opcode() {
+        match interpreter.current_opcode() {
             op::SLOAD => {
-                let key = try_or_return!(interpreter.stack.peek(0));
-                access.record_read(interpreter.input.target_address, key);
+                let key = try_or_return!(interpreter.stack().peek(0));
+                access.record_read(interpreter.contract().target_address, key);
             }
             op::SSTORE => {
-                let key = try_or_return!(interpreter.stack.peek(0));
-                access.record_write(interpreter.input.target_address, key);
+                let key = try_or_return!(interpreter.stack().peek(0));
+                access.record_write(interpreter.contract().target_address, key);
             }
             _ => {}
         }
@@ -1883,13 +1915,13 @@ impl Cheatcodes {
     #[cold]
     fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
-        match interpreter.bytecode.opcode() {
+        match interpreter.current_opcode() {
             op::SELFDESTRUCT => {
                 // Ensure that we're not selfdestructing a context recording was initiated on
                 let Some(last) = account_accesses.last_mut() else { return };
 
                 // get previous balance and initialized status of the target account
-                let target = try_or_return!(interpreter.stack.peek(0));
+                let target = try_or_return!(interpreter.stack().peek(0));
                 let target = Address::from_word(B256::from(target));
                 let (initialized, old_balance) = ecx
                     .load_account(target)
@@ -1898,7 +1930,7 @@ impl Cheatcodes {
 
                 // load balance of this account
                 let value = ecx
-                    .balance(interpreter.input.target_address)
+                    .balance(interpreter.contract().target_address)
                     .map(|b| b.data)
                     .unwrap_or(U256::ZERO);
 
@@ -1908,7 +1940,7 @@ impl Cheatcodes {
                         forkId: ecx.db.active_fork_id().unwrap_or_default(),
                         chainId: U256::from(ecx.env.cfg.chain_id),
                     },
-                    accessor: interpreter.input.target_address,
+                    accessor: interpreter.contract().target_address,
                     account: target,
                     kind: crate::Vm::AccountAccessKind::SelfDestruct,
                     initialized,
@@ -1926,8 +1958,8 @@ impl Cheatcodes {
             op::SLOAD => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
-                let key = try_or_return!(interpreter.stack.peek(0));
-                let address = interpreter.input.target_address;
+                let key = try_or_return!(interpreter.stack().peek(0));
+                let address = interpreter.contract().target_address;
 
                 // Try to include present value for informational purposes, otherwise assume
                 // it's not set (zero value)
@@ -1939,7 +1971,7 @@ impl Cheatcodes {
                     }
                 }
                 let access = crate::Vm::StorageAccess {
-                    account: interpreter.input.target_address,
+                    account: interpreter.contract().target_address,
                     slot: key.into(),
                     isWrite: false,
                     previousValue: present_value.into(),
@@ -1951,9 +1983,9 @@ impl Cheatcodes {
             op::SSTORE => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
-                let key = try_or_return!(interpreter.stack.peek(0));
-                let value = try_or_return!(interpreter.stack.peek(1));
-                let address = interpreter.input.target_address;
+                let key = try_or_return!(interpreter.stack().peek(0));
+                let value = try_or_return!(interpreter.stack().peek(1));
+                let address = interpreter.contract().target_address;
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
@@ -1976,7 +2008,7 @@ impl Cheatcodes {
 
             // Record account accesses via the EXT family of opcodes
             op::EXTCODECOPY | op::EXTCODESIZE | op::EXTCODEHASH | op::BALANCE => {
-                let kind = match interpreter.bytecode.opcode() {
+                let kind = match interpreter.current_opcode() {
                     op::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                     op::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
                     op::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
@@ -1984,7 +2016,7 @@ impl Cheatcodes {
                     _ => unreachable!(),
                 };
                 let address =
-                    Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
+                    Address::from_word(B256::from(try_or_return!(interpreter.stack().peek(0))));
                 let initialized;
                 let balance;
                 if let Ok(acc) = ecx.load_account(address) {
@@ -1999,7 +2031,7 @@ impl Cheatcodes {
                         forkId: ecx.db.active_fork_id().unwrap_or_default(),
                         chainId: U256::from(ecx.env.cfg.chain_id),
                     },
-                    accessor: interpreter.input.target_address,
+                    accessor: interpreter.contract().target_address,
                     account: address,
                     kind,
                     initialized,
@@ -2044,14 +2076,14 @@ impl Cheatcodes {
         // size of the memory write is implicit, so these cases are hard-coded.
         macro_rules! mem_opcode_match {
             ($(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),* $(,)?) => {
-                match interpreter.bytecode.opcode() {
+                match interpreter.current_opcode() {
                     ////////////////////////////////////////////////////////////////
                     //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
                     ////////////////////////////////////////////////////////////////
 
                     op::MSTORE => {
                         // The offset of the mstore operation is at the top of the stack.
-                        let offset = try_or_return!(interpreter.stack.peek(0)).saturating_to::<u64>();
+                        let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
 
                         // If none of the allowed ranges contain [offset, offset + 32), memory has been
                         // unexpectedly mutated.
@@ -2062,7 +2094,7 @@ impl Cheatcodes {
                             // `stopExpectSafeMemory`, this is allowed. It will do so at the current free memory
                             // pointer, which could have been updated to the exclusive upper bound during
                             // execution.
-                            let value = try_or_return!(interpreter.stack.peek(1)).to_be_bytes::<32>();
+                            let value = try_or_return!(interpreter.stack().peek(1)).to_be_bytes::<32>();
                             if value[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                 return
                             }
@@ -2073,7 +2105,7 @@ impl Cheatcodes {
                     }
                     op::MSTORE8 => {
                         // The offset of the mstore8 operation is at the top of the stack.
-                        let offset = try_or_return!(interpreter.stack.peek(0)).saturating_to::<u64>();
+                        let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
 
                         // If none of the allowed ranges contain the offset, memory has been
                         // unexpectedly mutated.
@@ -2089,7 +2121,7 @@ impl Cheatcodes {
 
                     op::MLOAD => {
                         // The offset of the mload operation is at the top of the stack
-                        let offset = try_or_return!(interpreter.stack.peek(0)).saturating_to::<u64>();
+                        let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
 
                         // If the offset being loaded is >= than the memory size, the
                         // memory is being expanded. If none of the allowed ranges contain
@@ -2108,10 +2140,10 @@ impl Cheatcodes {
 
                     op::CALL => {
                         // The destination offset of the operation is the fifth element on the stack.
-                        let dest_offset = try_or_return!(interpreter.stack.peek(5)).saturating_to::<u64>();
+                        let dest_offset = try_or_return!(interpreter.stack().peek(5)).saturating_to::<u64>();
 
                         // The size of the data that will be copied is the sixth element on the stack.
-                        let size = try_or_return!(interpreter.stack.peek(6)).saturating_to::<u64>();
+                        let size = try_or_return!(interpreter.stack().peek(6)).saturating_to::<u64>();
 
                         // If none of the allowed ranges contain [dest_offset, dest_offset + size),
                         // memory outside of the expected ranges has been touched. If the opcode
@@ -2127,10 +2159,10 @@ impl Cheatcodes {
                             // SPECIAL CASE: When a call to `stopExpectSafeMemory` is performed, this is allowed.
                             // It allocated calldata at the current free memory pointer, and will attempt to read
                             // from this memory region to perform the call.
-                            let to = Address::from_word(try_or_return!(interpreter.stack.peek(1)).to_be_bytes::<32>().into());
+                            let to = Address::from_word(try_or_return!(interpreter.stack().peek(1)).to_be_bytes::<32>().into());
                             if to == CHEATCODE_ADDRESS {
-                                let args_offset = try_or_return!(interpreter.stack.peek(3)).saturating_to::<usize>();
-                                let args_size = try_or_return!(interpreter.stack.peek(4)).saturating_to::<usize>();
+                                let args_offset = try_or_return!(interpreter.stack().peek(3)).saturating_to::<usize>();
+                                let args_size = try_or_return!(interpreter.stack().peek(4)).saturating_to::<usize>();
                                 let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
                                 if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                     return
@@ -2144,10 +2176,10 @@ impl Cheatcodes {
 
                     $(op::$opcode => {
                         // The destination offset of the operation.
-                        let dest_offset = try_or_return!(interpreter.stack.peek($offset_depth)).saturating_to::<u64>();
+                        let dest_offset = try_or_return!(interpreter.stack().peek($offset_depth)).saturating_to::<u64>();
 
                         // The size of the data that will be copied.
-                        let size = try_or_return!(interpreter.stack.peek($size_depth)).saturating_to::<u64>();
+                        let size = try_or_return!(interpreter.stack().peek($size_depth)).saturating_to::<u64>();
 
                         // If none of the allowed ranges contain [dest_offset, dest_offset + size),
                         // memory outside of the expected ranges has been touched. If the opcode
@@ -2216,11 +2248,11 @@ fn disallowed_mem_write(
         ranges.iter().map(|r| format!("(0x{:02X}, 0x{:02X}]", r.start, r.end)).join(" U ")
     );
 
-    interpreter.control.instruction_result = InstructionResult::Revert;
-    interpreter.control.next_action = InterpreterAction::Return {
+    interpreter.instruction_result = InstructionResult::Revert;
+    interpreter.next_action = InterpreterAction::Return {
         result: InterpreterResult {
             output: Error::encode(revert_string),
-            gas: interpreter.control.gas,
+            gas: interpreter.gas,
             result: InstructionResult::Revert,
         },
     };

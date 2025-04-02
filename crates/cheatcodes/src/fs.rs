@@ -366,9 +366,9 @@ fn deploy_code(
     }
 
     let scheme = if let Some(salt) = salt {
-        revm::context_interface::CreateScheme::Create2 { salt }
+        revm::primitives::CreateScheme::Create2 { salt }
     } else {
-        revm::context_interface::CreateScheme::Create
+        revm::primitives::CreateScheme::Create
     };
 
     let address = executor
@@ -750,7 +750,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.inner.inner.cfg.chain_id;
+        let chain_id = ccx.ecx.env.cfg.chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,

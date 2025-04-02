@@ -8,7 +8,7 @@ use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
-use revm::context_interface::result::EVMError;
+use revm::primitives::EVMError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
