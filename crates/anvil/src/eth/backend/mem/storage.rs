@@ -40,7 +40,7 @@ use foundry_evm::{
     },
 };
 use parking_lot::RwLock;
-use revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
