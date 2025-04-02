@@ -35,10 +35,10 @@ use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
-use alloy_consensus::proofs::calculate_receipt_root;
-use alloy_consensus::proofs::calculate_transaction_root;
 use alloy_consensus::{
-    transaction::Recovered, Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
+    proofs::{calculate_receipt_root, calculate_transaction_root},
+    transaction::Recovered,
+    Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
@@ -1625,7 +1625,7 @@ impl Backend {
                 }
                 let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
                 .iter()
-                .filter_map(|tx| AnyTxEnvelope::try_from(AnyRpcTransaction::from(tx.clone())).ok())
+                .map(|tx| AnyTxEnvelope::from(tx.clone()))
                 .collect();
 
                 let header = Header {
