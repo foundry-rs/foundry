@@ -382,7 +382,7 @@ impl DocBuilder {
         summary: &mut BufWriter,
         files: &[&Document],
         base_path: Option<&Path>,
-        depth: usize,
+        depth: u64,
     ) -> eyre::Result<()> {
         if files.is_empty() {
             return Ok(())

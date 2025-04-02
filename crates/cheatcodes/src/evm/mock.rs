@@ -1,6 +1,6 @@
 use crate::{inspector::InnerEcx, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
-use revm::{bytecode::Bytecode, interpreter::InstructionResult};
+use revm::{bytecode::Bytecode, context::JournalTr, interpreter::InstructionResult};
 use std::{cmp::Ordering, collections::VecDeque};
 
 /// Mocked call data.
@@ -59,7 +59,7 @@ impl Cheatcode for mockCall_0Call {
 impl Cheatcode for mockCall_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
-        ccx.ecx.load_account(*callee)?;
+        ccx.ecx.journaled_state.load_account(*callee)?;
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
         Ok(Default::default())
     }
@@ -85,7 +85,7 @@ impl Cheatcode for mockCall_2Call {
 impl Cheatcode for mockCall_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
-        ccx.ecx.load_account(*callee)?;
+        ccx.ecx.journaled_state.load_account(*callee)?;
         mock_call(
             ccx.state,
             callee,
@@ -111,7 +111,7 @@ impl Cheatcode for mockCalls_0Call {
 impl Cheatcode for mockCalls_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
-        ccx.ecx.load_account(*callee)?;
+        ccx.ecx.journaled_state.load_account(*callee)?;
         mock_calls(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
         Ok(Default::default())
     }

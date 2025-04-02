@@ -16,8 +16,7 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::Address;
-use foundry_evm_core::backend::DatabaseExt;
-use revm::{ContextPrecompiles, InnerEvmContext};
+use foundry_evm_core::{backend::DatabaseExt, evm::FoundryEvmCtx};
 use spec::Status;
 
 pub use config::CheatsConfig;
@@ -134,21 +133,19 @@ impl dyn DynCheatcode {
 }
 
 /// The cheatcode context, used in `Cheatcode`.
-pub struct CheatsCtxt<'cheats, 'evm, 'db, 'db2> {
+pub struct CheatsCtxt<'cheats, 'evm, 'db> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut InnerEvmContext<&'db mut (dyn DatabaseExt + 'db2)>,
-    /// The precompiles context.
-    pub(crate) precompiles: &'evm mut ContextPrecompiles<&'db mut (dyn DatabaseExt + 'db2)>,
+    pub(crate) ecx: &'evm mut FoundryEvmCtx<'db>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
 
-impl<'db, 'db2> std::ops::Deref for CheatsCtxt<'_, '_, 'db, 'db2> {
-    type Target = InnerEvmContext<&'db mut (dyn DatabaseExt + 'db2)>;
+impl<'db> std::ops::Deref for CheatsCtxt<'_, '_, 'db> {
+    type Target = FoundryEvmCtx<'db>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -156,16 +153,16 @@ impl<'db, 'db2> std::ops::Deref for CheatsCtxt<'_, '_, 'db, 'db2> {
     }
 }
 
-impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_, '_> {
+impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.ecx
     }
 }
 
-impl CheatsCtxt<'_, '_, '_, '_> {
+impl CheatsCtxt<'_, '_, '_> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.precompiles.contains(address)
+        self.ecx.journaled_state.precompiles.contains(address)
     }
 }
