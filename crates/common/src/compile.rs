@@ -62,8 +62,8 @@ pub struct ProjectCompiler {
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
 
-    /// Whether to compile with preprocessed cache for tests and scripts.
-    cache_tests: bool,
+    /// Whether to compile with dynamic linking tests and scripts.
+    dynamic_test_linking: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -86,7 +86,7 @@ impl ProjectCompiler {
             bail: None,
             ignore_eip_3860: false,
             files: Vec::new(),
-            cache_tests: false,
+            dynamic_test_linking: false,
         }
     }
 
@@ -140,10 +140,10 @@ impl ProjectCompiler {
         self
     }
 
-    /// Sets if compiler should use preprocessed cache.
+    /// Sets if tests should be dynamically linked.
     #[inline]
-    pub fn cache_tests(mut self, preprocess: bool) -> Self {
-        self.cache_tests = preprocess;
+    pub fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
+        self.dynamic_test_linking = preprocess;
         self
     }
 
@@ -155,7 +155,7 @@ impl ProjectCompiler {
     where
         TestOptimizerPreprocessor: Preprocessor<C>,
     {
-        self.project_root = project.root().clone();
+        self.project_root = project.root().to_path_buf();
 
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
@@ -166,7 +166,7 @@ impl ProjectCompiler {
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
-        let preprocess = self.cache_tests;
+        let preprocess = self.dynamic_test_linking;
         self.compile_with(|| {
             let sources = if !files.is_empty() {
                 Source::read_all(files)?
