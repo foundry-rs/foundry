@@ -3602,6 +3602,7 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(gas_report_include_tests, |prj, cmd| {
     prj.update_config(|config| {
+        config.dynamic_test_linking = false;
         config.gas_reports_include_tests = true;
         config.fuzz.runs = 1;
     });
