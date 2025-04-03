@@ -636,8 +636,8 @@ impl Backend {
 
     /// Whether to skip blob validation
     pub fn skip_blob_validation(&self, impersonator: Option<Address>) -> bool {
-        self.cheats().auto_impersonate_accounts()
-            || impersonator
+        self.cheats().auto_impersonate_accounts() ||
+            impersonator
                 .is_some_and(|addr| self.cheats().impersonated_accounts().contains(&addr))
     }
 
@@ -1767,10 +1767,10 @@ impl Backend {
                                 .into())
                         }
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
-                        GethDebugBuiltInTracerType::FourByteTracer
-                        | GethDebugBuiltInTracerType::PreStateTracer
-                        | GethDebugBuiltInTracerType::MuxTracer
-                        | GethDebugBuiltInTracerType::FlatCallTracer => {
+                        GethDebugBuiltInTracerType::FourByteTracer |
+                        GethDebugBuiltInTracerType::PreStateTracer |
+                        GethDebugBuiltInTracerType::MuxTracer |
+                        GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -2704,9 +2704,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return Ok(fork
-                    .transaction_by_block_number_and_index(number, index.into())
-                    .await?);
+                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?);
             }
         }
 
@@ -2762,10 +2760,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork
-                .transaction_by_hash(hash)
-                .await
-                .map_err(BlockchainError::AlloyForkProvider);
+            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider);
         }
 
         Ok(None)
@@ -2984,8 +2979,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON
-                        && legacy.tx().chain_id.is_none()
+                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                        legacy.tx().chain_id.is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
