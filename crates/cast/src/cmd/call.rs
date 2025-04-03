@@ -198,8 +198,14 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(shell::verbosity() > 4);
-            let mut executor =
-                TracingExecutor::new(env, fork, evm_version, trace_mode, odyssey, create2_deployer);
+            let mut executor = TracingExecutor::new(
+                env,
+                fork,
+                evm_version,
+                trace_mode,
+                odyssey,
+                create2_deployer,
+            )?;
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
