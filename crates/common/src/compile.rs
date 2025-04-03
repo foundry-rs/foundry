@@ -1,6 +1,7 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
+    preprocessor::TestOptimizerPreprocessor,
     reports::{report_kind, ReportKind},
     shell,
     term::SpinnerReporter,
@@ -16,7 +17,6 @@ use foundry_compilers::{
         Compiler,
     },
     info::ContractInfo as CompilerContractInfo,
-    preprocessor::TestOptimizerPreprocessor,
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
