@@ -1934,7 +1934,6 @@ forgetest_async!(decode_traces_with_project_artifacts, |prj, cmd| {
         anvil::spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
 
     foundry_test_utils::util::initialize(prj.root());
-    prj.clear();
     prj.add_source(
         "LocalProjectContract",
         r#"

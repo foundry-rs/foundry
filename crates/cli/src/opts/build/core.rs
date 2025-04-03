@@ -34,10 +34,10 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_cache: bool,
 
-    /// Disable dynamic test linking.
-    #[arg(long)]
+    /// Enable dynamic test linking.
+    #[arg(long, conflicts_with = "no_cache")]
     #[serde(skip)]
-    pub no_dynamic_test_linking: bool,
+    pub dynamic_test_linking: bool,
 
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
@@ -250,8 +250,8 @@ impl Provider for BuildOpts {
             dict.insert("cache".to_string(), false.into());
         }
 
-        if self.no_dynamic_test_linking || self.no_cache {
-            dict.insert("dynamic_test_linking".to_string(), false.into());
+        if self.dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), true.into());
         }
 
         if self.build_info {

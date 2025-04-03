@@ -2337,9 +2337,6 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
-    prj.update_config(|config| {
-        config.dynamic_test_linking = false;
-    });
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2898,9 +2895,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
-    prj.update_config(|config| {
-        config.dynamic_test_linking = false;
-    });
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
@@ -3000,9 +2994,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
-    prj.update_config(|config| {
-        config.dynamic_test_linking = false;
-    });
     cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
         .assert_success()
         .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
@@ -3012,9 +3003,6 @@ forgetest_init!(colored_traces, |prj, cmd| {
 // <https://github.com/foundry-rs/foundry/issues/9864>
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
-    prj.update_config(|config| {
-        config.dynamic_test_linking = false;
-    });
     prj.add_test(
         "SuppressTracesTest.t.sol",
         r#"
