@@ -223,13 +223,6 @@ impl NodeArgs {
             None => None,
         };
 
-        // --chain-id takes precedence over the genesis config
-        // if both are missing, use the default chain id
-        // <https://github.com/foundry-rs/foundry/issues/10059>
-        let chain_id = self
-            .evm
-            .chain_id
-            .map_or(self.init.as_ref().map_or(CHAIN_ID, |g| g.config.chain_id), |c| c.into());
         Ok(NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
@@ -261,7 +254,7 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(Some(chain_id))
+            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
