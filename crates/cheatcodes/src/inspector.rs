@@ -660,6 +660,25 @@ impl Cheatcodes {
     where
         Input: CommonCreateInput,
     {
+        // Check if we should intercept this create
+        if self.intercept_next_create_call {
+            // Reset the flag
+            self.intercept_next_create_call = false;
+
+            // Get initcode from the input
+            let output = input.init_code();
+
+            // Return a revert with the initcode as error data
+            return Some(CreateOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output,
+                    gas: Gas::new(input.gas_limit()),
+                },
+                address: None,
+            });
+        }
+
         let ecx = &mut ecx.inner;
         let gas = Gas::new(input.gas_limit());
         let curr_depth = ecx.journaled_state.depth();
@@ -1746,22 +1765,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 
     fn create(&mut self, ecx: Ecx, call: &mut CreateInputs) -> Option<CreateOutcome> {
-        // Check if we should intercept this create
-        if self.intercept_next_create_call {
-            // Reset the flag
-            self.intercept_next_create_call = false;
-
-            // Return a revert with the initcode as error data
-            return Some(CreateOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: call.init_code.clone(),
-                    gas: Gas::new(call.gas_limit),
-                },
-                address: None,
-            });
-        }
-
         self.create_common(ecx, call)
     }
 
@@ -1775,30 +1778,6 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 
     fn eofcreate(&mut self, ecx: Ecx, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
-        // Check if we should intercept this create
-        if self.intercept_next_create_call {
-            // Reset the flag
-            self.intercept_next_create_call = false;
-
-            // Get initcode from the kind field for EOF creates
-            let output = match &call.kind {
-                EOFCreateKind::Tx { initdata } => initdata.clone(),
-                // For Opcode variant, we don't have access to the raw initcode bytes
-                // so we return an empty buffer - this matches EVM behavior for EOF contracts
-                EOFCreateKind::Opcode { .. } => Bytes::new(),
-            };
-
-            // Return a revert with the initcode as error data
-            return Some(CreateOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output,
-                    gas: Gas::new(call.gas_limit),
-                },
-                address: None,
-            });
-        }
-
         self.create_common(ecx, call)
     }
 
