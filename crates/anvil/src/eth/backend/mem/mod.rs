@@ -38,7 +38,7 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
-    Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
+    Account, BlockHeader, Eip658Value, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
@@ -47,7 +47,8 @@ use alloy_network::{
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
+    address, hex, keccak256, logs_bloom, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256,
+    U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
@@ -636,8 +637,8 @@ impl Backend {
 
     /// Whether to skip blob validation
     pub fn skip_blob_validation(&self, impersonator: Option<Address>) -> bool {
-        self.cheats().auto_impersonate_accounts() ||
-            impersonator
+        self.cheats().auto_impersonate_accounts()
+            || impersonator
                 .is_some_and(|addr| self.cheats().impersonated_accounts().contains(&addr))
     }
 
@@ -1497,6 +1498,8 @@ impl Backend {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
+                let mut receipts:  Vec<ReceiptWithBloom<Receipt<Log>>> = Vec::new();
+                let mut logs:Vec<alloy_primitives::Log>= Vec::new();
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
                     state::apply_cached_db_state_override(state_overrides, &mut cache_db)?;
@@ -1602,7 +1605,7 @@ impl Backend {
                                 message: "execution failed".to_string(),
                             }
                         }),
-                        logs: result
+                        logs: result.clone()
                             .into_logs()
                             .into_iter()
                             .enumerate()
@@ -1619,7 +1622,16 @@ impl Backend {
                             })
                             .collect(),
                     };
-
+                    let receipt = Receipt {
+                        status: {
+                            let is_success = result.is_success();
+                            Eip658Value::Eip658(is_success)
+                        },
+                        cumulative_gas_used: result.gas_used(),
+                        logs:sim_res.logs.clone()
+                    };
+                    receipts.push(receipt.with_bloom());
+                    logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
@@ -1627,11 +1639,10 @@ impl Backend {
                 .iter()
                 .map(|tx| AnyTxEnvelope::from(tx.clone()))
                 .collect();
-
                 let header = Header {
-                    logs_bloom:Default::default(),
+                    logs_bloom:logs_bloom(logs.iter()),
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
-                    receipts_root: calculate_receipt_root(&transactions_envelopes.clone()),
+                    receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash: Default::default(),
                     ommers_hash: Default::default(),
                     beneficiary: block_env.coinbase,
@@ -1767,10 +1778,10 @@ impl Backend {
                                 .into())
                         }
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
-                        GethDebugBuiltInTracerType::FourByteTracer |
-                        GethDebugBuiltInTracerType::PreStateTracer |
-                        GethDebugBuiltInTracerType::MuxTracer |
-                        GethDebugBuiltInTracerType::FlatCallTracer => {
+                        GethDebugBuiltInTracerType::FourByteTracer
+                        | GethDebugBuiltInTracerType::PreStateTracer
+                        | GethDebugBuiltInTracerType::MuxTracer
+                        | GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -2704,7 +2715,9 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?);
+                return Ok(fork
+                    .transaction_by_block_number_and_index(number, index.into())
+                    .await?);
             }
         }
 
@@ -2760,7 +2773,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider);
+            return fork
+                .transaction_by_hash(hash)
+                .await
+                .map_err(BlockchainError::AlloyForkProvider);
         }
 
         Ok(None)
@@ -2979,8 +2995,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        legacy.tx().chain_id.is_none()
+                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON
+                        && legacy.tx().chain_id.is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
