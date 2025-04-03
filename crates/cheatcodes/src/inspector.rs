@@ -489,6 +489,9 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
+    /// Whether the next contract creation should be intercepted to return its initcode.
+    pub intercepting_next: bool,
+
     /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
     /// strategies.
     test_runner: Option<TestRunner>,
@@ -549,6 +552,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            intercepting_next: Default::default(),
             test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
@@ -1742,6 +1746,22 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 
     fn create(&mut self, ecx: Ecx, call: &mut CreateInputs) -> Option<CreateOutcome> {
+        // Check if we should intercept this create
+        if self.intercepting_next {
+            // Reset the flag
+            self.intercepting_next = false;
+
+            // Return a revert with the initcode as error data
+            return Some(CreateOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output: call.init_code.clone(),
+                    gas: Gas::new(call.gas_limit),
+                },
+                address: None,
+            });
+        }
+
         self.create_common(ecx, call)
     }
 
@@ -1755,6 +1775,30 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 
     fn eofcreate(&mut self, ecx: Ecx, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
+        // Check if we should intercept this create
+        if self.intercepting_next {
+            // Reset the flag
+            self.intercepting_next = false;
+
+            // Get initcode from the kind field for EOF creates
+            let output = match &call.kind {
+                EOFCreateKind::Tx { initdata } => initdata.clone(),
+                // For Opcode variant, we don't have access to the raw initcode bytes
+                // so we return an empty buffer - this matches EVM behavior for EOF contracts
+                EOFCreateKind::Opcode { .. } => Bytes::new(),
+            };
+
+            // Return a revert with the initcode as error data
+            return Some(CreateOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output,
+                    gas: Gas::new(call.gas_limit),
+                },
+                address: None,
+            });
+        }
+
         self.create_common(ecx, call)
     }
 
