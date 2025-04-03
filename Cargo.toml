@@ -313,7 +313,7 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 
 [patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "5377589" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "743ff47" }
 # foundry-compilers = { path = "../compilers/crates/compilers" }
 
 solar-parse = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
