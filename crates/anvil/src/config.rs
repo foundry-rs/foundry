@@ -1037,7 +1037,11 @@ impl NodeConfig {
 
         // if provided use all settings of `genesis.json`
         if let Some(ref genesis) = self.genesis {
-            env.cfg.chain_id = genesis.config.chain_id;
+            // --chain-id flag gets precedence over the genesis.json chain id
+            // <https://github.com/foundry-rs/foundry/issues/10059>
+            if self.chain_id.is_none() {
+                env.cfg.chain_id = genesis.config.chain_id;
+            }
             env.block.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
                 env.block.basefee = U256::from(base_fee);
