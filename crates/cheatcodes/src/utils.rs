@@ -196,8 +196,8 @@ impl Cheatcode for resumeTracingCall {
 impl Cheatcode for interceptInitcodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        if !state.intercepting_next {
-            state.intercepting_next = true;
+        if !state.intercept_next_create_call {
+            state.intercept_next_create_call = true;
         } else {
             bail!("vm.interceptInitcode() has already been called")
         }

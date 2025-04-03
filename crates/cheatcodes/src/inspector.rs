@@ -490,7 +490,7 @@ pub struct Cheatcodes {
     pub breakpoints: Breakpoints,
 
     /// Whether the next contract creation should be intercepted to return its initcode.
-    pub intercepting_next: bool,
+    pub intercept_next_create_call: bool,
 
     /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
     /// strategies.
@@ -552,7 +552,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
-            intercepting_next: Default::default(),
+            intercept_next_create_call: Default::default(),
             test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
@@ -1747,9 +1747,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
     fn create(&mut self, ecx: Ecx, call: &mut CreateInputs) -> Option<CreateOutcome> {
         // Check if we should intercept this create
-        if self.intercepting_next {
+        if self.intercept_next_create_call {
             // Reset the flag
-            self.intercepting_next = false;
+            self.intercept_next_create_call = false;
 
             // Return a revert with the initcode as error data
             return Some(CreateOutcome {
@@ -1776,9 +1776,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
 
     fn eofcreate(&mut self, ecx: Ecx, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
         // Check if we should intercept this create
-        if self.intercepting_next {
+        if self.intercept_next_create_call {
             // Reset the flag
-            self.intercepting_next = false;
+            self.intercept_next_create_call = false;
 
             // Get initcode from the kind field for EOF creates
             let output = match &call.kind {
