@@ -305,8 +305,10 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler =
-            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
+        let compiler = ProjectCompiler::new()
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .quiet(shell::is_json() || self.junit)
+            .files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 

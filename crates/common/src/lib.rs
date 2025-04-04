@@ -25,6 +25,7 @@ pub mod ens;
 pub mod errors;
 pub mod evm;
 pub mod fs;
+mod preprocessor;
 pub mod provider;
 pub mod reports;
 pub mod retry;
