@@ -893,17 +893,17 @@ Compiler run successful!
 
 Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [PASS] testA() ([GAS])
-[FAIL: revert: testB failed] testB() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
 [PASS] testC() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 2 tests succeeded
 
@@ -917,16 +917,16 @@ Encountered a total of 2 failing tests, 2 tests succeeded
 No files changed, compilation skipped
 
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
@@ -2123,8 +2123,8 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
             <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
         </testcase>
         <testcase name="test_junit_revert_fail()" time="[..]">
-            <failure message="revert: Revert"/>
-            <system-out>[FAIL: revert: Revert] test_junit_revert_fail() ([GAS])</system-out>
+            <failure message="Revert"/>
+            <system-out>[FAIL: Revert] test_junit_revert_fail() ([GAS])</system-out>
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>

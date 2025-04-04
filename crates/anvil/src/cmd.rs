@@ -278,7 +278,7 @@ impl NodeArgs {
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
+            .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {

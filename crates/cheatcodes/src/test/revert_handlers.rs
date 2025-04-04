@@ -108,7 +108,12 @@ fn handle_revert(
         } else {
             (&stringify(&actual_revert), &stringify(expected_reason))
         };
-        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
+
+        if expected == actual {
+            return Ok(());
+        }
+
+        Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
     }
 }
 
