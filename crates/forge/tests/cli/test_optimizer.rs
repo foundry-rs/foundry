@@ -1165,3 +1165,138 @@ Compiling 1 files with [..]
 
 "#]]);
 });
+
+// Counter contract with constructor reverts and emitted events.
+forgetest_init!(preprocess_contract_with_require_and_emit, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event CounterCreated(uint256 number);
+    uint256 public number;
+
+    constructor(uint256 no) {
+        require(no != 1, "ctor revert");
+        emit CounterCreated(10);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_assert_constructor_revert() public {
+        vm.expectRevert("ctor revert");
+        new Counter(1);
+    }
+
+    function test_assert_constructor_emit() public {
+        vm.expectEmit(true, true, true, true);
+        emit Counter.CounterCreated(10);
+
+        new Counter(11);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // All 20 files are compiled on first run.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 20 files with [..]
+...
+
+"#]]);
+
+    // Change Counter implementation to revert with different message.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event CounterCreated(uint256 number);
+    uint256 public number;
+
+    constructor(uint256 no) {
+        require(no != 1, "ctor revert update");
+        emit CounterCreated(10);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Assert that only 1 file is compiled (Counter source contract) and revert test fails.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_assert_constructor_emit() (gas: [..])
+[FAIL: Error != expected error: ctor revert update != ctor revert] test_assert_constructor_revert() (gas: [..])
+...
+
+"#]]);
+
+    // Change Counter implementation and don't revert.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event CounterCreated(uint256 number);
+    uint256 public number;
+
+    constructor(uint256 no) {
+        require(no != 0, "ctor revert");
+        emit CounterCreated(10);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Assert that only 1 file is compiled (Counter source contract) and revert test fails.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_assert_constructor_emit() (gas: [..])
+[FAIL: next call did not revert as expected] test_assert_constructor_revert() (gas: [..])
+...
+
+"#]]);
+
+    // Change Counter implementation to emit different event.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event CounterCreated(uint256 number);
+    uint256 public number;
+
+    constructor(uint256 no) {
+        require(no != 0, "ctor revert");
+        emit CounterCreated(100);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Assert that only 1 file is compiled (Counter source contract) and emit test fails.
+    cmd.with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] test_assert_constructor_emit() (gas: [..])
+[FAIL: next call did not revert as expected] test_assert_constructor_revert() (gas: [..])
+...
+
+"#]]);
+});
