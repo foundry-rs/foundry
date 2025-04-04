@@ -221,6 +221,13 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         filters.clone(),
         transaction_order,
     );
+    
+    // Add custom anvil headers if provided
+    let api = if !server_config.anvil_headers.is_empty() {
+        api.with_anvil_headers(server_config.anvil_headers.clone())
+    } else {
+        api
+    };
 
     // spawn the node service
     let node_service =

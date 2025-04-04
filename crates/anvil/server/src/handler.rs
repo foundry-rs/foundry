@@ -6,6 +6,7 @@ use anvil_rpc::{
 };
 use axum::{
     extract::{rejection::JsonRejection, State},
+    http::{HeaderMap, HeaderName, HeaderValue},
     Json,
 };
 use futures::{future, FutureExt};
@@ -15,8 +16,25 @@ use futures::{future, FutureExt};
 pub async fn handle<Http: RpcHandler, Ws>(
     State((handler, _)): State<(Http, Ws)>,
     request: Result<Json<Request>, JsonRejection>,
-) -> Json<Response> {
-    Json(match request {
+) -> (HeaderMap, Json<Response>) {
+    // Create headers for response
+    let mut headers = HeaderMap::new();
+    
+    // Get custom anvil_headers from the handler if available
+    if let Some(anvil_headers) = handler.get_anvil_headers() {
+        for header in anvil_headers {
+            if let Some((name, value)) = header.split_once(':') {
+                if let (Ok(name), Ok(value)) = (
+                    name.trim().parse::<HeaderName>(),
+                    value.trim().parse::<HeaderValue>(),
+                ) {
+                    headers.insert(name, value);
+                }
+            }
+        }
+    }
+    
+    let response = match request {
         Ok(Json(req)) => handle_request(req, handler)
             .await
             .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
@@ -24,7 +42,9 @@ pub async fn handle<Http: RpcHandler, Ws>(
             warn!(target: "rpc", ?err, "invalid request");
             Response::error(RpcError::invalid_request())
         }
-    })
+    };
+    
+    (headers, Json(response))
 }
 
 /// Handle the JSON-RPC [Request]

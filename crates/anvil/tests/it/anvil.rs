@@ -5,6 +5,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
+use serde_json;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -114,4 +115,93 @@ async fn test_cancun_fields() {
     assert_eq!(block.withdrawals, Some(Default::default()));
     assert!(block.header.blob_gas_used.is_some());
     assert!(block.header.excess_blob_gas.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_set_custom_headers() {
+    let headers = vec![
+        "X-Custom-Header: test".to_string(),
+        "X-Another-Header: value".to_string(),
+    ];
+    let (api, handle) = spawn(NodeConfig::default().with_headers(headers.clone())).await;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(handle.http_endpoint())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_blockNumber",
+            "params": [],
+            "id": 1
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    for header in headers {
+        let (name, value) = header.split_once(':').unwrap();
+        assert_eq!(
+            response.headers().get(name.trim()).unwrap().to_str().unwrap(),
+            value.trim()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_custom_headers_edge_cases() {
+    // Test with empty headers
+    let (api, handle) = spawn(NodeConfig::default().with_headers(vec![])).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(handle.http_endpoint())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_blockNumber",
+            "params": [],
+            "id": 1
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Test with invalid header format
+    let headers = vec!["Invalid-Header".to_string()];
+    let (api, handle) = spawn(NodeConfig::default().with_headers(headers)).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(handle.http_endpoint())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_blockNumber",
+            "params": [],
+            "id": 1
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Test with special characters in header values
+    let headers = vec!["X-Special-Header: test!@#$%^&*()".to_string()];
+    let (api, handle) = spawn(NodeConfig::default().with_headers(headers.clone())).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(handle.http_endpoint())
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_blockNumber",
+            "params": [],
+            "id": 1
+        }))
+        .send()
+        .await
+        .unwrap();
+    for header in headers {
+        let (name, value) = header.split_once(':').unwrap();
+        assert_eq!(
+            response.headers().get(name.trim()).unwrap().to_str().unwrap(),
+            value.trim()
+        );
+    }
 }

@@ -162,6 +162,11 @@ anvil = { path = "crates/anvil" }
 cast = { path = "crates/cast" }
 chisel = { path = "crates/chisel" }
 forge = { path = "crates/forge" }
+interprocess = { version = "1.2.1", features = ["tokio_support"] }
+tower-http = { version = "0.5.0", features = ["trace", "cors"] }
+axum = { version = "0.7.4", features = ["ws"] }
+bytes = "1.5.0"
+tokio-util = { version = "0.7.10", features = ["codec"] }
 
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
@@ -258,7 +263,6 @@ thiserror = "2"
 
 # misc
 auto_impl = "1"
-bytes = "1.8"
 walkdir = "2"
 prettyplease = "0.2"
 base64 = "0.22"
@@ -266,7 +270,6 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = "0.7"
 color-eyre = "0.6"
 comfy-table = "7"
 dirs = "6"
@@ -303,7 +306,6 @@ tikv-jemallocator = "0.6"
 tokio = "1"
 toml = "0.8"
 tower = "0.5"
-tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
