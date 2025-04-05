@@ -62,7 +62,6 @@ impl Cheatcode for assertionExCall {
             assertionContract,
             assertionContractLabel,
         } = self;
-
         // let spec_id = ccx.ecx.spec_id();
         // let block = ccx.ecx.env.block.clone();
         // let state = ccx.ecx.journaled_state.state.clone();
