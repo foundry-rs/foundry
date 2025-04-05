@@ -34,19 +34,19 @@ use std::str::FromStr;
 ///
 /// The following flags can be used to override the state for the call:
 ///
-/// * `--balance <address>:<balance>` - Override the balance of an account
-/// * `--nonce_overrides <address>:<nonce>` - Override the nonce of an account
-/// * `--code <address>:<code>` - Override the code of an account
-/// * `--state <address>:<slot>:<value>` - Override a storage slot of an account
+/// * `--override-balance <address>:<balance>` - Override the balance of an account
+/// * `--override-nonce <address>:<nonce>` - Override the nonce of an account
+/// * `--override-code <address>:<code>` - Override the code of an account
+/// * `--override-state <address>:<slot>:<value>` - Override a storage slot of an account
 ///
 /// Multiple overrides can be specified for the same account. For example:
 ///
 /// ```bash
 /// cast call 0x... "transfer(address,uint256)" 0x... 100 \
-///   --balance 0x123:0x1234 \
-///   --nonce_overrides 0x123:1 \
-///   --code 0x123:0x1234 \
-///   --state 0x123:0x1:0x1234
+///   --override-balance 0x123:0x1234 \
+///   --override-nonce 0x123:1 \
+///   --override-code 0x123:0x1234 \
+///   --override-state 0x123:0x1:0x1234
 /// ```
 #[derive(Debug, Parser)]
 pub struct CallArgs {
@@ -116,27 +116,27 @@ pub struct CallArgs {
 
     /// Override the balance of an account.
     /// Format: <address>:<balance>
-    #[arg(long = "balance", value_name = "ADDRESS:BALANCE")]
+    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
     pub balance_overrides: Vec<String>,
 
     /// Override the nonce of an account.
     /// Format: <address>:<nonce>
-    #[arg(long = "nonce_overrides", value_name = "ADDRESS:NONCE")]
+    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
     pub nonce_overrides: Vec<String>,
 
     /// Override the code of an account.
     /// Format: <address>:<code>
-    #[arg(long = "code", value_name = "ADDRESS:CODE")]
+    #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
     pub code_overrides: Vec<String>,
 
     /// Override the state of an account.
     /// Format: <address>:<slot>:<value>
-    #[arg(long = "state", value_name = "ADDRESS:SLOT:VALUE")]
+    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_overrides: Vec<String>,
 
     /// Override the state diff of an account.
     /// Format: <address>:<slot>:<value>
-    #[arg(long = "state-diff", value_name = "ADDRESS:SLOT:VALUE")]
+    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Vec<String>,
 }
 
@@ -338,13 +338,13 @@ mod tests {
     fn can_parse_state_overrides() {
         let args = CallArgs::parse_from([
             "foundry-cli",
-            "--balance",
+            "--override-balance",
             "0x123:0x1234",
-            "--nonce_overrides",
+            "--override-nonce",
             "0x123:1",
-            "--code",
+            "--override-code",
             "0x123:0x1234",
-            "--state",
+            "--override-state",
             "0x123:0x1:0x1234",
         ]);
 
@@ -358,21 +358,21 @@ mod tests {
     fn can_parse_multiple_state_overrides() {
         let args = CallArgs::parse_from([
             "foundry-cli",
-            "--balance",
+            "--override-balance",
             "0x123:0x1234",
-            "--balance",
+            "--override-balance",
             "0x456:0x5678",
-            "--nonce_overrides",
+            "--override-nonce",
             "0x123:1",
-            "--nonce_overrides",
+            "--override-nonce",
             "0x456:2",
-            "--code",
+            "--override-code",
             "0x123:0x1234",
-            "--code",
+            "--override-code",
             "0x456:0x5678",
-            "--state",
+            "--override-state",
             "0x123:0x1:0x1234",
-            "--state",
+            "--override-state",
             "0x456:0x2:0x5678",
         ]);
 
