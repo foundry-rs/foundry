@@ -68,6 +68,12 @@ pub enum Status<'a> {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum Group {
+    /// Cheatcodes that are related to the Phylax Credible Layer
+    ///
+    /// Examples: `assertionEx`.
+    ///
+    /// Safety: safe
+    Credible,
     /// Cheatcodes that read from, or write to the current EVM execution state.
     ///
     /// Examples: any of the `record` cheatcodes, `chainId`, `coinbase`.
@@ -138,6 +144,7 @@ impl Group {
     #[inline]
     pub const fn safety(self) -> Option<Safety> {
         match self {
+            Self::Credible => Some(Safety::Safe),
             Self::Evm | Self::Testing => None,
             Self::Scripting |
             Self::Filesystem |
@@ -154,6 +161,7 @@ impl Group {
     #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Credible => "credible",
             Self::Evm => "evm",
             Self::Testing => "testing",
             Self::Scripting => "scripting",
