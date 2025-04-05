@@ -1,7 +1,7 @@
 use crate::{Cheatcode, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::TxKind;
 use alloy_sol_types::{Revert, SolError, SolValue};
-use assertion_executor::{db::fork_db::ForkDb, ExecutorConfig};
+use assertion_executor::{db::fork_db::ForkDb, store::{AssertionState, AssertionStore}, ExecutorConfig};
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
 use revm::{
     primitives::{AccountInfo, Address, Bytecode, ExecutionResult, TxEnv, B256, U256},
@@ -62,122 +62,123 @@ impl Cheatcode for assertionExCall {
             assertionContract,
             assertionContractLabel,
         } = self;
+<<<<<<< Updated upstream
         // let spec_id = ccx.ecx.spec_id();
         // let block = ccx.ecx.env.block.clone();
         // let state = ccx.ecx.journaled_state.state.clone();
         // let chain_id = ccx.ecx.env.cfg.chain_id;
+||||||| Stash base
 
-        // // Setup assertion database
-        // let db = ThreadSafeDb::new(ccx.ecx.db);
+        // let spec_id = ccx.ecx.spec_id();
+        // let block = ccx.ecx.env.block.clone();
+        // let state = ccx.ecx.journaled_state.state.clone();
+        // let chain_id = ccx.ecx.env.cfg.chain_id;
+=======
 
-        // // Prepare assertion store
-        // let assertion_contract_bytecode = Bytecode::LegacyRaw(assertionContract.to_vec().into());
+        let spec_id = ccx.ecx.spec_id();
+        let block = ccx.ecx.env.block.clone();
+        let state = ccx.ecx.journaled_state.state.clone();
+        let chain_id = ccx.ecx.env.cfg.chain_id;
+>>>>>>> Stashed changes
 
-        // let config = ExecutorConfig { spec_id, chain_id, assertion_gas_limit: 3_000_000 };
+        // Setup assertion database
+        let db = ThreadSafeDb::new(ccx.ecx.db);
 
-        // let mut store = MockStore::new(config.clone());
-        // store
-        //     .insert(*assertion_adopter, vec![assertion_contract_bytecode])
-        //     .expect("Failed to store assertions");
+        // Prepare assertion store
+        let assertion_contract_bytecode = Bytecode::LegacyRaw(assertionContract.to_vec().into());
 
-        // let decoded_tx = AssertionExTransaction::abi_decode(&tx, true)?;
+        let config = ExecutorConfig { spec_id, chain_id, assertion_gas_limit: 3_000_000 };
 
-        // let tx_env = TxEnv {
-        //     caller: decoded_tx.from,
-        //     gas_limit: ccx.ecx.env.block.gas_limit.try_into().unwrap_or(u64::MAX),
-        //     transact_to: TxKind::Call(decoded_tx.to),
-        //     value: decoded_tx.value,
-        //     data: decoded_tx.data,
-        //     chain_id: Some(chain_id),
-        //     ..Default::default()
-        // };
+        let store = AssertionStore::new_ephemeral().expect("Failed to create assertion store");
 
-        // let rt = tokio::runtime::Runtime::new().unwrap();
+        let assertion_state= AssertionState::new_active(assertion_contract_bytecode.bytes(), &config).expect("Failed to create assertion state");
 
-        // // Execute the future, blocking the current thread until completion
-        // let tx_validation = rt
-        //     .block_on(async move {
-        //         let cancellation_token = tokio_util::sync::CancellationToken::new();
+        store
+            .insert(*assertion_adopter, assertion_state)
+            .expect("Failed to store assertions");
 
-        //         let (reader, handle) = store.cancellable_reader(cancellation_token.clone());
+        let decoded_tx = AssertionExTransaction::abi_decode(&tx, true)?;
 
-        //         let mut assertion_executor = config.build(db, reader);
+        let tx_env = TxEnv {
+            caller: decoded_tx.from,
+            gas_limit: ccx.ecx.env.block.gas_limit.try_into().unwrap_or(u64::MAX),
+            transact_to: TxKind::Call(decoded_tx.to),
+            value: decoded_tx.value,
+            data: decoded_tx.data,
+            chain_id: Some(chain_id),
+            ..Default::default()
+        };
 
-        //         // Commit current journal state so that it is available for assertions and
-        //         // triggering tx
-        //         let mut fork_db = ForkDb::new(assertion_executor.db.clone());
-        //         fork_db.commit(state);
+        let mut assertion_executor = config.build(db,store);
 
-        //         // Store assertions
-        //         let validate_result =
-        //             assertion_executor.validate_transaction(block, tx_env, &mut fork_db).await;
+        // Commit current journal state so that it is available for assertions and
+        // triggering tx
+        let mut fork_db = ForkDb::new(assertion_executor.db.clone());
+        fork_db.commit(state);
 
-        //         cancellation_token.cancel();
+        // Store assertions
+        let tx_validation=
+            assertion_executor.validate_transaction(block, tx_env, &mut fork_db).map_err(|e| format!("Assertion Executor Error: {:#?}", e))?;
 
-        //         let _ = handle.await;
+        // if transaction execution reverted, bail
+        if !tx_validation.result_and_state.result.is_success() {
+            let decoded_error = decode_revert_error(&tx_validation.result_and_state.result);
+            executor.console_log(ccx, &format!("Transaction reverted: {}", decoded_error.reason()));
+            bail!("Transaction Reverted");
+        }
+        // else get information about the assertion execution
+        let assertion_contract = tx_validation.assertions_executions.first().unwrap();
+        let total_assertion_gas = tx_validation.total_assertions_gas();
+        let total_assertions_ran = tx_validation.total_assertion_funcs_ran();
+        let tx_gas_used = tx_validation.result_and_state.result.gas_used();
+        let mut assertion_gas_message = format!(
+            "Transaction gas cost: {}\n  Total Assertion gas cost: {}\n  Total assertions ran: {}\n  Assertion Functions gas cost\n  ",
+            tx_gas_used, total_assertion_gas, total_assertions_ran
+        );
 
-        //         validate_result
-        //     })
-        //     .map_err(|e| format!("Assertion Executor Error: {:#?}", e))?;
-        // // if transaction execution reverted, bail
-        // if !tx_validation.result_and_state.result.is_success() {
-        //     let decoded_error = decode_revert_error(&tx_validation.result_and_state.result);
-        //     executor.console_log(ccx, format!("Transaction reverted: {}", decoded_error.reason()));
-        //     bail!("Transaction Reverted");
-        // }
-        // // else get information about the assertion execution
-        // let assertion_contract = tx_validation.assertions_executions.first().unwrap();
-        // let total_assertion_gas = tx_validation.total_assertions_gas();
-        // let total_assertions_ran = tx_validation.total_assertion_funcs_ran();
-        // let tx_gas_used = tx_validation.result_and_state.result.gas_used();
-        // let mut assertion_gas_message = format!(
-        //     "Transaction gas cost: {}\n  Total Assertion gas cost: {}\n  Total assertions ran: {}\n  Assertion Functions gas cost\n  ",
-        //     tx_gas_used, total_assertion_gas, total_assertions_ran
-        // );
+        // Format individual assertion function results
+        for (fn_selector_index, assertion_fn) in
+            assertion_contract.assertion_fns_results.iter().enumerate()
+        {
+            assertion_gas_message.push_str(&format!(
+                "   └─ [selector {}:index {}] gas cost: {}\n",
+                assertion_fn.id.fn_selector,
+                fn_selector_index,
+                assertion_fn.as_result().gas_used()
+            ));
+        }
+        executor.console_log(ccx, &assertion_gas_message);
 
-        // // Format individual assertion function results
-        // for (fn_selector_index, assertion_fn) in
-        //     assertion_contract.assertion_fns_results.iter().enumerate()
-        // {
-        //     assertion_gas_message.push_str(&format!(
-        //         "   └─ [selector {}:index {}] gas cost: {}\n",
-        //         assertion_fn.id.fn_selector,
-        //         fn_selector_index,
-        //         assertion_fn.as_result().gas_used()
-        //     ));
-        // }
-        // executor.console_log(ccx, assertion_gas_message);
+        if !tx_validation.is_valid() {
+            let mut error_msg = format!("\n  {assertionContractLabel} Assertions Failed:\n");
+            // Collect failed assertions
+            let reverted_assertions: HashMap<_, _> = assertion_contract
+                .assertion_fns_results
+                .iter()
+                .enumerate()
+                .filter(|(_, assertion_fn)| !assertion_fn.is_success())
+                .map(|(fn_selector_index, assertion_fn)| {
+                    let key = format!(
+                        "[selector {}:index {}]",
+                        assertion_fn.id.fn_selector, fn_selector_index
+                    );
+                    let revert = decode_revert_error(assertion_fn.as_result());
+                    (key, revert)
+                })
+                .collect();
 
-        // if !tx_validation.is_valid() {
-        //     let mut error_msg = format!("\n  {assertionContractLabel} Assertions Failed:\n");
-        //     // Collect failed assertions
-        //     let reverted_assertions: HashMap<_, _> = assertion_contract
-        //         .assertion_fns_results
-        //         .iter()
-        //         .enumerate()
-        //         .filter(|(_, assertion_fn)| !assertion_fn.is_success())
-        //         .map(|(fn_selector_index, assertion_fn)| {
-        //             let key = format!(
-        //                 "[selector {}:index {}]",
-        //                 assertion_fn.id.fn_selector, fn_selector_index
-        //             );
-        //             let revert = decode_revert_error(assertion_fn.as_result());
-        //             (key, revert)
-        //         })
-        //         .collect();
+            // Format error messages
+            for (key, revert) in reverted_assertions {
+                error_msg.push_str(&format!(
+                    "   └─ {} - Revert Reason: {} \n",
+                    key,
+                    revert.reason()
+                ));
+            }
 
-        //     // Format error messages
-        //     for (key, revert) in reverted_assertions {
-        //         error_msg.push_str(&format!(
-        //             "   └─ {} - Revert Reason: {} \n",
-        //             key,
-        //             revert.reason()
-        //         ));
-        //     }
-
-        //     executor.console_log(ccx, error_msg);
-        //     bail!("Assertions Reverted");
-        // }
+            executor.console_log(ccx, &error_msg);
+            bail!("Assertions Reverted");
+        }
         Ok(Default::default())
     }
 }
