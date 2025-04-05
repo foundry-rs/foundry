@@ -339,7 +339,14 @@ pub async fn handle_traces(
         let _ = sh_println!("Compiling project to generate artifacts");
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
+        
+        // We need to handle the case where compilation is skipped due to no changes
+        // This is a valid outcome and should not be treated as an error
         let output = compiler.compile(&project)?;
+        
+        // If output.is_unchanged() would be true, the compiler already printed
+        // "No files changed, compilation skipped" for us
+        
         (
             Some(ContractsByArtifact::new(
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
