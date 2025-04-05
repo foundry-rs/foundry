@@ -1,7 +1,11 @@
 use crate::{Cheatcode, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::TxKind;
 use alloy_sol_types::{Revert, SolError, SolValue};
-use assertion_executor::{db::fork_db::ForkDb, store::{AssertionState, AssertionStore}, ExecutorConfig};
+use assertion_executor::{
+    db::fork_db::ForkDb,
+    store::{AssertionState, AssertionStore},
+    ExecutorConfig,
+};
 use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
 use revm::{
     primitives::{AccountInfo, Address, Bytecode, ExecutionResult, TxEnv, B256, U256},
@@ -62,24 +66,11 @@ impl Cheatcode for assertionExCall {
             assertionContract,
             assertionContractLabel,
         } = self;
-<<<<<<< Updated upstream
-        // let spec_id = ccx.ecx.spec_id();
-        // let block = ccx.ecx.env.block.clone();
-        // let state = ccx.ecx.journaled_state.state.clone();
-        // let chain_id = ccx.ecx.env.cfg.chain_id;
-||||||| Stash base
-
-        // let spec_id = ccx.ecx.spec_id();
-        // let block = ccx.ecx.env.block.clone();
-        // let state = ccx.ecx.journaled_state.state.clone();
-        // let chain_id = ccx.ecx.env.cfg.chain_id;
-=======
 
         let spec_id = ccx.ecx.spec_id();
         let block = ccx.ecx.env.block.clone();
         let state = ccx.ecx.journaled_state.state.clone();
         let chain_id = ccx.ecx.env.cfg.chain_id;
->>>>>>> Stashed changes
 
         // Setup assertion database
         let db = ThreadSafeDb::new(ccx.ecx.db);
@@ -91,11 +82,11 @@ impl Cheatcode for assertionExCall {
 
         let store = AssertionStore::new_ephemeral().expect("Failed to create assertion store");
 
-        let assertion_state= AssertionState::new_active(assertion_contract_bytecode.bytes(), &config).expect("Failed to create assertion state");
+        let assertion_state =
+            AssertionState::new_active(assertion_contract_bytecode.bytes(), &config)
+                .expect("Failed to create assertion state");
 
-        store
-            .insert(*assertion_adopter, assertion_state)
-            .expect("Failed to store assertions");
+        store.insert(*assertion_adopter, assertion_state).expect("Failed to store assertions");
 
         let decoded_tx = AssertionExTransaction::abi_decode(&tx, true)?;
 
@@ -109,7 +100,7 @@ impl Cheatcode for assertionExCall {
             ..Default::default()
         };
 
-        let mut assertion_executor = config.build(db,store);
+        let mut assertion_executor = config.build(db, store);
 
         // Commit current journal state so that it is available for assertions and
         // triggering tx
@@ -117,8 +108,9 @@ impl Cheatcode for assertionExCall {
         fork_db.commit(state);
 
         // Store assertions
-        let tx_validation=
-            assertion_executor.validate_transaction(block, tx_env, &mut fork_db).map_err(|e| format!("Assertion Executor Error: {:#?}", e))?;
+        let tx_validation = assertion_executor
+            .validate_transaction(block, tx_env, &mut fork_db)
+            .map_err(|e| format!("Assertion Executor Error: {:#?}", e))?;
 
         // if transaction execution reverted, bail
         if !tx_validation.result_and_state.result.is_success() {
