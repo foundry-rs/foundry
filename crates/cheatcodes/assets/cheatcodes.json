@@ -3126,6 +3126,26 @@
     },
     {
       "func": {
+        "id": "assertionEx",
+        "description": "Gets the address for a given private key.",
+        "declaration": "function assertionEx(bytes calldata tx, address assertionAdopter, bytes calldata assertionContract, string calldata assertionContractLabel) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "assertionEx(bytes,address,bytes,string)",
+        "selector": "0x6a401fc5",
+        "selectorBytes": [
+          106,
+          64,
+          31,
+          197
+        ]
+      },
+      "group": "credible",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assume",
         "description": "If the condition is false, discard this run's fuzz inputs and generate new ones.",
         "declaration": "function assume(bool condition) external pure;",
