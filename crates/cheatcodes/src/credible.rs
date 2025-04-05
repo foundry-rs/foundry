@@ -15,7 +15,6 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
-use tokio;
 
 /// Wrapper around DatabaseExt to make it thread-safe
 #[derive(Clone)]
@@ -88,7 +87,7 @@ impl Cheatcode for assertionExCall {
 
         store.insert(*assertion_adopter, assertion_state).expect("Failed to store assertions");
 
-        let decoded_tx = AssertionExTransaction::abi_decode(&tx, true)?;
+        let decoded_tx = AssertionExTransaction::abi_decode(tx, true)?;
 
         let tx_env = TxEnv {
             caller: decoded_tx.from,
@@ -110,7 +109,7 @@ impl Cheatcode for assertionExCall {
         // Store assertions
         let tx_validation = assertion_executor
             .validate_transaction(block, tx_env, &mut fork_db)
-            .map_err(|e| format!("Assertion Executor Error: {:#?}", e))?;
+            .map_err(|e| format!("Assertion Executor Error: {e:#?}"))?;
 
         // if transaction execution reverted, bail
         if !tx_validation.result_and_state.result.is_success() {
@@ -124,8 +123,7 @@ impl Cheatcode for assertionExCall {
         let total_assertions_ran = tx_validation.total_assertion_funcs_ran();
         let tx_gas_used = tx_validation.result_and_state.result.gas_used();
         let mut assertion_gas_message = format!(
-            "Transaction gas cost: {}\n  Total Assertion gas cost: {}\n  Total assertions ran: {}\n  Assertion Functions gas cost\n  ",
-            tx_gas_used, total_assertion_gas, total_assertions_ran
+            "Transaction gas cost: {tx_gas_used}\n  Total Assertion gas cost: {total_assertion_gas}\n  Total assertions ran: {total_assertions_ran}\n  Assertion Functions gas cost\n  "
         );
 
         // Format individual assertion function results

@@ -4455,7 +4455,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util",
  "toml 0.8.20",
  "tracing",
  "vergen",
