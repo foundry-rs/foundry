@@ -25,8 +25,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use std::time::Instant;
-use alloy_consensus::{ TxEnvelope, transaction::{Recovered} };
-use alloy_rlp::Decodable;
+use alloy_consensus::transaction::Recovered;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -696,19 +695,17 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             &mut std::io::stdout(),
         ),
         CastSubcommand::Logs(cmd) => cmd.run().await?,
-        CastSubcommand::DecodeTransaction { tx, from_rlp: _ } => {
-            let tx_input = stdin::unwrap_line(tx)?;
-            let tx_bytes = hex::decode(tx_input.strip_prefix("0x").unwrap_or(&tx_input))?;
+        CastSubcommand::DecodeTransaction { tx } => {
+            let tx = stdin::unwrap_line(tx)?;
+            let tx = SimpleCast::decode_raw_transaction(&tx)?;
         
-            let envelope = TxEnvelope::decode(&mut &tx_bytes[..])?;
-        
-            if let Ok(signer) = envelope.recover_signer() {
-                let recovered = Recovered::new_unchecked(envelope, signer);
+            if let Ok(signer) = tx.recover_signer() {
+                let recovered = Recovered::new_unchecked(tx, signer);
                 sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
             } else {
-                sh_println!("{}", serde_json::to_string_pretty(&envelope)?)?;
+                sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
-        }
+        }  
         CastSubcommand::DecodeEof { eof } => {
             let eof = stdin::unwrap_line(eof)?;
             sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
