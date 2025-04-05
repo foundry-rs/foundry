@@ -1037,6 +1037,7 @@ pub enum CastSubcommand {
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
+    
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]
     Selectors {
