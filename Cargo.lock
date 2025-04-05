@@ -3771,6 +3771,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
+ "alloy-rpc-types",
  "clap",
  "color-eyre",
  "dotenvy",

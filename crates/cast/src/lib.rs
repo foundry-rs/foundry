@@ -16,7 +16,7 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, state::StateOverride};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
@@ -106,11 +106,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_rpc_types::{TransactionRequest, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
+    /// use std::{str::FromStr, collections::HashMap};
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
@@ -124,8 +124,16 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let bytes = Bytes::from_iter(greeting.iter());
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
+    ///
+    /// // Create state overrides
+    /// let mut state_overrides = HashMap::new();
+    /// let mut account_override = AccountOverride::default();
+    /// account_override.balance = Some(U256::from(1000));
+    /// state_overrides.insert(to, account_override);
+    /// let state_override = Some(StateOverride(state_overrides));
+    ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, state_override).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -135,8 +143,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        state_override: Option<StateOverride>,
     ) -> Result<String> {
-        let res = self.provider.call(req.clone()).block(block.unwrap_or_default()).await?;
+        let res = self.provider.call(req.clone())
+            .block(block.unwrap_or_default())
+            .overrides(state_override.unwrap_or_default())
+            .await?;
 
         let mut decoded = vec![];
 
