@@ -79,5 +79,4 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
-tokio-util = "0.7.13"
 
