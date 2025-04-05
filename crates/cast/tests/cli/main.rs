@@ -2016,7 +2016,6 @@ Transaction successfully executed.
 
 "#]]);
 
-
     // Run cast from project dir.
     cmd.cast_fuse().set_current_dir(prj.root());
 
