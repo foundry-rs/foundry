@@ -2202,27 +2202,6 @@ impl SimpleCast {
         let eof = Eof::decode(eof_hex.into())?;
         Ok(pretty_eof(&eof)?)
     }
-    pub fn decode_transaction(tx_str: &str, from_rlp: bool) -> Result<TxEnvelope> {
-        let tx_bytes = hex::decode(tx_str.strip_prefix("0x").unwrap_or(tx_str))?;
-
-        let transaction = if from_rlp {
-            TxEnvelope::decode(&mut &tx_bytes[..])?
-        } else {
-            TxEnvelope::decode(&mut &tx_bytes[..])?
-        };
-
-        Ok(transaction)
-    }
-
-    pub fn recover_transaction_sender(tx_str: &str, from_rlp: bool) -> Result<Address> {
-        let tx_bytes = hex::decode(tx_str.strip_prefix("0x").unwrap_or(tx_str))?;
-        
-        let envelope = TxEnvelope::decode(&mut &tx_bytes[..])?;
-        
-        let sender = envelope.recover_signer()?;
-
-        Ok(sender)
-    }
 }
 
 fn strip_0x(s: &str) -> &str {
