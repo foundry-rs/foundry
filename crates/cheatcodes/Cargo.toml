@@ -24,7 +24,7 @@ vergen = { workspace = true, default-features = false, features = [
 [dependencies]
 # assertion-executor = { git = "ssh://git@github.com/phylaxsystems/assertion-executor.git", branch = "main", features = ["phoundry"]  }
 
-assertion-executor = { path = "../../../assertion-executor", features = ["phoundry"] }
+assertion-executor = { path = "../../../assertion-executor" }
 
 tokio.workspace = true
 foundry-cheatcodes-spec.workspace = true
