@@ -694,11 +694,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             &mut std::io::stdout(),
         ),
         CastSubcommand::Logs(cmd) => cmd.run().await?,
-        CastSubcommand::DecodeTransaction { tx } => {
-            let tx = stdin::unwrap_line(tx)?;
-            let tx = SimpleCast::decode_raw_transaction(&tx)?;
-
-            sh_println!("{}", serde_json::to_string_pretty(&tx)?)?
+        CastSubcommand::DecodeTransaction { tx, from_rlp } => {
+            let tx_input = stdin::unwrap_line(tx)?;
+        
+            let decoded_tx = SimpleCast::decode_transaction(&tx_input, from_rlp)?;
+        
+            let recovered_address =
+                SimpleCast::recover_transaction_sender(&tx_input, from_rlp).ok();
+        
+            let mut output = serde_json::to_value(&decoded_tx)?;
+            if let Some(address) = recovered_address {
+                output["recoveredAddress"] =
+                    serde_json::Value::String(format!("{:?}", address));
+            }
+        
+            sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
         }
         CastSubcommand::DecodeEof { eof } => {
             let eof = stdin::unwrap_line(eof)?;
