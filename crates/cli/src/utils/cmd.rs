@@ -340,24 +340,12 @@ pub async fn handle_traces(
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         
-        // Attempt to compile or load existing artifacts if no changes
-        let output = match compiler.compile(&project) {
-            Ok(output) => {
-                // Successful compilation
-                output
-            },
-            Err(err) => {
-                // Handle the case where no files changed (compilation skipped)
-                if err.to_string().contains("No files changed, compilation skipped") {
-                    // Instead of failing, try to load existing artifacts
-                    let _ = sh_println!("No files changed, compilation skipped");
-                    compiler.load_output_from_disk(&project)?
-                } else {
-                    // Real error, propagate it
-                    return Err(err.into());
-                }
-            }
-        };
+        // We need to handle the case where compilation is skipped due to no changes
+        // This is a valid outcome and should not be treated as an error
+        let output = compiler.compile(&project)?;
+        
+        // If output.is_unchanged() would be true, the compiler already printed
+        // "No files changed, compilation skipped" for us
         
         (
             Some(ContractsByArtifact::new(
