@@ -47,6 +47,10 @@ pub struct NodeArgs {
     #[arg(long, value_name = "NUM")]
     pub timestamp: Option<u64>,
 
+    /// The number of the genesis block.
+    #[arg(long, value_name = "NUM")]
+    pub number: Option<u64>,
+
     /// BIP39 mnemonic phrase used for generating accounts.
     /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used.
     #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
@@ -234,6 +238,7 @@ impl NodeArgs {
             .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
+            .with_genesis_block_number(self.number)
             .with_port(self.port)
             .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
                 (Some(block), None) => Some(ForkChoice::Block(block)),
@@ -653,7 +658,7 @@ impl Future for PeriodicStateDumper {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         if this.dump_state.is_none() {
-            return Poll::Pending
+            return Poll::Pending;
         }
 
         loop {
@@ -664,7 +669,7 @@ impl Future for PeriodicStateDumper {
                     }
                     Poll::Pending => {
                         this.in_progress_dump = Some(flush);
-                        return Poll::Pending
+                        return Poll::Pending;
                     }
                 }
             }
@@ -675,7 +680,7 @@ impl Future for PeriodicStateDumper {
                 this.in_progress_dump =
                     Some(Box::pin(Self::dump_state(api, path, this.preserve_historical_states)));
             } else {
-                break
+                break;
             }
         }
 
@@ -705,7 +710,7 @@ impl StateFile {
         }
         let mut state = Self { path, state: None };
         if !state.path.exists() {
-            return Ok(state)
+            return Ok(state);
         }
 
         state.state = Some(SerializableState::load(&state.path).map_err(|err| err.to_string())?);
@@ -740,14 +745,14 @@ impl FromStr for ForkUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((url, block)) = s.rsplit_once('@') {
             if block == "latest" {
-                return Ok(Self { url: url.to_string(), block: None })
+                return Ok(Self { url: url.to_string(), block: None });
             }
             // this will prevent false positives for auths `user:password@example.com`
             if !block.is_empty() && !block.contains(':') && !block.contains('.') {
                 let block: u64 = block
                     .parse()
                     .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
-                return Ok(Self { url: url.to_string(), block: Some(block) })
+                return Ok(Self { url: url.to_string(), block: Some(block) });
             }
         }
         Ok(Self { url: s.to_string(), block: None })
