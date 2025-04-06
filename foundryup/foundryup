@@ -118,7 +118,7 @@ main() {
     PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$uname_s}")
     EXT="tar.gz"
     case $PLATFORM in
-      linux) ;;
+      linux|alpine) ;;
       darwin|mac*)
         PLATFORM="darwin"
         ;;
@@ -272,7 +272,7 @@ OPTIONS:
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
     --arch          Install a specific architecture (supports amd64 and arm64)
-    --platform      Install a specific platform (supports win32, linux, and darwin)
+    --platform      Install a specific platform (supports win32, linux, darwin and alpine)
 EOF
 }
 
