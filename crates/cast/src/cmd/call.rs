@@ -115,27 +115,27 @@ pub struct CallArgs {
     pub with_local_artifacts: bool,
 
     /// Override the balance of an account.
-    /// Format: <address>:<balance>
+    /// Format: address:balance
     #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
     pub balance_overrides: Vec<String>,
 
     /// Override the nonce of an account.
-    /// Format: <address>:<nonce>
+    /// Format: address:nonce
     #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
     pub nonce_overrides: Vec<String>,
 
     /// Override the code of an account.
-    /// Format: <address>:<code>
+    /// Format: address:code
     #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
     pub code_overrides: Vec<String>,
 
     /// Override the state of an account.
-    /// Format: <address>:<slot>:<value>
+    /// Format: address:slot:value
     #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_overrides: Vec<String>,
 
     /// Override the state diff of an account.
-    /// Format: <address>:<slot>:<value>
+    /// Format: address:slot:value
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Vec<String>,
 }

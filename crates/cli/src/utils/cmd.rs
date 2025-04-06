@@ -518,7 +518,7 @@ pub fn get_state_overrides(balance_overrides: Vec<String>, nonce_overrides: Vec<
     })
 }
 
-/// Parse an override string in the format <address>:<value>
+/// Parse an override string in the format address:value
 pub fn parse_address_value(s: &str) -> eyre::Result<(Address, U256)> {
     let (addr, value) = s.split_once(':').ok_or_else(|| {
         eyre::eyre!("Invalid override format. Expected <address>:<value>")
@@ -526,7 +526,7 @@ pub fn parse_address_value(s: &str) -> eyre::Result<(Address, U256)> {
     Ok((addr.parse()?, value.parse()?))
 }
 
-/// Parse an override string in the format <address>:<value>
+/// Parse an override string in the format address:value
 pub fn parse_address_value_for_nonce( s: &str) -> eyre::Result<(Address, u64)> {
     let (addr, value) = s.split_once(':').ok_or_else(|| {
         eyre::eyre!("Invalid override format. Expected <address>:<value>")
@@ -534,7 +534,7 @@ pub fn parse_address_value_for_nonce( s: &str) -> eyre::Result<(Address, u64)> {
     Ok((addr.parse()?, value.parse()?))
 }
 
-/// Parse an override string in the format <address>:<slot>:<value>
+/// Parse an override string in the format address:slot:value
 pub fn parse_address_slot_value(s: &str) -> eyre::Result<(Address, U256, U256)> {
     let mut parts = s.split(':');
     let addr = parts.next().ok_or_else(|| {
