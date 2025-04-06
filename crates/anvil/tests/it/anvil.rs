@@ -121,8 +121,6 @@ async fn test_can_set_genesis_block_number() {
     let (_api, handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(1337u64))).await;
     let provider = handle.http_provider();
 
-    println!("block: {:?}", provider.get_block(1337.into()).await.unwrap());
-
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, 1337u64);
 

@@ -682,7 +682,7 @@ impl NodeConfig {
     pub fn get_genesis_number(&self) -> u64 {
         self.genesis_block_number
             .or_else(|| self.genesis.as_ref().and_then(|g| g.number))
-            .unwrap_or_else(|| 0)
+            .unwrap_or(0)
     }
 
     /// Sets the hardfork
