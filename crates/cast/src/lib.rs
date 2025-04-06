@@ -16,7 +16,7 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, state::{StateOverride, AccountOverride}};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, state::StateOverride};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
