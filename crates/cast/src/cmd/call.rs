@@ -292,7 +292,7 @@ impl CallArgs {
         }
 
         let cast = Cast::new(provider);
-        sh_println!("{}", cast.call(&tx, func.as_ref(), block, state_override.map(|s| s.into())).await?)?;
+        sh_println!("{}", cast.call(&tx, func.as_ref(), block, state_override).await?)?;
 
         Ok(())
     }
