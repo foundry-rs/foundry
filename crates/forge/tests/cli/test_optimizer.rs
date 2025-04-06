@@ -248,7 +248,7 @@ contract CounterTest is Test {
     Counter public counter;
 
     function setUp() public {
-        counter = new Counter();
+        counter = Counter(address(new Counter()));
         counter.setNumber(0);
     }
 
@@ -1075,7 +1075,7 @@ import {CounterWithSalt} from "src/CounterWithSalt.sol";
 
 contract CounterTest is Test {
     function test_Increment_In_Counter() public {
-        Counter counter = new Counter{value: 111}(1);
+        Counter counter = Counter(address(new Counter{value: 111}(1)));
         counter.increment();
         assertEq(counter.number(), 112);
     }
