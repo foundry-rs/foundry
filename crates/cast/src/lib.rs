@@ -16,7 +16,7 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, state::StateOverride};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, state::{StateOverride, AccountOverride}};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
@@ -118,7 +118,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
@@ -126,14 +126,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let tx = WithOtherFields::new(tx);
     ///
     /// // Create state overrides
-    /// let mut state_overrides = HashMap::new();
+    /// let mut state_override = StateOverride::default();
     /// let mut account_override = AccountOverride::default();
     /// account_override.balance = Some(U256::from(1000));
-    /// state_overrides.insert(to, account_override);
-    /// let state_override = Some(StateOverride(state_overrides));
+    /// state_override.insert(to, account_override);
+    /// let state_override_object = Some(state_override);
     ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, state_override).await?;
+    /// let data = cast.call(&tx, None, None, state_override_object).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
