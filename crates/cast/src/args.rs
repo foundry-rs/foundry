@@ -3,6 +3,7 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     Cast, SimpleCast,
 };
+use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
@@ -25,7 +26,6 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use std::time::Instant;
-use alloy_consensus::transaction::Recovered;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -698,14 +698,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DecodeTransaction { tx } => {
             let tx = stdin::unwrap_line(tx)?;
             let tx = SimpleCast::decode_raw_transaction(&tx)?;
-        
+
             if let Ok(signer) = tx.recover_signer() {
                 let recovered = Recovered::new_unchecked(tx, signer);
                 sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
             } else {
                 sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
-        }  
+        }
         CastSubcommand::DecodeEof { eof } => {
             let eof = stdin::unwrap_line(eof)?;
             sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
