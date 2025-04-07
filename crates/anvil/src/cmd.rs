@@ -238,7 +238,12 @@ impl NodeArgs {
             .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
                 (Some(block), None) => Some(ForkChoice::Block(block)),
                 (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
-                _ => self.evm.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block),
+                _ => self
+                    .evm
+                    .fork_url
+                    .as_ref()
+                    .and_then(|f| f.block)
+                    .map(|num| ForkChoice::Block(num as i128)),
             })
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
@@ -428,9 +433,17 @@ pub struct AnvilEvmArgs {
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
+    /// If a negative the the given value is subtracted from the `latest` block number.
+    ///
     /// See --fork-url.
-    #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
-    pub fork_block_number: Option<u64>,
+    #[arg(
+        long,
+        requires = "fork_url",
+        value_name = "BLOCK",
+        help_heading = "Fork config",
+        allow_hyphen_values = true
+    )]
+    pub fork_block_number: Option<i128>,
 
     /// Fetch state from a specific transaction hash over a remote endpoint.
     ///

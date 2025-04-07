@@ -611,7 +611,7 @@ impl Backend {
         fork_block_number: u64,
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
-        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
 
         let mut env = self.env.read().clone();
         let (forked_db, client_fork_config) =

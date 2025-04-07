@@ -1361,7 +1361,16 @@ async fn derive_block_and_transactions(
     provider: &Arc<RetryProvider>,
 ) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
     match fork_choice {
-        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), None)),
+        ForkChoice::Block(block_number) => {
+            let block_number = *block_number;
+            if block_number >= 0 {
+                return Ok((block_number as u64, None))
+            }
+            // subtract from latest block number
+            let latest = provider.get_block_number().await?;
+
+            Ok((block_number.saturating_add(latest as i128) as u64, None))
+        }
         ForkChoice::Transaction(transaction_hash) => {
             // Determine the block that this transaction was mined in
             let transaction = provider
@@ -1400,15 +1409,17 @@ async fn derive_block_and_transactions(
 /// Fork delimiter used to specify which block or transaction to fork from
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForkChoice {
-    /// Block number to fork from
-    Block(BlockNumber),
+    /// Block number to fork from.
+    ///
+    /// f a negative the the given value is subtracted from the `latest` block number.
+    Block(i128),
     /// Transaction hash to fork from
     Transaction(TxHash),
 }
 
 impl ForkChoice {
     /// Returns the block number to fork from
-    pub fn block_number(&self) -> Option<BlockNumber> {
+    pub fn block_number(&self) -> Option<i128> {
         match self {
             Self::Block(block_number) => Some(*block_number),
             Self::Transaction(_) => None,
@@ -1434,7 +1445,7 @@ impl From<TxHash> for ForkChoice {
 /// Convert a decimal block number into a ForkChoice
 impl From<u64> for ForkChoice {
     fn from(block: u64) -> Self {
-        Self::Block(block)
+        Self::Block(block as i128)
     }
 }
 
