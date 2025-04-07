@@ -12,10 +12,8 @@ use crate::eth::{
 };
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_primitives::{
-    map::{B256HashMap, HashMap},
-    Bytes, B256, U256, U64,
-};
+use std::collections::HashMap;
+use alloy_primitives::map::B256HashMap;
 use alloy_rpc_types::{
     trace::{
         geth::{
