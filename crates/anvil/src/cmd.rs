@@ -238,7 +238,12 @@ impl NodeArgs {
             .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
                 (Some(block), None) => Some(ForkChoice::Block(block)),
                 (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
-                _ => self.evm.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block),
+                _ => self
+                    .evm
+                    .fork_url
+                    .as_ref()
+                    .and_then(|f| f.block)
+                    .map(|num| ForkChoice::Block(num as i128)),
             })
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
@@ -259,6 +264,7 @@ impl NodeArgs {
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
             .with_print_logs(!self.evm.disable_console_log)
+            .with_print_traces(self.evm.print_traces)
             .with_auto_impersonate(self.evm.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm.code_size_limit)
@@ -427,9 +433,17 @@ pub struct AnvilEvmArgs {
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
+    /// If a negative the the given value is subtracted from the `latest` block number.
+    ///
     /// See --fork-url.
-    #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
-    pub fork_block_number: Option<u64>,
+    #[arg(
+        long,
+        requires = "fork_url",
+        value_name = "BLOCK",
+        help_heading = "Fork config",
+        allow_hyphen_values = true
+    )]
+    pub fork_block_number: Option<i128>,
 
     /// Fetch state from a specific transaction hash over a remote endpoint.
     ///
@@ -556,6 +570,10 @@ pub struct AnvilEvmArgs {
     /// Disable printing of `console.log` invocations to stdout.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
+
+    /// Enable printing of traces for executed transactions and `eth_call` to stdout.
+    #[arg(long, visible_alias = "enable-trace-printing")]
+    pub print_traces: bool,
 
     /// Enables automatic impersonation on startup. This allows any transaction sender to be
     /// simulated as different accounts, which is useful for testing contract behavior.
