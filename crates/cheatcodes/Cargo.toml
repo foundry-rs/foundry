@@ -14,7 +14,19 @@ exclude.workspace = true
 [lints]
 workspace = true
 
+[build-dependencies]
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
+
 [dependencies]
+# assertion-executor = { git = "ssh://git@github.com/phylaxsystems/assertion-executor.git", branch = "main", features = ["phoundry"]  }
+
+assertion-executor = { path = "../../../assertion-executor" }
+
+tokio.workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
@@ -61,3 +73,4 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+
