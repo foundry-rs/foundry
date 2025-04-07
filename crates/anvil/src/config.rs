@@ -157,6 +157,8 @@ pub struct NodeConfig {
     pub enable_steps_tracing: bool,
     /// Enable printing of `console.log` invocations.
     pub print_logs: bool,
+    /// Enable printing of traces.
+    pub print_traces: bool,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -449,6 +451,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             enable_steps_tracing: false,
             print_logs: true,
+            print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -893,6 +896,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to print traces to stdout.
+    #[must_use]
+    pub fn with_print_traces(mut self, print_traces: bool) -> Self {
+        self.print_traces = print_traces;
+        self
+    }
+
     /// Sets whether to enable autoImpersonate
     #[must_use]
     pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
@@ -1083,6 +1093,7 @@ impl NodeConfig {
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.print_logs,
+            self.print_traces,
             self.odyssey,
             self.prune_history,
             self.max_persisted_states,
