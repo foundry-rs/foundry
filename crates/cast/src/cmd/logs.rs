@@ -10,6 +10,7 @@ use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
 use foundry_common::ens::NameOrAddress;
 use itertools::Itertools;
 use std::{io, str::FromStr};
+use alloy_primitives::address;
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -217,7 +218,7 @@ mod tests {
     fn test_build_filter_basic() {
         let from_block = Some(BlockNumberOrTag::from(1337));
         let to_block = Some(BlockNumberOrTag::Latest);
-        let address = Address::from_str(ADDRESS).ok();
+        let address = Address::from_str(ADDRESS.to_string()).ok();
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block, to_block },
             address: ValueOrArray::Value(address.unwrap()).into(),
