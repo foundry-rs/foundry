@@ -50,8 +50,8 @@ forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertDidNotRevert() ([GAS])
 [FAIL: Error != expected error: but reverts with this message != should revert with this message] testShouldFailExpectRevertErrorDoesNotMatch() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertNotOnImmediateNextCall() ([GAS])
-[FAIL: revert: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
-[FAIL: revert: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
+[FAIL: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
+[FAIL: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
 Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -238,7 +238,7 @@ forgetest!(mem_safety_test_should_fail, |prj, cmd| {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: revert: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
+[FAIL: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALL() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
 [FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]; counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
@@ -336,7 +336,7 @@ contract FailingSetupTest is DSTest {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: revert: setup failed predictably] setUp() ([GAS])
+[FAIL: setup failed predictably] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#

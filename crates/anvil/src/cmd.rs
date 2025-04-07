@@ -231,7 +231,7 @@ impl NodeArgs {
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
-            .with_account_generator(self.account_generator())
+            .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
@@ -279,7 +279,7 @@ impl NodeArgs {
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
+            .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {

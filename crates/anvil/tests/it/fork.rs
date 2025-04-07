@@ -532,7 +532,7 @@ async fn can_reset_fork_to_new_fork() {
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
     let provider = handle.http_provider();
 
-    let op = address!("C0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
+    let op = address!("0xC0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
 
     let tx = TransactionRequest::default().with_to(op).with_input("0x54fd4d50");
 
@@ -1092,7 +1092,7 @@ async fn test_block_receipts() {
     assert!(receipts.is_none());
 
     // Receipts from a block hash (14608400)
-    let hash = b256!("4c1c76f89cfe4eb503b09a0993346dd82865cac9d76034efc37d878c66453f0a");
+    let hash = b256!("0x4c1c76f89cfe4eb503b09a0993346dd82865cac9d76034efc37d878c66453f0a");
     let receipts = api.block_receipts(BlockId::Hash(hash.into())).await.unwrap();
     assert!(receipts.is_some());
 }
@@ -1308,7 +1308,7 @@ async fn test_fork_execution_reverted() {
     let resp = api
         .call(
             WithOtherFields::new(TransactionRequest {
-                to: Some(TxKind::from(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377"))),
+                to: Some(TxKind::from(address!("0xFd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377"))),
                 input: TransactionInput::new(bytes!("8f283b3c")),
                 ..Default::default()
             }),
@@ -1373,9 +1373,9 @@ async fn test_immutable_fork_transaction_hash() {
         fork_tx_hash,
     ];
     for expected in [
-        (expected_transactions[0], address!("8C1aB379E7263d37049505626D2F975288F5dF12")),
-        (expected_transactions[1], address!("df918d9D02d5C7Df6825a7046dBF3D10F705Aa76")),
-        (expected_transactions[2], address!("5Be88952ce249024613e0961eB437f5E9424A90c")),
+        (expected_transactions[0], address!("0x8C1aB379E7263d37049505626D2F975288F5dF12")),
+        (expected_transactions[1], address!("0xdf918d9D02d5C7Df6825a7046dBF3D10F705Aa76")),
+        (expected_transactions[2], address!("0x5Be88952ce249024613e0961eB437f5E9424A90c")),
     ] {
         let tx = api.backend.mined_transaction_by_hash(expected.0).unwrap();
         assert_eq!(tx.inner.inner.signer(), expected.1);
