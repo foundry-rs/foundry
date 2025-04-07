@@ -218,7 +218,7 @@ mod tests {
     fn test_build_filter_basic() {
         let from_block = Some(BlockNumberOrTag::from(1337));
         let to_block = Some(BlockNumberOrTag::Latest);
-        let address = Address::from_str(ADDRESS.to_string()).ok();
+        let address = Some(ADDRESS);
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block, to_block },
             address: ValueOrArray::Value(address.unwrap()).into(),
