@@ -218,12 +218,6 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                             });
                         }
                     }
-                } else {
-                    // Collect deps from call args expressions
-                    // `Interface(address(new Contract()))`
-                    for call_arg_expr in call_args.exprs() {
-                        let _ = self.visit_expr(call_arg_expr);
-                    }
                 }
             }
             ExprKind::Member(member_expr, ident) => {
