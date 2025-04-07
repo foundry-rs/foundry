@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_build_filter_sig_with_arguments() {
-        let addr = address!(ADDRESS);
+        let addr = ADDRESS;
         let addr = U256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_build_filter_sig_with_skipped_arguments() {
-        let addr = address!(ADDRESS);
+        let addr = ADDRESS;
         let addr = U256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
