@@ -156,7 +156,7 @@ impl SelectorsSubcommands {
                 while let Some((contract, artifact)) = artifacts.next() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue
+                        continue;
                     }
 
                     sh_println!("Uploading selectors for {contract}...")?;
@@ -277,7 +277,7 @@ impl SelectorsSubcommands {
                 while let Some((contract, artifact)) = artifacts.next() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue
+                        continue;
                     }
 
                     sh_println!("{contract}")?;

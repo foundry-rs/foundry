@@ -4,7 +4,7 @@ use crate::{
     Cast, SimpleCast,
 };
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
-use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256, Bytes, U256};
+use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, Bytes, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
@@ -25,8 +25,8 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {

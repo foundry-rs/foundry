@@ -71,11 +71,11 @@ pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugSte
 
     let memory = get_memory_input_for_opcode(opcode, step.stack.as_ref(), step.memory.as_ref());
 
-    let is_out_of_gas = step.status == InstructionResult::OutOfGas ||
-        step.status == InstructionResult::MemoryOOG ||
-        step.status == InstructionResult::MemoryLimitOOG ||
-        step.status == InstructionResult::PrecompileOOG ||
-        step.status == InstructionResult::InvalidOperandOOG;
+    let is_out_of_gas = step.status == InstructionResult::OutOfGas
+        || step.status == InstructionResult::MemoryOOG
+        || step.status == InstructionResult::MemoryLimitOOG
+        || step.status == InstructionResult::PrecompileOOG
+        || step.status == InstructionResult::InvalidOperandOOG;
 
     DebugStep {
         stack,

@@ -73,7 +73,7 @@ impl TimeManager {
         if timestamp < *self.last_timestamp.read() {
             return Err(BlockchainError::TimestampError(format!(
                 "{timestamp} is lower than previous block's timestamp"
-            )))
+            )));
         }
         self.next_exact_timestamp.write().replace(timestamp);
         Ok(())

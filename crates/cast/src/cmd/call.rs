@@ -9,7 +9,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, handle_traces, parse_ether_value, TraceResult, get_state_overrides},
+    utils::{self, get_state_overrides, handle_traces, parse_ether_value, TraceResult},
 };
 use foundry_common::{ens::NameOrAddress, shell};
 use foundry_compilers::artifacts::EvmVersion;
@@ -172,7 +172,7 @@ impl CallArgs {
 
         // Store state_diff_overrides in a local variable to avoid partial move
         let state_diff_overrides = self.state_diff_overrides.clone();
-        
+
         let Self {
             to,
             mut sig,
@@ -229,7 +229,13 @@ impl CallArgs {
             .build_raw(sender)
             .await?;
 
-        let state_override = get_state_overrides(balance_overrides,nonce_overrides, code_overrides, state_overrides, &state_diff_overrides)?;
+        let state_override = get_state_overrides(
+            balance_overrides,
+            nonce_overrides,
+            code_overrides,
+            state_overrides,
+            &state_diff_overrides,
+        )?;
 
         if trace {
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
@@ -321,7 +327,7 @@ impl figment::Provider for CallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex};
+    use alloy_primitives::hex;
 
     #[test]
     fn can_parse_call_data() {

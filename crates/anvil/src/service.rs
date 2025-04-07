@@ -83,7 +83,7 @@ impl Future for NodeService {
                 pin.block_producer.queued.push_back(transactions);
             } else {
                 // no progress made
-                break
+                break;
             }
         }
 
@@ -154,7 +154,7 @@ impl Stream for BlockProducer {
                     Err(err) => {
                         panic!("miner task failed: {err}");
                     }
-                }
+                };
             } else {
                 pin.block_mining = Some(mining)
             }

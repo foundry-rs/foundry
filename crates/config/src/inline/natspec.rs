@@ -128,7 +128,7 @@ impl SolcParser {
                 let contract_data = &n.other;
                 if let Value::String(contract_name) = contract_data.get("name")? {
                     if contract_id.ends_with(contract_name) {
-                        return Some(n)
+                        return Some(n);
                     }
                 }
             }
@@ -170,7 +170,7 @@ impl SolcParser {
             let fn_data = &node.other;
             let fn_name: String = self.get_fn_name(fn_data)?;
             let (fn_docs, docs_src_line) = self.get_node_docs(fn_data)?;
-            return Some((fn_name, fn_docs, docs_src_line))
+            return Some((fn_name, fn_docs, docs_src_line));
         }
 
         None
@@ -199,7 +199,7 @@ impl SolcParser {
                         .unwrap_or_else(|| String::from("<no-src-line-available>"));
 
                     src_line.retain(|c| c != '"');
-                    return Some((comment.into(), src_line))
+                    return Some((comment.into(), src_line));
                 }
             }
         }
@@ -238,7 +238,7 @@ impl SolarParser {
                 .filter_map(|d| {
                     let s = d.symbol.as_str();
                     if !s.contains(INLINE_CONFIG_PREFIX) {
-                        return None
+                        return None;
                     }
                     match d.kind {
                         CommentKind::Line => Some(s.trim().to_string()),

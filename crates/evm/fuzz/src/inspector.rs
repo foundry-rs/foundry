@@ -76,9 +76,9 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.caller != call_generator.test_address &&
-                call.scheme == CallScheme::Call &&
-                !call_generator.used
+            if call.caller != call_generator.test_address
+                && call.scheme == CallScheme::Call
+                && !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
                 if let Some(tx) = call_generator.next(call.caller, call.target_address) {

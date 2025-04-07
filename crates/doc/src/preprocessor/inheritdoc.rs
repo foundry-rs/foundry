@@ -80,7 +80,7 @@ impl Inheritdoc {
                             // TODO: improve matching logic
                             if source.ident() == children.source.ident() {
                                 let key = format!("{}.{}", base, source.ident());
-                                return Some((key, children.comments.clone()))
+                                return Some((key, children.comments.clone()));
                             }
                         }
                     }

@@ -60,7 +60,7 @@ fn test_directory(base_name: &str, test_config: TestConfig) {
                             .try_into()
                             .unwrap_or_else(|err| panic!("Invalid config for {filename}: {err}"));
 
-                        return Some((filename.to_string(), config, lines.join("\n")))
+                        return Some((filename.to_string(), config, lines.join("\n")));
                     }
                 }
 

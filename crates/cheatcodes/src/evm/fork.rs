@@ -336,8 +336,8 @@ fn create_fork_request(
         evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
     }
     let fork = CreateFork {
-        enable_caching: !ccx.state.config.no_storage_caching &&
-            ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.config.no_storage_caching
+            && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         env: (*ccx.ecx.env).clone(),
         evm_opts,

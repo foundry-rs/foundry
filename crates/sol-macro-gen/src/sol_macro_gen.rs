@@ -350,9 +350,9 @@ edition = "2021"
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
-        let toml_consistent = cargo_toml_contents.contains(&name_check) &&
-            cargo_toml_contents.contains(&version_check) &&
-            cargo_toml_contents.contains(&alloy_dep_check);
+        let toml_consistent = cargo_toml_contents.contains(&name_check)
+            && cargo_toml_contents.contains(&version_check)
+            && cargo_toml_contents.contains(&alloy_dep_check);
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.

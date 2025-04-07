@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, Bytes, U256, map::FbBuildHasher};
+use alloy_primitives::{map::FbBuildHasher, Address, Bytes, U256};
 use alloy_rpc_types::state::StateOverride;
 use eyre::{Result, WrapErr};
 use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
@@ -22,10 +22,10 @@ use foundry_evm::{
     },
 };
 use std::{
+    collections::HashMap,
     fmt::Write,
     path::{Path, PathBuf},
     str::FromStr,
-    collections::HashMap,
 };
 use yansi::Paint;
 
@@ -161,24 +161,24 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum() ||
-            matches!(
+        return chain.is_arbitrum()
+            || matches!(
                 chain,
-                NamedChain::Acala |
-                    NamedChain::AcalaMandalaTestnet |
-                    NamedChain::AcalaTestnet |
-                    NamedChain::Etherlink |
-                    NamedChain::EtherlinkTestnet |
-                    NamedChain::Karura |
-                    NamedChain::KaruraTestnet |
-                    NamedChain::Mantle |
-                    NamedChain::MantleSepolia |
-                    NamedChain::MantleTestnet |
-                    NamedChain::Moonbase |
-                    NamedChain::Moonbeam |
-                    NamedChain::MoonbeamDev |
-                    NamedChain::Moonriver |
-                    NamedChain::Metis
+                NamedChain::Acala
+                    | NamedChain::AcalaMandalaTestnet
+                    | NamedChain::AcalaTestnet
+                    | NamedChain::Etherlink
+                    | NamedChain::EtherlinkTestnet
+                    | NamedChain::Karura
+                    | NamedChain::KaruraTestnet
+                    | NamedChain::Mantle
+                    | NamedChain::MantleSepolia
+                    | NamedChain::MantleTestnet
+                    | NamedChain::Moonbase
+                    | NamedChain::Moonbeam
+                    | NamedChain::MoonbeamDev
+                    | NamedChain::Moonriver
+                    | NamedChain::Metis
             );
     }
     false
@@ -394,7 +394,7 @@ pub async fn handle_traces(
                 .sources(sources)
                 .build();
             debugger.try_run_tui()?;
-            return Ok(())
+            return Ok(());
         }
 
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
@@ -472,7 +472,13 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf
 }
 
 /// Parse state overrides from command line arguments
-pub fn get_state_overrides(balance_overrides: Vec<String>, nonce_overrides: Vec<String>, code_overrides: Vec<String>, state_overrides: Vec<String>, state_diff_overrides: &[String]) -> eyre::Result<Option<StateOverride>> {
+pub fn get_state_overrides(
+    balance_overrides: Vec<String>,
+    nonce_overrides: Vec<String>,
+    code_overrides: Vec<String>,
+    state_overrides: Vec<String>,
+    state_diff_overrides: &[String],
+) -> eyre::Result<Option<StateOverride>> {
     let mut state_override = StateOverride::default();
 
     // Parse balance overrides
@@ -500,52 +506,59 @@ pub fn get_state_overrides(balance_overrides: Vec<String>, nonce_overrides: Vec<
     // Parse state overrides
     for override_str in state_overrides {
         let (addr, slot, value) = parse_address_slot_value(&override_str)?;
-        let state_map = state_override.entry(addr).or_default().state.get_or_insert_with(|| HashMap::with_hasher(FbBuildHasher::<32>::default()));
+        let state_map = state_override
+            .entry(addr)
+            .or_default()
+            .state
+            .get_or_insert_with(|| HashMap::with_hasher(FbBuildHasher::<32>::default()));
         state_map.insert(slot.into(), value.into());
     }
 
     // Parse state diff overrides
     for override_str in state_diff_overrides {
         let (addr, slot, value) = parse_address_slot_value(override_str)?;
-        let state_diff_map = state_override.entry(addr).or_default().state_diff.get_or_insert_with(|| HashMap::with_hasher(FbBuildHasher::<32>::default()));
+        let state_diff_map = state_override
+            .entry(addr)
+            .or_default()
+            .state_diff
+            .get_or_insert_with(|| HashMap::with_hasher(FbBuildHasher::<32>::default()));
         state_diff_map.insert(slot.into(), value.into());
     }
 
-    Ok(if state_override.is_empty() {
-        None
-    } else {
-        Some(state_override)
-    })
+    Ok(if state_override.is_empty() { None } else { Some(state_override) })
 }
 
 /// Parse an override string in the format address:value
 pub fn parse_address_value(s: &str) -> eyre::Result<(Address, U256)> {
-    let (addr, value) = s.split_once(':').ok_or_else(|| {
-        eyre::eyre!("Invalid override format. Expected <address>:<value>")
-    })?;
+    let (addr, value) = s
+        .split_once(':')
+        .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<value>"))?;
     Ok((addr.parse()?, value.parse()?))
 }
 
 /// Parse an override string in the format address:value
-pub fn parse_address_value_for_nonce( s: &str) -> eyre::Result<(Address, u64)> {
-    let (addr, value) = s.split_once(':').ok_or_else(|| {
-        eyre::eyre!("Invalid override format. Expected <address>:<value>")
-    })?;
+pub fn parse_address_value_for_nonce(s: &str) -> eyre::Result<(Address, u64)> {
+    let (addr, value) = s
+        .split_once(':')
+        .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<value>"))?;
     Ok((addr.parse()?, value.parse()?))
 }
 
 /// Parse an override string in the format address:slot:value
 pub fn parse_address_slot_value(s: &str) -> eyre::Result<(Address, U256, U256)> {
     let mut parts = s.split(':');
-    let addr = parts.next().ok_or_else(|| {
-        eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-    })?.parse()?;
-    let slot = parts.next().ok_or_else(|| {
-        eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-    })?.parse()?;
-    let value = parts.next().ok_or_else(|| {
-        eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-    })?.parse()?;
+    let addr = parts
+        .next()
+        .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"))?
+        .parse()?;
+    let slot = parts
+        .next()
+        .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"))?
+        .parse()?;
+    let value = parts
+        .next()
+        .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"))?
+        .parse()?;
     if parts.next().is_some() {
         return Err(eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"));
     }

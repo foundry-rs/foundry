@@ -152,7 +152,7 @@ impl fmt::Display for BaseCounterExample {
                     args
                 )?;
 
-                return Ok(())
+                return Ok(());
             }
         }
 

@@ -76,7 +76,7 @@ pub fn offset_to_line_column(content: &str, start: usize) -> (usize, usize) {
             line_counter += 1;
         }
         if offset > start {
-            return (line_counter, offset - start)
+            return (line_counter, offset - start);
         }
     }
 

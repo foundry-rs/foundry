@@ -9,17 +9,17 @@ use revm::interpreter::OpCode;
 pub const fn modifies_memory(opcode: OpCode) -> bool {
     matches!(
         opcode,
-        OpCode::EXTCODECOPY |
-            OpCode::MLOAD |
-            OpCode::MSTORE |
-            OpCode::MSTORE8 |
-            OpCode::MCOPY |
-            OpCode::CODECOPY |
-            OpCode::CALLDATACOPY |
-            OpCode::RETURNDATACOPY |
-            OpCode::CALL |
-            OpCode::CALLCODE |
-            OpCode::DELEGATECALL |
-            OpCode::STATICCALL
+        OpCode::EXTCODECOPY
+            | OpCode::MLOAD
+            | OpCode::MSTORE
+            | OpCode::MSTORE8
+            | OpCode::MCOPY
+            | OpCode::CODECOPY
+            | OpCode::CALLDATACOPY
+            | OpCode::RETURNDATACOPY
+            | OpCode::CALL
+            | OpCode::CALLCODE
+            | OpCode::DELEGATECALL
+            | OpCode::STATICCALL
     )
 }

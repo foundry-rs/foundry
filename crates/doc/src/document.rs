@@ -149,10 +149,10 @@ impl<'a> Iterator for ParseItemIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.next.take() {
-            return Some(next)
+            return Some(next);
         }
         if let Some(other) = self.other.as_mut() {
-            return other.next()
+            return other.next();
         }
 
         None
@@ -170,10 +170,10 @@ impl<'a> Iterator for ParseItemIterMut<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.next.take() {
-            return Some(next)
+            return Some(next);
         }
         if let Some(other) = self.other.as_mut() {
-            return other.next()
+            return other.next();
         }
 
         None
