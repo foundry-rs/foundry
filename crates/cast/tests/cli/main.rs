@@ -2221,6 +2221,37 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+// https://github.com/foundry-rs/foundry/issues/10189
+forgetest_async!(cast_call_custom_override, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_auto_impersonate(true)
+            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+    )
+    .await;
+
+    let http_endpoint = handle.http_endpoint();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+            "--override-balance",
+            "5FbDB2315678afecb367f032d93F642f64180aa3:1234",
+            "--override-nonce",
+            "5FbDB2315678afecb367f032d93F642f64180aa3:5",
+            // "--override-code",
+            // "5FbDB2315678afecb367f032d93F642f64180aa3:0x1234",
+            "--override-state",
+            "5FbDB2315678afecb367f032d93F642f64180aa3:0x1:1234",
+            // "--override-state-diff",
+            // "5FbDB2315678afecb367f032d93F642f64180aa3:0x2:1234",
+        ])
+        .assert_success();
+});
+
 // https://github.com/foundry-rs/foundry/issues/9541
 forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
     let (_api, handle) = anvil::spawn(
