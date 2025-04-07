@@ -59,8 +59,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
         let (etherscan, verify_args) = self.prepare_verify_request(&args, &context).await?;
 
-        if !args.skip_is_verified_check
-            && self.is_contract_verified(&etherscan, &verify_args).await?
+        if !args.skip_is_verified_check &&
+            self.is_contract_verified(&etherscan, &verify_args).await?
         {
             sh_println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
@@ -68,7 +68,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 verify_args.address.to_checksum(None)
             )?;
 
-            return Ok(());
+            return Ok(())
         }
 
         trace!(?verify_args, "submitting verification request");
@@ -99,14 +99,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         // specific for blockscout response
                         || resp.result == "Smart-contract already verified."
                     {
-                        return Ok(None);
+                        return Ok(None)
                     }
 
-                    if resp.result.starts_with("Unable to locate ContractCode at")
-                        || resp.result.starts_with("The address is not a smart contract")
+                    if resp.result.starts_with("Unable to locate ContractCode at") ||
+                        resp.result.starts_with("The address is not a smart contract")
                     {
                         warn!("{}", resp.result);
-                        return Err(eyre!("Could not detect the deployment."));
+                        return Err(eyre!("Could not detect the deployment."))
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
@@ -138,7 +138,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     retry: RETRY_CHECK_ON_VERIFY,
                     verifier: args.verifier,
                 };
-                return self.check(check_args).await;
+                return self.check(check_args).await
             }
         } else {
             sh_println!("Contract source code already verified")?;
@@ -175,20 +175,20 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 );
 
                 if resp.result == "Pending in queue" {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
+                    return Err(RetryError::Retry(eyre!("Verification is still pending...")))
                 }
 
                 if resp.result == "Unable to verify" {
-                    return Err(RetryError::Retry(eyre!("Unable to verify.")));
+                    return Err(RetryError::Retry(eyre!("Unable to verify.")))
                 }
 
                 if resp.result == "Already Verified" {
                     let _ = sh_println!("Contract source code already verified");
-                    return Ok(());
+                    return Ok(())
                 }
 
                 if resp.status == "0" {
-                    return Err(RetryError::Break(eyre!("Contract failed to verify.")));
+                    return Err(RetryError::Break(eyre!("Contract failed to verify.")))
                 }
 
                 if resp.result == "Pass - Verified" {
@@ -281,8 +281,8 @@ impl EtherscanVerificationProvider {
 
             // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
             // API key passed.
-            let is_etherscan = verifier_type.is_etherscan()
-                || (verifier_type.is_sourcify() && etherscan_key.is_some());
+            let is_etherscan = verifier_type.is_etherscan() ||
+                (verifier_type.is_sourcify() && etherscan_key.is_some());
             let base_url = if !is_etherscan {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_prefix("/api").unwrap_or(api_url)
@@ -373,10 +373,10 @@ impl EtherscanVerificationProvider {
                 read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
-            return Ok(Some(encoded_args[8..].into()));
+            return Ok(Some(encoded_args[8..].into()))
         }
         if args.guess_constructor_args {
-            return Ok(Some(self.guess_constructor_args(args, context).await?));
+            return Ok(Some(self.guess_constructor_args(args, context).await?))
         }
 
         Ok(args.constructor_args.clone())

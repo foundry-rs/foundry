@@ -174,7 +174,7 @@ impl RevertDecoder {
             }
 
             if string_decoded.is_some() {
-                return string_decoded;
+                return string_decoded
             }
 
             // Generic custom error.
@@ -188,11 +188,11 @@ impl RevertDecoder {
                     }
                 }
                 s
-            });
+            })
         }
 
         if string_decoded.is_some() {
-            return string_decoded;
+            return string_decoded
         }
 
         if let Some(status) = status {

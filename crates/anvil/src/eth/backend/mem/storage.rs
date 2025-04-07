@@ -576,10 +576,10 @@ impl MinedTransaction {
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer
-                    | GethDebugBuiltInTracerType::NoopTracer
-                    | GethDebugBuiltInTracerType::MuxTracer
-                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
+                    GethDebugBuiltInTracerType::PreStateTracer |
+                    GethDebugBuiltInTracerType::NoopTracer |
+                    GethDebugBuiltInTracerType::MuxTracer |
+                    GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }

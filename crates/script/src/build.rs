@@ -199,8 +199,8 @@ impl PreprocessedState {
                 if id.name != *name {
                     continue;
                 }
-            } else if contract.abi.as_ref().is_none_or(|abi| abi.is_empty())
-                || contract.bytecode.as_ref().is_none_or(|b| match &b.object {
+            } else if contract.abi.as_ref().is_none_or(|abi| abi.is_empty()) ||
+                contract.bytecode.as_ref().is_none_or(|b| match &b.object {
                     BytecodeObject::Bytecode(b) => b.is_empty(),
                     BytecodeObject::Unlinked(_) => false,
                 })

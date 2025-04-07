@@ -114,15 +114,15 @@ impl<'a> ContractVisitor<'a> {
                     .ok_or_else(|| eyre::eyre!("inline assembly block with no AST attribute"))?,
             ),
             // Simple statements
-            NodeType::Break
-            | NodeType::Continue
-            | NodeType::EmitStatement
-            | NodeType::RevertStatement
-            | NodeType::YulAssignment
-            | NodeType::YulBreak
-            | NodeType::YulContinue
-            | NodeType::YulLeave
-            | NodeType::YulVariableDeclaration => {
+            NodeType::Break |
+            NodeType::Continue |
+            NodeType::EmitStatement |
+            NodeType::RevertStatement |
+            NodeType::YulAssignment |
+            NodeType::YulBreak |
+            NodeType::YulContinue |
+            NodeType::YulLeave |
+            NodeType::YulVariableDeclaration => {
                 self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
@@ -395,10 +395,10 @@ impl<'a> ContractVisitor<'a> {
 
     fn visit_expression(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
-            NodeType::Assignment
-            | NodeType::UnaryOperation
-            | NodeType::Conditional
-            | NodeType::YulFunctionCall => {
+            NodeType::Assignment |
+            NodeType::UnaryOperation |
+            NodeType::Conditional |
+            NodeType::YulFunctionCall => {
                 self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
@@ -456,13 +456,13 @@ impl<'a> ContractVisitor<'a> {
                 Ok(())
             }
             // Does not count towards coverage
-            NodeType::FunctionCallOptions
-            | NodeType::Identifier
-            | NodeType::IndexAccess
-            | NodeType::IndexRangeAccess
-            | NodeType::Literal
-            | NodeType::YulLiteralValue
-            | NodeType::YulIdentifier => Ok(()),
+            NodeType::FunctionCallOptions |
+            NodeType::Identifier |
+            NodeType::IndexAccess |
+            NodeType::IndexRangeAccess |
+            NodeType::Literal |
+            NodeType::YulLiteralValue |
+            NodeType::YulIdentifier => Ok(()),
             _ => {
                 warn!("unexpected node type, expected an expression: {:?}", node.node_type);
                 Ok(())
@@ -473,20 +473,20 @@ impl<'a> ContractVisitor<'a> {
     fn visit_block_or_statement(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
             NodeType::Block => self.visit_block(node),
-            NodeType::Break
-            | NodeType::Continue
-            | NodeType::DoWhileStatement
-            | NodeType::EmitStatement
-            | NodeType::ExpressionStatement
-            | NodeType::ForStatement
-            | NodeType::IfStatement
-            | NodeType::InlineAssembly
-            | NodeType::Return
-            | NodeType::RevertStatement
-            | NodeType::TryStatement
-            | NodeType::VariableDeclarationStatement
-            | NodeType::YulVariableDeclaration
-            | NodeType::WhileStatement => self.visit_statement(node),
+            NodeType::Break |
+            NodeType::Continue |
+            NodeType::DoWhileStatement |
+            NodeType::EmitStatement |
+            NodeType::ExpressionStatement |
+            NodeType::ForStatement |
+            NodeType::IfStatement |
+            NodeType::InlineAssembly |
+            NodeType::Return |
+            NodeType::RevertStatement |
+            NodeType::TryStatement |
+            NodeType::VariableDeclarationStatement |
+            NodeType::YulVariableDeclaration |
+            NodeType::WhileStatement => self.visit_statement(node),
             // Skip placeholder statements as they are never referenced in source maps.
             NodeType::PlaceholderStatement => Ok(()),
             _ => {
@@ -535,15 +535,15 @@ impl<'a> ContractVisitor<'a> {
 /// Helper function to check if a given node is or contains any statement.
 fn has_statements(node: &Node) -> bool {
     match node.node_type {
-        NodeType::DoWhileStatement
-        | NodeType::EmitStatement
-        | NodeType::ExpressionStatement
-        | NodeType::ForStatement
-        | NodeType::IfStatement
-        | NodeType::RevertStatement
-        | NodeType::TryStatement
-        | NodeType::VariableDeclarationStatement
-        | NodeType::WhileStatement => true,
+        NodeType::DoWhileStatement |
+        NodeType::EmitStatement |
+        NodeType::ExpressionStatement |
+        NodeType::ForStatement |
+        NodeType::IfStatement |
+        NodeType::RevertStatement |
+        NodeType::TryStatement |
+        NodeType::VariableDeclarationStatement |
+        NodeType::WhileStatement => true,
         _ => node.attribute::<Vec<Node>>("statements").is_some_and(|s| !s.is_empty()),
     }
 }
