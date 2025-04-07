@@ -2381,11 +2381,11 @@ mod tests {
         let disassembled = Cast::disassemble(complete);
         assert!(disassembled.is_ok());
 
-        let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
+        let incomplete = &hex!("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
         let disassembled = Cast::disassemble(incomplete);
         assert!(disassembled.is_err());
 
-        let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
+        let complete = &hex!("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
         let disassembled = Cast::disassemble(complete);
         assert!(disassembled.is_ok());
     }
