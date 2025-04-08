@@ -20,7 +20,7 @@ use super::{
 static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
+const DUMMY_CREATE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
 
 fn stringify(data: &[u8]) -> String {
     if let Ok(s) = String::abi_decode(data, true) {
@@ -108,7 +108,12 @@ fn handle_revert(
         } else {
             (&stringify(&actual_revert), &stringify(expected_reason))
         };
-        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
+
+        if expected == actual {
+            return Ok(());
+        }
+
+        Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
     }
 }
 

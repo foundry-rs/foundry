@@ -1,5 +1,5 @@
 use crate::{init_tracing, util::lossy_string, TestCommand};
-use alloy_primitives::Address;
+use alloy_primitives::{address, Address};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_common::provider::{get_http_provider, RetryProvider};
@@ -7,7 +7,6 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -70,9 +69,9 @@ impl ScriptTester {
 
         Self {
             accounts_pub: vec![
-                Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
-                Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap(),
-                Address::from_str("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC").unwrap(),
+                address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+                address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+                address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
             ],
             accounts_priv: vec![
                 "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),

@@ -12,7 +12,7 @@ use foundry_test_utils::{
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, str::FromStr};
+use std::{env, fs, path::PathBuf};
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
@@ -152,7 +152,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: revert: failed
+Error: script failed: failed
 
 "#]]);
 });
@@ -168,7 +168,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: revert: failed
+Error: script failed: failed
 
 "#]]);
 });
@@ -702,13 +702,13 @@ forgetest_async!(can_deploy_script_private_key, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .load_addresses(&[address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906")])
         .await
         .add_sig("BroadcastTest", "deployPrivateKey()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(&[(
-            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
             3,
         )])
         .await;
@@ -731,13 +731,13 @@ forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .load_addresses(&[address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906")])
         .await
         .add_sig("BroadcastTest", "deployRememberKey()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(&[(
-            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
             2,
         )])
         .await;
@@ -749,7 +749,7 @@ forgetest_async!(can_deploy_script_remember_key_and_resume, |prj, cmd| {
 
     tester
         .add_deployer(0)
-        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .load_addresses(&[address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906")])
         .await
         .add_sig("BroadcastTest", "deployRememberKeyResume()")
         .simulate(ScriptOutcome::OkSimulation)
@@ -759,7 +759,7 @@ forgetest_async!(can_deploy_script_remember_key_and_resume, |prj, cmd| {
         .await
         .run(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(&[(
-            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
             1,
         )])
         .await
@@ -855,7 +855,7 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
 forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
-    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
 
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
@@ -881,7 +881,7 @@ forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
 forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
-    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
 
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
@@ -904,7 +904,7 @@ forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| 
 forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
-    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
 
     tester
         .add_deployer(0)
@@ -974,7 +974,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Prepare CREATE2 Deployer
-    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+    let addr = address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
     let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
     api.anvil_set_code(addr, code).await.unwrap();
 
@@ -2245,7 +2245,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 "#]]);
 
     assert!(!api
-        .get_code(address!("4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+        .get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
         .await
         .unwrap()
         .is_empty());
