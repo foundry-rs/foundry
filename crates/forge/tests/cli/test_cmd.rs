@@ -893,17 +893,17 @@ Compiler run successful!
 
 Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [PASS] testA() ([GAS])
-[FAIL: revert: testB failed] testB() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
 [PASS] testC() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 2 tests succeeded
 
@@ -917,16 +917,16 @@ Encountered a total of 2 failing tests, 2 tests succeeded
 No files changed, compilation skipped
 
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
@@ -2123,8 +2123,8 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
             <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
         </testcase>
         <testcase name="test_junit_revert_fail()" time="[..]">
-            <failure message="revert: Revert"/>
-            <system-out>[FAIL: revert: Revert] test_junit_revert_fail() ([GAS])</system-out>
+            <failure message="Revert"/>
+            <system-out>[FAIL: Revert] test_junit_revert_fail() ([GAS])</system-out>
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
@@ -3410,4 +3410,114 @@ Selectors successfully uploaded to OpenChain
 ...
 
 "#]]);
+});
+
+// tests `interceptInitcode` function
+forgetest_init!(intercept_initcode, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "InterceptInitcode.t.sol",
+        r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+
+contract SimpleContract {
+    uint256 public value;
+    constructor(uint256 _value) {
+        value = _value;
+    }
+}
+
+contract InterceptInitcodeTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function testInterceptRegularCreate() public {
+        // Set up interception
+        vm.interceptInitcode();
+
+        // Try to create a contract - this should revert with the initcode
+        bytes memory initcode;
+        try new SimpleContract(42) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode = interceptedInitcode;
+        }
+
+        // Verify the initcode contains the constructor argument
+        assertTrue(initcode.length > 0, "initcode should not be empty");
+
+        // The constructor argument is encoded as a 32-byte value at the end of the initcode
+        // We need to convert the last 32 bytes to uint256
+        uint256 value;
+        assembly {
+            value := mload(add(add(initcode, 0x20), sub(mload(initcode), 32)))
+        }
+        assertEq(value, 42, "initcode should contain constructor arg");
+    }
+
+    function testInterceptCreate2() public {
+        // Set up interception
+        vm.interceptInitcode();
+
+        // Try to create a contract with CREATE2 - this should revert with the initcode
+        bytes memory initcode;
+        try new SimpleContract(1337) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode = interceptedInitcode;
+        }
+
+        // Verify the initcode contains the constructor argument
+        assertTrue(initcode.length > 0, "initcode should not be empty");
+
+        // The constructor argument is encoded as a 32-byte value at the end of the initcode
+        uint256 value;
+        assembly {
+            value := mload(add(add(initcode, 0x20), sub(mload(initcode), 32)))
+        }
+        assertEq(value, 1337, "initcode should contain constructor arg");
+    }
+
+    function testInterceptMultiple() public {
+        // First interception
+        vm.interceptInitcode();
+        bytes memory initcode1;
+        try new SimpleContract(1) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode1 = interceptedInitcode;
+        }
+
+        // Second interception
+        vm.interceptInitcode();
+        bytes memory initcode2;
+        try new SimpleContract(2) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode2 = interceptedInitcode;
+        }
+
+        // Verify different initcodes
+        assertTrue(initcode1.length > 0, "first initcode should not be empty");
+        assertTrue(initcode2.length > 0, "second initcode should not be empty");
+
+        // Extract constructor arguments from both initcodes
+        uint256 value1;
+        uint256 value2;
+        assembly {
+            value1 := mload(add(add(initcode1, 0x20), sub(mload(initcode1), 32)))
+            value2 := mload(add(add(initcode2, 0x20), sub(mload(initcode2), 32)))
+        }
+        assertEq(value1, 1, "first initcode should contain first arg");
+        assertEq(value2, 2, "second initcode should contain second arg");
+    }
+}
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vvvvv"]).assert_success();
 });

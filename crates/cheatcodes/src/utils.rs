@@ -193,10 +193,31 @@ impl Cheatcode for resumeTracingCall {
     }
 }
 
-impl Cheatcode for setArbitraryStorageCall {
+impl Cheatcode for interceptInitcodeCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        if !state.intercept_next_create_call {
+            state.intercept_next_create_call = true;
+        } else {
+            bail!("vm.interceptInitcode() has already been called")
+        }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for setArbitraryStorage_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target } = self;
-        ccx.state.arbitrary_storage().mark_arbitrary(target);
+        ccx.state.arbitrary_storage().mark_arbitrary(target, false);
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for setArbitraryStorage_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, overwrite } = self;
+        ccx.state.arbitrary_storage().mark_arbitrary(target, *overwrite);
 
         Ok(Default::default())
     }
