@@ -30,7 +30,7 @@ resolver = "2"
 version = "1.0.0"
 edition = "2021"
 # Remember to update clippy.toml as well
-rust-version = "1.83"
+rust-version = "1.85"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
