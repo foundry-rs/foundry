@@ -52,6 +52,18 @@ pub struct BindArgs {
     #[arg(long, default_value = DEFAULT_CRATE_VERSION, value_name = "VERSION")]
     crate_version: String,
 
+    /// The description of the Rust crate to generate.
+    ///
+    /// This will be added to the package.description field in Cargo.toml.
+    #[arg(long, default_value = "", value_name = "DESCRIPTION")]
+    crate_description: String,
+
+    /// The license of the Rust crate to generate.
+    ///
+    /// This will be added to the package.license field in Cargo.toml.
+    #[arg(long, value_name = "LICENSE", default_value = "")]
+    crate_license: String,
+
     /// Generate the bindings as a module instead of a crate.
     #[arg(long)]
     module: bool,
@@ -206,7 +218,7 @@ impl BindArgs {
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         let mut bindings = self.get_solmacrogen(artifacts)?;
-        bindings.generate_bindings()?;
+        bindings.generate_bindings(!self.skip_extra_derives)?;
         sh_println!("Checking bindings for {} contracts", bindings.instances.len())?;
         bindings.check_consistency(
             &self.crate_name,
@@ -232,14 +244,21 @@ impl BindArgs {
             solmacrogen.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
+                &self.crate_description,
+                &self.crate_license,
                 bindings_root,
                 self.single_file,
                 self.alloy_version.clone(),
                 self.alloy_rev.clone(),
+                !self.skip_extra_derives,
             )?;
         } else {
             trace!(single_file = self.single_file, "generating module");
-            solmacrogen.write_to_module(bindings_root, self.single_file)?;
+            solmacrogen.write_to_module(
+                bindings_root,
+                self.single_file,
+                !self.skip_extra_derives,
+            )?;
         }
 
         Ok(())

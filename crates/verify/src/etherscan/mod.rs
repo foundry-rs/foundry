@@ -362,7 +362,6 @@ impl EtherscanVerificationProvider {
             let constructor = abi
                 .constructor()
                 .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
-            #[allow(deprecated)]
             let func = Function {
                 name: "constructor".to_string(),
                 inputs: constructor.inputs.clone(),

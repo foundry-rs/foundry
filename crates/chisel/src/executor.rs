@@ -133,7 +133,7 @@ impl SessionSource {
                 };
 
                 // Create a new runner
-                let mut runner = self.prepare_runner(final_pc).await;
+                let mut runner = self.prepare_runner(final_pc).await?;
 
                 // Return [ChiselResult] or bubble up error
                 runner.run(bytecode.into_owned())
@@ -311,7 +311,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A configured [ChiselRunner]
-    async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
+    async fn prepare_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env =
             self.config.evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
@@ -320,7 +320,7 @@ impl SessionSource {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
-                let backend = Backend::spawn(fork);
+                let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
                 backend
             }
@@ -346,7 +346,7 @@ impl SessionSource {
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone())
+        Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
 }
 
@@ -801,7 +801,7 @@ impl Type {
         }
 
         // Type members, like array, bytes etc
-        #[allow(clippy::single_match)]
+        #[expect(clippy::single_match)]
         match &self {
             Self::Access(inner, access) => {
                 if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {
@@ -1286,7 +1286,6 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
 /// Whether execution should continue after inspecting this expression
 #[inline]
 fn should_continue(expr: &pt::Expression) -> bool {
-    #[allow(clippy::match_like_matches_macro)]
     match expr {
         // assignments
         pt::Expression::PreDecrement(_, _) |       // --<inner>

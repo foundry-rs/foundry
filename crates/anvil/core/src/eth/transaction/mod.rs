@@ -83,7 +83,7 @@ pub fn transaction_request_to_typed(
         access_list.as_ref(),
         max_fee_per_blob_gas,
         blob_versioned_hashes.as_ref(),
-        sidecar,
+        sidecar.as_ref(),
         to,
     ) {
         // legacy transaction
@@ -132,7 +132,7 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, _, Some(_), Some(sidecar), to) => {
+        (Some(3), None, _, _, _, _, Some(_), _, to) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
@@ -149,9 +149,14 @@ pub fn transaction_request_to_typed(
                 access_list: access_list.unwrap_or_default(),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
             };
-            Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
-                TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
-            )))
+
+            if let Some(sidecar) = sidecar {
+                Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
+                    TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
+                )))
+            } else {
+                Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844(tx)))
+            }
         }
         _ => None,
     }
@@ -1524,7 +1529,7 @@ mod tests {
         let tx = TypedTransaction::Legacy(Signed::new_unchecked(
             tx,
             signature,
-            b256!("a517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
+            b256!("0xa517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
         ));
 
         assert_eq!(tx, decoded);
@@ -1576,21 +1581,21 @@ mod tests {
             _ => unreachable!(),
         };
 
-        assert_eq!(tx.tx().tx().to, address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064"));
+        assert_eq!(tx.tx().tx().to, address!("0x11E9CA82A3a762b4B5bd264d4173a242e7a77064"));
 
         assert_eq!(
             tx.tx().tx().blob_versioned_hashes,
             vec![
-                b256!("012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
-                b256!("0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
-                b256!("013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
-                b256!("01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
-                b256!("011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
+                b256!("0x012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
+                b256!("0x0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
+                b256!("0x013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
+                b256!("0x01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
+                b256!("0x011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
             ]
         );
 
         let from = tx.recover_signer().unwrap();
-        assert_eq!(from, address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
+        assert_eq!(from, address!("0xA83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
     }
 
     #[test]

@@ -434,7 +434,7 @@ impl Future for NodeHandle {
         }
 
         // poll the axum server handles
-        for server in pin.servers.iter_mut() {
+        for server in &mut pin.servers {
             if let Poll::Ready(res) = server.poll_unpin(cx) {
                 return Poll::Ready(res);
             }

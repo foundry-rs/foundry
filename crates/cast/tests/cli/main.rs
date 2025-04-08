@@ -8,8 +8,8 @@ use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
-        next_etherscan_api_key, next_http_rpc_endpoint, next_mainnet_etherscan_api_key,
-        next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
+        next_mainnet_etherscan_api_key, next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -199,7 +199,7 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
     cmd.cast_fuse()
@@ -500,7 +500,20 @@ casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
 
 "#]]);
 });
+// tests that `cast wallet public-key` correctly derives and outputs the public key
+casttest!(wallet_public_key_with_private_key, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "public-key",
+        "--raw-private-key",
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4
 
+"#]]);
+});
 // tests that `cast wallet private-key` with derivation path outputs the private key
 casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
     cmd.args([
@@ -529,7 +542,7 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
     cmd.cast_fuse()
@@ -585,7 +598,7 @@ casttest!(wallet_change_password, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key with initial password
     cmd.cast_fuse()
@@ -730,7 +743,7 @@ casttest!(rlp, |_prj, cmd| {
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
 casttest!(impl_slot, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the implementation slot (AAVE Proxy)
     cmd.args([
@@ -749,7 +762,7 @@ casttest!(impl_slot, |_prj, cmd| {
 });
 
 casttest!(impl_slot_beacon, |_prj, cmd| {
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the beacon slot
     cmd.args([
@@ -851,7 +864,7 @@ casttest!(calldata_array, |_prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "run",
         "-v",
@@ -899,7 +912,7 @@ casttest!(to_base, |_prj, cmd| {
 
 // tests that revert reason is only present if transaction has reverted.
 casttest!(receipt_revert_reason, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
     cmd.args([
@@ -931,7 +944,7 @@ to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
 
     // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
     cmd.cast_fuse()
@@ -1044,7 +1057,7 @@ access list:
 });
 
 casttest!(logs_topics, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1061,7 +1074,7 @@ casttest!(logs_topics, |_prj, cmd| {
 });
 
 casttest!(logs_topic_2, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1080,7 +1093,7 @@ casttest!(logs_topic_2, |_prj, cmd| {
 });
 
 casttest!(logs_sig, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1097,7 +1110,7 @@ casttest!(logs_sig, |_prj, cmd| {
 });
 
 casttest!(logs_sig_2, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args([
         "logs",
         "--rpc-url",
@@ -1268,7 +1281,7 @@ Error: Must specify a recipient address or contract code to deploy
 });
 
 casttest!(storage, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
         [r#"
 0x0000000000000000000000000000000000000000000000000000000000000000
@@ -1276,7 +1289,7 @@ casttest!(storage, |_prj, cmd| {
 "#]
     ]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.cast_fuse()
         .args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc])
         .assert_success()
@@ -1285,7 +1298,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
     let decimals_slot = "0x09";
     cmd.cast_fuse()
@@ -1296,7 +1309,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     let total_supply_slot = "0x01";
     let block_before = "4634747";
     let block_after = "4634748";
@@ -1308,7 +1321,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
-    let rpc = next_http_rpc_endpoint();
+    let rpc = next_http_archive_rpc_url();
     cmd.cast_fuse()
         .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_after])
         .assert_success()
@@ -1323,7 +1336,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1350,7 +1363,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1367,7 +1380,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1457,7 +1470,7 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
     cmd.args([
         "storage",
         "--rpc-url",
-        next_rpc_endpoint(NamedChain::Mainnet).as_str(),
+        next_http_archive_rpc_url().as_str(),
         "--block",
         "21034138",
         "--etherscan-api-key",
@@ -1674,6 +1687,70 @@ casttest!(block_number_hash, |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
+});
+
+// Tests that `cast --disable-block-gas-limit` commands are working correctly for BSC
+// <https://github.com/foundry-rs/foundry/pull/9996>
+// Equivalent transaction on Binance Smart Chain Testnet:
+// <https://testnet.bscscan.com/tx/0x0db4f279fc4d47dca1e6ace180f45f50c5bf12e2b968f210c217f57031e02744>
+casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
+    let bsc_testnet_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChainTestnet);
+
+    let latest_block_json: serde_json::Value = serde_json::from_str(
+        &cmd.args(["block", "--rpc-url", bsc_testnet_rpc_url.as_str(), "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy(),
+    )
+    .expect("Failed to parse latest block");
+
+    let latest_excessive_gas_limit_tx =
+        latest_block_json["transactions"].as_array().and_then(|txs| {
+            txs.iter()
+                .find(|tx| tx.get("gas").and_then(|gas| gas.as_str()) == Some("0x7fffffffffffffff"))
+        });
+
+    match latest_excessive_gas_limit_tx {
+        Some(tx) => {
+            let tx_hash =
+                tx.get("hash").and_then(|h| h.as_str()).expect("Transaction missing hash");
+
+            // If --disable-block-gas-limit is not provided, the transaction should fail as the gas
+            // limit exceeds the block gas limit.
+            cmd.cast_fuse()
+                .args(["run", "-v", tx_hash, "--quick", "--rpc-url", bsc_testnet_rpc_url.as_str()])
+                .assert_failure()
+                .stderr_eq(str![[r#"
+Error: EVM error; transaction validation error: caller gas limit exceeds the block gas limit
+
+"#]]);
+
+            // If --disable-block-gas-limit is provided, the transaction should succeed
+            // despite the gas limit exceeding the block gas limit.
+            cmd.cast_fuse()
+                .args([
+                    "run",
+                    "-v",
+                    tx_hash,
+                    "--quick",
+                    "--rpc-url",
+                    bsc_testnet_rpc_url.as_str(),
+                    "--disable-block-gas-limit",
+                ])
+                .assert_success()
+                .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+        }
+        None => {
+            eprintln!(
+                "Skipping test: No transaction with gas = 0x7fffffffffffffff found in the latest block."
+            );
+        }
+    }
 });
 
 casttest!(send_eip7702, async |_prj, cmd| {
@@ -2159,8 +2236,8 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 
     // send impersonated tx
     let tx = TransactionRequest::default()
-        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
-        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
         .with_input(
             Bytes::from_str(
                 "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
@@ -2182,7 +2259,7 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 casttest!(fetch_src_blockscout, |_prj, cmd| {
     let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
     cmd.args([
         "source",
@@ -2204,7 +2281,7 @@ contract WETH9 {
 });
 
 casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     let etherscan_api_key = next_mainnet_etherscan_api_key();
 
     cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])

@@ -194,6 +194,8 @@ pub struct Config {
     pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
+    /// whether to dynamically link tests
+    pub dynamic_test_linking: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
     /// where the gas snapshots are stored
@@ -576,14 +578,14 @@ impl Config {
     /// Default address for tx.origin
     ///
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
-    pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
+    pub const DEFAULT_SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
 
     /// Default create2 deployer
     pub const DEFAULT_CREATE2_DEPLOYER: Address =
-        address!("4e59b44847b379578588920ca78fbf26c0b4956c");
+        address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
 
     /// Loads the `Config` from the current directory.
     ///
@@ -1192,7 +1194,7 @@ impl Config {
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
         // Only instantiate Vyper if there are any Vyper files in the project.
-        if self.project_paths::<VyperLanguage>().input_files_iter().next().is_none() {
+        if !self.project_paths::<VyperLanguage>().has_input_files() {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
@@ -1200,7 +1202,6 @@ impl Config {
         } else {
             Vyper::new("vyper").ok()
         };
-
         Ok(vyper)
     }
 
@@ -2280,6 +2281,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            dynamic_test_linking: false,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
@@ -2564,10 +2566,7 @@ mod tests {
 
     #[test]
     fn default_sender() {
-        assert_eq!(
-            Config::DEFAULT_SENDER,
-            Address::from_str("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38").unwrap()
-        );
+        assert_eq!(Config::DEFAULT_SENDER, address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"));
     }
 
     #[test]
@@ -4578,7 +4577,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
-    #[allow(clippy::disallowed_macros)]
+    #[expect(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {
@@ -4604,7 +4603,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unknown_lints, non_local_definitions)]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {
@@ -4796,11 +4794,11 @@ mod tests {
                 config.labels,
                 AddressHashMap::from_iter(vec![
                     (
-                        Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984").unwrap(),
+                        address!("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
                         "Uniswap V3: Factory".to_string()
                     ),
                     (
-                        Address::from_str("0xC36442b4a4522E871399CD717aBDD847Ab11FE88").unwrap(),
+                        address!("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"),
                         "Uniswap V3: Positions NFT".to_string()
                     ),
                 ])

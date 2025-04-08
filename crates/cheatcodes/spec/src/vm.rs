@@ -1873,6 +1873,46 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
+
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
@@ -2160,6 +2200,10 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
 
+    /// Sign an EIP-7702 authorization for delegation for specific nonce
+    #[cheatcode(group = Scripting)]
+    function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
@@ -2167,6 +2211,10 @@ interface Vm {
     /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
+
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
@@ -2777,6 +2825,29 @@ interface Vm {
     /// Utility cheatcode to set arbitrary storage for given target address.
     #[cheatcode(group = Utilities)]
     function setArbitraryStorage(address target) external;
+
+    /// Utility cheatcode to set arbitrary storage for given target address and overwrite
+    /// any storage slots that have been previously set.
+    #[cheatcode(group = Utilities)]
+    function setArbitraryStorage(address target, bool overwrite) external;
+
+    /// Sorts an array in ascending order.
+    #[cheatcode(group = Utilities)]
+    function sort(uint256[] calldata array) external returns (uint256[] memory);
+
+    /// Randomly shuffles an array.
+    #[cheatcode(group = Utilities)]
+    function shuffle(uint256[] calldata array) external returns (uint256[] memory);
+
+    /// Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.
+    /// This allows type-safe access to the initcode payload that would be used for contract creation.
+    /// Example usage:
+    /// vm.interceptInitcode();
+    /// bytes memory initcode;
+    /// try new MyContract(param1, param2) { assert(false); }
+    /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
+    #[cheatcode(group = Utilities, safety = Unsafe)]
+    function interceptInitcode() external;
 }
 }
 

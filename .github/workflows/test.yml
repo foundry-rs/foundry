@@ -20,13 +20,6 @@ jobs:
     with:
       profile: default
     secrets: inherit
-    needs:
-      - codespell
-      - clippy
-      - rustfmt
-      - forge-fmt
-      - crate-checks
-      - deny
 
   docs:
     runs-on: ubuntu-latest

@@ -59,6 +59,8 @@ impl InitArgs {
         if let Some(template) = template {
             let template = if template.contains("://") {
                 template
+            } else if template.starts_with("github.com/") {
+                "https://".to_string() + &template
             } else {
                 "https://github.com/".to_string() + &template
             };
