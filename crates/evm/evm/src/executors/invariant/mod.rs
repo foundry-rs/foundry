@@ -392,7 +392,7 @@ impl Corpus {
                     }
                     return new_seq;
                 }
-
+                // TODO
                 // 3. Overwrite prefix with new or mutated sequence
                 // 4. Overwrite suffix with new or mutated sequence
                 // 5. Select idx to mutate and change its args according to its ABI
@@ -445,9 +445,13 @@ impl<'a> InvariantExecutor<'a> {
             if !corpus_dir.is_dir() {
                 foundry_common::fs::create_dir_all(corpus_dir)?;
             }
+        } else {
+            // TOOD rerun corpus
         }
+
         let generator = invariant_strategy.boxed();
 
+        // TODO check for none
         let mut corpus: Corpus =
             Corpus::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
 
@@ -507,7 +511,6 @@ impl<'a> InvariantExecutor<'a> {
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
                 // Cribbed from https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
                 if let Some(ref mut x) = call_result.edge_coverage {
-                    // TODO don't save when discarded == true
                     if !x.is_empty() {
                         let mut new_coverage = false;
 
@@ -553,15 +556,17 @@ impl<'a> InvariantExecutor<'a> {
                                     .expect("Time went backwards")
                                     .as_secs()
                                     .to_string();
-                                if let Err(err) = foundry_common::fs::create_dir_all(corpus_dir) {
-                                    error!(%err, "Failed to create invariant corpus dir");
-                                } else if let Err(err) = foundry_common::fs::write_json_file(
+                                if let Err(err) = foundry_common::fs::write_json_file(
                                     corpus_dir.join(timestamp).as_path(),
                                     &current_run.inputs,
                                 ) {
                                     error!(%err, "Failed to record call sequence");
                                 }
                             }
+
+                            // This includes reverting txs in the corpus and `can_continue` removes
+                            // them. We want this as it is new coverage
+                            // and may help reach the other branch.
                             corpus.insert(current_run.inputs.clone());
                         }
                     }
@@ -639,10 +644,14 @@ impl<'a> InvariantExecutor<'a> {
                     current_run.depth += 1;
                 }
 
-                // Generates the next call from the run using the recently updated
-                // dictionary if initial seq isn't `depth` long.
-                if discarded || (current_run.depth as usize > initial_seq.len().saturating_sub(1)) {
-                    // TODO rng.rand_ratio(X) to occasionally intermix new txs
+                // To occasionally intermix new txs
+                let generate_new = self.runner.rng().gen_ratio(1, 10);
+                // Initial sequence's length is less than depth
+                let must_generate =
+                    (current_run.depth as usize > initial_seq.len().saturating_sub(1));
+
+                if discarded || must_generate || generate_new {
+                    // Generates the next call from the run using the recently updated dictionary
                     current_run.inputs.push(
                         generator
                             .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)

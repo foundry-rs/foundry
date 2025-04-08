@@ -404,7 +404,7 @@ impl InspectorStack {
     /// Set whether to enable the edge coverage collector.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
-        self.edge_coverage = yes.then(Default::default);
+        self.edge_coverage = yes.then(EdgeCovInspector::new); // TODO configurable edge size?
     }
 
     /// Set whether to enable call isolation.
