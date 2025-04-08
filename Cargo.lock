@@ -1777,7 +1777,7 @@ dependencies = [
 [[package]]
 name = "assertion-executor"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-executor.git?branch=chore%2Fbump-deps#9890f4871f9f165d33bc3db8082aff02baef7e3b"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-executor.git?rev=1cbbf30#1cbbf307bd0da493530fe3cb05bb11699294209c"
 dependencies = [
  "alloy",
  "alloy-consensus 0.11.1",
@@ -4455,7 +4455,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.12",
- "tokio",
  "toml 0.8.20",
  "tracing",
  "vergen",
