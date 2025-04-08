@@ -296,11 +296,11 @@ mod tests {
 
     #[test]
     fn can_parse_oz_dep() {
-        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable").unwrap();
-        assert_eq!(dep.name, "contracts-upgradeable");
+        let dep = Dependency::from_str("@openzeppelin/openzeppelin-contracts-upgradeable").unwrap();
+        assert_eq!(dep.name, "openzeppelin-contracts-upgradeable");
         assert_eq!(
             dep.url,
-            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+            Some("https://github.com/openzeppelin/openzeppelin-contracts-upgradeable".to_string())
         );
         assert_eq!(dep.tag, None);
         assert_eq!(dep.alias, None);
@@ -308,11 +308,11 @@ mod tests {
 
     #[test]
     fn can_parse_oz_dep_tag() {
-        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable@v1").unwrap();
-        assert_eq!(dep.name, "contracts-upgradeable");
+        let dep = Dependency::from_str("@openzeppelin/openzeppelin-contracts-upgradeable@v1").unwrap();
+        assert_eq!(dep.name, "openzeppelin-contracts-upgradeable");
         assert_eq!(
             dep.url,
-            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+            Some("https://github.com/openzeppelin/openzeppelin-contracts-upgradeable".to_string())
         );
         assert_eq!(dep.tag, Some("v1".to_string()));
         assert_eq!(dep.alias, None);
