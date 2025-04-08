@@ -336,7 +336,9 @@ impl ChiselDispatcher {
                     self.session.id = None;
                     DispatchResult::CommandSuccess(Some(String::from("Cleared chisel cache!")))
                 }
-                Err(_) => DispatchResult::CommandFailed(Self::make_error("Failed to clear cache! Check file permissions or disk space.")),
+                Err(_) => DispatchResult::CommandFailed(Self::make_error(
+                    "Failed to clear cache! Check file permissions or disk space.",
+                )),
             },
             ChiselCommand::Fork => {
                 if args.is_empty() || args[0].trim().is_empty() {
@@ -374,7 +376,9 @@ impl ChiselDispatcher {
 
                 // Check validity of URL
                 if Url::parse(&fork_url).is_err() {
-                    return DispatchResult::CommandFailed(Self::make_error("Invalid fork URL! Please provide a valid RPC endpoint URL."))
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "Invalid fork URL! Please provide a valid RPC endpoint URL.",
+                    ))
                 }
 
                 // Create success message before moving the fork_url
@@ -637,7 +641,9 @@ impl ChiselDispatcher {
             }
             ChiselCommand::Exec => {
                 if args.is_empty() {
-                    return DispatchResult::CommandFailed(Self::make_error("No command supplied! Please provide a valid command after '!'."))
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "No command supplied! Please provide a valid command after '!'.",
+                    ))
                 }
 
                 let mut cmd = Command::new(args[0]);
