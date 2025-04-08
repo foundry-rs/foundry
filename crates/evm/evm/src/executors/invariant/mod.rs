@@ -721,6 +721,11 @@ impl<'a> InvariantExecutor<'a> {
             .setup_contracts
             .iter()
             .filter(|&(addr, (identifier, _))| {
+                // Include to address if explicitly set as target.
+                if *addr == to && selected.contains(&to) {
+                    return true;
+                }
+
                 *addr != to &&
                     *addr != CHEATCODE_ADDRESS &&
                     *addr != HARDHAT_CONSOLE_ADDRESS &&
