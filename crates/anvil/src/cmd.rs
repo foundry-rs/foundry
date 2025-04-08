@@ -47,6 +47,10 @@ pub struct NodeArgs {
     #[arg(long, value_name = "NUM")]
     pub timestamp: Option<u64>,
 
+    /// The number of the genesis block.
+    #[arg(long, value_name = "NUM")]
+    pub number: Option<u64>,
+
     /// BIP39 mnemonic phrase used for generating accounts.
     /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used.
     #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
@@ -223,13 +227,6 @@ impl NodeArgs {
             None => None,
         };
 
-        // --chain-id takes precedence over the genesis config
-        // if both are missing, use the default chain id
-        // <https://github.com/foundry-rs/foundry/issues/10059>
-        let chain_id = self
-            .evm
-            .chain_id
-            .map_or(self.init.as_ref().map_or(CHAIN_ID, |g| g.config.chain_id), |c| c.into());
         Ok(NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
@@ -241,11 +238,17 @@ impl NodeArgs {
             .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
+            .with_genesis_block_number(self.number)
             .with_port(self.port)
             .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
                 (Some(block), None) => Some(ForkChoice::Block(block)),
                 (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
-                _ => self.evm.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block),
+                _ => self
+                    .evm
+                    .fork_url
+                    .as_ref()
+                    .and_then(|f| f.block)
+                    .map(|num| ForkChoice::Block(num as i128)),
             })
             .with_fork_headers(self.evm.fork_headers)
             .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
@@ -261,11 +264,12 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(Some(chain_id))
+            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
             .with_print_logs(!self.evm.disable_console_log)
+            .with_print_traces(self.evm.print_traces)
             .with_auto_impersonate(self.evm.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm.code_size_limit)
@@ -434,9 +438,17 @@ pub struct AnvilEvmArgs {
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
+    /// If a negative the the given value is subtracted from the `latest` block number.
+    ///
     /// See --fork-url.
-    #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
-    pub fork_block_number: Option<u64>,
+    #[arg(
+        long,
+        requires = "fork_url",
+        value_name = "BLOCK",
+        help_heading = "Fork config",
+        allow_hyphen_values = true
+    )]
+    pub fork_block_number: Option<i128>,
 
     /// Fetch state from a specific transaction hash over a remote endpoint.
     ///
@@ -563,6 +575,10 @@ pub struct AnvilEvmArgs {
     /// Disable printing of `console.log` invocations to stdout.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
+
+    /// Enable printing of traces for executed transactions and `eth_call` to stdout.
+    #[arg(long, visible_alias = "enable-trace-printing")]
+    pub print_traces: bool,
 
     /// Enables automatic impersonation on startup. This allows any transaction sender to be
     /// simulated as different accounts, which is useful for testing contract behavior.

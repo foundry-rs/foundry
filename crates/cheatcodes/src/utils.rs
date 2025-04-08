@@ -194,6 +194,18 @@ impl Cheatcode for resumeTracingCall {
     }
 }
 
+impl Cheatcode for interceptInitcodeCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        if !state.intercept_next_create_call {
+            state.intercept_next_create_call = true;
+        } else {
+            bail!("vm.interceptInitcode() has already been called")
+        }
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for setArbitraryStorage_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target } = self;

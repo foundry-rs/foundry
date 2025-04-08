@@ -38,7 +38,7 @@ macro_rules! test_repro {
             #[tokio::test(flavor = "multi_thread")]
             $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
-                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test();
+                let mut $res = repro_config($issue_number, $should_fail, $sender.into()).await.test().unwrap();
                 $e
             }
         }

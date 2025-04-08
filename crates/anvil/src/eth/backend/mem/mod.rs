@@ -23,6 +23,7 @@ use crate::{
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
+        sign::build_typed_transaction,
         util::get_precompiles_for,
     },
     inject_precompiles,
@@ -35,13 +36,13 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    transaction::Recovered, Account, Header, Receipt, ReceiptWithBloom, Signed,
+    transaction::Recovered, Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
-use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
+use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, EthereumWallet,
-    UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
@@ -50,6 +51,7 @@ use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
+    simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
         filter::TraceFilter,
@@ -64,13 +66,15 @@ use alloy_rpc_types::{
     FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+use alloy_signer::Signature;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        optimism::DepositTransaction, DepositReceipt, MaybeImpersonatedTransaction,
-        PendingTransaction, ReceiptResponse, TransactionInfo, TypedReceipt, TypedTransaction,
+        optimism::DepositTransaction, transaction_request_to_typed, DepositReceipt,
+        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
+        TypedReceipt, TypedTransaction,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -101,15 +105,18 @@ use revm::{
     database::WrapDatabaseRef,
     primitives::{HashMap, OptimismFields, ResultAndState},
 };
+use revm_inspectors::transfer::TransferInspector;
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
+    ops::Not,
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
+
 pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
@@ -196,6 +203,7 @@ pub struct Backend {
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
+    print_traces: bool,
     odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
@@ -224,6 +232,7 @@ impl Backend {
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         print_logs: bool,
+        print_traces: bool,
         odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
@@ -328,6 +337,7 @@ impl Backend {
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
+            print_traces,
             odyssey,
             prune_state_history_config,
             transaction_block_keeper,
@@ -600,7 +610,7 @@ impl Backend {
         fork_block_number: u64,
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
-        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
 
         let mut env = self.env.read().clone();
         let (forked_db, client_fork_config) =
@@ -1084,6 +1094,10 @@ impl Backend {
         drop(evm);
         inspector.print_logs();
 
+        if self.print_traces {
+            inspector.print_traces();
+        }
+
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
     }
 
@@ -1124,6 +1138,7 @@ impl Backend {
             blob_gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
+            print_traces: self.print_traces,
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
         };
@@ -1207,6 +1222,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
+                    print_traces: self.print_traces,
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                 };
@@ -1453,15 +1469,231 @@ impl Backend {
         env
     }
 
-    /// Builds [`Inspector`] with the configured options
+    /// Builds [`Inspector`] with the configured options.
     fn build_inspector(&self) -> Inspector {
         let mut inspector = Inspector::default();
 
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
+        if self.print_traces {
+            inspector = inspector.with_trace_printer();
+        }
 
         inspector
+    }
+
+    /// Simulates the payload by executing the calls in request.
+    pub async fn simulate(
+        &self,
+        request: SimulatePayload,
+        block_request: Option<BlockRequest>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
+        self.with_database_at(block_request, |state, mut block_env| {
+            let SimulatePayload {
+                block_state_calls,
+                trace_transfers,
+                validation,
+                return_full_transactions,
+            } = request;
+            let mut cache_db = CacheDB::new(state);
+            let mut block_res = Vec::with_capacity(block_state_calls.len());
+
+            // execute the blocks
+            for block in block_state_calls {
+                let SimBlock { block_overrides, state_overrides, calls } = block;
+                let mut call_res = Vec::with_capacity(calls.len());
+                let mut log_index = 0;
+                let mut gas_used = 0;
+                let mut transactions = Vec::with_capacity(calls.len());
+                // apply state overrides before executing the transactions
+                if let Some(state_overrides) = state_overrides {
+                    state::apply_cached_db_state_override(state_overrides, &mut cache_db)?;
+                }
+
+                // apply block overrides
+                if let Some(overrides) = block_overrides {
+                    if let Some(number) = overrides.number {
+                        block_env.number = number.saturating_to();
+                    }
+                    if let Some(difficulty) = overrides.difficulty {
+                        block_env.difficulty = difficulty;
+                    }
+                    if let Some(time) = overrides.time {
+                        block_env.timestamp = U256::from(time);
+                    }
+                    if let Some(gas_limit) = overrides.gas_limit {
+                        block_env.gas_limit = U256::from(gas_limit);
+                    }
+                    if let Some(coinbase) = overrides.coinbase {
+                        block_env.coinbase = coinbase;
+                    }
+                    if let Some(random) = overrides.random {
+                        block_env.prevrandao = Some(random);
+                    }
+                    if let Some(base_fee) = overrides.base_fee {
+                        block_env.basefee = base_fee.saturating_to();
+                    }
+                }
+
+                // execute all calls in that block
+                for (req_idx, request) in calls.into_iter().enumerate() {
+                    let fee_details = FeeDetails::new(
+                        request.gas_price,
+                        request.max_fee_per_gas,
+                        request.max_priority_fee_per_gas,
+                        request.max_fee_per_blob_gas,
+                    )?
+                    .or_zero_fees();
+
+                    let mut env = self.build_call_env(
+                        WithOtherFields::new(request.clone()),
+                        fee_details,
+                        block_env.clone(),
+                    );
+
+                    // Always disable EIP-3607
+                    env.cfg.disable_eip3607 = true;
+
+                    if !validation {
+                        env.cfg.disable_base_fee = !validation;
+                        env.block.basefee = U256::from(0);
+                    }
+
+                    // transact
+                    let ResultAndState { result, state } = if trace_transfers {
+                        // prepare inspector to capture transfer inside the evm so they are
+                        // recorded and included in logs
+                        let mut inspector = TransferInspector::new(false).with_logs(true);
+                        let mut evm =
+                            self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
+                        trace!(target: "backend", env=?evm.context.env(), spec=?evm.spec_id(), "simulate evm env");
+                        evm.transact()?
+                    } else {
+                        let mut inspector = self.build_inspector();
+                        let mut evm =
+                            self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
+                        trace!(target: "backend", env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
+                        evm.transact()?
+                    };
+                    trace!(target: "backend", ?result, ?request, "simulate call");
+
+                    // commit the transaction
+                    cache_db.commit(state);
+                    gas_used += result.gas_used();
+
+                    // TODO: this is likely incomplete
+                    // create the transaction from a request
+                    let from = request.from.unwrap_or_default();
+                    let request =
+                        transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
+                    let tx = build_typed_transaction(
+                        request,
+                        Signature::new(Default::default(), Default::default(), false),
+                    )?;
+                    let rpc_tx = transaction_build(
+                        None,
+                        MaybeImpersonatedTransaction::impersonated(tx, from),
+                        None,
+                        None,
+                        Some(block_env.basefee.to()),
+                    );
+                    transactions.push(rpc_tx);
+
+                    let return_data = result.output().cloned().unwrap_or_default();
+                    let sim_res = SimCallResult {
+                        return_data,
+                        gas_used: result.gas_used(),
+                        status: result.is_success(),
+                        error: result.is_success().not().then(|| {
+                            alloy_rpc_types::simulate::SimulateError {
+                                code: -3200,
+                                message: "execution failed".to_string(),
+                            }
+                        }),
+                        logs: result
+                            .into_logs()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, log)| Log {
+                                inner: log,
+                                block_number: Some(block_env.number.to()),
+                                block_timestamp: Some(block_env.timestamp.to()),
+                                transaction_index: Some(req_idx as u64),
+                                log_index: Some((idx + log_index) as u64),
+                                removed: false,
+
+                                block_hash: None,
+                                transaction_hash: None,
+                            })
+                            .collect(),
+                    };
+
+                    log_index += sim_res.logs.len();
+                    call_res.push(sim_res);
+                }
+
+                let header = Header {
+                    logs_bloom: Default::default(),
+                    transactions_root: Default::default(),
+                    receipts_root: Default::default(),
+                    parent_hash: Default::default(),
+                    ommers_hash: Default::default(),
+                    beneficiary: block_env.coinbase,
+                    state_root: Default::default(),
+                    difficulty: Default::default(),
+                    number: block_env.number.to(),
+                    gas_limit: block_env.gas_limit.to(),
+                    gas_used,
+                    timestamp: block_env.timestamp.to(),
+                    extra_data: Default::default(),
+                    mix_hash: Default::default(),
+                    nonce: Default::default(),
+                    base_fee_per_gas: Some(block_env.basefee.to()),
+                    withdrawals_root: None,
+                    blob_gas_used: None,
+                    excess_blob_gas: None,
+                    parent_beacon_block_root: None,
+                    requests_hash: None,
+                };
+                let mut block = alloy_rpc_types::Block {
+                    header: AnyRpcHeader {
+                        hash: header.hash_slow(),
+                        inner: header.into(),
+                        total_difficulty: None,
+                        size: None,
+                    },
+                    uncles: vec![],
+                    transactions: BlockTransactions::Full(transactions),
+                    withdrawals: None,
+                };
+
+                if !return_full_transactions {
+                    block.transactions.convert_to_hashes();
+                }
+
+                let simulated_block = SimulatedBlock {
+                    inner: AnyRpcBlock::new(WithOtherFields::new(block)),
+                    calls: call_res,
+                };
+
+                // update block env
+                block_env.number += U256::from(1);
+                block_env.timestamp += U256::from(12);
+                block_env.basefee = U256::from(
+                    simulated_block
+                        .inner
+                        .header
+                        .next_block_base_fee(BaseFeeParams::ethereum())
+                        .unwrap_or_default(),
+                );
+
+                block_res.push(simulated_block);
+            }
+
+            Ok(block_res)
+        })
+        .await?
     }
 
     pub fn call_with_state(
@@ -1487,6 +1719,11 @@ impl Backend {
         };
         drop(evm);
         inspector.print_logs();
+
+        if self.print_traces {
+            inspector.into_print_traces();
+        }
+
         Ok((exit_reason, out, gas_used as u128, state))
     }
 

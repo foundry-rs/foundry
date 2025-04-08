@@ -300,7 +300,7 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() 
 // <https://github.com/foundry-rs/foundry/issues/9924>
 #[tokio::test]
 async fn can_bypass_sidecar_requirement() {
-    tracing_subscriber::fmt::init();
+    crate::init_tracing();
     let node_config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Cancun.into()))
         .with_auto_impersonate(true);

@@ -291,7 +291,7 @@ impl BlockchainStorage {
             difficulty: env.block.difficulty,
             blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
             excess_blob_gas: env.block.get_blob_excess_gas(),
-
+            number: genesis_number,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
