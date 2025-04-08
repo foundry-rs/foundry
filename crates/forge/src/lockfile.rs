@@ -155,7 +155,7 @@ impl<'a> Lockfile<'a> {
 
     /// Writes the lockfile to the project root.
     pub fn write(&self) -> Result<()> {
-        foundry_common::fs::write_json_file(&self.lockfile_path, &self.deps)?;
+        foundry_common::fs::write_pretty_json_file(&self.lockfile_path, &self.deps)?;
         trace!(at= ?self.lockfile_path, "wrote lockfile");
 
         Ok(())
