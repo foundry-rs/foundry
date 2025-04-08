@@ -47,6 +47,10 @@ pub struct NodeArgs {
     #[arg(long, value_name = "NUM")]
     pub timestamp: Option<u64>,
 
+    /// The number of the genesis block.
+    #[arg(long, value_name = "NUM")]
+    pub number: Option<u64>,
+
     /// BIP39 mnemonic phrase used for generating accounts.
     /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used.
     #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
@@ -234,6 +238,7 @@ impl NodeArgs {
             .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
+            .with_genesis_block_number(self.number)
             .with_port(self.port)
             .with_fork_choice(match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
                 (Some(block), None) => Some(ForkChoice::Block(block)),

@@ -105,6 +105,8 @@ pub struct NodeConfig {
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
+    /// Genesis block number
+    pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
@@ -430,6 +432,7 @@ impl Default for NodeConfig {
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
             genesis_timestamp: None,
+            genesis_block_number: None,
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
@@ -669,9 +672,20 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the genesis number
+    #[must_use]
+    pub fn with_genesis_block_number<U: Into<u64>>(mut self, number: Option<U>) -> Self {
+        if let Some(number) = number {
+            self.genesis_block_number = Some(number.into());
+        }
+        self
+    }
+
     /// Returns the genesis number
     pub fn get_genesis_number(&self) -> u64 {
-        self.genesis.as_ref().and_then(|g| g.number).unwrap_or(0)
+        self.genesis_block_number
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.number))
+            .unwrap_or(0)
     }
 
     /// Sets the hardfork

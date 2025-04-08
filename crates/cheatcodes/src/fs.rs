@@ -371,19 +371,22 @@ fn deploy_code(
         revm::primitives::CreateScheme::Create
     };
 
-    let address = executor
-        .exec_create(
-            CreateInputs {
-                caller: ccx.caller,
-                scheme,
-                value: value.unwrap_or(U256::ZERO),
-                init_code: bytecode.into(),
-                gas_limit: ccx.gas_limit,
-            },
-            ccx,
-        )?
-        .address
-        .ok_or_else(|| fmt_err!("contract creation failed"))?;
+    let outcome = executor.exec_create(
+        CreateInputs {
+            caller: ccx.caller,
+            scheme,
+            value: value.unwrap_or(U256::ZERO),
+            init_code: bytecode.into(),
+            gas_limit: ccx.gas_limit,
+        },
+        ccx,
+    )?;
+
+    if !outcome.result.result.is_ok() {
+        return Err(crate::Error::from(outcome.result.output))
+    }
+
+    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
 
     Ok(address.abi_encode())
 }
