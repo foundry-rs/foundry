@@ -353,4 +353,4 @@ path-slash = "0.2"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "5264e51" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "6144088" }
