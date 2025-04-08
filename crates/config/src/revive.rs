@@ -1,8 +1,7 @@
 use foundry_compilers::{multi::MultiCompilerLanguage, ProjectPathsConfig};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-use crate::Config;
+use crate::{Config, SolcReq};
 
 /// Filename for Revive cache
 pub const REVIVE_SOLIDITY_FILES_CACHE_FILENAME: &str = "revive-solidity-files-cache.json";
@@ -17,10 +16,9 @@ pub const CONTRACT_SIZE_LIMIT: usize = 250_000;
 pub struct ReviveConfig {
     /// Enable compilation using revive
     pub revive_compile: bool,
-    /// The revive path
-    pub revive_path: Option<PathBuf>,
-    /// solc path to use along the revive compiler
-    pub solc_path: Option<PathBuf>,
+
+    /// The revive compiler
+    pub revive: Option<SolcReq>,
 }
 
 impl ReviveConfig {

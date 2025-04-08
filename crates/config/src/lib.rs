@@ -1255,20 +1255,20 @@ impl Config {
 
     /// Returns the Revive [Resolc] compiler.
     pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
-        if let Some(path) = &self.revive.solc_path {
-            if !path.is_file() {
-                return Err(SolcError::msg(format!("`solc` {} does not exist", path.display())));
+        match &self.revive.revive {
+            Some(SolcReq::Local(path)) => {
+                if !path.is_file() {
+                    return Err(SolcError::msg(format!(
+                        "`revive` {} does not exist",
+                        path.display()
+                    )));
+                }
+                Resolc::new(path, self.solc_compiler()?)
             }
-            let solc = Solc::new(path)?;
-            Resolc::new(
-                self.revive.revive_path.clone().unwrap_or("resolc".into()),
-                SolcCompiler::Specific(solc),
-            )
-        } else {
-            Resolc::new(
-                self.revive.revive_path.clone().unwrap_or("resolc".into()),
-                self.solc_compiler()?,
-            )
+            Some(_) => {
+                Err(SolcError::msg("`revive` selecting by versions is not supported".to_string()))
+            }
+            None => Resolc::new("resolc", self.solc_compiler()?),
         }
     }
 

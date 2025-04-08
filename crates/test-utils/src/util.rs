@@ -1021,7 +1021,7 @@ fn test_redactions() -> snapbox::Redactions {
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
-            ("[REVIVE_VERSION]", r"Resolc and Solc( version)? \d+.\d+.\d+"),
+            ("[REVIVE_VERSION]", r"Resolc v\d+\.\d+\.\d+(-[a-zA-Z0-9\.]+)?, Solc v\d+.\d+.\d+"),
         ];
         for (placeholder, re) in redactions {
             r.insert(placeholder, Regex::new(re).expect(re)).expect(re);

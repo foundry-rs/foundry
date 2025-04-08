@@ -22,6 +22,7 @@ mod inline_config;
 mod multi_script;
 mod odyssey;
 mod revive_build;
+mod revive_config;
 mod revive_create;
 mod revive_inspect;
 mod script;

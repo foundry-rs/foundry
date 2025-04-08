@@ -1290,8 +1290,7 @@ exclude = []
   "compilation_restrictions": [],
   "revive": {
     "revive_compile": false,
-    "revive_path": null,
-    "solc_path": null
+    "revive": null
   }
 }
 

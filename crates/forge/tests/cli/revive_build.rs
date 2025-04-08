@@ -14,7 +14,7 @@ forgetest!(code_size_exceeds_limit_with_revive, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
     cmd.args(["build", "--revive-compile", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] [ELAPSED]
+[REVIVE_VERSION] Finished [ELAPSED]
 Compiler run successful!
 
 ╭---------------+------------------+-------------------+--------------------+---------------------╮

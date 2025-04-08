@@ -1,8 +1,6 @@
 use clap::Parser;
-use foundry_config::revive::ReviveConfig;
+use foundry_config::{revive::ReviveConfig, SolcReq};
 use serde::Serialize;
-use std::path::PathBuf;
-
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Revive configuration")]
 /// Compiler options for revive
@@ -16,21 +14,19 @@ pub struct ReviveOpts {
     )]
     pub revive_compile: Option<bool>,
 
-    #[clap(
-        long = "revive-path",
-        help = "Specify a revive path to be used",
-        value_name = "REVIVE_PATH"
+    /// Specify the revive version, or a path to a local resolc, to build with.
+    ///
+    /// Valid values follow the SemVer format `x.y.z-dev.n`, `revive:x.y.z-dev.n` or
+    /// `path/to/resolc`.
+    #[arg(
+        long = "use-revive",
+        help = "Use revive version",
+        alias = "revive-compiler-version",
+        help = "Use compiler version",
+        value_name = "REVIVE_VERSION"
     )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub revive_path: Option<PathBuf>,
-
-    #[clap(
-        help = "Solc compiler path to use when compiling with revive",
-        long = "revive-solc-path",
-        value_name = "REVIVE_SOLC_PATH"
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub solc_path: Option<PathBuf>,
+    #[serde(skip)]
+    pub use_revive: Option<String>,
 }
 
 impl ReviveOpts {
@@ -43,10 +39,12 @@ impl ReviveOpts {
             };
         }
 
-        set_if_some!(self.revive_compile, revive.revive_compile);
-        set_if_some!(self.revive_path.clone(), revive.revive_path);
-        set_if_some!(self.solc_path.clone(), revive.solc_path);
+        set_if_some!(
+            self.use_revive.as_ref().map(|v| SolcReq::from(v.trim_start_matches("revive:"))),
+            revive.revive
+        );
 
+        set_if_some!(self.revive_compile, revive.revive_compile);
         revive
     }
 }
