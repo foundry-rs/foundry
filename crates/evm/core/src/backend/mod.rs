@@ -1801,7 +1801,11 @@ impl BackendInner {
 
     /// Returns a new, empty, `JournaledState` with set precompiles
     pub fn new_journaled_state(&self) -> JournaledState {
-        let mut journal = JournalInner::new(self.spec_id);
+        let mut journal = {
+            let mut journal_inner = JournalInner::new();
+            journal_inner.set_spec_id(self.spec_id);
+            journal_inner
+        };
         journal.precompiles.extend(self.precompiles().addresses().copied());
         journal
     }

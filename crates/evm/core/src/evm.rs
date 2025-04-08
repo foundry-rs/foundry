@@ -104,10 +104,11 @@ pub fn new_evm_with_inspector<'i, 'db, INSP: InspectorExt + ?Sized>(
 ) -> FoundryHandler<'db, &'i mut INSP> {
     FoundryHandler::new(
         FoundryEvmCtx {
-            journaled_state: Journal::new_with_inner(
-                db,
-                JournalInner::new(env.evm_env.cfg_env.spec),
-            ),
+            journaled_state: Journal::new_with_inner(db, {
+                let mut journal_inner = JournalInner::new();
+                journal_inner.set_spec_id(env.evm_env.cfg_env.spec);
+                journal_inner
+            }),
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone(),
             tx: env.tx.clone(),
