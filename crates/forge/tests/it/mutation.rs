@@ -1,12 +1,10 @@
 use forge::mutation::MutationHandler;
 use forge_script::ScriptArgs;
-use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity};
-use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
-use std::{path::PathBuf, sync::Arc};
+use foundry_common::shell::{ColorChoice, OutputFormat, OutputMode, Shell};
+use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_mutation_handler_lifecycle() {
+async fn test_mutation_test_lifecycle() {
     let contract = r#"
         // SPDX-License-Identifier: UNLICENSED
         pragma solidity ^0.8.13;

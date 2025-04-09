@@ -1,5 +1,6 @@
 mod mutant;
 mod mutators;
+mod reporter;
 mod visitor;
 
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
@@ -12,25 +13,79 @@ use std::sync::Arc;
 
 use crate::mutation::{mutant::Mutant, visitor::MutantVisitor};
 
-pub use crate::mutation::mutant::MutationResult;
+pub use crate::mutation::reporter::MutationReporter;
+
+use crate::result::TestOutcome;
 use foundry_compilers::{project::ProjectCompiler, ProjectCompileOutput};
 use foundry_config::Config;
 use rayon::prelude::*;
 use solar_parse::ast::visit::Visit;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+pub struct MutationsSummary {
+    total: usize,
+    dead: usize,
+    survived: usize,
+    invalid: usize,
+}
+
+impl MutationsSummary {
+    pub fn new() -> Self {
+        Self { total: 0, dead: 0, survived: 0, invalid: 0 }
+    }
+
+    pub fn update_valid_mutant(&mut self, outcome: &TestOutcome) {
+        self.total += 1;
+
+        if outcome.failures().count() > 0 {
+            self.dead += 1;
+        } else {
+            self.survived += 1;
+        }
+    }
+
+    pub fn update_invalid_mutant(&mut self) {
+        self.total += 1;
+        self.invalid += 1;
+    }
+
+    pub fn total(&self) -> usize {
+        self.total
+    }
+
+    pub fn dead(&self) -> usize {
+        self.dead
+    }
+
+    pub fn survived(&self) -> usize {
+        self.survived
+    }
+
+    pub fn invalid(&self) -> usize {
+        self.invalid
+    }
+}
+
 pub struct MutationHandler {
     contract_to_mutate: PathBuf,
     src: Arc<String>,
     mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
+    report: MutationsSummary,
     // Ensure we don't clean it between creation and mutant generation (been there, done that)
     temp_dir: Option<TempDir>,
 }
 
 impl MutationHandler {
     pub fn new(contract_to_mutate: PathBuf, config: Arc<foundry_config::Config>) -> Self {
-        Self { contract_to_mutate, src: Arc::default(), mutations: vec![], config, temp_dir: None }
+        Self {
+            contract_to_mutate,
+            src: Arc::default(),
+            mutations: vec![],
+            config,
+            temp_dir: None,
+            report: MutationsSummary::new(),
+        }
     }
 
     /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants

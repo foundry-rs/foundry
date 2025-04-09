@@ -3,7 +3,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
-    mutation::MutationHandler,
+    mutation::{MutationHandler, MutationReporter, MutationsSummary},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
@@ -486,6 +486,8 @@ impl TestArgs {
             };
 
             sh_println!("Running mutation tests...").unwrap();
+            let mut mutation_summary = MutationsSummary::new();
+
             for path in mutate_paths {
                 let mut handler = MutationHandler::new(path, config.clone());
 
@@ -495,7 +497,7 @@ impl TestArgs {
 
                 let mutants = handler.generate_and_compile().await;
 
-                // @todo multithread here? -> tests are async already
+                // @todo ugly - needs to be refactored
                 for mutant in mutants {
                     if let Some(compile_output) = mutant.1 {
                         let mutant_path = mutant.0.path.clone();
@@ -528,17 +530,16 @@ impl TestArgs {
                         let results = runner.test_collect(&new_filter);
 
                         let outcome = TestOutcome::new(results, self.allow_failure);
-
-                        if outcome.failed() != 0 {
-                            sh_println!("Mutation: Dead")?;
-                        } else {
-                            sh_println!("Mutation: Survived")?;
-                        }
+                        mutation_summary.update_valid_mutant(&outcome);
                     } else {
-                        sh_println!("Mutation: Invalid")?;
+                        mutation_summary.update_invalid_mutant();
                     }
                 }
             }
+
+            MutationReporter::new().report(&mutation_summary);
+
+            outcome = TestOutcome::empty(true);
         }
 
         Ok(outcome)
