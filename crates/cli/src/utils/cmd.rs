@@ -445,9 +445,9 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_dir: &Path) -
             signatures.extend_from_abi(abi);
         }
 
-        // External libraries don't have functions included in abi, but `methodIdentifiers`.
+        // External libraries don't have functions included in the ABI, but `methodIdentifiers`.
         if let Some(method_identifiers) = &artifact.method_identifiers {
-            signatures.extend(method_identifiers.iter().filter_map(|(selector, signature)| {
+            signatures.extend(method_identifiers.iter().filter_map(|(signature, selector)| {
                 Some((SelectorKind::Function(selector.parse().ok()?), signature.clone()))
             }));
         }

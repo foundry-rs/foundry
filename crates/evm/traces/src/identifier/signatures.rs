@@ -191,9 +191,7 @@ impl SignaturesIdentifier {
             foundry_compilers::utils::RuntimeOrHandle::new().block_on(self.cache.read()).save(path);
         }
     }
-}
 
-impl SignaturesIdentifier {
     /// Identifies `Function`s.
     pub async fn identify_functions(
         &self,

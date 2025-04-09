@@ -321,9 +321,7 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
-            if !node.trace.kind.is_any_create() {
-                node.trace.decoded = self.decode_function(&node.trace).await;
-            }
+            node.trace.decoded = self.decode_function(&node.trace).await;
             for log in &mut node.logs {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }
@@ -338,11 +336,15 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
+        let label = self.labels.get(&trace.address).cloned();
+
+        if trace.kind.is_any_create() {
+            return DecodedCallTrace { label, ..Default::default() };
+        }
+
         if let Some(trace) = precompiles::decode(trace, 1) {
             return trace;
         }
-
-        let label = self.labels.get(&trace.address).cloned();
 
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
@@ -353,7 +355,7 @@ impl CallTraceDecoder {
             };
         }
 
-        if is_abi_calldata(cdata) {
+        if is_abi_call_data(cdata) {
             let selector = Selector::try_from(&cdata[..SELECTOR_LEN]).unwrap();
             let mut functions = Vec::new();
             let functions = match self.functions.get(&selector) {
@@ -370,7 +372,7 @@ impl CallTraceDecoder {
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
                     label,
-                    call_data: Some(self.fallback_calldata(trace)),
+                    call_data: self.fallback_call_data(trace),
                     return_data: self.default_return_data(trace),
                 };
             };
@@ -380,7 +382,9 @@ impl CallTraceDecoder {
             let mut call_data = self.decode_function_input(trace, func);
             if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
                 if !fallback_functions.contains(&selector) {
-                    call_data = self.fallback_calldata(trace);
+                    if let Some(cd) = self.fallback_call_data(trace) {
+                        call_data = cd;
+                    }
                 }
             }
 
@@ -392,7 +396,7 @@ impl CallTraceDecoder {
         } else {
             DecodedCallTrace {
                 label,
-                call_data: Some(self.fallback_calldata(trace)),
+                call_data: self.fallback_call_data(trace),
                 return_data: self.default_return_data(trace),
             }
         }
@@ -592,16 +596,19 @@ impl CallTraceDecoder {
         .map(Into::into)
     }
 
-    fn fallback_calldata(&self, trace: &CallTrace) -> DecodedCallData {
+    #[track_caller]
+    fn fallback_call_data(&self, trace: &CallTrace) -> Option<DecodedCallData> {
         let cdata = &trace.data;
         let signature = if cdata.is_empty() && self.receive_contracts.contains(&trace.address) {
             "receive()"
-        } else {
+        } else if self.fallback_contracts.contains_key(&trace.address) {
             "fallback()"
+        } else {
+            return None;
         }
         .to_string();
         let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
-        DecodedCallData { signature, args }
+        Some(DecodedCallData { signature, args })
     }
 
     /// The default decoded return data for a trace.
@@ -666,7 +673,7 @@ impl CallTraceDecoder {
                     return None;
                 }
                 // Ignore non-ABI calldata.
-                if n.trace.kind.is_any_create() || !is_abi_calldata(&n.trace.data) {
+                if n.trace.kind.is_any_create() || !is_abi_call_data(&n.trace.data) {
                     return None;
                 }
                 n.trace.data.first_chunk().map(Selector::from)
@@ -677,7 +684,7 @@ impl CallTraceDecoder {
             .chain(functions.map(SelectorKind::Function))
             .unique()
             .collect::<Vec<_>>();
-        identifier.identify(&selectors).await;
+        let _ = identifier.identify(&selectors).await;
     }
 
     /// Pretty-prints a value.
@@ -694,7 +701,7 @@ impl CallTraceDecoder {
 /// Returns `true` if the given function calldata (including function selector) is ABI-encoded.
 ///
 /// This is a simple heuristic to avoid fetching non ABI-encoded selectors.
-fn is_abi_calldata(data: &[u8]) -> bool {
+fn is_abi_call_data(data: &[u8]) -> bool {
     match data.len().cmp(&SELECTOR_LEN) {
         std::cmp::Ordering::Less => false,
         std::cmp::Ordering::Equal => true,
