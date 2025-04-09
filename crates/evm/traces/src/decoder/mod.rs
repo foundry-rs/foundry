@@ -383,7 +383,7 @@ impl CallTraceDecoder {
             if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
                 if !fallback_functions.contains(&selector) {
                     if let Some(cd) = self.fallback_call_data(trace) {
-                        call_data = cd;
+                        call_data.signature = cd.signature;
                     }
                 }
             }
@@ -711,10 +711,10 @@ fn is_abi_call_data(data: &[u8]) -> bool {
 
 /// Returns `true` if the given data is ABI-encoded.
 ///
-/// See [`is_abi_calldata`] for more details.
+/// See [`is_abi_call_data`] for more details.
 fn is_abi_data(data: &[u8]) -> bool {
     let rem = data.len() % 32;
-    if rem == 0 || data.len() == 0 {
+    if rem == 0 || data.is_empty() {
         return true;
     }
     // If the length is not a multiple of 32, also accept when the last remainder bytes are all 0.
