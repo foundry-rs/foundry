@@ -256,14 +256,15 @@ impl CallTraceDecoder {
                     node.trace.kind.is_any_create().then_some(&node.trace.data[..]),
                 )
             })
-            .filter(|&(address, _, _)| {
+            .filter(|&(address, ..)| {
                 !self.labels.contains_key(address) || !self.contracts.contains_key(address)
             })
             .collect()
     }
 
-    fn collect_identities(&mut self, identities: Vec<AddressIdentity<'_>>) {
-        // Skip logging if there are no identities.
+    fn collect_identities(&mut self, mut identities: Vec<AddressIdentity<'_>>) {
+        identities.sort_by_key(|identity| identity.address);
+        identities.dedup_by_key(|identity| identity.address);
         if identities.is_empty() {
             return;
         }
@@ -287,7 +288,11 @@ impl CallTraceDecoder {
     }
 
     fn collect_abi(&mut self, abi: &JsonAbi, address: Option<&Address>) {
-        trace!(target: "evm::traces", len=abi.len(), ?address, "collecting ABI");
+        let len = abi.len();
+        if len == 0 {
+            return;
+        }
+        trace!(target: "evm::traces", len, ?address, "collecting ABI");
         for function in abi.functions() {
             self.push_function(function.clone());
         }

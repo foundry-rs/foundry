@@ -99,8 +99,7 @@ impl TraceIdentifier for EtherscanIdentifier {
         &mut self,
         addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
     ) -> Vec<AddressIdentity<'_>> {
-        if self.invalid_api_key.load(Ordering::Relaxed) {
-            // api key was marked as invalid
+        if self.invalid_api_key.load(Ordering::Relaxed) || addresses.is_empty() {
             return Vec::new()
         }
 

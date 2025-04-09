@@ -131,7 +131,8 @@ impl SignaturesCache {
 
     /// Extends the cache with multiple signatures.
     pub fn extend(&mut self, signatures: impl IntoIterator<Item = (SelectorKind, String)>) {
-        self.signatures.extend(signatures.into_iter().map(|(k, v)| (k, Some(v))));
+        self.signatures
+            .extend(signatures.into_iter().map(|(k, v)| (k, (!v.is_empty()).then_some(v))));
     }
 
     /// Gets a signature from the cache.
@@ -148,7 +149,6 @@ impl SignaturesCache {
 /// An identifier that tries to identify functions and events using signatures found at
 /// `https://openchain.xyz` or a local cache.
 #[derive(Clone, Debug)]
-#[allow(clippy::new_without_default)]
 pub struct SignaturesIdentifier {
     /// Cached selectors for functions, events and custom errors.
     cache: Arc<RwLock<SignaturesCache>>,
@@ -235,6 +235,11 @@ impl SignaturesIdentifier {
 
     /// Identifies a list of selectors.
     pub async fn identify(&self, selectors: &[SelectorKind]) -> Vec<Option<String>> {
+        if selectors.is_empty() {
+            return vec![];
+        }
+        trace!(target: "evm::traces", ?selectors, "identifying selectors");
+
         let mut cache_r = self.cache.read().await;
         if let Some(client) = &self.client {
             let query =

@@ -145,6 +145,10 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
         &mut self,
         addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
     ) -> Vec<AddressIdentity<'_>> {
+        if addresses.is_empty() {
+            return Vec::new();
+        }
+
         trace!(target: "evm::traces::local", "identify {} addresses", addresses.len());
 
         addresses

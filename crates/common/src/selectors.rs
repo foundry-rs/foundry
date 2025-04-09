@@ -146,8 +146,11 @@ impl OpenChainClient {
             return Ok(vec![]);
         }
 
-        debug!(len = selectors.len(), "decoding selectors");
-        trace!(?selectors, "decoding selectors");
+        if enabled!(tracing::Level::TRACE) {
+            trace!(?selectors, "decoding selectors");
+        } else {
+            debug!(len = selectors.len(), "decoding selectors");
+        }
 
         // Exit early if spurious connection.
         self.ensure_not_spurious()?;
@@ -168,7 +171,7 @@ impl OpenChainClient {
         }
 
         let text = self.get_text(url).await?;
-        let SignatureResponse { ok, mut result } = match serde_json::from_str(&text) {
+        let SignatureResponse { ok, result } = match serde_json::from_str(&text) {
             Ok(response) => response,
             Err(err) => eyre::bail!("could not decode response: {err}: {text}"),
         };
@@ -181,15 +184,16 @@ impl OpenChainClient {
             .map(|selector| {
                 let signatures = match selector {
                     SelectorKind::Function(selector) | SelectorKind::Error(selector) => {
-                        result.function.remove(selector)
+                        result.function.get(selector)
                     }
-                    SelectorKind::Event(hash) => result.event.remove(hash),
+                    SelectorKind::Event(hash) => result.event.get(hash),
                 };
                 signatures
+                    .map(Option::as_deref)
                     .unwrap_or_default()
                     .unwrap_or_default()
-                    .into_iter()
-                    .map(|sig| sig.name)
+                    .iter()
+                    .map(|sig| sig.name.clone())
                     .collect()
             })
             .collect())
