@@ -1,4 +1,5 @@
 use super::{AddressIdentity, TraceIdentifier};
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use foundry_common::contracts::{bytecode_diff_score, ContractsByArtifact};
@@ -53,6 +54,19 @@ impl<'a> LocalTraceIdentifier<'a> {
             };
 
             if let Some(bytecode) = contract_bytecode {
+                let mut current_bytecode = current_bytecode;
+                if is_creation && current_bytecode.len() > bytecode.len() {
+                    // Try to decode ctor args with contract abi.
+                    if let Some(constructor) = contract.abi.constructor() {
+                        let constructor_args = &current_bytecode[bytecode.len()..];
+                        if constructor.abi_decode_input(constructor_args, false).is_ok() {
+                            // If we can decode args with current abi then remove args from
+                            // code to compare.
+                            current_bytecode = &current_bytecode[..bytecode.len()]
+                        }
+                    }
+                }
+
                 let score = bytecode_diff_score(bytecode, current_bytecode);
                 if score == 0.0 {
                     trace!(target: "evm::traces", "found exact match");

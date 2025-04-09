@@ -105,6 +105,8 @@ pub struct NodeConfig {
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
+    /// Genesis block number
+    pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
@@ -155,6 +157,8 @@ pub struct NodeConfig {
     pub enable_steps_tracing: bool,
     /// Enable printing of `console.log` invocations.
     pub print_logs: bool,
+    /// Enable printing of traces.
+    pub print_traces: bool,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -428,6 +432,7 @@ impl Default for NodeConfig {
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
             genesis_timestamp: None,
+            genesis_block_number: None,
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
@@ -446,6 +451,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             enable_steps_tracing: false,
             print_logs: true,
+            print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -666,9 +672,20 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the genesis number
+    #[must_use]
+    pub fn with_genesis_block_number<U: Into<u64>>(mut self, number: Option<U>) -> Self {
+        if let Some(number) = number {
+            self.genesis_block_number = Some(number.into());
+        }
+        self
+    }
+
     /// Returns the genesis number
     pub fn get_genesis_number(&self) -> u64 {
-        self.genesis.as_ref().and_then(|g| g.number).unwrap_or(0)
+        self.genesis_block_number
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.number))
+            .unwrap_or(0)
     }
 
     /// Sets the hardfork
@@ -879,6 +896,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to print traces to stdout.
+    #[must_use]
+    pub fn with_print_traces(mut self, print_traces: bool) -> Self {
+        self.print_traces = print_traces;
+        self
+    }
+
     /// Sets whether to enable autoImpersonate
     #[must_use]
     pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
@@ -1069,6 +1093,7 @@ impl NodeConfig {
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.print_logs,
+            self.print_traces,
             self.odyssey,
             self.prune_history,
             self.max_persisted_states,
@@ -1350,7 +1375,16 @@ async fn derive_block_and_transactions(
     provider: &Arc<RetryProvider>,
 ) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
     match fork_choice {
-        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), None)),
+        ForkChoice::Block(block_number) => {
+            let block_number = *block_number;
+            if block_number >= 0 {
+                return Ok((block_number as u64, None))
+            }
+            // subtract from latest block number
+            let latest = provider.get_block_number().await?;
+
+            Ok((block_number.saturating_add(latest as i128) as u64, None))
+        }
         ForkChoice::Transaction(transaction_hash) => {
             // Determine the block that this transaction was mined in
             let transaction = provider
@@ -1389,15 +1423,17 @@ async fn derive_block_and_transactions(
 /// Fork delimiter used to specify which block or transaction to fork from
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForkChoice {
-    /// Block number to fork from
-    Block(BlockNumber),
+    /// Block number to fork from.
+    ///
+    /// f a negative the the given value is subtracted from the `latest` block number.
+    Block(i128),
     /// Transaction hash to fork from
     Transaction(TxHash),
 }
 
 impl ForkChoice {
     /// Returns the block number to fork from
-    pub fn block_number(&self) -> Option<BlockNumber> {
+    pub fn block_number(&self) -> Option<i128> {
         match self {
             Self::Block(block_number) => Some(*block_number),
             Self::Transaction(_) => None,
@@ -1423,7 +1459,7 @@ impl From<TxHash> for ForkChoice {
 /// Convert a decimal block number into a ForkChoice
 impl From<u64> for ForkChoice {
     fn from(block: u64) -> Self {
-        Self::Block(block)
+        Self::Block(block as i128)
     }
 }
 
