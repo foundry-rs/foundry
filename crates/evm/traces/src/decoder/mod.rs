@@ -655,9 +655,8 @@ impl CallTraceDecoder {
                 {
                     return None;
                 }
-                n.trace.data.get(..SELECTOR_LEN)
+                n.trace.data.first_chunk().map(Selector::from)
             })
-            .map(|bytes| Selector::try_from(bytes).unwrap())
             .filter(|selector| !self.functions.contains_key(selector));
         let selectors = events
             .map(SelectorKind::Event)
