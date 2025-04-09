@@ -33,6 +33,7 @@ pub struct AddressIdentity<'a> {
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub trait TraceIdentifier {
     /// Attempts to identify an address in one or more call traces.
+    #[allow(clippy::type_complexity)]
     fn identify_addresses(
         &mut self,
         addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],

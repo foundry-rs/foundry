@@ -242,7 +242,8 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    /// Returns an iterator over the trace addresses.
+    /// Returns a list over all the addresses in the given trace.
+    #[allow(clippy::type_complexity)]
     pub fn trace_addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
