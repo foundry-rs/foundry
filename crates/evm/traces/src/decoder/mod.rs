@@ -351,7 +351,7 @@ impl CallTraceDecoder {
             };
         }
 
-        if cdata.len() >= SELECTOR_LEN {
+        if is_abi_calldata(cdata) {
             let selector = Selector::try_from(&cdata[..SELECTOR_LEN]).unwrap();
             let mut functions = Vec::new();
             let functions = match self.functions.get(&selector) {
@@ -664,7 +664,7 @@ impl CallTraceDecoder {
                     return None;
                 }
                 // Ignore non-ABI calldata.
-                if n.trace.data.len().saturating_sub(4) % 32 != 0 {
+                if !is_abi_calldata(&n.trace.data) {
                     return None;
                 }
                 n.trace.data.first_chunk().map(Selector::from)
@@ -687,6 +687,29 @@ impl CallTraceDecoder {
         }
         format_token(value)
     }
+}
+
+/// Returns `true` if the given function calldata (including function selector) is ABI-encoded.
+///
+/// This is a simple heuristic to avoid fetching non ABI-encoded selectors.
+fn is_abi_calldata(data: &[u8]) -> bool {
+    match data.len().cmp(&SELECTOR_LEN) {
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => true,
+        std::cmp::Ordering::Greater => is_abi_data(&data[SELECTOR_LEN..]),
+    }
+}
+
+/// Returns `true` if the given data is ABI-encoded.
+///
+/// See [`is_abi_calldata`] for more details.
+fn is_abi_data(data: &[u8]) -> bool {
+    let rem = data.len() % 32;
+    if rem == 0 || data.len() == 0 {
+        return true;
+    }
+    // If the length is not a multiple of 32, also accept when the last remainder bytes are all 0.
+    data[data.len() - rem..].iter().all(|byte| *byte == 0)
 }
 
 /// Restore the order of the params of a decoded event,
