@@ -6,7 +6,7 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{
-    map::{hash_map::Entry, HashMap},
+    map::{hash_map::Entry, HashMap, HashSet},
     Address, LogData, Selector, B256,
 };
 use foundry_common::{
@@ -119,9 +119,10 @@ pub struct CallTraceDecoder {
     /// Address labels.
     pub labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
-    pub receive_contracts: Vec<Address>,
-    /// Contract addresses that have fallback functions, mapped to function sigs.
-    pub fallback_contracts: HashMap<Address, Vec<String>>,
+    pub receive_contracts: HashSet<Address>,
+    /// Contract addresses that have fallback functions, mapped to function selectors of that
+    /// contract.
+    pub fallback_contracts: HashMap<Address, HashSet<Selector>>,
 
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
@@ -304,15 +305,12 @@ impl CallTraceDecoder {
         }
         if let Some(address) = address {
             if abi.receive.is_some() {
-                self.receive_contracts.push(*address);
+                self.receive_contracts.insert(*address);
             }
 
             if abi.fallback.is_some() {
-                let mut functions_sig = vec![];
-                for function in abi.functions() {
-                    functions_sig.push(function.signature());
-                }
-                self.fallback_contracts.insert(*address, functions_sig);
+                self.fallback_contracts
+                    .insert(*address, abi.functions().map(|f| f.selector()).collect());
             }
         }
     }
@@ -369,12 +367,7 @@ impl CallTraceDecoder {
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
                     label,
-                    call_data: self.fallback_contracts.get(&trace.address).map(|_| {
-                        DecodedCallData {
-                            signature: "fallback()".to_string(),
-                            args: vec![cdata.to_string()],
-                        }
-                    }),
+                    call_data: Some(self.fallback_calldata(trace)),
                     return_data: self.default_return_data(trace),
                 };
             };
@@ -383,8 +376,8 @@ impl CallTraceDecoder {
             // If not, then replace call data signature with `fallback`.
             let mut call_data = self.decode_function_input(trace, func);
             if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
-                if !fallback_functions.contains(&func.signature()) {
-                    call_data.signature = "fallback()".to_string();
+                if !fallback_functions.contains(&selector) {
+                    call_data = self.fallback_calldata(trace);
                 }
             }
 
@@ -394,14 +387,9 @@ impl CallTraceDecoder {
                 return_data: self.decode_function_output(trace, functions),
             }
         } else {
-            let has_receive = self.receive_contracts.contains(&trace.address);
-            let signature =
-                if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }
-                    .to_string();
-            let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
             DecodedCallTrace {
                 label,
-                call_data: Some(DecodedCallData { signature, args }),
+                call_data: Some(self.fallback_calldata(trace)),
                 return_data: self.default_return_data(trace),
             }
         }
@@ -601,6 +589,18 @@ impl CallTraceDecoder {
         .map(Into::into)
     }
 
+    fn fallback_calldata(&self, trace: &CallTrace) -> DecodedCallData {
+        let cdata = &trace.data;
+        let signature = if cdata.is_empty() && self.receive_contracts.contains(&trace.address) {
+            "receive()"
+        } else {
+            "fallback()"
+        }
+        .to_string();
+        let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
+        DecodedCallData { signature, args }
+    }
+
     /// The default decoded return data for a trace.
     fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
         (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
@@ -655,9 +655,15 @@ impl CallTraceDecoder {
         let functions = nodes
             .iter()
             .filter_map(|n| {
+                // Ignore CREATE2 and precompiles.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER ||
+                    n.is_precompile() ||
                     precompiles::is_known_precompile(n.trace.address, 1)
                 {
+                    return None;
+                }
+                // Ignore non-ABI calldata.
+                if n.trace.data.len().saturating_sub(4) % 32 != 0 {
                     return None;
                 }
                 n.trace.data.first_chunk().map(Selector::from)
