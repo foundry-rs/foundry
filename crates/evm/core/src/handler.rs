@@ -1,4 +1,5 @@
 use crate::{
+    backend::DatabaseExt,
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvm, FoundryEvmCtx},
     InspectorExt,
@@ -22,7 +23,11 @@ use revm::{
     primitives::KECCAK_EMPTY,
     Database,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 /// A list of features that can be enabled or disabled in the [`FoundryHandler`].
 /// This is used to conditionally override certain execution paths in the EVM.
@@ -79,6 +84,30 @@ where
 
     /// Returns a mutable reference to the inner EVM instance.
     pub fn env(&mut self) -> &mut FoundryEvmCtx<'db> {
+        &mut self.inner.inner
+    }
+
+    /// Returns a mutable reference to the inner journaled state database.
+    pub fn db(&mut self) -> &mut dyn DatabaseExt {
+        self.inner.inner.journaled_state.database
+    }
+}
+
+impl<'db, INSP> Deref for FoundryHandler<'db, INSP>
+where
+    INSP: InspectorExt,
+{
+    type Target = FoundryEvmCtx<'db>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner.inner
+    }
+}
+
+impl<INSP> DerefMut for FoundryHandler<'_, INSP>
+where
+    INSP: InspectorExt,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.inner
     }
 }

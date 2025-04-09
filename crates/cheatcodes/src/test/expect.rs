@@ -132,6 +132,15 @@ impl Display for CreateScheme {
     }
 }
 
+impl From<revm::context_interface::CreateScheme> for CreateScheme {
+    fn from(scheme: revm::context_interface::CreateScheme) -> Self {
+        match scheme {
+            revm::context_interface::CreateScheme::Create => Self::Create,
+            revm::context_interface::CreateScheme::Create2 { .. } => Self::Create2,
+        }
+    }
+}
+
 impl CreateScheme {
     pub fn eq(&self, create_scheme: CreateScheme) -> bool {
         matches!(
