@@ -13,6 +13,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use serde::Deserialize;
+use revm_primitives::SignedAuthorization;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
@@ -313,6 +314,29 @@ impl UIfmt for AccessListItem {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RecoveredAuthorization {
+    pub auth: SignedAuthorization,
+    pub authority: Address,
+}
+
+impl TryFrom<SignedAuthorization> for RecoveredAuthorization {
+    type Error = eyre::Error;
+
+    fn try_from(auth: SignedAuthorization) -> Result<Self, Self::Error> {
+        let authority = auth.recover_authority()?;
+        Ok(Self { auth, authority })
+    }
+}
+
+impl UIfmt for RecoveredAuthorization {
+    fn pretty(&self) -> String {
+        let auth_json = serde_json::to_string_pretty(&self.auth)
+            .unwrap_or_else(|_| "<invalid auth>".to_string());
+        format!("{}\nRecoveredAuthority: {:?}", auth_json, self.authority)
+    }
+}
+
 impl UIfmt for TxEnvelope {
     fn pretty(&self) -> String {
         match &self {
@@ -443,8 +467,18 @@ yParity              {}",
                     .pretty(),
                 self.authorization_list()
                     .as_ref()
-                    .map(|l| serde_json::to_string(&l).unwrap())
-                    .unwrap_or_default(),
+                    .map(|list| {
+                        list.iter()
+                            .map(|auth| {
+                                match RecoveredAuthorization::try_from(auth.clone()) {
+                                    Ok(rec_auth) => rec_auth.pretty(),
+                                    Err(e) => format!("Invalid auth: {}", e),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",\n")
+                    })
+		    .unwrap_or_default(),
                 self.chain_id().pretty(),
                 self.gas_limit().pretty(),
                 self.tx_hash().pretty(),
