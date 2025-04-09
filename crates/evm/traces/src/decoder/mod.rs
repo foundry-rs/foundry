@@ -321,7 +321,9 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
-            node.trace.decoded = self.decode_function(&node.trace).await;
+            if !node.trace.kind.is_any_create() {
+                node.trace.decoded = self.decode_function(&node.trace).await;
+            }
             for log in &mut node.logs {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }
@@ -664,7 +666,7 @@ impl CallTraceDecoder {
                     return None;
                 }
                 // Ignore non-ABI calldata.
-                if !is_abi_calldata(&n.trace.data) {
+                if n.trace.kind.is_any_create() || !is_abi_calldata(&n.trace.data) {
                     return None;
                 }
                 n.trace.data.first_chunk().map(Selector::from)
