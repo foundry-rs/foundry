@@ -1,8 +1,6 @@
 use crate::{
     debug::DebugTraceIdentifier,
-    identifier::{
-        AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
-    },
+    identifier::{AddressIdentity, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
     CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
@@ -12,7 +10,8 @@ use alloy_primitives::{
     Address, LogData, Selector, B256,
 };
 use foundry_common::{
-    abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
+    abi::get_indexed_event, fmt::format_token, get_contract_name, selectors::SelectorKind,
+    ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
     abi::{console, Vm},
@@ -85,7 +84,7 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the signature identifier for events and functions.
     #[inline]
-    pub fn with_signature_identifier(mut self, identifier: SingleSignaturesIdentifier) -> Self {
+    pub fn with_signature_identifier(mut self, identifier: SignaturesIdentifier) -> Self {
         self.decoder.signature_identifier = Some(identifier);
         self
     }
@@ -132,7 +131,7 @@ pub struct CallTraceDecoder {
     pub revert_decoder: RevertDecoder,
 
     /// A signature identifier for events and functions.
-    pub signature_identifier: Option<SingleSignaturesIdentifier>,
+    pub signature_identifier: Option<SignaturesIdentifier>,
     /// Verbosity level
     pub verbosity: u8,
 
@@ -212,7 +211,7 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identities(identifier.identify_addresses(self.trace_addresses(trace)));
+        self.collect_identities(identifier.identify_addresses(&self.trace_addresses(trace)));
     }
 
     /// Adds a single event to the decoder.
@@ -246,7 +245,7 @@ impl CallTraceDecoder {
     pub fn trace_addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
-    ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone + 'a {
+    ) -> Vec<(&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> {
         arena
             .nodes()
             .iter()
@@ -260,6 +259,7 @@ impl CallTraceDecoder {
             .filter(|&(address, _, _)| {
                 !self.labels.contains_key(address) || !self.contracts.contains_key(address)
             })
+            .collect()
     }
 
     fn collect_identities(&mut self, identities: Vec<AddressIdentity<'_>>) {
@@ -348,15 +348,13 @@ impl CallTraceDecoder {
         }
 
         if cdata.len() >= SELECTOR_LEN {
-            let selector = &cdata[..SELECTOR_LEN];
+            let selector = Selector::try_from(&cdata[..SELECTOR_LEN]).unwrap();
             let mut functions = Vec::new();
-            let functions = match self.functions.get(selector) {
+            let functions = match self.functions.get(&selector) {
                 Some(fs) => fs,
                 None => {
                     if let Some(identifier) = &self.signature_identifier {
-                        if let Some(function) =
-                            identifier.write().await.identify_function(selector).await
-                        {
+                        if let Some(function) = identifier.identify_function(selector).await {
                             functions.push(function);
                         }
                     }
@@ -612,7 +610,7 @@ impl CallTraceDecoder {
             Some(es) => es,
             None => {
                 if let Some(identifier) = &self.signature_identifier {
-                    if let Some(event) = identifier.write().await.identify_event(&t0[..]).await {
+                    if let Some(event) = identifier.identify_event(t0).await {
                         events.push(get_indexed_event(event, log));
                     }
                 }
@@ -645,24 +643,28 @@ impl CallTraceDecoder {
     /// Prefetches function and event signatures into the identifier cache
     pub async fn prefetch_signatures(&self, nodes: &[CallTraceNode]) {
         let Some(identifier) = &self.signature_identifier else { return };
-
-        let events_it = nodes
+        let events = nodes
             .iter()
             .flat_map(|node| node.logs.iter().filter_map(|log| log.raw_log.topics().first()))
-            .unique();
-        identifier.write().await.identify_events(events_it).await;
-
-        const DEFAULT_CREATE2_DEPLOYER_BYTES: [u8; 20] = DEFAULT_CREATE2_DEPLOYER.0 .0;
-        let funcs_it = nodes
+            .copied();
+        let functions = nodes
             .iter()
-            .filter_map(|n| match n.trace.address.0 .0 {
-                DEFAULT_CREATE2_DEPLOYER_BYTES => None,
-                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01..=0x0a] => None,
-                _ => n.trace.data.get(..SELECTOR_LEN),
+            .filter_map(|n| {
+                if n.trace.address == DEFAULT_CREATE2_DEPLOYER ||
+                    precompiles::is_known_precompile(n.trace.address, 1)
+                {
+                    return None;
+                }
+                n.trace.data.get(..SELECTOR_LEN)
             })
-            .filter(|v| !self.functions.contains_key(*v))
-            .unique();
-        identifier.write().await.identify_functions(funcs_it).await;
+            .map(|bytes| Selector::try_from(bytes).unwrap())
+            .filter(|selector| !self.functions.contains_key(selector));
+        let selectors = events
+            .map(SelectorKind::Event)
+            .chain(functions.map(SelectorKind::Function))
+            .unique()
+            .collect::<Vec<_>>();
+        identifier.identify(&selectors).await;
     }
 
     /// Pretty-prints a value.

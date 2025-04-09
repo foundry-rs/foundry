@@ -69,7 +69,7 @@ impl<'a> LocalTraceIdentifier<'a> {
 
                 let score = bytecode_diff_score(bytecode, current_bytecode);
                 if score == 0.0 {
-                    trace!(target: "evm::traces", "found exact match");
+                    trace!(target: "evm::traces::local", "found exact match");
                     return Some((id, &contract.abi));
                 }
                 if score < *min_score {
@@ -114,7 +114,7 @@ impl<'a> LocalTraceIdentifier<'a> {
             }
         }
 
-        trace!(target: "evm::traces", %min_score, "no exact match found");
+        trace!(target: "evm::traces::local", %min_score, "no exact match found");
 
         // Note: the diff score can be inaccurate for small contracts so we're using a relatively
         // high threshold here to avoid filtering out too many contracts.
@@ -141,19 +141,21 @@ impl<'a> LocalTraceIdentifier<'a> {
 }
 
 impl TraceIdentifier for LocalTraceIdentifier<'_> {
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)>,
-    {
-        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
+    fn identify_addresses(
+        &mut self,
+        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
+    ) -> Vec<AddressIdentity<'_>> {
+        trace!(target: "evm::traces::local", "identify {} addresses", addresses.len());
 
         addresses
+            .iter()
+            .copied()
             .filter_map(|(address, runtime_code, creation_code)| {
-                let _span = trace_span!(target: "evm::traces", "identify", %address).entered();
+                let _span =
+                    trace_span!(target: "evm::traces::local", "identify", %address).entered();
 
-                trace!(target: "evm::traces", "identifying");
                 let (id, abi) = self.identify_code(runtime_code?, creation_code?)?;
-                trace!(target: "evm::traces", id=%id.identifier(), "identified");
+                trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
                 Some(AddressIdentity {
                     address: *address,

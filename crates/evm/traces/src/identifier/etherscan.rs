@@ -95,16 +95,16 @@ impl EtherscanIdentifier {
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)>,
-    {
-        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
-
+    fn identify_addresses(
+        &mut self,
+        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
+    ) -> Vec<AddressIdentity<'_>> {
         if self.invalid_api_key.load(Ordering::Relaxed) {
             // api key was marked as invalid
             return Vec::new()
         }
+
+        trace!(target: "evm::traces::etherscan", "identify {} addresses", addresses.len());
 
         let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
@@ -114,7 +114,7 @@ impl TraceIdentifier for EtherscanIdentifier {
             Arc::clone(&self.invalid_api_key),
         );
 
-        for (addr, _, _) in addresses {
+        for &(addr, _, _) in addresses {
             if let Some(metadata) = self.contracts.get(addr) {
                 let label = metadata.contract_name.clone();
                 let abi = metadata.abi().ok().map(Cow::Owned);

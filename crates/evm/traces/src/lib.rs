@@ -174,14 +174,9 @@ impl DerefMut for SparsedTraceArena {
 /// Decode a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
-pub async fn decode_trace_arena(
-    arena: &mut CallTraceArena,
-    decoder: &CallTraceDecoder,
-) -> Result<(), std::fmt::Error> {
+pub async fn decode_trace_arena(arena: &mut CallTraceArena, decoder: &CallTraceDecoder) {
     decoder.prefetch_signatures(arena.nodes()).await;
     decoder.populate_traces(arena.nodes_mut()).await;
-
-    Ok(())
 }
 
 /// Render a collection of call traces to a string.
@@ -260,7 +255,7 @@ pub fn load_contracts<'a>(
     let decoder = CallTraceDecoder::new();
     let mut contracts = ContractsByAddress::new();
     for trace in traces {
-        for address in local_identifier.identify_addresses(decoder.trace_addresses(trace)) {
+        for address in local_identifier.identify_addresses(&decoder.trace_addresses(trace)) {
             if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
                 contracts.insert(address.address, (contract, abi.into_owned()));
             }

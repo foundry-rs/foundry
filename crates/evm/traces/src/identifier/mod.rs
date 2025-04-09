@@ -12,7 +12,7 @@ mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
 mod signatures;
-pub use signatures::{CachedSignatures, SignaturesIdentifier, SingleSignaturesIdentifier};
+pub use signatures::{SignaturesCache, SignaturesIdentifier};
 
 /// An address identity
 pub struct AddressIdentity<'a> {
@@ -33,9 +33,10 @@ pub struct AddressIdentity<'a> {
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub trait TraceIdentifier {
     /// Attempts to identify an address in one or more call traces.
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone;
+    fn identify_addresses(
+        &mut self,
+        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
+    ) -> Vec<AddressIdentity<'_>>;
 }
 
 /// A collection of trace identifiers.
@@ -53,13 +54,16 @@ impl Default for TraceIdentifiers<'_> {
 }
 
 impl TraceIdentifier for TraceIdentifiers<'_> {
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone,
-    {
-        let mut identities = Vec::new();
+    fn identify_addresses(
+        &mut self,
+        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
+    ) -> Vec<AddressIdentity<'_>> {
+        let mut identities = Vec::with_capacity(addresses.len());
         if let Some(local) = &mut self.local {
-            identities.extend(local.identify_addresses(addresses.clone()));
+            identities.extend(local.identify_addresses(addresses));
+            if identities.len() >= addresses.len() {
+                return identities;
+            }
         }
         if let Some(etherscan) = &mut self.etherscan {
             identities.extend(etherscan.identify_addresses(addresses));
