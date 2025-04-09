@@ -8,6 +8,7 @@ use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
+use alloy_rpc_types::state::AccountOverride;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -732,25 +733,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AccountOverride {
-    /// The balance of the account
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub balance: Option<U256>,
-    /// The nonce of the account
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nonce: Option<U256>,
-    /// The code of the account
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<Bytes>,
-    /// The state of the account
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<HashMap<U256, U256>>,
-    /// The stateDiff of the account
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state_diff: Option<HashMap<U256, U256>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
