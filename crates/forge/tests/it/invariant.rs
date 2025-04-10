@@ -1267,3 +1267,69 @@ Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner
 ...
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10253>
+forgetest_init!(invariant_test_target, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+    });
+    prj.add_test(
+        "InvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTest is Test {
+    uint256 count;
+
+    function setCount(uint256  _count) public {
+        count = _count;
+    }
+
+    function setUp() public {
+    }
+
+    function invariant_check_count() public {
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_check_count"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_check_count() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+
+    prj.add_test(
+        "InvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTest is Test {
+    uint256 count;
+
+    function setCount(uint256  _count) public {
+        count = _count;
+    }
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function invariant_check_count() public {
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_check_count"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] invariant_check_count() (runs: 5, calls: 25, reverts: 0)
+...
+"#]],
+    );
+});
