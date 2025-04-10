@@ -8,7 +8,10 @@ use alloy_primitives::{
     map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
+use revm::{
+    context::JournalTr,
+    interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult},
+};
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.

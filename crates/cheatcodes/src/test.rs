@@ -5,6 +5,7 @@ use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
+use revm::context::JournalTr;
 
 pub(crate) mod assert;
 pub(crate) mod assume;

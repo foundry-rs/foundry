@@ -1,6 +1,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
+use revm::context::JournalTr;
 use spec::Vm::{
     assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call, PotentialRevert,
 };

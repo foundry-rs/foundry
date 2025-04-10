@@ -97,8 +97,7 @@ fn sign_delegation(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let authority_acc =
-            ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
+        let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
         authority_acc.data.info.nonce
     };
     let auth = Authorization {
@@ -125,7 +124,7 @@ fn sign_delegation(
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
+    let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
     if authority_acc.data.info.nonce != auth.nonce {
         return Err("invalid nonce".into());
     }
