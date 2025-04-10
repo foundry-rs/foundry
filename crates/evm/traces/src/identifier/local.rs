@@ -150,7 +150,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
 
         nodes
             .iter()
-            .map(|node| {
+            .map(|&node| {
                 (
                     node.trace.address,
                     node.trace.kind.is_any_create().then_some(&node.trace.output[..]),

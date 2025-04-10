@@ -93,6 +93,22 @@ impl EtherscanIdentifier {
 
         Ok(sources)
     }
+
+    fn identify_from_metadata(
+        &self,
+        address: Address,
+        metadata: &Metadata,
+    ) -> IdentifiedAddress<'static> {
+        let label = metadata.contract_name.clone();
+        let abi = metadata.abi().ok().map(Cow::Owned);
+        IdentifiedAddress {
+            address,
+            label: Some(label.clone()),
+            contract: Some(label),
+            abi,
+            artifact_id: None,
+        }
+    }
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
@@ -111,19 +127,10 @@ impl TraceIdentifier for EtherscanIdentifier {
             Arc::clone(&self.invalid_api_key),
         );
 
-        for node in nodes {
+        for &node in nodes {
             let address = node.trace.address;
             if let Some(metadata) = self.contracts.get(&address) {
-                let label = metadata.contract_name.clone();
-                let abi = metadata.abi().ok().map(Cow::Owned);
-
-                identities.push(IdentifiedAddress {
-                    address,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi,
-                    artifact_id: None,
-                });
+                identities.push(self.identify_from_metadata(address, metadata));
             } else {
                 fetcher.push(address);
             }
@@ -132,17 +139,9 @@ impl TraceIdentifier for EtherscanIdentifier {
         let fetched_identities = foundry_common::block_on(
             fetcher
                 .map(|(address, metadata)| {
-                    let label = metadata.contract_name.clone();
-                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    let addr = self.identify_from_metadata(address, &metadata);
                     self.contracts.insert(address, metadata);
-
-                    IdentifiedAddress {
-                        address,
-                        label: Some(label.clone()),
-                        contract: Some(label),
-                        abi,
-                        artifact_id: None,
-                    }
+                    addr
                 })
                 .collect::<Vec<IdentifiedAddress<'_>>>(),
         );
