@@ -5,10 +5,9 @@ use crate::{
 };
 use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
-use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256, Bytes, U256};
+use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
-use alloy_rpc_types::state::AccountOverride;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -26,9 +25,7 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_config::Config;
-use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use std::collections::HashMap;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -733,10 +730,4 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct StateOverride {
-    /// Map of address to account override
-    pub state_diff: HashMap<Address, AccountOverride>,
 }
