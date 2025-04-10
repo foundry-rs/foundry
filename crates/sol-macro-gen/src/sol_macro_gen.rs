@@ -110,7 +110,7 @@ impl MultiSolMacroGen {
                     std::mem::swap(&mut tmp_file, &mut instance.path);
                     input.normalize_json()?
                 } else {
-                    return Err(error.into())
+                    return Err(error)
                 }
             }
         };
