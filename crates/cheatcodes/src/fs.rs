@@ -12,7 +12,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::{context::CreateScheme, interpreter::CreateInputs};
+use revm::interpreter::CreateInputs;
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -365,8 +365,11 @@ fn deploy_code(
         bytecode.extend_from_slice(args);
     }
 
-    let scheme =
-        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
+    let scheme = if let Some(salt) = salt {
+        revm::primitives::CreateScheme::Create2 { salt }
+    } else {
+        revm::primitives::CreateScheme::Create
+    };
 
     let outcome = executor.exec_create(
         CreateInputs {
@@ -750,7 +753,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.inner.inner.cfg.chain_id;
+        let chain_id = ccx.ecx.env.cfg.chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,
