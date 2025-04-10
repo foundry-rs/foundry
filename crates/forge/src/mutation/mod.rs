@@ -169,20 +169,33 @@ impl MutationHandler {
 
     /// Copy the src, cache, out and test folders to one of the mutant temp folder
     fn copy_origin(path: &Path, src_contract_path: &Path, config: Arc<Config>) {
+        let root_src = &config.root;
         let cache_src = &config.cache_path;
         let out_src = &config.out;
         let contract_src = &config.src;
         let test_src = &config.test;
 
-        let cache_dest = path.join("cache");
-        let out_dest = path.join("out");
-        let contract_dest = path.join("src");
-        let test_dest = path.join("test");
+        // Get all paths relative to project root
+        let to_relative_path = |src_path: &Path| -> PathBuf {
+            src_path.strip_prefix(root_src).unwrap_or(src_path).to_path_buf()
+        };
+
+        // Create directories with the same relative structure from root
+        let rel_cache = to_relative_path(cache_src);
+        let rel_out = to_relative_path(out_src);
+        let rel_src = to_relative_path(contract_src);
+        let rel_test = to_relative_path(test_src);
+
+        // Create the target directories under the mutation path
+        let cache_dest = path.join(&rel_cache);
+        let out_dest = path.join(&rel_out);
+        let contract_dest = path.join(&rel_src);
+        let test_dest = path.join(&rel_test);
 
         std::fs::create_dir_all(&cache_dest).expect("Failed to create temp cache directory");
         std::fs::create_dir_all(&out_dest).expect("Failed to create temp out directory");
         std::fs::create_dir_all(&contract_dest).expect("Failed to create temp src directory");
-        std::fs::create_dir_all(&test_dest).expect("Failed to create temp src directory");
+        std::fs::create_dir_all(&test_dest).expect("Failed to create temp test directory");
 
         Self::copy_dir_except(cache_src, cache_dest, src_contract_path)
             .expect("Failed to copy in temp cache");
@@ -191,7 +204,7 @@ impl MutationHandler {
         Self::copy_dir_except(contract_src, contract_dest, src_contract_path)
             .expect("Failed to copy in temp src directory");
         Self::copy_dir_except(test_src, test_dest, src_contract_path)
-            .expect("Failed to copy in temp src directory");
+            .expect("Failed to copy in temp test directory");
     }
 
     /// Recursively copy all files except one, from a src to a dst folder
@@ -213,12 +226,15 @@ impl MutationHandler {
                 // Create symlinks instead of copying files - much faster
                 #[cfg(unix)]
                 {
-                    std::os::unix::fs::symlink(entry.path(), dst.as_ref().join(entry.file_name()))?;
+                    std::os::unix::fs::symlink(
+                        entry.path().canonicalize()?,
+                        dst.as_ref().join(entry.file_name()),
+                    )?;
                 }
                 #[cfg(windows)]
                 {
                     std::os::windows::fs::symlink_file(
-                        entry.path(),
+                        entry.path().canonicalize()?,
                         dst.as_ref().join(entry.file_name()),
                     )?;
                 }
@@ -230,16 +246,28 @@ impl MutationHandler {
     /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
     fn generate_mutant(&self, mutation: &Mutant, src_contract_path: &Path) {
         let temp_dir_path = &mutation.path;
+        let root_src = &self.config.root;
+        let contract_src = &self.config.src;
+
+        // Get the relative path from src directory to the contract
+        let rel_contract_path = src_contract_path
+            .strip_prefix(contract_src)
+            .unwrap_or_else(|_| Path::new(src_contract_path.file_name().unwrap_or_default()));
+
+        // Get the relative path of contract_src from project root
+        let rel_src_dir = contract_src.strip_prefix(root_src).unwrap_or_else(|_| contract_src);
+
+        // Create the full target path in the mutation directory
+        let target_path = temp_dir_path.join(rel_src_dir).join(rel_contract_path);
+
+        // Make sure parent directories exist
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)
+                .unwrap_or_else(|_| panic!("Failed to create directories for {:?}", &parent));
+        }
 
         let span = mutation.span;
         let replacement = mutation.mutation.to_string();
-
-        let target_path = temp_dir_path
-            .ancestors()
-            .next()
-            .unwrap()
-            .join("src")
-            .join(src_contract_path.file_name().unwrap());
         let src_content = Arc::clone(&self.src);
 
         let start_pos = span.lo().0 as usize;
@@ -260,11 +288,23 @@ impl MutationHandler {
     /// Compile a directory and get the compilation output
     fn compile_mutant(&self, mutant: &Mutant) -> Option<ProjectCompileOutput> {
         let temp_folder = &mutant.path;
+        let root_src = &self.config.root;
 
+        // Get relative paths for all directories from project root
+        let to_relative_path = |src_path: &Path| -> PathBuf {
+            src_path.strip_prefix(root_src).unwrap_or(src_path).to_path_buf()
+        };
+
+        let rel_cache = to_relative_path(&self.config.cache_path);
+        let rel_out = to_relative_path(&self.config.out);
+        let rel_src = to_relative_path(&self.config.src);
+
+        // Create a new config with the correct paths mirroring the original structure
         let mut config = (*self.config).clone();
-        config.src = temp_folder.clone();
-        config.cache_path = temp_folder.join("cache");
-        config.out = temp_folder.join("out");
+        config.root = temp_folder.clone();
+        config.src = temp_folder.join(&rel_src);
+        config.cache_path = temp_folder.join(&rel_cache);
+        config.out = temp_folder.join(&rel_out);
         let project = config.project().unwrap();
 
         let compiler = ProjectCompiler::new(&project).unwrap();
