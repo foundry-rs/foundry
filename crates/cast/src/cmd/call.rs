@@ -225,7 +225,7 @@ impl CallArgs {
             .await?;
 
         if trace {
-            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = block {
+            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
                 // Override Config `fork_block_number` (if set) with CLI value.
                 config.fork_block_number = Some(block_number);
             }
@@ -284,8 +284,7 @@ impl CallArgs {
             return Ok(());
         }
 
-        let cast = Cast::new(provider);
-        sh_println!("{}", cast.call(&tx, func.as_ref(), block, state_override.clone()).await?)?;
+        sh_println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, state_override.clone()).await?)?;
 
         Ok(())
     }
