@@ -28,7 +28,6 @@ pub mod buffer;
 pub mod constants;
 pub mod decode;
 pub mod fork;
-pub mod handler;
 pub mod ic;
 pub mod opcodes;
 pub mod opts;
@@ -39,14 +38,14 @@ pub mod utils;
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
 /// handlers.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt: for<'a> Inspector<FoundryEvmCtx<'a>> {
+pub trait InspectorExt: for<'db> Inspector<FoundryEvmContext<'db>> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
     fn should_use_create2_factory(
         &mut self,
-        _context: &mut FoundryEvmCtx<'_>,
+        _context: &mut FoundryEvmContext<'_>,
         _inputs: &CreateInputs,
     ) -> bool {
         false

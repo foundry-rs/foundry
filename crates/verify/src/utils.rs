@@ -17,7 +17,7 @@ use foundry_evm::{
     traces::TraceMode,
 };
 use reqwest::Url;
-use revm_primitives::{
+use revm::primitives::{
     bytecode::Bytecode,
     database::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},

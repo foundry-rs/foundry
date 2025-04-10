@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    utils::new_evm_with_existing_context,
+    evm::new_evm_with_context,
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -45,16 +45,19 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
+    self,
+    bytecode::{opcode as op, EOF_MAGIC_BYTES},
+    context::{BlockEnv, JournalTr},
+    context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        interpreter_types::{LoopControl, MemoryTr},
+        CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        EOFCreateInputs, EOFCreateKind, Gas, Host, InstructionResult, Interpreter,
+        InterpreterAction, InterpreterResult,
     },
-    primitives::{
-        BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SignedAuthorization, SpecId,
-        EOF_MAGIC_BYTES,
-    },
-    EvmContext, InnerEvmContext, Inspector,
+    primitives::hardfork::SpecId,
+    state::EvmStorageSlot,
+    Inspector,
 };
 use serde_json::Value;
 use std::{
@@ -164,7 +167,7 @@ where
         l1_block_info,
     };
 
-    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
+    let mut evm = new_evm_with_context(inner, &mut *inspector);
 
     let res = f(&mut evm)?;
 

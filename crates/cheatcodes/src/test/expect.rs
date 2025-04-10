@@ -133,11 +133,10 @@ impl Display for CreateScheme {
 }
 
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+    pub fn eq(&self, create_scheme: CreateScheme) -> bool {
         matches!(
             (self, create_scheme),
-            (Self::Create, revm::primitives::CreateScheme::Create) |
-                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, CreateScheme::Create) | (Self::Create2, CreateScheme::Create2 { .. })
         )
     }
 }
@@ -812,11 +811,11 @@ pub(crate) fn handle_expect_emit(
                 .expected_emits
                 .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
-            interpreter.instruction_result = InstructionResult::Revert;
-            interpreter.next_action = InterpreterAction::Return {
+            interpreter.control.instruction_result = InstructionResult::Revert;
+            interpreter.control.next_action = InterpreterAction::Return {
                 result: InterpreterResult {
                     output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                    gas: interpreter.gas,
+                    gas: interpreter.control.gas,
                     result: InstructionResult::Revert,
                 },
             };
