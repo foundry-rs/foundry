@@ -1,9 +1,9 @@
-use super::{AddressIdentity, TraceIdentifier};
+use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
 use foundry_common::contracts::{bytecode_diff_score, ContractsByArtifact};
 use foundry_compilers::ArtifactId;
+use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
 /// A trace identifier that tries to identify addresses using local contracts.
@@ -141,19 +141,22 @@ impl<'a> LocalTraceIdentifier<'a> {
 }
 
 impl TraceIdentifier for LocalTraceIdentifier<'_> {
-    fn identify_addresses(
-        &mut self,
-        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
-    ) -> Vec<AddressIdentity<'_>> {
-        if addresses.is_empty() {
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+        if nodes.is_empty() {
             return Vec::new();
         }
 
-        trace!(target: "evm::traces::local", "identify {} addresses", addresses.len());
+        trace!(target: "evm::traces::local", "identify {} addresses", nodes.len());
 
-        addresses
+        nodes
             .iter()
-            .copied()
+            .map(|node| {
+                (
+                    node.trace.address,
+                    node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
+                    node.trace.kind.is_any_create().then_some(&node.trace.data[..]),
+                )
+            })
             .filter_map(|(address, runtime_code, creation_code)| {
                 let _span =
                     trace_span!(target: "evm::traces::local", "identify", %address).entered();
@@ -161,8 +164,8 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                 let (id, abi) = self.identify_code(runtime_code?, creation_code?)?;
                 trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
-                Some(AddressIdentity {
-                    address: *address,
+                Some(IdentifiedAddress {
+                    address,
                     contract: Some(id.identifier()),
                     label: Some(id.name.clone()),
                     abi: Some(Cow::Borrowed(abi)),

@@ -1,4 +1,4 @@
-use super::{AddressIdentity, TraceIdentifier};
+use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::Address;
 use foundry_block_explorers::{
@@ -12,6 +12,7 @@ use futures::{
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
+use revm_inspectors::tracing::types::CallTraceNode;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -95,15 +96,12 @@ impl EtherscanIdentifier {
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
-    fn identify_addresses(
-        &mut self,
-        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
-    ) -> Vec<AddressIdentity<'_>> {
-        if self.invalid_api_key.load(Ordering::Relaxed) || addresses.is_empty() {
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+        if self.invalid_api_key.load(Ordering::Relaxed) || nodes.is_empty() {
             return Vec::new()
         }
 
-        trace!(target: "evm::traces::etherscan", "identify {} addresses", addresses.len());
+        trace!(target: "evm::traces::etherscan", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
@@ -113,20 +111,21 @@ impl TraceIdentifier for EtherscanIdentifier {
             Arc::clone(&self.invalid_api_key),
         );
 
-        for &(addr, _, _) in addresses {
-            if let Some(metadata) = self.contracts.get(addr) {
+        for node in nodes {
+            let address = node.trace.address;
+            if let Some(metadata) = self.contracts.get(&address) {
                 let label = metadata.contract_name.clone();
                 let abi = metadata.abi().ok().map(Cow::Owned);
 
-                identities.push(AddressIdentity {
-                    address: *addr,
+                identities.push(IdentifiedAddress {
+                    address,
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi,
                     artifact_id: None,
                 });
             } else {
-                fetcher.push(*addr);
+                fetcher.push(address);
             }
         }
 
@@ -137,7 +136,7 @@ impl TraceIdentifier for EtherscanIdentifier {
                     let abi = metadata.abi().ok().map(Cow::Owned);
                     self.contracts.insert(address, metadata);
 
-                    AddressIdentity {
+                    IdentifiedAddress {
                         address,
                         label: Some(label.clone()),
                         contract: Some(label),
@@ -145,7 +144,7 @@ impl TraceIdentifier for EtherscanIdentifier {
                         artifact_id: None,
                     }
                 })
-                .collect::<Vec<AddressIdentity<'_>>>(),
+                .collect::<Vec<IdentifiedAddress<'_>>>(),
         );
 
         identities.extend(fetched_identities);

@@ -3,6 +3,7 @@ use alloy_primitives::Address;
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};
+use revm_inspectors::tracing::types::CallTraceNode;
 use std::borrow::Cow;
 
 mod local;
@@ -14,17 +15,17 @@ pub use etherscan::EtherscanIdentifier;
 mod signatures;
 pub use signatures::{SignaturesCache, SignaturesIdentifier};
 
-/// An address identity
-pub struct AddressIdentity<'a> {
-    /// The address this identity belongs to
+/// An address identified by a [`TraceIdentifier`].
+pub struct IdentifiedAddress<'a> {
+    /// The address.
     pub address: Address,
-    /// The label for the address
+    /// The label for the address.
     pub label: Option<String>,
-    /// The contract this address represents
+    /// The contract this address represents.
     ///
     /// Note: This may be in the format `"<artifact>:<contract>"`.
     pub contract: Option<String>,
-    /// The ABI of the contract at this address
+    /// The ABI of the contract at this address.
     pub abi: Option<Cow<'a, JsonAbi>>,
     /// The artifact ID of the contract, if any.
     pub artifact_id: Option<ArtifactId>,
@@ -33,11 +34,7 @@ pub struct AddressIdentity<'a> {
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub trait TraceIdentifier {
     /// Attempts to identify an address in one or more call traces.
-    #[allow(clippy::type_complexity)]
-    fn identify_addresses(
-        &mut self,
-        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
-    ) -> Vec<AddressIdentity<'_>>;
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>>;
 }
 
 /// A collection of trace identifiers.
@@ -55,19 +52,16 @@ impl Default for TraceIdentifiers<'_> {
 }
 
 impl TraceIdentifier for TraceIdentifiers<'_> {
-    fn identify_addresses(
-        &mut self,
-        addresses: &[(&Address, Option<&[u8]>, Option<&[u8]>)],
-    ) -> Vec<AddressIdentity<'_>> {
-        let mut identities = Vec::with_capacity(addresses.len());
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+        let mut identities = Vec::with_capacity(nodes.len());
         if let Some(local) = &mut self.local {
-            identities.extend(local.identify_addresses(addresses));
-            if identities.len() >= addresses.len() {
+            identities.extend(local.identify_addresses(nodes));
+            if identities.len() >= nodes.len() {
                 return identities;
             }
         }
         if let Some(etherscan) = &mut self.etherscan {
-            identities.extend(etherscan.identify_addresses(addresses));
+            identities.extend(etherscan.identify_addresses(nodes));
         }
         identities
     }

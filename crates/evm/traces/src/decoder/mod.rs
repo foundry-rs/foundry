@@ -1,6 +1,6 @@
 use crate::{
     debug::DebugTraceIdentifier,
-    identifier::{AddressIdentity, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
+    identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
     CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
@@ -211,8 +211,23 @@ impl CallTraceDecoder {
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
-    pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identities(identifier.identify_addresses(&self.trace_addresses(trace)));
+    pub fn identify(&mut self, arena: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
+        self.collect_identified_addresses(self.identify_addresses(arena, identifier));
+    }
+
+    /// Identify unknown addresses in the specified call trace using the specified identifier.
+    ///
+    /// Unknown contracts are contracts that either lack a label or an ABI.
+    pub fn identify_addresses<'a>(
+        &self,
+        arena: &CallTraceArena,
+        identifier: &'a mut impl TraceIdentifier,
+    ) -> Vec<IdentifiedAddress<'a>> {
+        let nodes = arena.nodes().iter().filter(|node| {
+            let address = &node.trace.address;
+            !self.labels.contains_key(address) || !self.contracts.contains_key(address)
+        });
+        identifier.identify_addresses(&nodes.collect::<Vec<_>>())
     }
 
     /// Adds a single event to the decoder.
@@ -242,37 +257,15 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    /// Returns a list over all the addresses in the given trace.
-    #[allow(clippy::type_complexity)]
-    pub fn trace_addresses<'a>(
-        &'a self,
-        arena: &'a CallTraceArena,
-    ) -> Vec<(&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> {
-        arena
-            .nodes()
-            .iter()
-            .map(|node| {
-                (
-                    &node.trace.address,
-                    node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
-                    node.trace.kind.is_any_create().then_some(&node.trace.data[..]),
-                )
-            })
-            .filter(|&(address, ..)| {
-                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
-            })
-            .collect()
-    }
-
-    fn collect_identities(&mut self, mut identities: Vec<AddressIdentity<'_>>) {
-        identities.sort_by_key(|identity| identity.address);
-        identities.dedup_by_key(|identity| identity.address);
-        if identities.is_empty() {
+    fn collect_identified_addresses(&mut self, mut addrs: Vec<IdentifiedAddress<'_>>) {
+        addrs.sort_by_key(|identity| identity.address);
+        addrs.dedup_by_key(|identity| identity.address);
+        if addrs.is_empty() {
             return;
         }
 
-        trace!(target: "evm::traces", len=identities.len(), "collecting address identities");
-        for AddressIdentity { address, label, contract, abi, artifact_id: _ } in identities {
+        trace!(target: "evm::traces", len=addrs.len(), "collecting address identities");
+        for IdentifiedAddress { address, label, contract, abi, artifact_id: _ } in addrs {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
 
             if let Some(contract) = contract {
@@ -284,12 +277,12 @@ impl CallTraceDecoder {
             }
 
             if let Some(abi) = abi {
-                self.collect_abi(&abi, Some(&address));
+                self.collect_abi(&abi, Some(address));
             }
         }
     }
 
-    fn collect_abi(&mut self, abi: &JsonAbi, address: Option<&Address>) {
+    fn collect_abi(&mut self, abi: &JsonAbi, address: Option<Address>) {
         let len = abi.len();
         if len == 0 {
             return;
@@ -306,12 +299,12 @@ impl CallTraceDecoder {
         }
         if let Some(address) = address {
             if abi.receive.is_some() {
-                self.receive_contracts.insert(*address);
+                self.receive_contracts.insert(address);
             }
 
             if abi.fallback.is_some() {
                 self.fallback_contracts
-                    .insert(*address, abi.functions().map(|f| f.selector()).collect());
+                    .insert(address, abi.functions().map(|f| f.selector()).collect());
             }
         }
     }

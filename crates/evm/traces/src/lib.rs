@@ -42,7 +42,7 @@ pub use revm_inspectors::tracing::{
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-use identifier::{LocalTraceIdentifier, TraceIdentifier};
+use identifier::LocalTraceIdentifier;
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
@@ -255,7 +255,7 @@ pub fn load_contracts<'a>(
     let decoder = CallTraceDecoder::new();
     let mut contracts = ContractsByAddress::new();
     for trace in traces {
-        for address in local_identifier.identify_addresses(&decoder.trace_addresses(trace)) {
+        for address in decoder.identify_addresses(trace, &mut local_identifier) {
             if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
                 contracts.insert(address.address, (contract, abi.into_owned()));
             }
