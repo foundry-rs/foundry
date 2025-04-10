@@ -489,17 +489,20 @@ impl TestArgs {
             let mut mutation_summary = MutationsSummary::new();
 
             for path in mutate_paths {
-                let mut handler = MutationHandler::new(path, config.clone());
+                let mut handler = MutationHandler::new(path.clone(), config.clone());
 
                 handler.read_source_contract()?;
                 handler.generate_ast().await;
                 handler.create_mutation_folders();
 
+                sh_println!("Mutating {}", path.display());
+
                 let mutants = handler.generate_and_compile().await;
 
                 // @todo ugly - needs to be refactored
-                for mutant in mutants {
-                    if let Some(compile_output) = mutant.1 {
+                for (i, mutant) in mutants.iter().enumerate() {
+                    sh_println!("\rMutant {} out of {}", i + 1, mutants.len());
+                    if let Some(compile_output) = &mutant.1 {
                         let mutant_path = mutant.0.path.clone();
 
                         let mut new_config = (*config).clone();
@@ -535,6 +538,7 @@ impl TestArgs {
                         mutation_summary.update_invalid_mutant();
                     }
                 }
+                sh_println!("\n");
             }
 
             MutationReporter::new().report(&mutation_summary);

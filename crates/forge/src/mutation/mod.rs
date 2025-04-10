@@ -210,10 +210,18 @@ impl MutationHandler {
             if ty.is_dir() {
                 Self::copy_dir_except(entry.path(), dst.as_ref().join(entry.file_name()), except)?;
             } else if entry.file_name() != except.file_name().unwrap_or_default() {
-                // std::os::unix::fs::symlink(entry.path(),
-                // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
-                // std::os::windows::fs::symlink_file
-                std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+                // Create symlinks instead of copying files - much faster
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(entry.path(), dst.as_ref().join(entry.file_name()))?;
+                }
+                #[cfg(windows)]
+                {
+                    std::os::windows::fs::symlink_file(
+                        entry.path(),
+                        dst.as_ref().join(entry.file_name()),
+                    )?;
+                }
             }
         }
         Ok(())
