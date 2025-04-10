@@ -14,7 +14,7 @@ impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         ccx.ecx
-            .db
+            .db()
             .active_fork_id()
             .map(|id| id.abi_encode())
             .ok_or_else(|| fmt_err!("no active fork"))

@@ -5,9 +5,10 @@ use std::{
 };
 
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, EnvMut, EnvRef,
+    InspectorExt,
 };
-use alloy_evm::eth::EthEvmContext;
+use alloy_evm::{eth::EthEvmContext, EvmEnv};
 use alloy_primitives::{Address, U256};
 use revm::{
     context::{
@@ -87,6 +88,26 @@ where
     /// Whether a handler feature is enabled or not.
     pub fn is_enabled(&self, name: Features) -> bool {
         self.enabled.get(&name).copied().unwrap_or(false)
+    }
+
+    /// Returns a reference to the environment of the EVM.
+    /// This is used to access the block, transaction, and configuration data.
+    pub fn env(&self) -> EnvRef<'_> {
+        EnvRef {
+            block: &self.inner.data.ctx.block,
+            cfg: &self.inner.data.ctx.cfg,
+            tx: &self.inner.data.ctx.tx,
+        }
+    }
+
+    /// Returns a mutable reference to the environment of the EVM.
+    /// This is used to access the block, transaction, and configuration data.
+    pub fn env_mut(&mut self) -> EnvMut<'_> {
+        EnvMut {
+            block: &mut self.inner.data.ctx.block,
+            cfg: &mut self.inner.data.ctx.cfg,
+            tx: &mut self.inner.data.ctx.tx,
+        }
     }
 
     /// Returns a reference to the inner EVM instance.

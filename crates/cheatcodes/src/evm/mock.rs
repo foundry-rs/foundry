@@ -1,6 +1,6 @@
 use crate::{inspector::InnerEcx, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
-use revm::{bytecode::Bytecode, interpreter::InstructionResult};
+use revm::{bytecode::Bytecode, context::JournalTr, interpreter::InstructionResult};
 use std::{cmp::Ordering, collections::VecDeque};
 
 /// Mocked call data.
