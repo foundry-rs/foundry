@@ -20,7 +20,9 @@ transfer(address,uint256)
 
 casttest!(fourbyte_invalid, |_prj, cmd| {
     cmd.args(["4byte", "0xa9059c"]).assert_failure().stderr_eq(str![[r#"
-Error: Invalid selector 0xa9059c: expected 10 characters (including 0x prefix).
+error: invalid value '0xa9059c' for '[SELECTOR]': invalid string length
+
+For more information, try '--help'.
 
 "#]]);
 });
