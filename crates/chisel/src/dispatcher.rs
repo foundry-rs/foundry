@@ -13,7 +13,7 @@ use crate::{
 use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use forge_fmt::FormatterConfig;
-use foundry_config::{Config, RpcEndpointUrl};
+use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
@@ -925,9 +925,8 @@ impl ChiselDispatcher {
     ) -> eyre::Result<CallTraceDecoder> {
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
-            .with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                session_config.foundry_config.offline,
+            .with_signature_identifier(SignaturesIdentifier::from_config(
+                &session_config.foundry_config,
             )?)
             .build();
 
@@ -965,7 +964,7 @@ impl ChiselDispatcher {
         for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
-                decode_trace_arena(trace, decoder).await?;
+                decode_trace_arena(trace, decoder).await;
                 sh_println!("{}", render_trace_arena(trace))?;
             }
         }

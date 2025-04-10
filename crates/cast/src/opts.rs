@@ -5,7 +5,7 @@ use crate::cmd::{
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
     txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Selector, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
@@ -646,7 +646,7 @@ pub enum CastSubcommand {
     #[command(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
         /// The function selector.
-        selector: Option<String>,
+        selector: Option<Selector>,
     },
 
     /// Decode ABI-encoded calldata using <https://openchain.xyz>.
@@ -661,7 +661,7 @@ pub enum CastSubcommand {
     FourByteEvent {
         /// Topic 0
         #[arg(value_name = "TOPIC_0")]
-        topic: Option<String>,
+        topic: Option<B256>,
     },
 
     /// Upload the given signatures to <https://openchain.xyz>.
