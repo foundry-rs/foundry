@@ -127,6 +127,8 @@ pub struct CallTraceDecoder {
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
+    ///
+    /// Key is: `(topics[0], topics.len() - 1)`.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.
     pub revert_decoder: RevertDecoder,
@@ -653,24 +655,38 @@ impl CallTraceDecoder {
         let Some(identifier) = &self.signature_identifier else { return };
         let events = nodes
             .iter()
-            .flat_map(|node| node.logs.iter().filter_map(|log| log.raw_log.topics().first()))
+            .flat_map(|node| {
+                node.logs
+                    .iter()
+                    .map(|log| log.raw_log.topics())
+                    .filter(|&topics| {
+                        if let Some(&first) = topics.first() {
+                            if self.events.contains_key(&(first, topics.len() - 1)) {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .filter_map(|topics| topics.first())
+            })
             .copied();
         let functions = nodes
             .iter()
-            .filter_map(|n| {
-                // Ignore CREATE2 and precompiles.
+            .filter(|&n| {
+                // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER ||
                     n.is_precompile() ||
                     precompiles::is_known_precompile(n.trace.address, 1)
                 {
-                    return None;
+                    return false;
                 }
                 // Ignore non-ABI calldata.
                 if n.trace.kind.is_any_create() || !is_abi_call_data(&n.trace.data) {
-                    return None;
+                    return false;
                 }
-                n.trace.data.first_chunk().map(Selector::from)
+                true
             })
+            .filter_map(|n| n.trace.data.first_chunk().map(Selector::from))
             .filter(|selector| !self.functions.contains_key(selector));
         let selectors = events
             .map(SelectorKind::Event)
