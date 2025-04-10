@@ -116,9 +116,9 @@ where
     }
 }
 
-impl<'db, INSP> Deref for FoundryHandler<'db, INSP>
+impl<'db, I> Deref for FoundryHandler<'db, I>
 where
-    INSP: InspectorExt,
+    I: InspectorExt,
 {
     type Target = FoundryEvmContext<'db>;
     fn deref(&self) -> &Self::Target {
@@ -126,9 +126,9 @@ where
     }
 }
 
-impl<INSP> DerefMut for FoundryHandler<'_, INSP>
+impl<I> DerefMut for FoundryHandler<'_, I>
 where
-    INSP: InspectorExt,
+    I: InspectorExt,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner

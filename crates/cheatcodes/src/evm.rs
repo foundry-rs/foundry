@@ -836,7 +836,7 @@ impl Cheatcode for broadcastRawTransactionCall {
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
-                rpc: ccx.db.active_fork_url(),
+                rpc: ccx.ecx.db.active_fork_url(),
                 transaction: tx.try_into()?,
             });
         }
