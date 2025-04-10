@@ -20,7 +20,7 @@ use itertools::Itertools;
 use rand::Rng;
 use revm::{
     bytecode::Bytecode,
-    context::JournalTr,
+    context::{journaled_state, Block, JournalTr},
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::Account,
 };
@@ -228,9 +228,10 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
+        let mut journaled_state = ccx.ecx.journaled_state.clone();
         ccx.ecx
-            .db
-            .load_allocs(&allocs, &mut ccx.ecx.journaled_state)
+            .db_mut()
+            .load_allocs(&allocs, &mut journaled_state)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
@@ -241,13 +242,11 @@ impl Cheatcode for cloneAccountCall {
         let Self { source, target } = self;
 
         let account = ccx.ecx.journaled_state.load_account(*source)?;
-        ccx.ecx.db.clone_account(
-            &genesis_account(account.data),
-            target,
-            &mut ccx.ecx.journaled_state,
-        )?;
+        let genesis = &genesis_account(account.data);
+        let mut journaled_state = ccx.ecx.journaled_state.clone();
+        ccx.ecx.db_mut().clone_account(genesis, target, &mut journaled_state)?;
         // Cloned account should persist in forked envs.
-        ccx.ecx.db.add_persistent_account(*target);
+        ccx.ecx.db_mut().add_persistent_account(*target);
         Ok(Default::default())
     }
 }
@@ -389,7 +388,8 @@ impl Cheatcode for difficultyCall {
 impl Cheatcode for feeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newBasefee } = self;
-        ccx.ecx.block.basefee = *newBasefee;
+        ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64 - 1");
+        ccx.ecx.block.basefee = newBasefee.saturating_to();
         Ok(Default::default())
     }
 }
@@ -448,7 +448,8 @@ impl Cheatcode for getBlobhashesCall {
 impl Cheatcode for rollCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newHeight } = self;
-        ccx.ecx.block.number = *newHeight;
+        ensure!(*newHeight <= U256::from(u64::MAX), "block height must be less than 2^64 - 1");
+        ccx.ecx.block.number = newHeight.saturating_to();
         Ok(Default::default())
     }
 }
@@ -463,7 +464,8 @@ impl Cheatcode for getBlockNumberCall {
 impl Cheatcode for txGasPriceCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newGasPrice } = self;
-        ccx.ecx.tx.gas_price = *newGasPrice;
+        ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64 - 1");
+        ccx.ecx.tx.gas_price = newGasPrice.saturating_to();
         Ok(Default::default())
     }
 }
@@ -471,7 +473,8 @@ impl Cheatcode for txGasPriceCall {
 impl Cheatcode for warpCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newTimestamp } = self;
-        ccx.ecx.block.timestamp = *newTimestamp;
+        ensure!(*newTimestamp <= U256::from(u64::MAX), "timestamp must be less than 2^64 - 1");
+        ccx.ecx.block.timestamp = newTimestamp.saturating_to();
         Ok(Default::default())
     }
 }
@@ -491,10 +494,8 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.block.set_blob_excess_gas_and_price(
-            (*newBlobBaseFee).to(),
-            ccx.ecx.cfg.spec >= SpecId::PRAGUE,
-        );
+        let is_prague = ccx.ecx.cfg.spec >= SpecId::PRAGUE;
+        ccx.ecx.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to(), is_prague);
         Ok(Default::default())
     }
 }
@@ -502,7 +503,7 @@ impl Cheatcode for blobBaseFeeCall {
 impl Cheatcode for getBlobBaseFeeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.block.get_blob_excess_gas().unwrap_or(0).abi_encode())
+        Ok(ccx.ecx.block.blob_excess_gas().unwrap_or(0).abi_encode())
     }
 }
 
@@ -636,7 +637,7 @@ impl Cheatcode for coolSlotCall {
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.tx.caller, ccx.ecx.journaled_state.depth())
+        read_callers(ccx.state, &ccx.ecx.tx.caller, ccx.ecx.journaled_state.depth().try_into()?)
     }
 }
 
@@ -828,16 +829,18 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        ccx.ecx.db.transact_from_tx(
+        let env = ccx.ecx.env();
+        let mut journaled_state = ccx.ecx.journaled_state.clone();
+        ccx.ecx.db_mut().transact_from_tx(
             &tx.clone().into(),
-            (*ccx.ecx.env).clone(),
-            &mut ccx.ecx.journaled_state,
+            env,
+            &mut journaled_state,
             &mut *executor.get_inspector(ccx.state),
         )?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
-                rpc: ccx.ecx.db.active_fork_url(),
+                rpc: ccx.ecx.db_mut().active_fork_url(),
                 transaction: tx.try_into()?,
             });
         }
@@ -849,12 +852,13 @@ impl Cheatcode for broadcastRawTransactionCall {
 impl Cheatcode for setBlockhashCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber, blockHash } = *self;
+        ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64 - 1");
         ensure!(
-            blockNumber <= ccx.ecx.block.number,
+            blockNumber <= U256::from(ccx.ecx.block.number),
             "block number must be less than or equal to the current block number"
         );
 
-        ccx.ecx.db.set_blockhash(blockNumber, blockHash);
+        ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
 
         Ok(Default::default())
     }
@@ -932,18 +936,22 @@ pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
 }
 
 fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
-    Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+    let mut env = ccx.ecx.env();
+    let journaled_state = ccx.ecx.journaled_state.clone();
+    Ok(ccx.ecx.db_mut().snapshot_state(&journaled_state, &mut env).abi_encode())
 }
 
 fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
+    let mut env = ccx.ecx.env();
+    let journaled_state = ccx.ecx.journaled_state.clone();
+    let result = if let Some(journaled_state) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        &ccx.ecx.journaled_state,
-        &mut ccx.ecx.env,
+        &journaled_state,
+        &mut env,
         RevertStateSnapshotAction::RevertKeep,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.journaled_state = journaled_state;
+        ccx.ecx.journaled_state.inner = journaled_state;
         true
     } else {
         false
@@ -952,14 +960,16 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
 }
 
 fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
+    let mut env = ccx.ecx.env();
+    let journaled_state = ccx.ecx.journaled_state.clone();
+    let result = if let Some(journaled_state) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        &ccx.ecx.journaled_state,
-        &mut ccx.ecx.env,
+        &journaled_state,
+        &mut env,
         RevertStateSnapshotAction::RevertRemove,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
-        ccx.ecx.journaled_state = journaled_state;
+        ccx.ecx.journaled_state.inner = journaled_state;
         true
     } else {
         false
@@ -968,12 +978,12 @@ fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> 
 }
 
 fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = ccx.ecx.db.delete_state_snapshot(snapshot_id);
+    let result = ccx.ecx.db_mut().delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
 
 fn inner_delete_state_snapshots(ccx: &mut CheatsCtxt) -> Result {
-    ccx.ecx.db.delete_state_snapshots();
+    ccx.ecx.db_mut().delete_state_snapshots();
     Ok(Default::default())
 }
 
@@ -1020,7 +1030,7 @@ fn inner_start_gas_snapshot(
         group: group.clone(),
         name: name.clone(),
         gas_used: 0,
-        depth: ccx.ecx.journaled_state.depth(),
+        depth: ccx.ecx.journaled_state.depth().try_into()?,
     });
 
     ccx.state.gas_metering.active_gas_snapshot = Some((group, name));

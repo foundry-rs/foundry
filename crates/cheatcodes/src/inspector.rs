@@ -49,6 +49,7 @@ use revm::{
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
     context::{BlockEnv, JournalTr},
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
+    handler::{FrameOrResult, FrameResult},
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
@@ -91,43 +92,93 @@ pub trait CheatcodesExecutor {
         inputs: CreateInputs,
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
-        with_evm(self, ccx, |evm| {
-            evm.context.evm.inner.journaled_state.depth += 1;
+        // /// Constructs [revm::Evm] and runs a given closure with it.
+        // fn with_evm<E, F, O>(
+        //     executor: &mut E,
+        //     ccx: &mut CheatsCtxt,
+        //     f: F,
+        // ) -> Result<O, EVMError<DatabaseError>>
+        // where
+        //     E: CheatcodesExecutor + ?Sized,
+        //     F: for<'a, 'b> FnOnce(
+        //         &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
+        //     ) -> Result<O, EVMError<DatabaseError>>,
+        // {
+        //     let mut inspector = executor.get_inspector(ccx.state);
+        //     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+        //     let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
 
-            // Handle EOF bytecode
-            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA) &&
-                inputs.scheme == CreateScheme::Create &&
-                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
-            {
-                evm.handler.execution().eofcreate(
-                    &mut evm.context,
-                    Box::new(EOFCreateInputs::new(
-                        inputs.caller,
-                        inputs.value,
-                        inputs.gas_limit,
-                        EOFCreateKind::Tx { initdata: inputs.init_code },
-                    )),
-                )?
-            } else {
-                evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
-            };
+        //     let inner = revm::InnerEvmContext {
+        //         env: ccx.ecx.env.clone(),
+        //         journaled_state: std::mem::replace(
+        //             &mut ccx.ecx.journaled_state,
+        //             revm::JournaledState::new(Default::default(), Default::default()),
+        //         ),
+        //         db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
+        //         error,
+        //         l1_block_info,
+        //     };
 
-            let mut result = match first_frame_or_result {
-                revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
-                revm::FrameOrResult::Result(result) => result,
-            };
+        //     let mut evm = new_evm_with_context(inner, &mut *inspector);
 
-            evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+        //     let res = f(&mut evm)?;
 
-            let outcome = match result {
-                revm::FrameResult::Call(_) => unreachable!(),
-                revm::FrameResult::Create(create) | revm::FrameResult::EOFCreate(create) => create,
-            };
+        //     ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
+        //     ccx.ecx.env = evm.context.evm.inner.env;
+        //     ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+        //     ccx.ecx.error = evm.context.evm.inner.error;
 
-            evm.context.evm.inner.journaled_state.depth -= 1;
+        //     Ok(res)
+        // }
 
-            Ok(outcome)
-        })
+        let mut inspector = self.get_inspector(ccx.state);
+        let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+        // let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
+
+        // let journaled_state = std::mem::replace(
+        //     &mut ccx.ecx.journaled_state,
+        //     // revm::JournaledState::new(Default::default(), Default::default()),
+        // );
+
+        let mut evm = new_evm_with_context(ccx.inner, &mut *inspector);
+
+        // with_evm(self, ccx, |evm| {
+        evm.journaled_state.depth += 1;
+
+        // Handle EOF bytecode
+        let first_frame_or_result = if evm.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
+            inputs.scheme == CreateScheme::Create &&
+            inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+        {
+            evm.execution().eofcreate(
+                &mut evm.context,
+                Box::new(EOFCreateInputs::new(
+                    inputs.caller,
+                    inputs.value,
+                    inputs.gas_limit,
+                    EOFCreateKind::Tx { initdata: inputs.init_code },
+                )),
+            )?
+        } else {
+            evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
+        };
+
+        let mut result = match first_frame_or_result {
+            FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
+            FrameOrResult::Result(result) => result,
+        };
+
+        evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+
+        let outcome = match result {
+            FrameResult::Call(_) => unreachable!(),
+            FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
+        };
+
+        evm.context.evm.inner.journaled_state.depth -= 1;
+
+        Ok(outcome)
+        // })
     }
 
     fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
@@ -138,45 +189,6 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
         None
     }
-}
-
-/// Constructs [revm::Evm] and runs a given closure with it.
-fn with_evm<E, F, O>(
-    executor: &mut E,
-    ccx: &mut CheatsCtxt,
-    f: F,
-) -> Result<O, EVMError<DatabaseError>>
-where
-    E: CheatcodesExecutor + ?Sized,
-    F: for<'a, 'b> FnOnce(
-        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
-    ) -> Result<O, EVMError<DatabaseError>>,
-{
-    let mut inspector = executor.get_inspector(ccx.state);
-    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
-    let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
-
-    let inner = revm::InnerEvmContext {
-        env: ccx.ecx.env.clone(),
-        journaled_state: std::mem::replace(
-            &mut ccx.ecx.journaled_state,
-            revm::JournaledState::new(Default::default(), Default::default()),
-        ),
-        db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
-        error,
-        l1_block_info,
-    };
-
-    let mut evm = new_evm_with_context(inner, &mut *inspector);
-
-    let res = f(&mut evm)?;
-
-    ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
-    ccx.ecx.env = evm.context.evm.inner.env;
-    ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
-    ccx.ecx.error = evm.context.evm.inner.error;
-
-    Ok(res)
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an

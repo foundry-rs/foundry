@@ -252,7 +252,7 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth: u64 = ccx.ecx.journaled_state.depth().try_into()?;
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"

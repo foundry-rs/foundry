@@ -1,6 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
-use revm::context::JournalTr;
+use revm::{context::JournalTr, interpreter::Host};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -116,7 +116,7 @@ impl Cheatcode for startPrank_3Call {
 impl Cheatcode for stopPrankCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth());
+        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth().try_into()?);
         Ok(Default::default())
     }
 }
@@ -130,11 +130,14 @@ fn prank(
 ) -> Result {
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
-        let code = ccx.code(*new_caller)?;
-        ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
+        let code = ccx
+            .load_account_code(*new_caller)
+            .ok_or_else(|| eyre::eyre!("cannot `prank` delegate call from an EOA"))?;
+
+        ensure!(!code.data.is_empty(), "cannot `prank` delegate call from an EOA");
     }
 
-    let depth = ccx.ecx.journaled_state.depth();
+    let depth: u64 = ccx.ecx.journaled_state.depth().try_into()?;
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.

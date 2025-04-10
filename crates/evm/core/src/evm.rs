@@ -90,9 +90,18 @@ where
         self.enabled.get(&name).copied().unwrap_or(false)
     }
 
+    /// Returns a clone of the environment of the EVM.
+    pub fn env(&self) -> Env {
+        Env::from(
+            self.inner.data.ctx.cfg.clone(),
+            self.inner.data.ctx.block.clone(),
+            self.inner.data.ctx.tx.clone(),
+        )
+    }
+
     /// Returns a reference to the environment of the EVM.
     /// This is used to access the block, transaction, and configuration data.
-    pub fn env(&self) -> EnvRef<'_> {
+    pub fn env_ref(&self) -> EnvRef<'_> {
         EnvRef {
             block: &self.inner.data.ctx.block,
             cfg: &self.inner.data.ctx.cfg,
@@ -388,26 +397,27 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
     }
 }
 
+pub fn new_evm_context<'db>(db: &'db mut dyn DatabaseExt, env: &Env) -> FoundryEvmContext<'db> {
+    FoundryEvmContext {
+        journaled_state: {
+            let mut journal = Journal::new(db);
+            journal.set_spec_id(env.evm_env.cfg_env.spec);
+            journal
+        },
+        block: env.evm_env.block_env.clone(),
+        cfg: env.evm_env.cfg_env.clone(),
+        tx: env.tx.clone(),
+        chain: (),
+        error: Ok(()),
+    }
+}
+
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
     env: &Env,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
-    new_evm_with_context(
-        FoundryEvmContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.clone(),
-            chain: (),
-            error: Ok(()),
-        },
-        inspector,
-    )
+    new_evm_with_context(new_evm_context(db, env), inspector)
 }
 
 pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
