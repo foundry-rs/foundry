@@ -368,7 +368,7 @@ impl TestArgs {
 
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await?;
+            decode_trace_arena(arena, decoder).await;
             let mut fst = folded_stack_trace::build(arena);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
@@ -524,10 +524,8 @@ impl TestArgs {
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
-            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                config.offline,
-            )?);
+            builder =
+                builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
         if self.decode_internal {
@@ -637,7 +635,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decode_trace_arena(arena, &decoder).await?;
+                        decode_trace_arena(arena, &decoder).await;
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
