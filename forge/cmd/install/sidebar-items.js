@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["install_missing_dependencies","match_yn"],"static":["DEPENDENCY_VERSION_TAG_REGEX"],"struct":["DependencyInstallOpts","InstallArgs","Installer"]};
