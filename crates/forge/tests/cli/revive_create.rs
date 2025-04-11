@@ -4,8 +4,11 @@ use crate::utils::{self, network_private_key, network_rpc_key};
 use alloy_primitives::Address;
 use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_test_utils::{
-    forgetest, forgetest_async, str,
+    forgetest, forgetest_async,
+    revive::PolkadotHubNode,
+    str,
     util::{OutputExt, TestProject},
+    TestCommand,
 };
 use std::str::FromStr;
 
@@ -88,6 +91,33 @@ library ChainlinkTWAP {
     "src/Contract.sol:Contract".to_string()
 }
 
+/// configures the `TestProject` with the given closure and calls the `forge create` command
+fn create_on_chain<F>(
+    network_args: Option<Vec<String>>,
+    prj: TestProject,
+    mut cmd: TestCommand,
+    f: F,
+) where
+    F: FnOnce(&TestProject) -> String,
+{
+    if let Some(network_args) = network_args {
+        let contract_path = f(&prj);
+
+        let output = cmd
+            .arg("create")
+            .arg("--revive")
+            .arg("--legacy")
+            .arg("--broadcast")
+            .args(network_args)
+            .arg(contract_path)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let _address = utils::parse_deployed_address(output.as_str())
+            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
+    }
+}
+
 fn westend_assethub_args() -> Option<Vec<String>> {
     Some(
         [
@@ -95,6 +125,18 @@ fn westend_assethub_args() -> Option<Vec<String>> {
             network_rpc_key("westend_assethub")?,
             "--private-key".to_string(),
             network_private_key("westend_assethub")?,
+        ]
+        .to_vec(),
+    )
+}
+
+fn localnode_args() -> Option<Vec<String>> {
+    Some(
+        [
+            "--rpc-url".to_string(),
+            PolkadotHubNode::http_endpoint().to_string(),
+            "--private-key".to_string(),
+            PolkadotHubNode::dev_accounts().next().unwrap().1.to_string(),
         ]
         .to_vec(),
     )
@@ -108,42 +150,14 @@ fn westend_assethub_args() -> Option<Vec<String>> {
 //
 // Ensure these variables are set before running the tests to enable proper interaction with the
 // Westend AssetHub.
-// tests `forge` create on goerli if correct env vars are set
+// tests `forge` create on westend if correct env vars are set
 forgetest!(can_create_simple_on_westend_assethub, |prj, cmd| {
-    if let Some(network_args) = westend_assethub_args() {
-        let contract_path = setup_with_simple_remapping(&prj);
-        let output = cmd
-            .arg("create")
-            .arg("--revive")
-            .arg("--legacy")
-            .arg("--broadcast")
-            .args(network_args)
-            .arg(contract_path)
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let _address = utils::parse_deployed_address(output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
-    }
+    create_on_chain(westend_assethub_args(), prj, cmd, setup_with_simple_remapping);
 });
 
-// tests `forge` create on goerli if correct env vars are set
+// tests `forge` create on westend if correct env vars are set
 forgetest!(can_create_oracle_on_westend_assethub, |prj, cmd| {
-    if let Some(network_args) = westend_assethub_args() {
-        let contract_path = setup_oracle(&prj);
-        let output = cmd
-            .arg("create")
-            .arg("--revive")
-            .arg("--legacy")
-            .arg("--broadcast")
-            .args(network_args)
-            .arg(contract_path)
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let _address = utils::parse_deployed_address(output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
-    }
+    create_on_chain(westend_assethub_args(), prj, cmd, setup_oracle);
 });
 
 // tests that we can deploy with constructor args
@@ -267,5 +281,11 @@ Deployed to: [..]
 [TX_HASH]
 
 "#]]);
+    }
+});
+
+forgetest_async!(can_create_simple_on_localnode, |prj, cmd| {
+    if let Ok(_node) = PolkadotHubNode::start().await {
+        create_on_chain(localnode_args(), prj, cmd, setup_with_simple_remapping);
     }
 });

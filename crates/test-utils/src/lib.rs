@@ -15,6 +15,8 @@ mod macros;
 
 pub mod rpc;
 
+pub mod revive;
+
 pub mod fd_lock;
 
 mod filter;
