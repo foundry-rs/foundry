@@ -1,6 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -17,10 +17,12 @@ use foundry_evm::{
     traces::TraceMode,
 };
 use reqwest::Url;
-use revm_primitives::{
-    db::Database,
+use revm::primitives::{
+    bytecode::Bytecode,
+    database::Database,
     env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId, TxKind,
+    hardfork::SpecId,
+    Env,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};

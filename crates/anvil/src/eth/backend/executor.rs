@@ -30,7 +30,7 @@ use foundry_evm::{
     traces::CallTraceNode,
     utils::odyssey_handler_register,
 };
-use revm::db::WrapDatabaseRef;
+use revm::database::WrapDatabaseRef;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)

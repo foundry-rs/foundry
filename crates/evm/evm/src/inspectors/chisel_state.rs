@@ -29,8 +29,8 @@ impl<DB: Database> Inspector<DB> for ChiselState {
         if self.final_pc == interp.program_counter() - 1 {
             self.state = Some((
                 interp.stack.data().clone(),
-                interp.shared_memory.context_memory().to_vec(),
-                interp.instruction_result,
+                interp.memory,
+                interp.control.instruction_result,
             ))
         }
     }

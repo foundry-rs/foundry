@@ -8,7 +8,10 @@ use alloy_primitives::{
     map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
+use revm::{
+    context::JournalTr,
+    interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult},
+};
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
@@ -132,12 +135,20 @@ impl Display for CreateScheme {
     }
 }
 
+impl From<revm::context_interface::CreateScheme> for CreateScheme {
+    fn from(scheme: revm::context_interface::CreateScheme) -> Self {
+        match scheme {
+            revm::context_interface::CreateScheme::Create => Self::Create,
+            revm::context_interface::CreateScheme::Create2 { .. } => Self::Create2,
+        }
+    }
+}
+
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+    pub fn eq(&self, create_scheme: CreateScheme) -> bool {
         matches!(
             (self, create_scheme),
-            (Self::Create, revm::primitives::CreateScheme::Create) |
-                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, CreateScheme::Create) | (Self::Create2, CreateScheme::Create2 { .. })
         )
     }
 }
@@ -248,7 +259,7 @@ impl Cheatcode for expectEmit_0Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             false,
@@ -262,7 +273,7 @@ impl Cheatcode for expectEmit_1Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             false,
@@ -274,14 +285,28 @@ impl Cheatcode for expectEmit_1Call {
 impl Cheatcode for expectEmit_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false, 1)
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            [true; 5],
+            None,
+            false,
+            1,
+        )
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), false, 1)
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            [true; 5],
+            Some(emitter),
+            false,
+            1,
+        )
     }
 }
 
@@ -290,7 +315,7 @@ impl Cheatcode for expectEmit_4Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, count } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             false,
@@ -304,7 +329,7 @@ impl Cheatcode for expectEmit_5Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter, count } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             false,
@@ -316,7 +341,14 @@ impl Cheatcode for expectEmit_5Call {
 impl Cheatcode for expectEmit_6Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { count } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false, count)
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            [true; 5],
+            None,
+            false,
+            count,
+        )
     }
 }
 
@@ -325,7 +357,7 @@ impl Cheatcode for expectEmit_7Call {
         let Self { emitter, count } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [true; 5],
             Some(emitter),
             false,
@@ -339,7 +371,7 @@ impl Cheatcode for expectEmitAnonymous_0Call {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             true,
@@ -353,7 +385,7 @@ impl Cheatcode for expectEmitAnonymous_1Call {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             true,
@@ -365,14 +397,28 @@ impl Cheatcode for expectEmitAnonymous_1Call {
 impl Cheatcode for expectEmitAnonymous_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, true, 1)
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            [true; 5],
+            None,
+            true,
+            1,
+        )
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true, 1)
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            [true; 5],
+            Some(emitter),
+            true,
+            1,
+        )
     }
 }
 
@@ -393,7 +439,15 @@ impl Cheatcode for expectCreate2Call {
 impl Cheatcode for expectRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false, None, 1)
+        expect_revert(
+            ccx.state,
+            None,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            false,
+            false,
+            None,
+            1,
+        )
     }
 }
 
@@ -403,7 +457,7 @@ impl Cheatcode for expectRevert_1Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             None,
@@ -418,7 +472,7 @@ impl Cheatcode for expectRevert_2Call {
         expect_revert(
             ccx.state,
             Some(revertData),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             None,
@@ -433,7 +487,7 @@ impl Cheatcode for expectRevert_3Call {
         expect_revert(
             ccx.state,
             None,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             Some(*reverter),
@@ -448,7 +502,7 @@ impl Cheatcode for expectRevert_4Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             Some(*reverter),
@@ -463,7 +517,7 @@ impl Cheatcode for expectRevert_5Call {
         expect_revert(
             ccx.state,
             Some(revertData),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             Some(*reverter),
@@ -475,7 +529,15 @@ impl Cheatcode for expectRevert_5Call {
 impl Cheatcode for expectRevert_6Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { count } = self;
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false, None, *count)
+        expect_revert(
+            ccx.state,
+            None,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            false,
+            false,
+            None,
+            *count,
+        )
     }
 }
 
@@ -485,7 +547,7 @@ impl Cheatcode for expectRevert_7Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             None,
@@ -500,7 +562,7 @@ impl Cheatcode for expectRevert_8Call {
         expect_revert(
             ccx.state,
             Some(revertData),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             None,
@@ -515,7 +577,7 @@ impl Cheatcode for expectRevert_9Call {
         expect_revert(
             ccx.state,
             None,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             Some(*reverter),
@@ -530,7 +592,7 @@ impl Cheatcode for expectRevert_10Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             Some(*reverter),
@@ -545,7 +607,7 @@ impl Cheatcode for expectRevert_11Call {
         expect_revert(
             ccx.state,
             Some(revertData),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             false,
             Some(*reverter),
@@ -560,7 +622,7 @@ impl Cheatcode for expectPartialRevert_0Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             true,
             None,
@@ -575,7 +637,7 @@ impl Cheatcode for expectPartialRevert_1Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             false,
             true,
             Some(*reverter),
@@ -586,7 +648,15 @@ impl Cheatcode for expectPartialRevert_1Call {
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true, false, None, 1)
+        expect_revert(
+            ccx.state,
+            None,
+            ccx.ecx.journaled_state.depth().try_into()?,
+            true,
+            false,
+            None,
+            1,
+        )
     }
 }
 
@@ -596,7 +666,7 @@ impl Cheatcode for _expectCheatcodeRevert_1Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             true,
             false,
             None,
@@ -611,7 +681,7 @@ impl Cheatcode for _expectCheatcodeRevert_2Call {
         expect_revert(
             ccx.state,
             Some(revertData),
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth().try_into()?,
             true,
             false,
             None,
@@ -623,14 +693,14 @@ impl Cheatcode for _expectCheatcodeRevert_2Call {
 impl Cheatcode for expectSafeMemoryCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
+        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth().try_into()?)
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
+        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth().try_into()?);
         Ok(Default::default())
     }
 }
@@ -638,7 +708,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 impl Cheatcode for expectSafeMemoryCallCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
+        expect_safe_memory(ccx.state, min, max, (ccx.ecx.journaled_state.depth() + 1).try_into()?)
     }
 }
 
@@ -812,11 +882,11 @@ pub(crate) fn handle_expect_emit(
                 .expected_emits
                 .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
-            interpreter.instruction_result = InstructionResult::Revert;
-            interpreter.next_action = InterpreterAction::Return {
+            interpreter.control.instruction_result = InstructionResult::Revert;
+            interpreter.control.next_action = InterpreterAction::Return {
                 result: InterpreterResult {
                     output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                    gas: interpreter.gas,
+                    gas: interpreter.control.gas,
                     result: InstructionResult::Revert,
                 },
             };
