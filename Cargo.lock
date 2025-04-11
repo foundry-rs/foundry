@@ -883,7 +883,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 0.11.1",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -1754,7 +1754,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-client"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#5086f7262b38690e2de09c1a65d46242a1a43212"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#a1b32aa91e6768125112415844d2328b015f2ab3"
 dependencies = [
  "alloy",
  "assertion-da-core",
@@ -1768,7 +1768,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#5086f7262b38690e2de09c1a65d46242a1a43212"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#a1b32aa91e6768125112415844d2328b015f2ab3"
 dependencies = [
  "alloy",
  "serde",
@@ -9099,7 +9099,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

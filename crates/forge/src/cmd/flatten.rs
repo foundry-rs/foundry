@@ -31,7 +31,7 @@ pub struct FlattenArgs {
     pub output: Option<PathBuf>,
 
     #[command(flatten)]
-    project_paths: ProjectPathOpts,
+    pub project_paths: ProjectPathOpts,
 }
 
 impl FlattenArgs {
