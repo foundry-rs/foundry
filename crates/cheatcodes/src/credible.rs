@@ -106,9 +106,11 @@ impl Cheatcode for assertionExCall {
         let mut fork_db = ForkDb::new(assertion_executor.db.clone());
         fork_db.commit(state);
 
+        let mut ext_db = revm::db::WrapDatabaseRef(fork_db.clone());
+
         // Store assertions
         let tx_validation = assertion_executor
-            .validate_transaction(block, tx_env, &mut fork_db)
+            .validate_transaction_ext_db(block, tx_env, &mut fork_db, &mut ext_db)
             .map_err(|e| format!("Assertion Executor Error: {e:#?}"))?;
 
         // if transaction execution reverted, bail
