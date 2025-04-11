@@ -175,7 +175,7 @@ pub trait CheatcodesExecutor {
             FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
         };
 
-        evm.context.evm.inner.journaled_state.depth -= 1;
+        evm.journaled_state.depth -= 1;
 
         Ok(outcome)
         // })

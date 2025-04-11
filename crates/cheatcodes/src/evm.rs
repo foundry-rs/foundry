@@ -20,7 +20,7 @@ use itertools::Itertools;
 use rand::Rng;
 use revm::{
     bytecode::Bytecode,
-    context::{journaled_state, Block, JournalTr},
+    context::{Block, JournalTr},
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::Account,
 };

@@ -8,7 +8,7 @@ use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, EnvMut, EnvRef,
     InspectorExt,
 };
-use alloy_evm::{eth::EthEvmContext, EvmEnv};
+use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, U256};
 use revm::{
     context::{
