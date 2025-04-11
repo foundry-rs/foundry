@@ -22,7 +22,7 @@ vergen = { workspace = true, default-features = false, features = [
 ] }
 
 [dependencies]
-assertion-executor = { git = "ssh://git@github.com/phylaxsystems/assertion-executor.git", rev = "1cbbf30" }
+assertion-executor = { git = "ssh://git@github.com/phylaxsystems/assertion-executor.git", rev = "6f74915" }
 
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
