@@ -10,6 +10,7 @@ use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
 use foundry_common::ens::NameOrAddress;
 use itertools::Itertools;
 use std::{io, str::FromStr};
+use alloy_primitives::address;
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -208,7 +209,7 @@ mod tests {
     use alloy_primitives::{U160, U256};
     use alloy_rpc_types::ValueOrArray;
 
-    const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
+    const ADDRESS: Address = address!("0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38");
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
     const TRANSFER_TOPIC: &str =
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -217,7 +218,7 @@ mod tests {
     fn test_build_filter_basic() {
         let from_block = Some(BlockNumberOrTag::from(1337));
         let to_block = Some(BlockNumberOrTag::Latest);
-        let address = Address::from_str(ADDRESS).ok();
+        let address = Some(ADDRESS);
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block, to_block },
             address: ValueOrArray::Value(address.unwrap()).into(),
@@ -269,8 +270,7 @@ mod tests {
 
     #[test]
     fn test_build_filter_sig_with_arguments() {
-        let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(ADDRESS.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),
@@ -294,8 +294,7 @@ mod tests {
 
     #[test]
     fn test_build_filter_sig_with_skipped_arguments() {
-        let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(ADDRESS.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),
