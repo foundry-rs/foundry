@@ -1753,6 +1753,98 @@ contract AContractTest is DSTest {
     assert!(files.is_empty());
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10172>
+forgetest!(constructor_with_args, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "ArrayCondition.sol",
+        r#"
+contract ArrayCondition {
+    uint8 public constant MAX_SIZE = 32;
+    error TooLarge();
+    error EmptyArray();
+    // Storage variable to ensure the constructor does something
+    uint256 private _arrayLength;
+
+    constructor(uint256[] memory values) {
+        // Check for empty array
+        if (values.length == 0) {
+            revert EmptyArray();
+        }
+
+        if (values.length > MAX_SIZE) {
+            revert TooLarge();
+        }
+
+        // Store the array length
+        _arrayLength = values.length;
+    }
+
+    function getArrayLength() external view returns (uint256) {
+        return _arrayLength;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "ArrayConditionTest.sol",
+        r#"
+import "./test.sol";
+import {ArrayCondition} from "./ArrayCondition.sol";
+
+interface Vm {
+    function expectRevert(bytes4 revertData) external;
+}
+
+contract ArrayConditionTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testValidSize() public {
+        uint256[] memory values = new uint256[](10);
+        ArrayCondition condition = new ArrayCondition(values);
+        assertEq(condition.getArrayLength(), 10);
+    }
+
+    // Test with maximum array size (should NOT revert)
+    function testMaxSize() public {
+        uint256[] memory values = new uint256[](32);
+        ArrayCondition condition = new ArrayCondition(values);
+        assertEq(condition.getArrayLength(), 32);
+    }
+
+    // Test with too large array size (should revert)
+    function testTooLarge() public {
+        uint256[] memory values = new uint256[](33);
+        vm.expectRevert(ArrayCondition.TooLarge.selector);
+        new ArrayCondition(values);
+    }
+
+    // Test with empty array (should revert)
+    function testEmptyArray() public {
+        uint256[] memory values = new uint256[](0);
+        vm.expectRevert(ArrayCondition.EmptyArray.selector);
+        new ArrayCondition(values);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭------------------------+---------------+---------------+---------------+---------------╮
+| File                   | % Lines       | % Statements  | % Branches    | % Funcs       |
++========================================================================================+
+| src/ArrayCondition.sol | 100.00% (8/8) | 100.00% (6/6) | 100.00% (2/2) | 100.00% (2/2) |
+|------------------------+---------------+---------------+---------------+---------------|
+| Total                  | 100.00% (8/8) | 100.00% (6/6) | 100.00% (2/2) | 100.00% (2/2) |
+╰------------------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});
+
 #[track_caller]
 fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
     cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
