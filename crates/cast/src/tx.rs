@@ -459,23 +459,18 @@ where
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.
 async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
-    if let Some(err_data) = serde_json::from_str::<String>(data.get())?.strip_prefix("0x") {
-        let Some(selector) = err_data.get(..8) else { return Ok(None) };
-
-        if let Some(known_error) = SignaturesIdentifier::new(Config::foundry_cache_dir(), false)?
-            .write()
-            .await
-            .identify_error(&hex::decode(selector)?)
-            .await
-        {
-            let mut decoded_error = known_error.name.clone();
-            if !known_error.inputs.is_empty() {
-                if let Ok(error) = known_error.decode_error(&hex::decode(err_data)?) {
-                    write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
-                }
+    let err_data = serde_json::from_str::<Bytes>(data.get())?;
+    let Some(selector) = err_data.get(..4) else { return Ok(None) };
+    if let Some(known_error) =
+        SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
+    {
+        let mut decoded_error = known_error.name.clone();
+        if !known_error.inputs.is_empty() {
+            if let Ok(error) = known_error.decode_error(&err_data) {
+                write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
             }
-            return Ok(Some(decoded_error))
         }
+        return Ok(Some(decoded_error))
     }
     Ok(None)
 }
