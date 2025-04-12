@@ -624,7 +624,6 @@ impl ScriptConfig {
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
-                    .address_warn_inspector(true)
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .odyssey(self.evm_opts.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -636,7 +635,6 @@ impl ScriptConfig {
         if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
-                    .address_warn_inspector(true)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config,
@@ -652,23 +650,6 @@ impl ScriptConfig {
         }
 
         Ok(ScriptRunner::new(builder.build(env, db), self.evm_opts.clone()))
-    }
-}
-
-/// An inspector that warns if the `ADDRESS` (0x30) opcode is used during script execution.
-#[derive(Debug, Clone, Default)]
-pub struct ScriptAddressWarnInspector;
-
-impl<DB: Database> Inspector<DB> for ScriptAddressWarnInspector {
-    fn step(&mut self, interp: &mut Interpreter, _data: &mut EvmState<'_>) -> InstructionResult {
-        let opcode = interp.current_opcode();
-        if opcode == opcode::ADDRESS {
-            // Using eprintln directly might be too noisy or not the standard way Foundry handles warnings.
-            // Consider integrating with a logger or a dedicated warning mechanism if available.
-            // For now, printing to stderr demonstrates the concept.
-            eprintln!("forge script warning: Usage of `address(this)` detected. Script contracts are ephemeral and their addresses should not be relied upon.");
-        }
-        InstructionResult::Continue
     }
 }
 
