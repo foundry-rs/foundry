@@ -24,6 +24,25 @@ use std::{
     sync::Arc,
 };
 
+/// An inspector that warns if the `ADDRESS` (0x30) opcode is used.
+/// This is particularly useful for `forge script` where using `address(this)` is often unintended.
+#[derive(Debug, Clone, Default)]
+pub struct ScriptAddressWarnInspector;
+
+impl<DB: DatabaseExt> Inspector<DB> for ScriptAddressWarnInspector {
+    fn step(&mut self, interp: &mut Interpreter, _data: &mut EvmContext<DB>) -> InstructionResult {
+        let opcode = interp.current_opcode();
+        // Check if the opcode is ADDRESS (0x30)
+        if opcode == revm::interpreter::opcode::ADDRESS {
+            // Using eprintln directly might be too noisy or not the standard way Foundry handles warnings.
+            // Consider integrating with a logger or a dedicated warning mechanism if available.
+            // For now, printing to stderr demonstrates the concept.
+            eprintln!("forge script warning: Usage of `address(this)` detected. Script contracts are ephemeral and their addresses should not be relied upon.");
+        }
+        InstructionResult::Continue
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct InspectorStackBuilder {
@@ -61,6 +80,8 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
+    /// Whether to enable the address(this) warning inspector.
+    pub address_warn: bool,
 }
 
 impl InspectorStackBuilder {
@@ -164,6 +185,13 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable the address(this) warning inspector.
+    #[inline]
+    pub fn address_warn_inspector(mut self, yes: bool) -> Self {
+        self.address_warn = yes;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -180,6 +208,7 @@ impl InspectorStackBuilder {
             odyssey,
             wallets,
             create2_deployer,
+            address_warn,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -203,6 +232,11 @@ impl InspectorStackBuilder {
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
+
+        // Add the new inspector if requested
+        if address_warn {
+            stack.set_address_warn_inspector();
+        }
 
         stack.enable_isolation(enable_isolation);
         stack.odyssey(odyssey);
@@ -290,6 +324,8 @@ pub struct InspectorStackInner {
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
+    /// Inspector to warn about address(this) usage.
+    pub address_warn_inspector: Option<ScriptAddressWarnInspector>,
     pub enable_isolation: bool,
     pub odyssey: bool,
     pub create2_deployer: Address,
@@ -435,6 +471,11 @@ impl InspectorStack {
         } else {
             self.tracer = None;
         }
+    }
+
+    /// Set the address(this) warning inspector.
+    pub fn set_address_warn_inspector(&mut self) {
+        self.inner.address_warn_inspector = Some(ScriptAddressWarnInspector::default());
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -756,20 +797,31 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
     ) {
+        // do not modify the interpreter state if we are in the inner context
+        // check is done in the `step` function
+        if self.in_inner_context {
+            return;
+        }
+
         call_inspectors!(
-            [&mut self.coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            [&mut self.cheatcodes, &mut self.inner.tracer],
             |inspector| inspector.initialize_interp(interpreter, ecx),
         );
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+        if self.in_inner_context {
+            return;
+        }
+
         call_inspectors!(
             [
-                &mut self.fuzzer,
-                &mut self.tracer,
-                &mut self.coverage,
                 &mut self.cheatcodes,
-                &mut self.printer,
+                &mut self.inner.fuzzer,
+                &mut self.inner.tracer,
+                &mut self.inner.coverage,
+                &mut self.inner.printer,
+                &mut self.inner.address_warn_inspector
             ],
             |inspector| inspector.step(interpreter, ecx),
         );
@@ -780,8 +832,12 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
     ) {
+        if self.in_inner_context {
+            return;
+        }
+
         call_inspectors!(
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
+            [&mut self.cheatcodes, &mut self.inner.tracer, &mut self.inner.chisel_state],
             |inspector| inspector.step_end(interpreter, ecx),
         );
     }
@@ -793,7 +849,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         log: &Log,
     ) {
         call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
+            [&mut self.cheatcodes, &mut self.inner.log_collector, &mut self.inner.tracer],
             |inspector| inspector.log(interpreter, ecx, log),
         );
     }
