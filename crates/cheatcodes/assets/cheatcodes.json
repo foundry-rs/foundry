@@ -5956,7 +5956,7 @@
     },
     {
       "func": {
-        "id": "getChain",
+        "id": "getChain_0",
         "description": "Returns a Chain struct for specific alias",
         "declaration": "function getChain(string calldata chainAlias) external view returns (Chain memory chain);",
         "visibility": "external",
@@ -5968,6 +5968,26 @@
           193,
           194,
           187
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getChain_1",
+        "description": "Returns a Chain struct for specific chainId",
+        "declaration": "function getChain(uint256 chainId) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(uint256)",
+        "selector": "0xb6791ad4",
+        "selectorBytes": [
+          182,
+          121,
+          26,
+          212
         ]
       },
       "group": "testing",

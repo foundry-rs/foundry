@@ -292,6 +292,7 @@ interface Vm {
     function getBroadcasts(string calldata contractName, uint64 chainId, BroadcastTxType txType) external view returns (BroadcastTxSummary[] memory);
     function getBroadcasts(string calldata contractName, uint64 chainId) external view returns (BroadcastTxSummary[] memory);
     function getChain(string calldata chainAlias) external view returns (Chain memory chain);
+    function getChain(uint256 chainId) external view returns (Chain memory chain);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
     function getDeployment(string calldata contractName) external view returns (address deployedAddress);

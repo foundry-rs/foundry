@@ -983,6 +983,10 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function getChain(string calldata chainAlias) external view returns (Chain memory chain);
 
+    /// Returns a Chain struct for specific chainId
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getChain(uint256 chainId) external view returns (Chain memory chain);
+
     /// Suspends execution of the main thread for `duration` milliseconds.
     #[cheatcode(group = Testing, safety = Safe)]
     function sleep(uint256 duration) external;

@@ -3705,6 +3705,7 @@ dependencies = [
 name = "foundry-cheatcodes"
 version = "1.0.0"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-genesis",

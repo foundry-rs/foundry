@@ -1,10 +1,12 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use alloy_chains::Chain as AlloyChain;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
+use std::str::FromStr;
 
 pub(crate) mod assert;
 pub(crate) mod assume;
@@ -29,14 +31,6 @@ impl Cheatcode for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         Ok(SEMVER_VERSION.abi_encode())
-    }
-}
-
-impl Cheatcode for getChainCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { chainAlias } = self;
-        let chain = get_chain_data(state, chainAlias)?;
-        Ok(chain.abi_encode())
     }
 }
 
@@ -92,6 +86,22 @@ impl Cheatcode for skip_1Call {
     }
 }
 
+impl Cheatcode for getChain_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { chainAlias } = self;
+        get_chain(state, chainAlias)
+    }
+}
+
+impl Cheatcode for getChain_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { chainId } = self;
+        // Convert the chainId to a string and use the existing get_chain function
+        let chain_id_str = chainId.to_string();
+        get_chain(state, &chain_id_str)
+    }
+}
+
 /// Adds or removes the given breakpoint to the state.
 fn breakpoint(state: &mut Cheatcodes, caller: &Address, s: &str, add: bool) -> Result {
     let mut chars = s.chars();
@@ -109,21 +119,31 @@ fn breakpoint(state: &mut Cheatcodes, caller: &Address, s: &str, add: bool) -> R
     Ok(Default::default())
 }
 
-/// Get chain data and create a Chain struct
-fn get_chain_data(state: &Cheatcodes, alias: &str) -> Result<Chain> {
-    // Ensure the alias is not empty
-    if alias.is_empty() {
-        bail!("Chain alias cannot be empty");
+/// Gets chain information for the given alias.
+fn get_chain(state: &mut Cheatcodes, chain_alias: &str) -> Result {
+    // Parse the chain alias - works for both chain names and IDs
+    let alloy_chain = AlloyChain::from_str(chain_alias)
+        .map_err(|_| fmt_err!("invalid chain alias: {chain_alias}"))?;
+
+    // Check if this is an unknown chain ID by comparing the name to the chain ID
+    // When a numeric ID is passed for an unknown chain, alloy_chain.to_string() will return the ID
+    // So if they match, it's likely an unknown chain ID
+    if alloy_chain.to_string() == alloy_chain.id().to_string() {
+        return Err(fmt_err!("invalid chain alias: {chain_alias}"));
     }
-    // Get chain data from alias
-    let chain_data = state.config.get_chain_data_by_alias_non_mut(alias)?;
-    // Get RPC URL
-    let rpc_url = state.config.get_rpc_url_non_mut(alias)?;
-    // Create the Chain struct
-    Ok(Chain {
-        name: chain_data.name,
-        chainId: U256::from(chain_data.chain_id),
-        chainAlias: alias.to_string(),
+
+    // First, try to get RPC URL from the user's config in foundry.toml
+    let rpc_url = state.config.rpc_endpoint(chain_alias).ok().and_then(|e| e.url().ok());
+
+    // If we couldn't get a URL from config, return an empty string
+    let rpc_url = rpc_url.unwrap_or_default();
+
+    let chain_struct = Chain {
+        name: alloy_chain.to_string(),
+        chainId: U256::from(alloy_chain.id()),
+        chainAlias: chain_alias.to_string(),
         rpcUrl: rpc_url,
-    })
+    };
+
+    Ok(chain_struct.abi_encode())
 }

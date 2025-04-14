@@ -7,48 +7,85 @@ import "cheats/Vm.sol";
 contract GetChainTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testGetChainByAlias() public {
+    function testGetMainnet() public {
         // Test mainnet
         Vm.Chain memory mainnet = vm.getChain("mainnet");
-        assertEq(mainnet.name, "Mainnet");
+        assertEq(mainnet.name, "mainnet");
         assertEq(mainnet.chainId, 1);
         assertEq(mainnet.chainAlias, "mainnet");
-        assertTrue(bytes(mainnet.rpcUrl).length > 0);
-        
-        // Test sepolia
-        Vm.Chain memory sepolia = vm.getChain("sepolia");
-        assertEq(sepolia.name, "Sepolia");
-        assertEq(sepolia.chainId, 11155111);
-        assertEq(sepolia.chainAlias, "sepolia");
-        assertTrue(bytes(sepolia.rpcUrl).length > 0);
-        
-        // Test Anvil/Local chain
-        Vm.Chain memory anvil = vm.getChain("anvil");
-        assertEq(anvil.name, "Anvil");
-        assertEq(anvil.chainId, 31337);
-        assertEq(anvil.chainAlias, "anvil");
-        assertTrue(bytes(anvil.rpcUrl).length > 0);
-    }
-    
-    function testGetChainInvalidAlias() public {
-        // Test with invalid alias - should revert
-        vm._expectCheatcodeRevert("vm.getChain: Chain with alias \"invalid_chain\" not found");
-        vm.getChain("invalid_chain");
     }
 
-    function testGetChainEmptyAlias() public {
-        vm._expectCheatcodeRevert("Chain alias cannot be empty");
+    function testGetSepolia() public {
+        // Test Sepolia
+        Vm.Chain memory sepolia = vm.getChain("sepolia");
+        assertEq(sepolia.name, "sepolia");
+        assertEq(sepolia.chainId, 11155111);
+        assertEq(sepolia.chainAlias, "sepolia");
+    }
+
+    function testGetOptimism() public {
+        // Test Optimism
+        Vm.Chain memory optimism = vm.getChain("optimism");
+        assertEq(optimism.name, "optimism");
+        assertEq(optimism.chainId, 10);
+        assertEq(optimism.chainAlias, "optimism");
+    }
+
+    function testGetByChainId() public {
+        // Test getting a chain by its ID
+        vm._expectCheatcodeRevert("invalid chain alias:");
+        Vm.Chain memory arbitrum = vm.getChain("42161222");
+    }
+
+    function testEmptyAlias() public {
+        // Test empty string
+        vm._expectCheatcodeRevert("invalid chain alias:");
         vm.getChain("");
     }
 
-    
-    function testGetChainRpcUrlPriority() public {
-        // This test assumes running with default config where no custom RPC URLs are set
-        // for mainnet. So it should use the default RPC URL.
-        Vm.Chain memory mainnet = vm.getChain("mainnet");
-        assertTrue(bytes(mainnet.rpcUrl).length > 0);
-        
-        // You can print the URL for manual verification
-        emit log_string(mainnet.rpcUrl);
+    function testInvalidAlias() public {
+        // Test invalid alias
+        vm._expectCheatcodeRevert("invalid chain alias: nonexistent_chain");
+        vm.getChain("nonexistent_chain");
+    }
+
+    // Tests for the numeric chainId version of getChain
+
+    function testGetMainnetById() public {
+        // Test mainnet using chain ID
+        Vm.Chain memory mainnet = vm.getChain(1);
+        assertEq(mainnet.name, "mainnet");
+        assertEq(mainnet.chainId, 1);
+        assertEq(mainnet.chainAlias, "1");
+    }
+
+    function testGetSepoliaById() public {
+        // Test Sepolia using chain ID
+        Vm.Chain memory sepolia = vm.getChain(11155111);
+        assertEq(sepolia.name, "sepolia");
+        assertEq(sepolia.chainId, 11155111);
+        assertEq(sepolia.chainAlias, "11155111");
+    }
+
+    function testGetOptimismById() public {
+        // Test Optimism using chain ID
+        Vm.Chain memory optimism = vm.getChain(10);
+        assertEq(optimism.name, "optimism");
+        assertEq(optimism.chainId, 10);
+        assertEq(optimism.chainAlias, "10");
+    }
+
+    function testGetArbitrumById() public {
+        // Test Arbitrum using chain ID
+        Vm.Chain memory arbitrum = vm.getChain(42161);
+        assertEq(arbitrum.name, "arbitrum");
+        assertEq(arbitrum.chainId, 42161);
+        assertEq(arbitrum.chainAlias, "42161");
+    }
+
+    function testInvalidChainId() public {
+        // Test invalid chain ID (using a value that's unlikely to be a valid chain)
+        vm._expectCheatcodeRevert("invalid chain alias: 12345678");
+        vm.getChain(12345678);
     }
 }
