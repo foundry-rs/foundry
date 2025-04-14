@@ -123,11 +123,12 @@ impl FromStr for VerificationProviderType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "e" | "etherscan" => Ok(Self::Etherscan),
-            "s" | "sourcify" => Ok(Self::Sourcify),
-            "b" | "blockscout" => Ok(Self::Blockscout),
-            "o" | "oklink" => Ok(Self::Oklink),
-            "c" | "custom" => Ok(Self::Custom),
+            "e"   | "etherscan" => Ok(Self::Etherscan),
+            "ev2" | "etherscan-v2" => Ok(Self::EtherscanV2),
+            "s"   | "sourcify" => Ok(Self::Sourcify),
+            "b"   | "blockscout" => Ok(Self::Blockscout),
+            "o"   | "oklink" => Ok(Self::Oklink),
+            "c"   | "custom" => Ok(Self::Custom),
             _ => Err(format!("Unknown provider: {s}")),
         }
     }
@@ -138,6 +139,9 @@ impl fmt::Display for VerificationProviderType {
         match self {
             Self::Etherscan => {
                 write!(f, "etherscan")?;
+            }
+            Self::EtherscanV2 => {
+                write!(f, "etherscan-v2")?;
             }
             Self::Sourcify => {
                 write!(f, "sourcify")?;
@@ -159,6 +163,7 @@ impl fmt::Display for VerificationProviderType {
 #[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerificationProviderType {
     Etherscan,
+    EtherscanV2,
     #[default]
     Sourcify,
     Blockscout,
@@ -208,6 +213,10 @@ impl VerificationProviderType {
     }
 
     pub fn is_etherscan(&self) -> bool {
-        matches!(self, Self::Etherscan)
+        matches!(self, Self::Etherscan) || matches!(self, Self::EtherscanV2)
+    }
+
+    pub fn is_etherscan_v2(&self) -> bool {
+        matches!(self, Self::EtherscanV2)
     }
 }
