@@ -123,12 +123,12 @@ impl FromStr for VerificationProviderType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "e"   | "etherscan" => Ok(Self::Etherscan),
+            "e" | "etherscan" => Ok(Self::Etherscan),
             "ev2" | "etherscan-v2" => Ok(Self::EtherscanV2),
-            "s"   | "sourcify" => Ok(Self::Sourcify),
-            "b"   | "blockscout" => Ok(Self::Blockscout),
-            "o"   | "oklink" => Ok(Self::Oklink),
-            "c"   | "custom" => Ok(Self::Custom),
+            "s" | "sourcify" => Ok(Self::Sourcify),
+            "b" | "blockscout" => Ok(Self::Blockscout),
+            "o" | "oklink" => Ok(Self::Oklink),
+            "c" | "custom" => Ok(Self::Custom),
             _ => Err(format!("Unknown provider: {s}")),
         }
     }
