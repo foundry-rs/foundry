@@ -8,13 +8,14 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::fork::CreateFork;
+use foundry_evm_core::{fork::CreateFork, AsEnvMut};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         ccx.ecx
-            .db()
+            .journaled_state
+            .database
             .active_fork_id()
             .map(|id| id.abi_encode())
             .ok_or_else(|| fmt_err!("no active fork"))
@@ -67,9 +68,12 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        let mut env = ccx.ecx.env();
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().roll_fork(None, (*blockNumber).to(), &mut env, &mut journaled_state)?;
+        ccx.ecx.journaled_state.database.roll_fork(
+            None,
+            (*blockNumber).to(),
+            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.journaled_state.inner,
+        )?;
         Ok(Default::default())
     }
 }
@@ -78,9 +82,12 @@ impl Cheatcode for rollFork_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { txHash } = self;
         persist_caller(ccx);
-        let mut env = ccx.ecx.env();
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().roll_fork_to_transaction(None, *txHash, &mut env, &mut journaled_state)?;
+        ccx.ecx.journaled_state.database.roll_fork_to_transaction(
+            None,
+            *txHash,
+            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.journaled_state.inner,
+        )?;
         Ok(Default::default())
     }
 }
@@ -89,13 +96,11 @@ impl Cheatcode for rollFork_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { forkId, blockNumber } = self;
         persist_caller(ccx);
-        let mut env = ccx.ecx.env();
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().roll_fork(
+        ccx.ecx.journaled_state.database.roll_fork(
             Some(*forkId),
             (*blockNumber).to(),
-            &mut env,
-            &mut journaled_state,
+            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
     }
@@ -105,13 +110,11 @@ impl Cheatcode for rollFork_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { forkId, txHash } = self;
         persist_caller(ccx);
-        let mut env = ccx.ecx.env();
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().roll_fork_to_transaction(
+        ccx.ecx.journaled_state.database.roll_fork_to_transaction(
             Some(*forkId),
             *txHash,
-            &mut env,
-            &mut journaled_state,
+            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
     }
@@ -122,10 +125,11 @@ impl Cheatcode for selectForkCall {
         let Self { forkId } = self;
         persist_caller(ccx);
         check_broadcast(ccx.state)?;
-
-        let mut env = ccx.ecx.env();
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().select_fork(*forkId, &mut env, &mut journaled_state)?;
+        ccx.ecx.journaled_state.database.select_fork(
+            *forkId,
+            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.journaled_state.inner,
+        )?;
         Ok(Default::default())
     }
 }
@@ -147,7 +151,7 @@ impl Cheatcode for transact_1Call {
 impl Cheatcode for allowCheatcodesCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { account } = self;
-        ccx.ecx.db_mut().allow_cheatcode_access(*account);
+        ccx.ecx.journaled_state.database.allow_cheatcode_access(*account);
         Ok(Default::default())
     }
 }
@@ -155,7 +159,7 @@ impl Cheatcode for allowCheatcodesCall {
 impl Cheatcode for makePersistent_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { account } = self;
-        ccx.ecx.db_mut().add_persistent_account(*account);
+        ccx.ecx.journaled_state.database.add_persistent_account(*account);
         Ok(Default::default())
     }
 }
@@ -163,8 +167,8 @@ impl Cheatcode for makePersistent_0Call {
 impl Cheatcode for makePersistent_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { account0, account1 } = self;
-        ccx.ecx.db_mut().add_persistent_account(*account0);
-        ccx.ecx.db_mut().add_persistent_account(*account1);
+        ccx.ecx.journaled_state.database.add_persistent_account(*account0);
+        ccx.ecx.journaled_state.database.add_persistent_account(*account1);
         Ok(Default::default())
     }
 }
@@ -172,9 +176,9 @@ impl Cheatcode for makePersistent_1Call {
 impl Cheatcode for makePersistent_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { account0, account1, account2 } = self;
-        ccx.ecx.db_mut().add_persistent_account(*account0);
-        ccx.ecx.db_mut().add_persistent_account(*account1);
-        ccx.ecx.db_mut().add_persistent_account(*account2);
+        ccx.ecx.journaled_state.database.add_persistent_account(*account0);
+        ccx.ecx.journaled_state.database.add_persistent_account(*account1);
+        ccx.ecx.journaled_state.database.add_persistent_account(*account2);
         Ok(Default::default())
     }
 }
@@ -183,7 +187,7 @@ impl Cheatcode for makePersistent_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { accounts } = self;
         for account in accounts {
-            ccx.ecx.db_mut().add_persistent_account(*account);
+            ccx.ecx.journaled_state.database.add_persistent_account(*account);
         }
         Ok(Default::default())
     }
@@ -192,7 +196,7 @@ impl Cheatcode for makePersistent_3Call {
 impl Cheatcode for revokePersistent_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { account } = self;
-        ccx.ecx.db_mut().remove_persistent_account(account);
+        ccx.ecx.journaled_state.database.remove_persistent_account(account);
         Ok(Default::default())
     }
 }
@@ -201,7 +205,7 @@ impl Cheatcode for revokePersistent_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { accounts } = self;
         for account in accounts {
-            ccx.ecx.db_mut().remove_persistent_account(account);
+            ccx.ecx.journaled_state.database.remove_persistent_account(account);
         }
         Ok(Default::default())
     }
@@ -210,7 +214,7 @@ impl Cheatcode for revokePersistent_1Call {
 impl Cheatcode for isPersistentCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { account } = self;
-        Ok(ccx.ecx.db_mut().is_persistent(account).abi_encode())
+        Ok(ccx.ecx.journaled_state.database.is_persistent(account).abi_encode())
     }
 }
 
@@ -281,16 +285,18 @@ fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u6
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let mut env = ccx.ecx.env();
-    let mut journaled_state = ccx.ecx.journaled_state.clone();
-    let id = ccx.ecx.db_mut().create_select_fork(fork, &mut env, &mut journaled_state)?;
+    let id = ccx.ecx.journaled_state.database.create_select_fork(
+        fork,
+        ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.journaled_state.inner,
+    )?;
     Ok(id.abi_encode())
 }
 
 /// Creates a new fork
 fn create_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u64>) -> Result {
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let id = ccx.ecx.db_mut().create_fork(fork)?;
+    let id = ccx.ecx.journaled_state.database.create_fork(fork)?;
     Ok(id.abi_encode())
 }
 
@@ -303,12 +309,10 @@ fn create_select_fork_at_transaction(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let mut env = ccx.ecx.env();
-    let mut journaled_state = ccx.ecx.journaled_state.clone();
-    let id = ccx.ecx.db_mut().create_select_fork_at_transaction(
+    let id = ccx.ecx.journaled_state.database.create_select_fork_at_transaction(
         fork,
-        &mut env,
-        &mut journaled_state,
+        ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.journaled_state.inner,
         *transaction,
     )?;
     Ok(id.abi_encode())
@@ -321,7 +325,7 @@ fn create_fork_at_transaction(
     transaction: &B256,
 ) -> Result {
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let id = ccx.ecx.db_mut().create_fork_at_transaction(fork, *transaction)?;
+    let id = ccx.ecx.journaled_state.database.create_fork_at_transaction(fork, *transaction)?;
     Ok(id.abi_encode())
 }
 
@@ -342,12 +346,11 @@ fn create_fork_request(
     if let Some(Ok(auth)) = rpc_endpoint.auth {
         evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
     }
-    let env = ccx.ecx.env();
     let fork = CreateFork {
         enable_caching: !ccx.state.config.no_storage_caching &&
             ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
-        env,
+        env: ccx.ecx.as_env_mut().to_owned(),
         evm_opts,
     };
     Ok(fork)
@@ -367,13 +370,11 @@ fn transact(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let env = ccx.ecx.env();
-    let mut journaled_state = ccx.ecx.journaled_state.clone();
-    ccx.ecx.db_mut().transact(
+    ccx.ecx.journaled_state.database.transact(
         fork_id,
         transaction,
-        env,
-        &mut journaled_state,
+        &ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.journaled_state.inner,
         &mut *executor.get_inspector(ccx.state),
     )?;
     Ok(Default::default())
@@ -384,7 +385,7 @@ fn transact(
 // Applies to create, select and roll forks actions.
 // https://github.com/foundry-rs/foundry/issues/8004
 fn persist_caller(ccx: &mut CheatsCtxt) {
-    ccx.ecx.db_mut().add_persistent_account(ccx.caller);
+    ccx.ecx.journaled_state.database.add_persistent_account(ccx.caller);
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.

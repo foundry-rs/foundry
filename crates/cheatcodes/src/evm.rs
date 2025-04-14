@@ -14,6 +14,7 @@ use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+    AsEnvMut,
 };
 use foundry_evm_traces::StackSnapshotType;
 use itertools::Itertools;
@@ -228,10 +229,9 @@ impl Cheatcode for loadAllocsCall {
         };
 
         // Then, load the allocs into the database.
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
         ccx.ecx
             .db_mut()
-            .load_allocs(&allocs, &mut journaled_state)
+            .load_allocs(&allocs, &mut ccx.ecx.journaled_state.inner)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
@@ -243,10 +243,13 @@ impl Cheatcode for cloneAccountCall {
 
         let account = ccx.ecx.journaled_state.load_account(*source)?;
         let genesis = &genesis_account(account.data);
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().clone_account(genesis, target, &mut journaled_state)?;
+        ccx.ecx.journaled_state.database.clone_account(
+            genesis,
+            target,
+            &mut ccx.ecx.journaled_state.inner,
+        )?;
         // Cloned account should persist in forked envs.
-        ccx.ecx.db_mut().add_persistent_account(*target);
+        ccx.ecx.journaled_state.database.add_persistent_account(*target);
         Ok(Default::default())
     }
 }
@@ -829,18 +832,16 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        let env = ccx.ecx.env();
-        let mut journaled_state = ccx.ecx.journaled_state.clone();
-        ccx.ecx.db_mut().transact_from_tx(
+        ccx.ecx.journaled_state.database.transact_from_tx(
             &tx.clone().into(),
-            env,
-            &mut journaled_state,
+            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.journaled_state.inner,
             &mut *executor.get_inspector(ccx.state),
         )?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
-                rpc: ccx.ecx.db_mut().active_fork_url(),
+                rpc: ccx.ecx.journaled_state.database.active_fork_url(),
                 transaction: tx.try_into()?,
             });
         }
@@ -858,7 +859,7 @@ impl Cheatcode for setBlockhashCall {
             "block number must be less than or equal to the current block number"
         );
 
-        ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
+        ccx.ecx.journaled_state.database.set_blockhash(blockNumber, blockHash);
 
         Ok(Default::default())
     }
@@ -936,18 +937,20 @@ pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
 }
 
 fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
-    let mut env = ccx.ecx.env();
-    let journaled_state = ccx.ecx.journaled_state.clone();
-    Ok(ccx.ecx.db_mut().snapshot_state(&journaled_state, &mut env).abi_encode())
+    Ok(ccx
+        .ecx
+        .inner
+        .journaled_state
+        .database
+        .snapshot_state(&mut ccx.ecx.journaled_state.inner, &ccx.ecx.as_env_mut())
+        .abi_encode())
 }
 
 fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let mut env = ccx.ecx.env();
-    let journaled_state = ccx.ecx.journaled_state.clone();
-    let result = if let Some(journaled_state) = ccx.ecx.db_mut().revert_state(
+    let result = if let Some(journaled_state) = ccx.ecx.inner.journaled_state.database.revert_state(
         snapshot_id,
-        &journaled_state,
-        &mut env,
+        &ccx.journaled_state.inner,
+        &ccx.ecx.as_env_mut(),
         RevertStateSnapshotAction::RevertKeep,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
@@ -960,12 +963,10 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
 }
 
 fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let mut env = ccx.ecx.env();
-    let journaled_state = ccx.ecx.journaled_state.clone();
-    let result = if let Some(journaled_state) = ccx.ecx.db_mut().revert_state(
+    let result = if let Some(journaled_state) = ccx.ecx.journaled_state.database.revert_state(
         snapshot_id,
-        &journaled_state,
-        &mut env,
+        &ccx.journaled_state.inner,
+        ccx.ecx.as_env_mut(),
         RevertStateSnapshotAction::RevertRemove,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
@@ -978,12 +979,12 @@ fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> 
 }
 
 fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = ccx.ecx.db_mut().delete_state_snapshot(snapshot_id);
+    let result = ccx.ecx.journaled_state.database.delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
 
 fn inner_delete_state_snapshots(ccx: &mut CheatsCtxt) -> Result {
-    ccx.ecx.db_mut().delete_state_snapshots();
+    ccx.ecx.journaled_state.database.delete_state_snapshots();
     Ok(Default::default())
 }
 

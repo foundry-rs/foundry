@@ -5,8 +5,7 @@ use std::{
 };
 
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, EnvMut, EnvRef,
-    InspectorExt,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, EnvMut, InspectorExt,
 };
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, U256};
@@ -90,53 +89,9 @@ where
         self.enabled.get(&name).copied().unwrap_or(false)
     }
 
-    /// Returns a clone of the environment of the EVM.
-    pub fn env(&self) -> Env {
-        Env::from(
-            self.inner.data.ctx.cfg.clone(),
-            self.inner.data.ctx.block.clone(),
-            self.inner.data.ctx.tx.clone(),
-        )
-    }
-
-    /// Returns a reference to the environment of the EVM.
-    /// This is used to access the block, transaction, and configuration data.
-    pub fn env_ref(&self) -> EnvRef<'_> {
-        EnvRef {
-            block: &self.inner.data.ctx.block,
-            cfg: &self.inner.data.ctx.cfg,
-            tx: &self.inner.data.ctx.tx,
-        }
-    }
-
-    /// Returns a mutable reference to the environment of the EVM.
-    /// This is used to access the block, transaction, and configuration data.
-    pub fn env_mut(&mut self) -> EnvMut<'_> {
-        EnvMut {
-            block: &mut self.inner.data.ctx.block,
-            cfg: &mut self.inner.data.ctx.cfg,
-            tx: &mut self.inner.data.ctx.tx,
-        }
-    }
-
     /// Returns a reference to the inner EVM instance.
     pub fn evm(&self) -> &FoundryEvm<'db, I> {
         &self.inner
-    }
-
-    /// Returns a mutable reference to the inner EVM instance.
-    pub fn evm_mut(&mut self) -> &mut FoundryEvm<'db, I> {
-        &mut self.inner
-    }
-
-    /// Returns a reference to the inner DB instance.
-    pub fn db(&self) -> &dyn DatabaseExt {
-        &self.inner.data.ctx.journaled_state.database
-    }
-
-    /// Returns a mutable reference to the inner DB instance.
-    pub fn db_mut(&mut self) -> &mut dyn DatabaseExt {
-        &mut self.inner.data.ctx.journaled_state.database
     }
 
     /// Returns a reference to the inner inspector instance.
@@ -397,15 +352,18 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
     }
 }
 
-pub fn new_evm_context<'db>(db: &'db mut dyn DatabaseExt, env: &Env) -> FoundryEvmContext<'db> {
+pub fn new_evm_context<'db>(
+    db: &'db mut dyn DatabaseExt,
+    env: &EnvMut<'_>,
+) -> FoundryEvmContext<'db> {
     FoundryEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
+            journal.set_spec_id(env.cfg.spec);
             journal
         },
-        block: env.evm_env.block_env.clone(),
-        cfg: env.evm_env.cfg_env.clone(),
+        block: env.block.clone(),
+        cfg: env.cfg.clone(),
         tx: env.tx.clone(),
         chain: (),
         error: Ok(()),
@@ -414,7 +372,7 @@ pub fn new_evm_context<'db>(db: &'db mut dyn DatabaseExt, env: &Env) -> FoundryE
 
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
-    env: &Env,
+    env: &EnvMut<'_>,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
     new_evm_with_context(new_evm_context(db, env), inspector)

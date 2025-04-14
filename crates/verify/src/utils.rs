@@ -350,7 +350,7 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
+pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.coinbase = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
