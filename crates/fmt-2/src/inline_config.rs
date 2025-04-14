@@ -71,7 +71,7 @@ pub struct InlineConfig {
 
 impl InlineConfig {
     /// Build a new inline config with an iterator of inline config items and their locations in a
-    /// source file
+    /// source file.
     pub fn new(items: impl IntoIterator<Item = (Loc, InlineConfigItem)>, src: &str) -> Self {
         let mut disabled_ranges = vec![];
         let mut disabled_range_start = None;

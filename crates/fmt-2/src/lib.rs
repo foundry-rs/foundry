@@ -5,6 +5,8 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod printer;
+
 mod buffer;
 pub mod chunk;
 mod comments;

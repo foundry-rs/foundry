@@ -45,8 +45,8 @@ impl FormatterError {
         Self::Fmt(std::fmt::Error)
     }
 
-    fn custom(err: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self::Custom(Box::new(err))
+    pub fn custom(err: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self::Custom(err.into())
     }
 }
 

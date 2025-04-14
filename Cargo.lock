@@ -3577,6 +3577,7 @@ dependencies = [
  "itertools 0.14.0",
  "similar-asserts",
  "solang-parser",
+ "solar-parse",
  "thiserror 2.0.12",
  "toml 0.8.20",
  "tracing",
