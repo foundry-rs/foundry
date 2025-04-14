@@ -1,4 +1,5 @@
-// Adapted from https://github.com/dtolnay/prettyplease/blob/8eb8c14649aea32e810732bd4d64fe519e6b752a/src/algorithm.rs.
+//! Adapted from [`rustc_ast_pretty`](https://github.com/rust-lang/rust/blob/07d3fd1d9b9c1f07475b96a9d168564bf528db68/compiler/rustc_ast_pretty/src/pp.rs)
+//! and [`prettyplease`](https://github.com/dtolnay/prettyplease/blob/8eb8c14649aea32e810732bd4d64fe519e6b752a/src/algorithm.rs).
 
 use ring::RingBuffer;
 use std::{borrow::Cow, cmp, collections::VecDeque, iter};
@@ -70,8 +71,8 @@ pub(crate) enum Token {
 
 #[derive(Copy, Clone)]
 enum PrintFrame {
-    Fits,
-    Broken { indent: usize, breaks: Breaks },
+    Fits(Breaks),
+    Broken(usize, Breaks),
 }
 
 const SIZE_INFINITY: isize = 0xffff;
@@ -98,7 +99,7 @@ pub struct Printer {
     /// Level of indentation of current line
     indent: usize,
     /// Buffered indentation to avoid writing trailing whitespace
-    pending_indentation: isize,
+    pending_indentation: usize,
     /// The token most recently popped from the left boundary of the
     /// ring-buffer for printing
     last_printed: Option<Token>,
@@ -189,7 +190,7 @@ impl Printer {
     }
 
     pub(crate) fn offset(&mut self, offset: isize) {
-        if let Some(BufEntry { token: Token::Break(token), .. }) = &mut self.buf.last_mut() {
+        if let Some(BufEntry { token: Token::Break(token), .. }) = self.buf.last_mut() {
             token.offset += offset;
         }
     }
@@ -262,15 +263,30 @@ impl Printer {
     }
 
     fn get_top(&self) -> PrintFrame {
-        *self
-            .print_stack
-            .last()
-            .unwrap_or(&PrintFrame::Broken { indent: 0, breaks: Breaks::Inconsistent })
+        *self.print_stack.last().unwrap_or(&PrintFrame::Broken(0, Breaks::Inconsistent))
     }
 
     fn print_begin(&mut self, token: BeginToken, size: isize) {
+        if DEBUG {
+            self.out.push(match token.breaks {
+                Breaks::Consistent => '«',
+                Breaks::Inconsistent => '‹',
+            });
+            // TODO(dani)
+            /*
+            if DEBUG_INDENT {
+                self.out.extend(token.offset.to_string().chars().map(|ch| match ch {
+                    '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
+                        [(ch as u8 - b'0') as usize],
+                    '-' => '₋',
+                    _ => unreachable!(),
+                }));
+            }
+            */
+        }
+
         if size > self.space {
-            self.print_stack.push(PrintFrame::Broken { indent: self.indent, breaks: token.breaks });
+            self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
             self.indent = match token.indent {
                 IndentStyle::Block { offset } => {
                     usize::try_from(self.indent as isize + offset).unwrap()
@@ -278,48 +294,79 @@ impl Printer {
                 IndentStyle::Visual => (MARGIN - self.space) as usize,
             };
         } else {
-            self.print_stack.push(PrintFrame::Fits);
+            self.print_stack.push(PrintFrame::Fits(token.breaks));
         }
     }
 
     fn print_end(&mut self) {
-        if let PrintFrame::Broken { indent, .. } = self.print_stack.pop().unwrap() {
-            self.indent = indent;
+        let breaks = match self.print_stack.pop().unwrap() {
+            PrintFrame::Broken(indent, breaks) => {
+                self.indent = indent;
+                breaks
+            }
+            PrintFrame::Fits(breaks) => breaks,
+        };
+        if DEBUG {
+            self.out.push(match breaks {
+                Breaks::Consistent => '»',
+                Breaks::Inconsistent => '›',
+            });
         }
     }
 
     fn print_break(&mut self, token: BreakToken, size: isize) {
-        let fits = match self.get_top() {
-            PrintFrame::Fits => true,
-            PrintFrame::Broken { breaks: Breaks::Consistent, .. } => false,
-            PrintFrame::Broken { breaks: Breaks::Inconsistent, .. } => size <= self.space,
-        };
+        let fits = /* token.never_break || */
+            match self.get_top() {
+                PrintFrame::Fits(..) => true,
+                PrintFrame::Broken(.., Breaks::Consistent) => false,
+                PrintFrame::Broken(.., Breaks::Inconsistent) => size <= self.space,
+            };
         if fits {
-            self.pending_indentation += token.blank_space;
-            self.space -= token.blank_space;
+            self.pending_indentation += usize::try_from(token.blank_space).unwrap();
+            self.space -= token.blank_space as isize;
+            // TODO(dani)
+            /*
+            if let Some(no_break) = token.no_break {
+                self.out.push(no_break);
+                self.space -= no_break.len_utf8() as isize;
+            }
+            */
+            if DEBUG {
+                self.out.push('·');
+            }
         } else {
             if let Some(pre_break) = token.pre_break {
+                self.print_indent();
                 self.out.push(pre_break);
+            }
+            if DEBUG {
+                self.out.push('·');
             }
             self.out.push('\n');
             let indent = self.indent as isize + token.offset;
-            self.pending_indentation = indent;
+            self.pending_indentation = usize::try_from(indent).unwrap();
+            // TODO(dani): config
             self.space = cmp::max(MARGIN - indent, MIN_SPACE);
+            // TODO(dani)
+            /*
+            if !token.post_break.is_empty() {
+                self.print_indent();
+                self.out.push_str(token.post_break);
+                self.space -= token.post_break.len() as isize;
+            }
+            */
         }
     }
 
     fn print_string(&mut self, string: &str) {
-        // Write the pending indent. A more concise way of doing this would be:
-        //
-        //   write!(self.out, "{: >n$}", "", n = self.pending_indentation as usize)?;
-        //
-        // But that is significantly slower. This code is sufficiently hot, and indents can get
-        // sufficiently large, that the difference is significant on some workloads.
-        self.out.reserve(self.pending_indentation as usize);
-        self.out.extend(iter::repeat(' ').take(self.pending_indentation as usize));
-        self.pending_indentation = 0;
-
+        self.print_indent();
         self.out.push_str(string);
         self.space -= string.len() as isize;
+    }
+
+    fn print_indent(&mut self) {
+        self.out.reserve(self.pending_indentation);
+        self.out.extend(iter::repeat(' ').take(self.pending_indentation));
+        self.pending_indentation = 0;
     }
 }
