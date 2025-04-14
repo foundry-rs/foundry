@@ -11,7 +11,7 @@ use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
-    verify::{self, CodeFormat, VerifyContract},
+    verify::{CodeFormat, VerifyContract},
     Client,
 };
 use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
@@ -275,10 +275,8 @@ impl EtherscanVerificationProvider {
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
             .or_else(|| chain.etherscan_urls().map(|(_, url)| url));
-
         let etherscan_key =
             etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.as_str()));
- 
         let etherscan_api_version = if verifier_type.is_etherscan_v2() {
             foundry_block_explorers::EtherscanApiVersion::V2
         } else {
@@ -593,7 +591,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/v2/api?chainid=80001");
+        assert_eq!(
+            client.etherscan_api_url().as_str(),
+            "https://api.etherscan.io/v2/api?chainid=80001"
+        );
         assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([
@@ -611,7 +612,7 @@ mod tests {
         ]);
 
         let config = args.load_config().unwrap();
-        
+
         assert_eq!(args.verifier.verifier, VerificationProviderType::EtherscanV2);
 
         let etherscan = EtherscanVerificationProvider::default();
