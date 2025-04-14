@@ -3572,11 +3572,9 @@ name = "forge-fmt-2"
 version = "1.1.0"
 dependencies = [
  "alloy-primitives",
- "ariadne",
  "foundry-config",
  "itertools 0.14.0",
  "similar-asserts",
- "solang-parser",
  "solar-parse",
  "thiserror 2.0.12",
  "toml 0.8.20",

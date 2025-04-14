@@ -1,6 +1,5 @@
-use crate::comments::{CommentState, CommentStringExt};
 use itertools::Itertools;
-use solang_parser::pt::Loc;
+use solar_parse::{ast::Span, lexer::token::RawTokenKind};
 use std::{fmt, str::FromStr};
 
 /// An inline config item
@@ -37,7 +36,7 @@ pub struct InvalidInlineConfigItem(String);
 
 impl fmt::Display for InvalidInlineConfigItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("Invalid inline config item: {}", self.0))
+        write!(f, "invalid inline config item: {}", self.0)
     }
 }
 
@@ -52,8 +51,8 @@ struct DisabledRange {
 }
 
 impl DisabledRange {
-    fn includes(&self, loc: Loc) -> bool {
-        loc.start() >= self.start && (if self.loose { loc.start() } else { loc.end() } <= self.end)
+    fn includes(&self, range: std::ops::Range<usize>) -> bool {
+        range.start >= self.start && (if self.loose { range.start } else { range.end } <= self.end)
     }
 }
 
@@ -72,36 +71,43 @@ pub struct InlineConfig {
 impl InlineConfig {
     /// Build a new inline config with an iterator of inline config items and their locations in a
     /// source file.
-    pub fn new(items: impl IntoIterator<Item = (Loc, InlineConfigItem)>, src: &str) -> Self {
+    pub fn new(items: impl IntoIterator<Item = (Span, InlineConfigItem)>, src: &str) -> Self {
         let mut disabled_ranges = vec![];
         let mut disabled_range_start = None;
         let mut disabled_depth = 0usize;
-        for (loc, item) in items.into_iter().sorted_by_key(|(loc, _)| loc.start()) {
+        for (sp, item) in items.into_iter().sorted_by_key(|(loc, _)| loc.lo().to_usize()) {
             match item {
                 InlineConfigItem::DisableNextItem => {
-                    let offset = loc.end();
-                    let mut char_indices = src[offset..]
-                        .comment_state_char_indices()
-                        .filter_map(|(state, idx, ch)| match state {
-                            CommentState::None => Some((idx, ch)),
-                            _ => None,
+                    use RawTokenKind::*;
+                    let offset = sp.hi().to_usize();
+                    let mut idx = offset;
+                    let mut tokens = solar_parse::Cursor::new(&src[offset..])
+                        .map(|token| {
+                            let start = idx;
+                            idx += token.len as usize;
+                            (start, token)
                         })
-                        .skip_while(|(_, ch)| ch.is_whitespace());
-                    if let Some((mut start, _)) = char_indices.next() {
+                        .filter(|(_, t)| {
+                            !matches!(t.kind, LineComment { .. } | BlockComment { .. })
+                        })
+                        .skip_while(|(_, t)| matches!(t.kind, Whitespace));
+                    if let Some((mut start, _)) = tokens.next() {
                         start += offset;
-                        let end = char_indices
-                            .find(|(_, ch)| !ch.is_whitespace())
-                            .map(|(idx, _)| offset + idx)
+                        let end = tokens
+                            .find(|(_, t)| !matches!(t.kind, Whitespace))
+                            .map(|(idx, _)| idx)
                             .unwrap_or(src.len());
                         disabled_ranges.push(DisabledRange { start, end, loose: true });
                     }
                 }
                 InlineConfigItem::DisableLine => {
-                    let mut prev_newline =
-                        src[..loc.start()].char_indices().rev().skip_while(|(_, ch)| *ch != '\n');
+                    let mut prev_newline = src[..sp.lo().to_usize()]
+                        .char_indices()
+                        .rev()
+                        .skip_while(|(_, ch)| *ch != '\n');
                     let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
 
-                    let end_offset = loc.end();
+                    let end_offset = sp.hi().to_usize();
                     let mut next_newline =
                         src[end_offset..].char_indices().skip_while(|(_, ch)| *ch != '\n');
                     let end =
@@ -110,7 +116,7 @@ impl InlineConfig {
                     disabled_ranges.push(DisabledRange { start, end, loose: false });
                 }
                 InlineConfigItem::DisableNextLine => {
-                    let offset = loc.end();
+                    let offset = sp.hi().to_usize();
                     let mut char_indices =
                         src[offset..].char_indices().skip_while(|(_, ch)| *ch != '\n').skip(1);
                     if let Some((mut start, _)) = char_indices.next() {
@@ -124,7 +130,7 @@ impl InlineConfig {
                 }
                 InlineConfigItem::DisableStart => {
                     if disabled_depth == 0 {
-                        disabled_range_start = Some(loc.end());
+                        disabled_range_start = Some(sp.hi().to_usize());
                     }
                     disabled_depth += 1;
                 }
@@ -134,7 +140,7 @@ impl InlineConfig {
                         if let Some(start) = disabled_range_start.take() {
                             disabled_ranges.push(DisabledRange {
                                 start,
-                                end: loc.start(),
+                                end: sp.lo().to_usize(),
                                 loose: false,
                             })
                         }
@@ -149,7 +155,7 @@ impl InlineConfig {
     }
 
     /// Check if the location is in a disabled range
-    pub fn is_disabled(&self, loc: Loc) -> bool {
-        self.disabled_ranges.iter().any(|range| range.includes(loc))
+    pub fn is_disabled(&self, span: Span) -> bool {
+        self.disabled_ranges.iter().any(|range| range.includes(span.to_range()))
     }
 }

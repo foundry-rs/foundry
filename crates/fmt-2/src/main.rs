@@ -10,7 +10,7 @@ fn main() {
         let path = PathBuf::from(&args[1]);
         (std::fs::read_to_string(&path).unwrap(), Some(path))
     };
-    match forge_fmt_2::printer::format_source(&src, path.as_deref(), Default::default()) {
+    match forge_fmt_2::format_source(&src, path.as_deref(), Default::default()) {
         Ok(formatted) => {
             print!("{formatted}");
         }

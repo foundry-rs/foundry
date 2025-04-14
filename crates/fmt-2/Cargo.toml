@@ -18,10 +18,7 @@ foundry-config.workspace = true
 solar-parse.workspace = true
 
 alloy-primitives.workspace = true
-
-ariadne = "0.5"
 itertools.workspace = true
-solang-parser.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

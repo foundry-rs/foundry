@@ -24,6 +24,12 @@ pub struct Comment {
     pub span: Span,
 }
 
+impl Comment {
+    pub fn pos(&self) -> BytePos {
+        self.span.lo()
+    }
+}
+
 /// A fast conservative estimate on whether the string can contain documentation links.
 /// A pair of square brackets `[]` must exist in the string, but we only search for the
 /// opening bracket because brackets always go in pairs in practice.
