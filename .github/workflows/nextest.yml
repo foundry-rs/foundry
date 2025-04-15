@@ -19,7 +19,7 @@ env:
   REVIVE_RELEASE_VERSION: v0.1.0-dev.12
   DLRP_API_KEY: ${{ secrets.DLRP_API_KEY }}
   ETH_RPC_VERSION: 0.4.0
-  SUBSTRATE_NODE_COMMIT_SHA: 6ce6110199a
+  SUBSTRATE_NODE_COMMIT_SHA: 6ce6110199a429ce449841fe7222a5ba96eafb5c
 
 jobs:
   matrices:
@@ -135,9 +135,11 @@ jobs:
       - name: Build substrate-node (if not cached)
         if: steps.cache-substrate.outputs.cache-hit != 'true' && !contains(matrix.runner_label, 'windows')
         run: |
-          git clone --depth 1 https://github.com/paritytech/polkadot-sdk
+          git init polkadot-sdk
           cd polkadot-sdk
-          git checkout ${{ env.SUBSTRATE_NODE_COMMIT_SHA }}
+          git remote add origin https://github.com/paritytech/polkadot-sdk
+          git fetch --depth 1 origin ${{ env.SUBSTRATE_NODE_COMMIT_SHA }}
+          git checkout FETCH_HEAD
           cargo build --release --bin substrate-node
 
       - name: Add substrate-node to $PATH
