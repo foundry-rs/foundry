@@ -9,6 +9,8 @@ use foundry_config::NamedChain;
 use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
+use crate::EnvMut;
+
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
 /// - checks for prevrandao mixhash after merge
@@ -84,7 +86,7 @@ pub fn get_function<'a>(
 
 /// Configures the env for the given RPC transaction.
 /// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
-pub fn configure_tx_env(env: &mut crate::Env, tx: &Transaction<AnyTxEnvelope>) {
+pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
     let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from());
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
         configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
@@ -95,7 +97,7 @@ pub fn configure_tx_env(env: &mut crate::Env, tx: &Transaction<AnyTxEnvelope>) {
 /// `impersonated_from` is the address of the impersonated account. This helps account for an
 /// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
 pub fn configure_tx_req_env(
-    env: &mut crate::Env,
+    env: &mut EnvMut<'_>,
     tx: &TransactionRequest,
     impersonated_from: Option<Address>,
 ) -> eyre::Result<()> {

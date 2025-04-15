@@ -68,10 +68,10 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        ccx.ecx.journaled_state.database.roll_fork(
+        ccx.ecx.inner.journaled_state.database.roll_fork(
             None,
             (*blockNumber).to(),
-            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.as_env_mut(),
             &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
@@ -250,8 +250,12 @@ impl Cheatcode for eth_getLogsCall {
             bail!("topics array must contain at most 4 elements")
         }
 
-        let url =
-            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let url = ccx
+            .ecx
+            .journaled_state
+            .database
+            .active_fork_url()
+            .ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, &topic) in topics.iter().enumerate() {
@@ -287,7 +291,7 @@ fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u6
     let fork = create_fork_request(ccx, url_or_alias, block)?;
     let id = ccx.ecx.journaled_state.database.create_select_fork(
         fork,
-        ccx.ecx.as_env_mut(),
+        &ccx.ecx.as_env_mut(),
         &mut ccx.ecx.journaled_state.inner,
     )?;
     Ok(id.abi_encode())
@@ -309,9 +313,9 @@ fn create_select_fork_at_transaction(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let id = ccx.ecx.journaled_state.database.create_select_fork_at_transaction(
+    let id = ccx.ecx.inner.journaled_state.database.create_select_fork_at_transaction(
         fork,
-        ccx.ecx.as_env_mut(),
+        &ccx.ecx.as_env_mut(),
         &mut ccx.ecx.journaled_state.inner,
         *transaction,
     )?;

@@ -834,7 +834,7 @@ impl Cheatcode for broadcastRawTransactionCall {
 
         ccx.ecx.journaled_state.database.transact_from_tx(
             &tx.clone().into(),
-            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.as_env_mut(),
             &mut ccx.ecx.journaled_state.inner,
             &mut *executor.get_inspector(ccx.state),
         )?;
@@ -942,7 +942,7 @@ fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
         .inner
         .journaled_state
         .database
-        .snapshot_state(&mut ccx.ecx.journaled_state.inner, &ccx.ecx.as_env_mut())
+        .snapshot_state(&mut ccx.ecx.journaled_state.inner, &mut ccx.ecx.as_env_mut())
         .abi_encode())
 }
 
@@ -950,7 +950,7 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     let result = if let Some(journaled_state) = ccx.ecx.inner.journaled_state.database.revert_state(
         snapshot_id,
         &ccx.journaled_state.inner,
-        &ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.as_env_mut(),
         RevertStateSnapshotAction::RevertKeep,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
@@ -966,7 +966,7 @@ fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> 
     let result = if let Some(journaled_state) = ccx.ecx.journaled_state.database.revert_state(
         snapshot_id,
         &ccx.journaled_state.inner,
-        ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.as_env_mut(),
         RevertStateSnapshotAction::RevertRemove,
     ) {
         // we reset the evm's journaled_state to the state of the snapshot previous state
