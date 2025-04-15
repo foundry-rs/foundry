@@ -105,6 +105,13 @@ pub struct TestArgs {
     #[arg(long)]
     decode_internal: bool,
 
+    /// Truncate large input/output data in execution traces.
+    ///
+    /// This is useful when dealing with functions that pass large byte arrays,
+    /// which can make execution traces unusable.
+    #[arg(long, value_name = "SIZE")]
+    truncate_data: Option<usize>,
+
     /// Dumps all debugger steps to file.
     #[arg(
         long,
@@ -339,6 +346,13 @@ impl TestArgs {
         } else {
             InternalTraceMode::None
         };
+
+        // Apply truncate data option if provided
+        if let Some(truncate_size) = self.truncate_data {
+            use crate::traces::TraceMode;
+            // Set the truncate data size globally
+            TraceMode::None.with_truncate_data_size(truncate_size);
+        }
 
         // Prepare the test builder.
         let config = Arc::new(config);
@@ -992,6 +1006,12 @@ mod tests {
         let args: TestArgs =
             TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+    
+    #[test]
+    fn truncate_data_parse() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--truncate-data", "100"]);
+        assert_eq!(args.truncate_data, Some(100));
     }
 
     #[test]
