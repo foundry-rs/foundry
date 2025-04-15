@@ -1057,8 +1057,6 @@ where {
                 if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
                     call.target_address = prank.new_caller;
                     call.caller = prank.new_caller;
-                    let acc = ecx.journaled_state.account(prank.new_caller);
-                    call.value = CallValue::Apparent(acc.info.balance);
                     if let Some(new_origin) = prank.new_origin {
                         ecx.tx.caller = new_origin;
                     }
