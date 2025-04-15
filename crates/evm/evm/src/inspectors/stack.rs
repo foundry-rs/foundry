@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
-    TracingInspector,
+    ScriptExecutionInspector, TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
@@ -61,6 +61,8 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
+    /// The address of the script contract being executed.
+    pub script_address: Option<Address>,
 }
 
 impl InspectorStackBuilder {
@@ -164,6 +166,13 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set the script address for the ScriptExecutionInspector.
+    #[inline]
+    pub fn script_address(mut self, address: Option<Address>) -> Self {
+        self.script_address = address;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -180,6 +189,7 @@ impl InspectorStackBuilder {
             odyssey,
             wallets,
             create2_deployer,
+            script_address,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -198,6 +208,9 @@ impl InspectorStackBuilder {
         }
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
+        }
+        if script_address.is_some() {
+            stack.set_script_execution_inspector(script_address);
         }
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
@@ -290,6 +303,7 @@ pub struct InspectorStackInner {
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
+    pub script_execution_inspector: Option<ScriptExecutionInspector>,
     pub enable_isolation: bool,
     pub odyssey: bool,
     pub create2_deployer: Address,
@@ -437,13 +451,27 @@ impl InspectorStack {
         }
     }
 
+    /// Set the script execution inspector.
+    #[inline]
+    pub fn set_script_execution_inspector(&mut self, address: Option<Address>) {
+        self.script_execution_inspector = Some(ScriptExecutionInspector::new(address));
+    }
+
     /// Collects all the data gathered during inspection into a single struct.
     #[inline]
     pub fn collect(self) -> InspectorData {
         let Self {
             mut cheatcodes,
-            inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
+            inner: InspectorStackInner {
+                chisel_state,
+                coverage,
+                log_collector,
+                tracer,
+                script_execution_inspector,
+                .. },
         } = self;
+
+        let _ = script_execution_inspector;
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
             let ignored = cheatcodes
@@ -780,17 +808,10 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.printer,
+                &mut self.inner.script_execution_inspector,
             ],
             |inspector| inspector.step(interpreter, ecx),
         );
-
-        // Check for address(this) usage in the main script contract
-        if let Some(script_addr) = self.inner.script_address {
-            if interpreter.current_opcode() == opcode::ADDRESS && interpreter.contract.address == script_addr {
-                // Use tracing::warn! instead of eprintln!
-                tracing::warn!(target: "forge::script", script_address=%script_addr, "Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.");
-            }
-        }
     }
 
     fn step_end(
@@ -798,10 +819,6 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
     ) {
-        if self.in_inner_context {
-            return;
-        }
-
         call_inspectors!(
             [&mut self.cheatcodes, &mut self.inner.tracer, &mut self.inner.chisel_state],
             |inspector| inspector.step_end(interpreter, ecx),
