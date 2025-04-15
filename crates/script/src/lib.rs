@@ -600,24 +600,17 @@ impl ScriptConfig {
         cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
-        trace!("preparing script runner");
-        let env = self.evm_opts.evm_env().await?;
+        trace!(?cheats_data, ?debug, "creating script runner");
 
-        let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            match self.backends.get(fork_url) {
-                Some(db) => db.clone(),
-                None => {
-                    let fork = self.evm_opts.get_fork(&self.config, env.clone());
-                    let backend = Backend::spawn(fork)?;
-                    self.backends.insert(fork_url.clone(), backend.clone());
-                    backend
-                }
+        let sender = self.evm_opts.sender;
+        let env = self.evm_opts.evm_env_blocking().await?;
+        let db = match self.backends.remove(&self.evm_opts.fork_url.clone().unwrap_or_default()) {
+            Some(db) => db,
+            None => {
+                let fork_url = self.evm_opts.fork_url.clone().unwrap_or_default();
+                trace!(%fork_url, "creating new backend");
+                Backend::spawn(self.evm_opts.get_fork(&self.config, env.clone())).await?
             }
-        } else {
-            // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
-            // no need to cache it, since there won't be any onchain simulation that we'd need
-            // to cache the backend for.
-            Backend::spawn(None)?
         };
 
         // We need to enable tracing to decode contract names: local or external.
@@ -627,6 +620,7 @@ impl ScriptConfig {
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .odyssey(self.evm_opts.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .script_address(Some(sender))
             })
             .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
