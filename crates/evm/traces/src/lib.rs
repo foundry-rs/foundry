@@ -189,19 +189,65 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
 pub fn render_trace_arena_inner(
     arena: &SparsedTraceArena,
     with_bytecodes: bool,
-    with_storage_changes: bool,
+    _with_storage_changes: bool,
 ) -> String {
     if shell::is_json() {
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to write traces");
     }
 
+    let resolved = arena.resolve_arena();
+    
+    // Check if there is a size for truncating data
+    let truncate_size = GLOBAL_CONFIG.with(|config| {
+        config.borrow().truncate_data_size
+    });
+    
+    // Prepare the arena for display
+    let arena_for_display = if let Some(size) = truncate_size {
+        // If truncation size is set, create a copy and truncate the data
+        let mut arena_clone = resolved.as_ref().clone();
+        truncate_large_data_in_arena(&mut arena_clone, size);
+        arena_clone
+    } else {
+        // Otherwise use the original arena
+        resolved.as_ref().clone()
+    };
+    
+    // Create a string with the trace
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
-        .write_bytecodes(with_bytecodes)
-        .with_storage_changes(with_storage_changes);
-    w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
+        .write_bytecodes(with_bytecodes);
+    
+    w.write_arena(&arena_for_display).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+}
+
+/// Truncates large data in the execution trace to the specified size
+fn truncate_large_data_in_arena(arena: &mut CallTraceArena, max_size: usize) {
+    for node in arena.nodes_mut() {
+        // Process trace input data
+        if node.trace.data.len() > max_size {
+            let mut shorter_data = node.trace.data[..max_size].to_vec();
+            shorter_data.extend_from_slice(
+                format!("... [truncated {} bytes]", node.trace.data.len() - max_size).as_bytes()
+            );
+            node.trace.data = shorter_data.into();
+        }
+        
+        // Process trace output data
+        if node.trace.output.len() > max_size {
+            let mut shorter_output = node.trace.output[..max_size].to_vec();
+            shorter_output.extend_from_slice(
+                format!("... [truncated {} bytes]", node.trace.output.len() - max_size).as_bytes()
+            );
+            node.trace.output = shorter_output.into();
+        }
+        
+        // Note: we don't process trace steps (step.memory) as
+        // the RecordedMemory type is closed and for the first MVP this is not critical,
+        // it's more important to truncate function input and output data
+    }
 }
 
 fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
@@ -309,6 +355,26 @@ pub enum TraceMode {
     RecordStateDiff,
 }
 
+#[derive(Debug, Clone, Copy)]
+/// Configuration for trace mode
+struct TraceModeConfig {
+    /// Size for truncating large data in traces. None means no truncation.
+    truncate_data_size: Option<usize>,
+}
+
+impl Default for TraceModeConfig {
+    fn default() -> Self {
+        Self {
+            truncate_data_size: None,
+        }
+    }
+}
+
+// Global configuration for all TraceMode instances
+thread_local! {
+    static GLOBAL_CONFIG: std::cell::RefCell<TraceModeConfig> = std::cell::RefCell::new(TraceModeConfig::default());
+}
+
 impl TraceMode {
     pub const fn is_none(self) -> bool {
         matches!(self, Self::None)
@@ -360,6 +426,15 @@ impl TraceMode {
         } else {
             self
         }
+    }
+    
+    /// Specifying the maximum size of function data in the trace.
+    /// If a value greater than 0 is specified, function data will be truncated to this size.
+    pub fn with_truncate_data_size(self, size: usize) -> Self {
+        GLOBAL_CONFIG.with(|config| {
+            config.borrow_mut().truncate_data_size = if size > 0 { Some(size) } else { None };
+        });
+        self
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
