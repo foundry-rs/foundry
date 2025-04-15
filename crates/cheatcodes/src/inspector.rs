@@ -46,7 +46,7 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
@@ -489,6 +489,9 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
+    /// Whether the next contract creation should be intercepted to return its initcode.
+    pub intercept_next_create_call: bool,
+
     /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
     /// strategies.
     test_runner: Option<TestRunner>,
@@ -549,6 +552,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            intercept_next_create_call: Default::default(),
             test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
@@ -656,6 +660,25 @@ impl Cheatcodes {
     where
         Input: CommonCreateInput,
     {
+        // Check if we should intercept this create
+        if self.intercept_next_create_call {
+            // Reset the flag
+            self.intercept_next_create_call = false;
+
+            // Get initcode from the input
+            let output = input.init_code();
+
+            // Return a revert with the initcode as error data
+            return Some(CreateOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output,
+                    gas: Gas::new(input.gas_limit()),
+                },
+                address: None,
+            });
+        }
+
         let ecx = &mut ecx.inner;
         let gas = Gas::new(input.gas_limit());
         let curr_depth = ecx.journaled_state.depth();
@@ -1024,8 +1047,6 @@ where {
                 if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
                     call.target_address = prank.new_caller;
                     call.caller = prank.new_caller;
-                    let acc = ecx.journaled_state.account(prank.new_caller);
-                    call.value = CallValue::Apparent(acc.info.balance);
                     if let Some(new_origin) = prank.new_origin {
                         ecx.env.tx.caller = new_origin;
                     }

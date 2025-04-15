@@ -4,6 +4,7 @@ use alloy_rpc_types::{
     anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
+    simulate::SimulatePayload,
     state::StateOverride,
     trace::{
         filter::TraceFilter,
@@ -151,6 +152,9 @@ pub enum EthRequest {
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
     ),
+
+    #[serde(rename = "eth_simulateV1")]
+    EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_createAccessList")]
     EthCreateAccessList(WithOtherFields<TransactionRequest>, #[serde(default)] Option<BlockId>),

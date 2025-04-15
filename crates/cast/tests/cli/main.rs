@@ -2179,11 +2179,9 @@ contract CounterInExternalLibScript is Script {
         .tx_hash();
 
     // Cache project selectors.
-    cmd.forge_fuse().set_current_dir(prj.root());
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     // Assert cast with local artifacts can decode external lib signature.
-    cmd.cast_fuse().set_current_dir(prj.root());
     cmd.cast_fuse()
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
