@@ -85,7 +85,7 @@ impl Cheatcode for rollFork_1Call {
         ccx.ecx.journaled_state.database.roll_fork_to_transaction(
             None,
             *txHash,
-            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.as_env_mut(),
             &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
@@ -99,7 +99,7 @@ impl Cheatcode for rollFork_2Call {
         ccx.ecx.journaled_state.database.roll_fork(
             Some(*forkId),
             (*blockNumber).to(),
-            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.as_env_mut(),
             &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
@@ -113,7 +113,7 @@ impl Cheatcode for rollFork_3Call {
         ccx.ecx.journaled_state.database.roll_fork_to_transaction(
             Some(*forkId),
             *txHash,
-            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.as_env_mut(),
             &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
@@ -127,7 +127,7 @@ impl Cheatcode for selectForkCall {
         check_broadcast(ccx.state)?;
         ccx.ecx.journaled_state.database.select_fork(
             *forkId,
-            &ccx.ecx.as_env_mut(),
+            &mut ccx.ecx.as_env_mut(),
             &mut ccx.ecx.journaled_state.inner,
         )?;
         Ok(Default::default())
@@ -223,7 +223,8 @@ impl Cheatcode for rpc_0Call {
         let Self { method, params } = self;
         let url = ccx
             .ecx
-            .db_mut()
+            .journaled_state
+            .database
             .active_fork_url()
             .ok_or_else(|| fmt_err!("no active fork URL found"))?;
         rpc_call(&url, method, params)
@@ -291,7 +292,7 @@ fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u6
     let fork = create_fork_request(ccx, url_or_alias, block)?;
     let id = ccx.ecx.journaled_state.database.create_select_fork(
         fork,
-        &ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.as_env_mut(),
         &mut ccx.ecx.journaled_state.inner,
     )?;
     Ok(id.abi_encode())
@@ -315,7 +316,7 @@ fn create_select_fork_at_transaction(
     let fork = create_fork_request(ccx, url_or_alias, None)?;
     let id = ccx.ecx.inner.journaled_state.database.create_select_fork_at_transaction(
         fork,
-        &ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.as_env_mut(),
         &mut ccx.ecx.journaled_state.inner,
         *transaction,
     )?;
@@ -377,7 +378,7 @@ fn transact(
     ccx.ecx.journaled_state.database.transact(
         fork_id,
         transaction,
-        &ccx.ecx.as_env_mut(),
+        &mut ccx.ecx.as_env_mut(),
         &mut ccx.ecx.journaled_state.inner,
         &mut *executor.get_inspector(ccx.state),
     )?;

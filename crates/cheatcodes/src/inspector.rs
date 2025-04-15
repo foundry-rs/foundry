@@ -617,7 +617,7 @@ impl Cheatcodes {
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
-        ecx.db().ensure_cheatcode_access_forking_mode(&caller)?;
+        ecx.journaled_state.database.ensure_cheatcode_access_forking_mode(&caller)?;
 
         apply_dispatch(
             &decoded,
@@ -632,8 +632,10 @@ impl Cheatcodes {
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
     /// automatically we need to determine the new address.
     fn allow_cheatcodes_on_create(&self, ecx: Ecx, caller: Address, created_address: Address) {
-        if ecx.journaled_state.depth <= 1 || ecx.db().has_cheatcode_access(&caller) {
-            ecx.db_mut().allow_cheatcode_access(created_address);
+        if ecx.journaled_state.depth <= 1 ||
+            ecx.journaled_state.database.has_cheatcode_access(&caller)
+        {
+            ecx.journaled_state.database.allow_cheatcode_access(created_address);
         }
     }
 
@@ -2004,7 +2006,7 @@ impl Cheatcodes {
                 // register access for the target account
                 last.push(crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.db().active_fork_id().unwrap_or_default(),
+                        forkId: ecx.journaled_state.database.active_fork_id().unwrap_or_default(),
                         chainId: U256::from(ecx.cfg.chain_id),
                     },
                     accessor: interpreter.input.target_address,
@@ -2114,7 +2116,7 @@ impl Cheatcodes {
                     .expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.db().active_fork_id().unwrap_or_default(),
+                        forkId: ecx.journaled_state.database.active_fork_id().unwrap_or_default(),
                         chainId: U256::from(ecx.cfg.chain_id),
                     },
                     accessor: interpreter.input.target_address,

@@ -230,8 +230,10 @@ impl Cheatcode for loadAllocsCall {
 
         // Then, load the allocs into the database.
         ccx.ecx
-            .db_mut()
-            .load_allocs(&allocs, &mut ccx.ecx.journaled_state.inner)
+            .inner
+            .journaled_state
+            .database
+            .load_allocs(&allocs, &mut ccx.ecx.inner.journaled_state.inner)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
