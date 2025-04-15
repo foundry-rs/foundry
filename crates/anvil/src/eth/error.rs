@@ -5,6 +5,7 @@ use alloy_primitives::{Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
+use anvil_core::eth::wallet::WalletError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
@@ -85,12 +86,22 @@ pub enum BlockchainError {
     EIP2930TransactionUnsupportedAtHardfork,
     #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
     EIP4844TransactionUnsupportedAtHardfork,
+    #[error("EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later.")]
+    EIP7702TransactionUnsupportedAtHardfork,
     #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
     DepositTransactionUnsupported,
+    #[error("UnknownTransactionType not supported ")]
+    UnknownTransactionType,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
     #[error("{0}")]
     Message(String),
+}
+
+impl From<eyre::Report> for BlockchainError {
+    fn from(err: eyre::Report) -> Self {
+        Self::Message(err.to_string())
+    }
 }
 
 impl From<RpcError> for BlockchainError {
@@ -113,6 +124,26 @@ where
             EVMError::Database(err) => err.into(),
             EVMError::Precompile(err) => Self::Message(err),
             EVMError::Custom(err) => Self::Message(err),
+        }
+    }
+}
+
+impl From<WalletError> for BlockchainError {
+    fn from(value: WalletError) -> Self {
+        match value {
+            WalletError::ValueNotZero => Self::Message("tx value not zero".to_string()),
+            WalletError::FromSet => Self::Message("tx from field is set".to_string()),
+            WalletError::NonceSet => Self::Message("tx nonce is set".to_string()),
+            WalletError::InvalidAuthorization => {
+                Self::Message("invalid authorization address".to_string())
+            }
+            WalletError::IllegalDestination => Self::Message(
+                "the destination of the transaction is not a delegated account".to_string(),
+            ),
+            WalletError::InternalError => Self::Message("internal error".to_string()),
+            WalletError::InvalidTransactionRequest => {
+                Self::Message("invalid tx request".to_string())
+            }
         }
     }
 }
@@ -215,8 +246,8 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
-    #[error("too many blobs in one transaction, max: {0}, have: {1}")]
-    TooManyBlobs(usize, usize),
+    #[error("too many blobs in one transaction, have: {0}")]
+    TooManyBlobs(usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
@@ -229,6 +260,12 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction.
     #[error("There should be at least one blob in a Blob transaction.")]
     EmptyBlobs,
+    /// Thrown when an access list is used before the berlin hard fork.
+    #[error("EIP-7702 authorization lists are not supported before the Prague hardfork")]
+    AuthorizationListNotSupported,
+    /// Forwards error from the revm
+    #[error(transparent)]
+    Revm(revm::primitives::InvalidTransaction),
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -242,6 +279,9 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallerGasLimitMoreThanBlock") })
             }
             InvalidTransaction::CallGasCostMoreThanGasLimit => {
+                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
+            }
+            InvalidTransaction::GasFloorMoreThanGasLimit => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
@@ -260,8 +300,14 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
             InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
             InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs { max, have } => Self::TooManyBlobs(max, have),
-            _ => todo!(),
+            InvalidTransaction::TooManyBlobs { have } => Self::TooManyBlobs(have),
+            InvalidTransaction::AuthorizationListNotSupported => {
+                Self::AuthorizationListNotSupported
+            }
+            InvalidTransaction::AuthorizationListInvalidFields |
+            InvalidTransaction::OptimismError(_) |
+            InvalidTransaction::EofCrateShouldHaveToAddress |
+            InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
         }
     }
 }
@@ -373,7 +419,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     match err {
                         TransportError::ErrorResp(err) => RpcError {
                             code: ErrorCode::from(err.code),
-                            message: err.message.into(),
+                            message: err.message,
                             data: err.data.and_then(|data| serde_json::to_value(data).ok()),
                         },
                         err => RpcError::internal_error_with(format!("Fork Error: {err:?}")),
@@ -418,6 +464,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::EIP4844TransactionUnsupportedAtHardfork => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::EIP7702TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 err @ BlockchainError::DepositTransactionUnsupported => {
                     RpcError::invalid_params(err.to_string())
                 }
@@ -425,6 +474,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
+                err @ BlockchainError::UnknownTransactionType => {
+                    RpcError::invalid_params(err.to_string())
+                }
             }
             .into(),
         }

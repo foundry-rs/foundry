@@ -1,40 +1,38 @@
 //! Test helpers for Forge integration tests.
 
+use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{
-    revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
-    TestOptionsBuilder,
-};
+use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
+    compilers::multi::MultiCompiler,
     utils::RuntimeOrHandle,
     Project, ProjectCompileOutput, SolcConfig, Vyper,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
-    InvariantConfig, RpcEndpoint, RpcEndpoints,
+    InvariantConfig, RpcEndpointUrl, RpcEndpoints,
 };
-use foundry_evm::{
-    constants::CALLER,
-    opts::{Env, EvmOpts},
+use foundry_evm::{constants::CALLER, opts::EvmOpts};
+use foundry_test_utils::{
+    fd_lock, init_tracing,
+    rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
 };
-use foundry_test_utils::{fd_lock, init_tracing};
-use once_cell::sync::Lazy;
 use std::{
     env, fmt,
     io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 pub const RE_PATH_SEPARATOR: &str = "/";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
-static VYPER: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("vyper"));
+static VYPER: LazyLock<PathBuf> = LazyLock::new(|| std::env::temp_dir().join("vyper"));
 
 /// Profile for the tests group. Used to configure separate configurations for test runs.
 pub enum ForgeTestProfile {
     Default,
-    Cancun,
+    Paris,
     MultiVersion,
 }
 
@@ -42,16 +40,16 @@ impl fmt::Display for ForgeTestProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Default => write!(f, "default"),
-            Self::Cancun => write!(f, "cancun"),
+            Self::Paris => write!(f, "paris"),
             Self::MultiVersion => write!(f, "multi-version"),
         }
     }
 }
 
 impl ForgeTestProfile {
-    /// Returns true if the profile is Cancun.
-    pub fn is_cancun(&self) -> bool {
-        matches!(self, Self::Cancun)
+    /// Returns true if the profile is Paris.
+    pub fn is_paris(&self) -> bool {
+        matches!(self, Self::Paris)
     }
 
     pub fn root(&self) -> PathBuf {
@@ -66,73 +64,12 @@ impl ForgeTestProfile {
         let mut settings =
             Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
 
-        if matches!(self, Self::Cancun) {
-            settings.evm_version = Some(EvmVersion::Cancun);
+        if matches!(self, Self::Paris) {
+            settings.evm_version = Some(EvmVersion::Paris);
         }
 
-        SolcConfig::builder().settings(settings).build()
-    }
-
-    pub fn project(&self) -> Project {
-        self.config().project().expect("Failed to build project")
-    }
-
-    pub fn test_opts(&self, output: &ProjectCompileOutput) -> TestOptions {
-        TestOptionsBuilder::default()
-            .fuzz(FuzzConfig {
-                runs: 256,
-                max_test_rejects: 65536,
-                seed: None,
-                dictionary: FuzzDictionaryConfig {
-                    include_storage: true,
-                    include_push_bytes: true,
-                    dictionary_weight: 40,
-                    max_fuzz_dictionary_addresses: 10_000,
-                    max_fuzz_dictionary_values: 10_000,
-                },
-                gas_report_samples: 256,
-                failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
-                failure_persist_file: Some("testfailure".to_string()),
-                show_logs: false,
-            })
-            .invariant(InvariantConfig {
-                runs: 256,
-                depth: 15,
-                fail_on_revert: false,
-                call_override: false,
-                dictionary: FuzzDictionaryConfig {
-                    dictionary_weight: 80,
-                    include_storage: true,
-                    include_push_bytes: true,
-                    max_fuzz_dictionary_addresses: 10_000,
-                    max_fuzz_dictionary_values: 10_000,
-                },
-                shrink_run_limit: 5000,
-                max_assume_rejects: 65536,
-                gas_report_samples: 256,
-                failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
-            })
-            .build(output, Path::new(self.project().root()))
-            .expect("Config loaded")
-    }
-
-    pub fn evm_opts(&self) -> EvmOpts {
-        EvmOpts {
-            env: Env {
-                gas_limit: u64::MAX,
-                chain_id: None,
-                tx_origin: CALLER,
-                block_number: 1,
-                block_timestamp: 1,
-                ..Default::default()
-            },
-            sender: CALLER,
-            initial_balance: U256::MAX,
-            ffi: true,
-            verbosity: 3,
-            memory_limit: 1 << 26,
-            ..Default::default()
-        }
+        let settings = SolcConfig::builder().settings(settings).build();
+        SolcConfig { settings }
     }
 
     /// Build [Config] for test profile.
@@ -153,11 +90,72 @@ impl ForgeTestProfile {
             "fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
         ];
 
-        if self.is_cancun() {
-            config.evm_version = EvmVersion::Cancun;
+        config.prompt_timeout = 0;
+
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(200);
+
+        config.gas_limit = u64::MAX.into();
+        config.chain = None;
+        config.tx_origin = CALLER;
+        config.block_number = 1;
+        config.block_timestamp = 1;
+
+        config.sender = CALLER;
+        config.initial_balance = U256::MAX;
+        config.ffi = true;
+        config.verbosity = 3;
+        config.memory_limit = 1 << 26;
+
+        if self.is_paris() {
+            config.evm_version = EvmVersion::Paris;
         }
 
-        config
+        config.fuzz = FuzzConfig {
+            runs: 256,
+            max_test_rejects: 65536,
+            seed: None,
+            dictionary: FuzzDictionaryConfig {
+                include_storage: true,
+                include_push_bytes: true,
+                dictionary_weight: 40,
+                max_fuzz_dictionary_addresses: 10_000,
+                max_fuzz_dictionary_values: 10_000,
+            },
+            gas_report_samples: 256,
+            failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+            failure_persist_file: Some("testfailure".to_string()),
+            show_logs: false,
+            timeout: None,
+        };
+        config.invariant = InvariantConfig {
+            runs: 256,
+            depth: 15,
+            fail_on_revert: false,
+            call_override: false,
+            dictionary: FuzzDictionaryConfig {
+                dictionary_weight: 80,
+                include_storage: true,
+                include_push_bytes: true,
+                max_fuzz_dictionary_addresses: 10_000,
+                max_fuzz_dictionary_values: 10_000,
+            },
+            shrink_run_limit: 5000,
+            max_assume_rejects: 65536,
+            gas_report_samples: 256,
+            failure_persist_dir: Some(
+                tempfile::Builder::new()
+                    .prefix(&format!("foundry-{self}"))
+                    .tempdir()
+                    .unwrap()
+                    .into_path(),
+            ),
+            show_metrics: false,
+            timeout: None,
+            show_solidity: false,
+        };
+
+        config.sanitized()
     }
 }
 
@@ -165,9 +163,7 @@ impl ForgeTestProfile {
 pub struct ForgeTestData {
     pub project: Project,
     pub output: ProjectCompileOutput,
-    pub test_opts: TestOptions,
-    pub evm_opts: EvmOpts,
-    pub config: Config,
+    pub config: Arc<Config>,
     pub profile: ForgeTestProfile,
 }
 
@@ -177,76 +173,69 @@ impl ForgeTestData {
     /// Uses [get_compiled] to lazily compile the project.
     pub fn new(profile: ForgeTestProfile) -> Self {
         init_tracing();
-
-        let mut project = profile.project();
+        let config = Arc::new(profile.config());
+        let mut project = config.project().unwrap();
         let output = get_compiled(&mut project);
-        let test_opts = profile.test_opts(&output);
-        let config = profile.config();
-        let evm_opts = profile.evm_opts();
-
-        Self { project, output, test_opts, evm_opts, config, profile }
+        Self { project, output, config, profile }
     }
 
     /// Builds a base runner
     pub fn base_runner(&self) -> MultiContractRunnerBuilder {
         init_tracing();
-        let mut runner = MultiContractRunnerBuilder::new(Arc::new(self.config.clone()))
-            .sender(self.evm_opts.sender)
-            .with_test_options(self.test_opts.clone());
-        if self.profile.is_cancun() {
-            runner = runner.evm_spec(SpecId::CANCUN);
+        let config = self.config.clone();
+        let mut runner = MultiContractRunnerBuilder::new(config).sender(self.config.sender);
+        if self.profile.is_paris() {
+            runner = runner.evm_spec(SpecId::MERGE);
         }
-
         runner
     }
 
     /// Builds a non-tracing runner
     pub fn runner(&self) -> MultiContractRunner {
-        let mut config = self.config.clone();
-        config.fs_permissions =
-            FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
-        self.runner_with_config(config)
+        self.runner_with(|_| {})
     }
 
     /// Builds a non-tracing runner
-    pub fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
+    pub fn runner_with(&self, modify: impl FnOnce(&mut Config)) -> MultiContractRunner {
+        let mut config = (*self.config).clone();
+        modify(&mut config);
+        self.runner_with_config(config)
+    }
+
+    fn runner_with_config(&self, mut config: Config) -> MultiContractRunner {
         config.rpc_endpoints = rpc_endpoints();
         config.allow_paths.push(manifest_root().to_path_buf());
 
-        // no prompt testing
-        config.prompt_timeout = 0;
-
-        let root = self.project.root();
-        let mut opts = self.evm_opts.clone();
-
-        if config.isolate {
-            opts.isolate = true;
+        if config.fs_permissions.is_empty() {
+            config.fs_permissions =
+                FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
         }
 
-        let sender = config.sender;
+        let opts = config_evm_opts(&config);
 
         let mut builder = self.base_runner();
-        builder.config = Arc::new(config);
+        let config = Arc::new(config);
+        let root = self.project.root();
+        builder.config = config.clone();
         builder
             .enable_isolation(opts.isolate)
-            .sender(sender)
-            .with_test_options(self.test_opts.clone())
-            .build(root, &self.output, opts.local_evm_env(), opts)
+            .sender(config.sender)
+            .build::<MultiCompiler>(root, &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
     /// Builds a tracing runner
     pub fn tracing_runner(&self) -> MultiContractRunner {
-        let mut opts = self.evm_opts.clone();
+        let mut opts = config_evm_opts(&self.config);
         opts.verbosity = 5;
         self.base_runner()
-            .build(self.project.root(), &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(self.project.root(), &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
     /// Builds a runner that runs against forked state
     pub async fn forked_runner(&self, rpc: &str) -> MultiContractRunner {
-        let mut opts = self.evm_opts.clone();
+        let mut opts = config_evm_opts(&self.config);
 
         opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
         opts.fork_url = Some(rpc.to_string());
@@ -256,7 +245,7 @@ impl ForgeTestData {
 
         self.base_runner()
             .with_fork(fork)
-            .build(self.project.root(), &self.output, env, opts)
+            .build::<MultiCompiler>(self.project.root(), &self.output, env, opts)
             .unwrap()
     }
 }
@@ -333,16 +322,16 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
 }
 
 /// Default data for the tests group.
-pub static TEST_DATA_DEFAULT: Lazy<ForgeTestData> =
-    Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Default));
+pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
+    LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Default));
+
+/// Data for tests requiring Paris support on Solc and EVM level.
+pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =
+    LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Paris));
 
 /// Data for tests requiring Cancun support on Solc and EVM level.
-pub static TEST_DATA_CANCUN: Lazy<ForgeTestData> =
-    Lazy::new(|| ForgeTestData::new(ForgeTestProfile::Cancun));
-
-/// Data for tests requiring Cancun support on Solc and EVM level.
-pub static TEST_DATA_MULTI_VERSION: Lazy<ForgeTestData> =
-    Lazy::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
+pub static TEST_DATA_MULTI_VERSION: LazyLock<ForgeTestData> =
+    LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 
 pub fn manifest_root() -> &'static Path {
     let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -357,18 +346,19 @@ pub fn manifest_root() -> &'static Path {
 /// the RPC endpoints used during tests
 pub fn rpc_endpoints() -> RpcEndpoints {
     RpcEndpoints::new([
-        (
-            "rpcAlias",
-            RpcEndpoint::Url(
-                "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
-            ),
-        ),
-        (
-            "rpcAliasSepolia",
-            RpcEndpoint::Url(
-                "https://eth-sepolia.g.alchemy.com/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
-            ),
-        ),
-        ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
+        ("mainnet", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
+        ("mainnet2", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
+        ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
+        ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
+        ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
+        ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
+        ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
+        ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
+        ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),
     ])
+}
+
+fn config_evm_opts(config: &Config) -> EvmOpts {
+    config.to_figment(foundry_config::FigmentProviders::None).extract().unwrap()
 }

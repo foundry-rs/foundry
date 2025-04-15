@@ -84,7 +84,7 @@ impl FuzzRunIdentifiedContracts {
     pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
         if !created_contracts.is_empty() {
             let mut targets = self.targets.lock();
-            for addr in created_contracts.iter() {
+            for addr in &created_contracts {
                 targets.remove(addr);
             }
         }
@@ -124,6 +124,18 @@ impl TargetedContracts {
             .iter()
             .filter(|(_, c)| !c.abi.functions.is_empty())
             .flat_map(|(contract, c)| c.abi_fuzzed_functions().map(move |f| (contract, f)))
+    }
+
+    /// Identifies fuzzed contract and function based on given tx details and returns unique metric
+    /// key composed from contract identifier and function name.
+    pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
+        self.inner.get(&tx.call_details.target).and_then(|contract| {
+            contract
+                .abi
+                .functions()
+                .find(|f| f.selector() == tx.call_details.calldata[..4])
+                .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+        })
     }
 }
 

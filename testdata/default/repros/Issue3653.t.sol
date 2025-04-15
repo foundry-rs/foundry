@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -11,7 +11,7 @@ contract Issue3653Test is DSTest {
     Token token;
 
     constructor() {
-        fork = vm.createSelectFork("rpcAlias", 1000000);
+        fork = vm.createSelectFork("mainnet", 1000000);
         token = new Token();
         vm.makePersistent(address(token));
     }

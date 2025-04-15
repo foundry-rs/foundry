@@ -7,7 +7,7 @@ use crate::prelude::{
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
-use alloy_primitives::{hex, Address, U256};
+use alloy_primitives::{hex, Address, B256, U256};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
@@ -49,6 +49,22 @@ impl SessionSource {
             // Fetch the run function's body statement
             let run_func_statements = compiled.intermediate.run_func_body()?;
 
+            // Record loc of first yul block return statement (if any).
+            // This is used to decide which is the final statement within the `run()` method.
+            // see <https://github.com/foundry-rs/foundry/issues/4617>.
+            let last_yul_return = run_func_statements.iter().find_map(|statement| {
+                if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
+                    if let Some(statement) = block.statements.last() {
+                        if let pt::YulStatement::FunctionCall(yul_call) = statement {
+                            if yul_call.id.name == "return" {
+                                return Some(statement.loc())
+                            }
+                        }
+                    }
+                }
+                None
+            });
+
             // Find the last statement within the "run()" method and get the program
             // counter via the source map.
             if let Some(final_statement) = run_func_statements.last() {
@@ -58,9 +74,13 @@ impl SessionSource {
                 //
                 // There is some code duplication within the arms due to the difference between
                 // the [pt::Statement] type and the [pt::YulStatement] types.
-                let source_loc = match final_statement {
+                let mut source_loc = match final_statement {
                     pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
-                        if let Some(statement) = block.statements.last() {
+                        // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
+                        let last_statement = block.statements.iter().rev().find(|statement| {
+                            !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
+                        });
+                        if let Some(statement) = last_statement {
                             statement.loc()
                         } else {
                             // In the case where the block is empty, attempt to grab the statement
@@ -88,6 +108,13 @@ impl SessionSource {
                     _ => final_statement.loc(),
                 };
 
+                // Consider yul return statement as final statement (if it's loc is lower) .
+                if let Some(yul_return) = last_yul_return {
+                    if yul_return.end() < source_loc.start() {
+                        source_loc = yul_return;
+                    }
+                }
+
                 // Map the source location of the final statement of the `run()` function to its
                 // corresponding runtime program counter
                 let final_pc = {
@@ -106,7 +133,7 @@ impl SessionSource {
                 };
 
                 // Create a new runner
-                let mut runner = self.prepare_runner(final_pc).await;
+                let mut runner = self.prepare_runner(final_pc).await?;
 
                 // Return [ChiselResult] or bubble up error
                 runner.run(bytecode.into_owned())
@@ -152,7 +179,7 @@ impl SessionSource {
                     Ok((_, res)) => (res, Some(err)),
                     Err(_) => {
                         if self.config.foundry_config.verbosity >= 3 {
-                            eprintln!("Could not inspect: {err}");
+                            sh_err!("Could not inspect: {err}")?;
                         }
                         return Ok((true, None))
                     }
@@ -180,7 +207,7 @@ impl SessionSource {
 
             // we were unable to check the event
             if self.config.foundry_config.verbosity >= 3 {
-                eprintln!("Failed eval: {err}");
+                sh_err!("Failed eval: {err}")?;
             }
 
             debug!(%err, %input, "failed abi encode input");
@@ -194,9 +221,9 @@ impl SessionSource {
             }
             let decoded_logs = decode_console_logs(&res.logs);
             if !decoded_logs.is_empty() {
-                println!("{}", "Logs:".green());
+                sh_println!("{}", "Logs:".green())?;
                 for log in decoded_logs {
-                    println!("  {log}");
+                    sh_println!("  {log}")?;
                 }
             }
 
@@ -284,7 +311,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A configured [ChiselRunner]
-    async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
+    async fn prepare_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env =
             self.config.evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
@@ -293,7 +320,7 @@ impl SessionSource {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
-                let backend = Backend::spawn(fork);
+                let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
                 backend
             }
@@ -308,19 +335,18 @@ impl SessionSource {
                         self.config.evm_opts.clone(),
                         None,
                         None,
-                        Some(self.solc.version.clone()),
                     )
                     .into(),
                 )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec(self.config.foundry_config.evm_spec_id())
+            .spec_id(self.config.foundry_config.evm_spec_id())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone())
+        Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
 }
 
@@ -352,7 +378,7 @@ fn format_token(token: DynSolValue) -> String {
                         .collect::<String>()
                 )
                 .cyan(),
-                format!("{i:#x}").cyan(),
+                hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )
         }
@@ -370,7 +396,7 @@ fn format_token(token: DynSolValue) -> String {
                         .collect::<String>()
                 )
                 .cyan(),
-                format!("{i:#x}").cyan(),
+                hex::encode_prefixed(B256::from(i)).cyan(),
                 i.cyan()
             )
         }
@@ -477,7 +503,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
     Ok(format!(
         "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         "event".red(),
-        SolidityHelper::highlight(&format!(
+        SolidityHelper::new().highlight(&format!(
             "{}({})",
             &event.name,
             &event
@@ -775,7 +801,7 @@ impl Type {
         }
 
         // Type members, like array, bytes etc
-        #[allow(clippy::single_match)]
+        #[expect(clippy::single_match)]
         match &self {
             Self::Access(inner, access) => {
                 if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {
@@ -1161,7 +1187,7 @@ impl Type {
         Self::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
     }
 
-    /// Inverts Int to Uint and viceversa.
+    /// Inverts Int to Uint and vice-versa.
     fn invert_int(self) -> Self {
         match self {
             Self::Builtin(DynSolType::Uint(n)) => Self::Builtin(DynSolType::Int(n)),
@@ -1260,7 +1286,6 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
 /// Whether execution should continue after inspecting this expression
 #[inline]
 fn should_continue(expr: &pt::Expression) -> bool {
-    #[allow(clippy::match_like_matches_macro)]
     match expr {
         // assignments
         pt::Expression::PreDecrement(_, _) |       // --<inner>
@@ -1370,7 +1395,7 @@ impl<'a> InstructionIter<'a> {
     }
 }
 
-impl<'a> Iterator for InstructionIter<'a> {
+impl Iterator for InstructionIter<'_> {
     type Item = Instruction;
     fn next(&mut self) -> Option<Self::Item> {
         let pc = self.offset;
@@ -1682,12 +1707,12 @@ mod tests {
                 match solc {
                     Ok((v, solc)) => {
                         // successfully installed
-                        eprintln!("found installed Solc v{v} @ {}", solc.solc.display());
+                        let _ = sh_println!("found installed Solc v{v} @ {}", solc.solc.display());
                         break
                     }
                     Err(e) => {
                         // try reinstalling
-                        eprintln!("error while trying to re-install Solc v{version}: {e}");
+                        let _ = sh_err!("error while trying to re-install Solc v{version}: {e}");
                         let solc = Solc::blocking_install(&version.parse().unwrap());
                         if solc.map_err(SolcError::from).is_ok() {
                             *is_preinstalled = true;
@@ -1726,7 +1751,7 @@ mod tests {
 
         if let Err(e) = s.parse() {
             for err in e {
-                eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
+                let _ = sh_eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
             }
             let source = s.to_repl_source();
             panic!("could not parse input:\n{source}")

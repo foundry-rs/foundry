@@ -5,9 +5,14 @@
 version = 2
 yanked = "warn"
 ignore = [
-    # https://github.com/watchexec/watchexec/issues/852
-    "RUSTSEC-2024-0350",
-    "RUSTSEC-2024-0351",
+    # proc-macro-error is unmaintained
+    "RUSTSEC-2024-0370",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
+    "RUSTSEC-2024-0436",
+    # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
+    "RUSTSEC-2024-0437",
+    # https://rustsec.org/advisories/RUSTSEC-2025-0021 gitoxide uses SHA-1 hash implementations without any collision detection, leaving it vulnerable to hash collision attacks.
+    "RUSTSEC-2025-0021"
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -43,13 +48,14 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
-    "OpenSSL",
+    "Unicode-3.0",
     "Unlicense",
     "WTFPL",
     "BSL-1.0",
     "0BSD",
     "MPL-2.0",
+    "CDDL-1.0",
+    "Zlib",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
@@ -63,9 +69,6 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
-    { allow = ["CC0-1.0"], name = "constant_time_eq" },
-    { allow = ["CC0-1.0"], name = "secp256k1" },
-    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
 ]
 #copyleft = "deny"
 

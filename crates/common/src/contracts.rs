@@ -1,16 +1,25 @@
 //! Commonly used contract types and functions.
 
+use crate::compile::PathOrContractInfo;
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{hex, Address, Bytes, Selector, B256};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_compilers::{
     artifacts::{
         BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
-        ContractBytecodeSome, Offsets,
+        ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
     },
-    ArtifactId,
+    utils::canonicalized,
+    ArtifactId, Project, ProjectCompileOutput,
 };
-use std::{collections::BTreeMap, ops::Deref, str::FromStr, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    ops::Deref,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 /// Libraries' runtime code always starts with the following instruction:
 /// `PUSH20 0x0000000000000000000000000000000000000000`
@@ -20,7 +29,7 @@ const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
 /// Subset of [CompactBytecode] excluding sourcemaps.
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct BytecodeData {
     pub object: Option<BytecodeObject>,
@@ -115,29 +124,46 @@ impl ContractsByArtifact {
 
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_code(code, ContractData::bytecode)
+        self.find_by_code(code, 0.1, true, ContractData::bytecode)
     }
 
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_code(code, ContractData::deployed_bytecode)
+        self.find_by_code(code, 0.15, false, ContractData::deployed_bytecode)
     }
 
+    /// Finds a contract based on provided bytecode and accepted match score.
+    /// If strip constructor args flag is true then removes args from bytecode to compare.
     fn find_by_code(
         &self,
         code: &[u8],
+        accepted_score: f64,
+        strip_ctor_args: bool,
         get: impl Fn(&ContractData) -> Option<&Bytes>,
     ) -> Option<ArtifactWithContractRef<'_>> {
         self.iter()
             .filter_map(|(id, contract)| {
                 if let Some(deployed_bytecode) = get(contract) {
+                    let mut code = code;
+                    if strip_ctor_args && code.len() > deployed_bytecode.len() {
+                        // Try to decode ctor args with contract abi.
+                        if let Some(constructor) = contract.abi.constructor() {
+                            let constructor_args = &code[deployed_bytecode.len()..];
+                            if constructor.abi_decode_input(constructor_args, false).is_ok() {
+                                // If we can decode args with current abi then remove args from
+                                // code to compare.
+                                code = &code[..deployed_bytecode.len()]
+                            }
+                        }
+                    };
+
                     let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
-                    (score <= 0.1).then_some((score, (id, contract)))
+                    (score <= accepted_score).then_some((score, (id, contract)))
                 } else {
                     None
                 }
             })
-            .min_by(|(score1, _), (score2, _)| score1.partial_cmp(score2).unwrap())
+            .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
             .map(|(_, data)| data)
     }
 
@@ -257,6 +283,26 @@ impl ContractsByArtifact {
         Ok(contracts.first().cloned())
     }
 
+    /// Finds abi for contract which has the same contract name or identifier as `id`.
+    pub fn find_abi_by_name_or_identifier(&self, id: &str) -> Option<JsonAbi> {
+        self.iter()
+            .find(|(artifact, _)| {
+                artifact.name.split(".").next().unwrap() == id || artifact.identifier() == id
+            })
+            .map(|(_, contract)| contract.abi.clone())
+    }
+
+    /// Finds abi by name or source path
+    ///
+    /// Returns the abi and the contract name.
+    pub fn find_abi_by_name_or_src_path(&self, name_or_path: &str) -> Option<(JsonAbi, String)> {
+        self.iter()
+            .find(|(artifact, _)| {
+                artifact.name == name_or_path || artifact.source == PathBuf::from(name_or_path)
+            })
+            .map(|(_, contract)| (contract.abi.clone(), contract.name.clone()))
+    }
+
     /// Flattens the contracts into functions, events and errors.
     pub fn flatten(&self) -> (BTreeMap<Selector, Function>, BTreeMap<B256, Event>, JsonAbi) {
         let mut funcs = BTreeMap::new();
@@ -274,6 +320,21 @@ impl ContractsByArtifact {
             }
         }
         (funcs, events, errors_abi)
+    }
+}
+
+impl From<ProjectCompileOutput> for ContractsByArtifact {
+    fn from(value: ProjectCompileOutput) -> Self {
+        Self::new(value.into_artifacts().map(|(id, ar)| {
+            (
+                id,
+                CompactContractBytecode {
+                    abi: ar.abi,
+                    bytecode: ar.bytecode,
+                    deployed_bytecode: ar.deployed_bytecode,
+                },
+            )
+        }))
     }
 }
 
@@ -339,6 +400,8 @@ unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
     sum
 }
 
+/// Returns contract name for a given contract identifier.
+///
 /// Artifact/Contract identifier can take the following form:
 /// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
 /// the contract's artifact and the contract name is the name of the solidity contract, like
@@ -386,6 +449,61 @@ pub fn compact_to_contract(contract: CompactContractBytecode) -> Result<Contract
     })
 }
 
+/// Returns the canonicalized target path for the given identifier.
+pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> Result<PathBuf> {
+    match identifier {
+        PathOrContractInfo::Path(path) => Ok(canonicalized(project.root().join(path))),
+        PathOrContractInfo::ContractInfo(info) => {
+            let path = project.find_contract_path(&info.name)?;
+            Ok(path)
+        }
+    }
+}
+
+/// Returns the target artifact given the path and name.
+pub fn find_matching_contract_artifact(
+    output: &mut ProjectCompileOutput,
+    target_path: &Path,
+    target_name: Option<&str>,
+) -> eyre::Result<ConfigurableContractArtifact> {
+    if let Some(name) = target_name {
+        output
+            .remove(target_path, name)
+            .ok_or_eyre(format!("Could not find artifact `{name}` in the compiled artifacts"))
+    } else {
+        let possible_targets = output
+            .artifact_ids()
+            .filter(|(id, _artifact)| id.source == target_path)
+            .collect::<Vec<_>>();
+
+        if possible_targets.is_empty() {
+            eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
+        }
+
+        let (target_id, target_artifact) = possible_targets[0].clone();
+        if possible_targets.len() == 1 {
+            return Ok(target_artifact.clone());
+        }
+
+        // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
+        // additional compiler profiles), it means that there are multiple contracts in the
+        // same file.
+        if !target_id.name.contains(".") &&
+            possible_targets.iter().any(|(id, _)| id.name != target_id.name)
+        {
+            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
+        }
+
+        // Otherwise, we're dealing with additional compiler profiles wherein `id.source` is the
+        // same but `id.path` is different.
+        let artifact = possible_targets
+            .iter()
+            .find_map(|(id, artifact)| if id.profile == "default" { Some(*artifact) } else { None })
+            .unwrap_or(target_artifact);
+
+        Ok(artifact.clone())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

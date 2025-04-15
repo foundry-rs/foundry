@@ -1,8 +1,9 @@
 use crate::executors::{Executor, ExecutorBuilder};
+use alloy_primitives::Address;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-use foundry_evm_traces::{InternalTraceMode, TraceMode};
+use foundry_evm_traces::TraceMode;
 use revm::primitives::{Env, SpecId};
 use std::ops::{Deref, DerefMut};
 
@@ -16,24 +17,21 @@ impl TracingExecutor {
         env: revm::primitives::Env,
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
-        debug: bool,
-        decode_internal: bool,
-    ) -> Self {
-        let db = Backend::spawn(fork);
-        let trace_mode =
-            TraceMode::Call.with_debug(debug).with_decode_internal(if decode_internal {
-                InternalTraceMode::Full
-            } else {
-                InternalTraceMode::None
-            });
-        Self {
+        trace_mode: TraceMode,
+        odyssey: bool,
+        create2_deployer: Address,
+    ) -> eyre::Result<Self> {
+        let db = Backend::spawn(fork)?;
+        Ok(Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
             executor: ExecutorBuilder::new()
-                .inspectors(|stack| stack.trace_mode(trace_mode))
-                .spec(evm_spec_id(&version.unwrap_or_default()))
+                .inspectors(|stack| {
+                    stack.trace_mode(trace_mode).odyssey(odyssey).create2_deployer(create2_deployer)
+                })
+                .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
                 .build(env, db),
-        }
+        })
     }
 
     /// Returns the spec id of the executor
@@ -45,7 +43,7 @@ impl TracingExecutor {
     pub async fn get_fork_material(
         config: &Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>)> {
+    ) -> eyre::Result<(Env, Option<CreateFork>, Option<Chain>, bool)> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
 
@@ -53,7 +51,7 @@ impl TracingExecutor {
 
         let fork = evm_opts.get_fork(config, env.clone());
 
-        Ok((env, fork, evm_opts.get_remote_chain_id().await))
+        Ok((env, fork, evm_opts.get_remote_chain_id().await, evm_opts.odyssey))
     }
 }
 

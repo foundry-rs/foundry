@@ -1,12 +1,22 @@
 //! ABI related helper functions.
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{hex, Address, LogData};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use foundry_config::Chain;
 use std::{future::Future, pin::Pin};
+
+pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    std::iter::zip(inputs, args)
+        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .collect()
+}
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
 /// [DynSolValue]s and then ABI encode them.
@@ -15,10 +25,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let params = std::iter::zip(&func.inputs, args)
-        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
-    func.abi_encode_input(params.as_slice()).map_err(Into::into)
+    Ok(func.abi_encode_input(&encode_args(&func.inputs, args)?)?)
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
@@ -76,6 +83,11 @@ pub fn get_func(sig: &str) -> Result<Function> {
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
     Event::parse(sig).wrap_err("could not parse event signature")
+}
+
+/// Given an error signature string, it tries to parse it as a `Error`
+pub fn get_error(sig: &str) -> Result<Error> {
+    Error::parse(sig).wrap_err("could not parse event signature")
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
@@ -139,9 +151,9 @@ pub fn find_source(
             Ok(source)
         } else {
             let implementation = metadata.implementation.unwrap();
-            println!(
+            sh_println!(
                 "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
-            );
+            )?;
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
                 Err(e) => {

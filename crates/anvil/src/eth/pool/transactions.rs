@@ -1,16 +1,12 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use alloy_primitives::{Address, TxHash};
-use alloy_rpc_types::Transaction as RpcTransaction;
+use alloy_network::AnyRpcTransaction;
+use alloy_primitives::{
+    map::{HashMap, HashSet},
+    Address, TxHash,
+};
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
-use std::{
-    cmp::Ordering,
-    collections::{BTreeSet, HashMap, HashSet},
-    fmt,
-    str::FromStr,
-    sync::Arc,
-    time::Instant,
-};
+use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
 
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;
@@ -85,6 +81,14 @@ pub struct PoolTransaction {
 // == impl PoolTransaction ==
 
 impl PoolTransaction {
+    pub fn new(transaction: PendingTransaction) -> Self {
+        Self {
+            pending_transaction: transaction,
+            requires: vec![],
+            provides: vec![],
+            priority: TransactionPriority(0),
+        }
+    }
     /// Returns the hash of this transaction
     pub fn hash(&self) -> TxHash {
         *self.pending_transaction.hash()
@@ -108,10 +112,10 @@ impl fmt::Debug for PoolTransaction {
     }
 }
 
-impl TryFrom<RpcTransaction> for PoolTransaction {
+impl TryFrom<AnyRpcTransaction> for PoolTransaction {
     type Error = eyre::Error;
-    fn try_from(transaction: RpcTransaction) -> Result<Self, Self::Error> {
-        let typed_transaction = TypedTransaction::try_from(transaction)?;
+    fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
+        let typed_transaction = TypedTransaction::try_from(value)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,
@@ -121,7 +125,6 @@ impl TryFrom<RpcTransaction> for PoolTransaction {
         })
     }
 }
-
 /// A waiting pool of transaction that are pending, but not yet ready to be included in a new block.
 ///
 /// Keeps a set of transactions that are waiting for other transactions

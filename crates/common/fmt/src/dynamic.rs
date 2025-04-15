@@ -15,7 +15,9 @@ impl DynValueFormatter {
             DynSolValue::Address(inner) => write!(f, "{inner}"),
             DynSolValue::Function(inner) => write!(f, "{inner}"),
             DynSolValue::Bytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
-            DynSolValue::FixedBytes(inner, _) => write!(f, "{inner}"),
+            DynSolValue::FixedBytes(word, size) => {
+                f.write_str(&hex::encode_prefixed(&word[..*size]))
+            }
             DynSolValue::Uint(inner, _) => {
                 if self.raw {
                     write!(f, "{inner}")
@@ -36,7 +38,13 @@ impl DynValueFormatter {
                 f.write_str("]")
             }
             DynSolValue::Tuple(values) => self.tuple(values, f),
-            DynSolValue::String(inner) => write!(f, "{inner:?}"), // escape strings
+            DynSolValue::String(inner) => {
+                if self.raw {
+                    write!(f, "{}", inner.escape_debug())
+                } else {
+                    write!(f, "{inner:?}") // escape strings
+                }
+            }
             DynSolValue::Bool(inner) => write!(f, "{inner}"),
             DynSolValue::CustomStruct { name, prop_names, tuple } => {
                 if self.raw {
@@ -119,6 +127,11 @@ pub fn format_tokens(tokens: &[DynSolValue]) -> impl Iterator<Item = String> + '
     tokens.iter().map(format_token)
 }
 
+/// Pretty-prints a slice of tokens using [`format_token_raw`].
+pub fn format_tokens_raw(tokens: &[DynSolValue]) -> impl Iterator<Item = String> + '_ {
+    tokens.iter().map(format_token_raw)
+}
+
 /// Pretty-prints the given value into a string suitable for user output.
 pub fn format_token(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, false).to_string()
@@ -156,7 +169,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
         assert_eq!(
             format_token(&DynSolValue::Address(address!(
-                "5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+                "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
             ))),
             "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
         );
@@ -164,7 +177,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
         assert_ne!(
             format_token(&DynSolValue::Address(address!(
-                "Fb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
+                "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
             ))),
             "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
         );

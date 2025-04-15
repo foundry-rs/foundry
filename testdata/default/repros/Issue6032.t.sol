@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -15,7 +15,7 @@ contract Issue6032Test is DSTest {
 
         address counterAddress = address(counter);
         // Enter the fork
-        vm.createSelectFork("rpcAlias");
+        vm.createSelectFork("mainnet");
         assert(counterAddress.code.length > 0);
         // `Counter` is not deployed on the fork, which is expected.
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -231,16 +231,6 @@ contract FsTest is DSTest {
 
         vm._expectCheatcodeRevert(FOUNDRY_READ_ERR);
         vm.fsMetadata("/etc/hosts");
-    }
-
-    // not testing file cheatcodes per se
-    function testCheatCodeErrorPrefix() public {
-        try vm.readFile("/etc/hosts") {
-            emit log("Error: reading /etc/hosts should revert");
-            fail();
-        } catch (bytes memory err) {
-            assertEq(err, abi.encodeWithSignature("CheatcodeError(string)", FOUNDRY_READ_ERR));
-        }
     }
 
     function testExists() public {

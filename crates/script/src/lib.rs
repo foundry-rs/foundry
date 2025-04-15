@@ -6,20 +6,30 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
-use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{hex, Address, Bytes, Log, TxKind, U256};
+use alloy_primitives::{
+    hex,
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, TxKind, U256,
+};
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
-use forge_verify::RetryArgs;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use forge_script_sequence::{AdditionalContract, NestedValue};
+use forge_verify::{RetryArgs, VerifierArgs};
+use foundry_cli::{
+    opts::{BuildOpts, GlobalArgs},
+    utils::LoadConfig,
+};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
@@ -36,19 +46,17 @@ use foundry_config::{
 };
 use foundry_evm::{
     backend::Backend,
-    constants::DEFAULT_CREATE2_DEPLOYER,
     executors::ExecutorBuilder,
     inspectors::{
-        cheatcodes::{BroadcastableTransactions, ScriptWallets},
+        cheatcodes::{BroadcastableTransactions, Wallets},
         CheatsConfig,
     },
     opts::EvmOpts,
     traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use yansi::Paint;
+use serde::Serialize;
+use std::path::PathBuf;
 
 mod broadcast;
 mod build;
@@ -64,11 +72,15 @@ mod transaction;
 mod verify;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
 
 /// CLI arguments for `forge script`.
 #[derive(Clone, Debug, Default, Parser)]
 pub struct ScriptArgs {
+    // Include global options for users of this struct.
+    #[command(flatten)]
+    pub global: GlobalArgs,
+
     /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
@@ -146,6 +158,15 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// Dumps all debugger steps to file.
+    #[arg(
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    pub dump: Option<PathBuf>,
+
     /// Makes sure a transaction is sent,
     /// only after its previous one has been confirmed and succeeded.
     #[arg(long)]
@@ -165,11 +186,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub verify: bool,
 
-    /// Output results in JSON format.
-    #[arg(long)]
-    pub json: bool,
-
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
@@ -178,28 +198,31 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
+    /// Timeout to use for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
-    pub opts: CoreBuildArgs,
+    pub build: BuildOpts,
 
     #[command(flatten)]
     pub wallets: MultiWalletOpts,
 
     #[command(flatten)]
-    pub evm_opts: EvmArgs,
+    pub evm: EvmArgs,
 
     #[command(flatten)]
-    pub verifier: forge_verify::VerifierArgs,
+    pub verifier: VerifierArgs,
 
     #[command(flatten)]
     pub retry: RetryArgs,
 }
 
 impl ScriptArgs {
-    async fn preprocess(self) -> Result<PreprocessedState> {
-        let script_wallets =
-            ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
+    pub async fn preprocess(self) -> Result<PreprocessedState> {
+        let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
 
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
@@ -214,7 +237,9 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let compiled = self.preprocess().await?.compile()?;
+        let state = self.preprocess().await?;
+        let create2_deployer = state.script_config.evm_opts.create2_deployer;
+        let compiled = state.compile()?;
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
         // simulating script.
@@ -234,10 +259,13 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                return pre_simulation.run_debugger()
+                return match pre_simulation.args.dump.clone() {
+                    Some(path) => pre_simulation.dump_debugger(&path),
+                    None => pre_simulation.run_debugger(),
+                };
             }
 
-            if pre_simulation.args.json {
+            if shell::is_json() {
                 pre_simulation.show_json()?;
             } else {
                 pre_simulation.show_traces().await?;
@@ -249,28 +277,39 @@ impl ScriptArgs {
                 .execution_result
                 .transactions
                 .as_ref()
-                .map_or(true, |txs| txs.is_empty())
+                .is_none_or(|txs| txs.is_empty())
             {
                 return Ok(());
             }
 
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
-                shell::println("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                if !shell::is_json() {
+                    sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                }
+
                 return Ok(());
             }
 
             pre_simulation.args.check_contract_sizes(
                 &pre_simulation.execution_result,
                 &pre_simulation.build_data.known_contracts,
+                create2_deployer,
             )?;
 
             pre_simulation.fill_metadata().await?.bundle().await?
         };
 
         // Exit early in case user didn't provide any broadcast/verify related flags.
-        if !bundled.args.broadcast && !bundled.args.resume && !bundled.args.verify {
-            shell::println("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+        if !bundled.args.should_broadcast() {
+            if !shell::is_json() {
+                if shell::verbosity() >= 4 {
+                    sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+                    bundled.sequence.show_transactions()?;
+                }
+
+                sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
+            }
             return Ok(());
         }
 
@@ -351,6 +390,7 @@ impl ScriptArgs {
         &self,
         result: &ScriptResult,
         known_contracts: &ContractsByArtifact,
+        create2_deployer: Address,
     ) -> Result<()> {
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
@@ -378,7 +418,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = match self.evm_opts.env.code_size_limit {
+        let max_size = match self.evm.env.code_size_limit {
             Some(size) => size,
             None => CONTRACT_MAX_SIZE,
         };
@@ -386,18 +426,16 @@ impl ScriptArgs {
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
-                    .input
-                    .clone()
-                    .into_input()
+                    .input()
                     .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to))
+                    .map(|data| (data, tx.transaction.to()))
             })
         }) {
             let mut offset = 0;
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
             if let Some(TxKind::Call(to)) = to {
-                if to == DEFAULT_CREATE2_DEPLOYER {
+                if to == create2_deployer {
                     // Size of the salt prefix.
                     offset = 32;
                 } else {
@@ -414,13 +452,10 @@ impl ScriptArgs {
                 let deployment_size = deployed_code.len();
 
                 if deployment_size > max_size {
-                    prompt_user = self.broadcast;
-                    shell::println(format!(
-                        "{}",
-                        format!(
-                            "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ).red()
-                    ))?;
+                    prompt_user = self.should_broadcast();
+                    sh_err!(
+                        "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
+                    )?;
                 }
             }
         }
@@ -434,6 +469,11 @@ impl ScriptArgs {
         }
 
         Ok(())
+    }
+
+    /// We only broadcast transactions if --broadcast or --resume was passed.
+    fn should_broadcast(&self) -> bool {
+        self.broadcast || self.resume
     }
 }
 
@@ -452,20 +492,26 @@ impl Provider for ScriptArgs {
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
         }
+        if let Some(timeout) = self.timeout {
+            dict.insert("transaction_timeout".to_string(), timeout.into());
+        }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct ScriptResult {
     pub success: bool,
+    #[serde(rename = "raw_logs")]
     pub logs: Vec<Log>,
     pub traces: Traces,
     pub gas_used: u64,
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
+    #[serde(skip)]
     pub breakpoints: Breakpoints,
 }
 
@@ -489,17 +535,12 @@ impl ScriptResult {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct JsonResult {
+#[derive(Serialize)]
+struct JsonResult<'a> {
     logs: Vec<String>,
-    gas_used: u64,
-    returns: HashMap<String, NestedValue>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
+    returns: &'a HashMap<String, NestedValue>,
+    #[serde(flatten)]
+    result: &'a ScriptResult,
 }
 
 #[derive(Clone, Debug)]
@@ -514,17 +555,18 @@ pub struct ScriptConfig {
 impl ScriptConfig {
     pub async fn new(config: Config, evm_opts: EvmOpts) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            next_nonce(evm_opts.sender, fork_url).await?
+            next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
         };
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::new() })
+
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
         self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
-            next_nonce(sender, fork_url).await?
+            next_nonce(sender, fork_url, None).await?
         } else {
             // dapptools compatibility
             1
@@ -540,7 +582,7 @@ impl ScriptConfig {
     async fn get_runner_with_cheatcodes(
         &mut self,
         known_contracts: ContractsByArtifact,
-        script_wallets: ScriptWallets,
+        script_wallets: Wallets,
         debug: bool,
         target: ArtifactId,
     ) -> Result<ScriptRunner> {
@@ -549,7 +591,7 @@ impl ScriptConfig {
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(ContractsByArtifact, ScriptWallets, ArtifactId)>,
+        cheats_data: Option<(ContractsByArtifact, Wallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -560,7 +602,7 @@ impl ScriptConfig {
                 Some(db) => db.clone(),
                 None => {
                     let fork = self.evm_opts.get_fork(&self.config, env.clone());
-                    let backend = Backend::spawn(fork);
+                    let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
                 }
@@ -569,15 +611,18 @@ impl ScriptConfig {
             // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
             // no need to cache it, since there won't be any onchain simulation that we'd need
             // to cache the backend for.
-            Backend::spawn(None)
+            Backend::spawn(None)?
         };
 
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                stack
+                    .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                    .odyssey(self.evm_opts.odyssey)
+                    .create2_deployer(self.evm_opts.create2_deployer)
             })
-            .spec(self.config.evm_spec_id())
+            .spec_id(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions);
 
@@ -589,11 +634,11 @@ impl ScriptConfig {
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),
-                            Some(script_wallets),
-                            Some(target.version),
+                            Some(target),
                         )
                         .into(),
                     )
+                    .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });
         }
@@ -648,7 +693,7 @@ mod tests {
             "--etherscan-api-key",
             "goerli",
         ]);
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
     }
 
@@ -686,7 +731,7 @@ mod tests {
             "--code-size-limit",
             "50000",
         ]);
-        assert_eq!(args.evm_opts.env.code_size_limit, Some(50000));
+        assert_eq!(args.evm.env.code_size_limit, Some(50000));
     }
 
     #[test]
@@ -713,7 +758,7 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }

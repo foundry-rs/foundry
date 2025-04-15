@@ -50,7 +50,7 @@ impl FormatterError {
     }
 }
 
-#[allow(unused_macros)]
+#[expect(unused_macros)]
 macro_rules! format_err {
     ($msg:literal $(,)?) => {
         $crate::formatter::FormatterError::custom($msg.to_string())
@@ -63,7 +63,6 @@ macro_rules! format_err {
     };
 }
 
-#[allow(unused_macros)]
 macro_rules! bail {
     ($msg:literal $(,)?) => {
         return Err($crate::formatter::format_err!($msg))
@@ -88,7 +87,7 @@ struct Context {
 impl Context {
     /// Returns true if the current function context is the constructor
     pub(crate) fn is_constructor_function(&self) -> bool {
-        self.function.as_ref().map_or(false, |f| matches!(f.ty, FunctionTy::Constructor))
+        self.function.as_ref().is_some_and(|f| matches!(f.ty, FunctionTy::Constructor))
     }
 }
 
@@ -132,14 +131,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
-    #[allow(dead_code)]
     unsafe fn buf_contents(&self) -> &String {
         *(&self.buf.w as *const W as *const &mut String)
     }
 
     /// Casts the current `W` writer or the current temp buffer as a `String` reference.
     /// Should only be used for debugging.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     unsafe fn temp_buf_contents(&self) -> &String {
         match &self.temp_bufs[..] {
             [] => self.buf_contents(),
@@ -246,6 +244,17 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write unformatted src and comments for given location.
+    fn write_raw_src(&mut self, loc: Loc) -> Result<()> {
+        let disabled_stmts_src = String::from_utf8(self.source.as_bytes()[loc.range()].to_vec())
+            .map_err(FormatterError::custom)?;
+        self.write_raw(disabled_stmts_src.trim_end())?;
+        self.write_whitespace_separator(true)?;
+        // Remove comments as they're already included in disabled src.
+        let _ = self.comments.remove_all_comments_before(loc.end());
+        Ok(())
+    }
+
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         // because of sorting import statements, start can be greater than end
@@ -330,7 +339,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     _ => stmt.loc().start(),
                 };
 
-                self.find_next_line(start_from).map_or(false, |loc| loc >= end_at)
+                self.find_next_line(start_from).is_some_and(|loc| loc >= end_at)
             }
         }
     }
@@ -359,7 +368,16 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         byte_offset: usize,
         next_byte_offset: Option<usize>,
-        fun: impl FnMut(&mut Self) -> Result<()>,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Chunk> {
+        self.chunked_mono(byte_offset, next_byte_offset, &mut fun)
+    }
+
+    fn chunked_mono(
+        &mut self,
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        fun: &mut dyn FnMut(&mut Self) -> Result<()>,
     ) -> Result<Chunk> {
         let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
         let prefixes = self.comments.remove_prefixes_before(byte_offset);
@@ -394,7 +412,26 @@ impl<'a, W: Write> Formatter<'a, W> {
         while let Some((loc, item)) = items.next() {
             let chunk_next_byte_offset =
                 items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
-            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
+
+            let chunk = if self.inline_config.is_disabled(loc) {
+                // If item format is disabled, we determine last disabled line from item and create
+                // chunk with raw src.
+                let mut disabled_loc = loc;
+                self.chunked(disabled_loc.start(), chunk_next_byte_offset, |fmt| {
+                    while fmt.inline_config.is_disabled(disabled_loc) {
+                        if let Some(next_line) = fmt.find_next_line(disabled_loc.end()) {
+                            disabled_loc = disabled_loc.with_end(next_line);
+                        } else {
+                            break;
+                        }
+                    }
+                    fmt.write_raw_src(disabled_loc)?;
+                    Ok(())
+                })?
+            } else {
+                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?
+            };
+            out.push(chunk);
         }
         Ok(out)
     }
@@ -521,7 +558,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_doc_block_line(&mut self, comment: &CommentWithMetadata, line: &str) -> Result<()> {
         if line.trim().starts_with('*') {
             let line = line.trim().trim_start_matches('*');
-            let needs_space = line.chars().next().map_or(false, |ch| !ch.is_whitespace());
+            let needs_space = line.chars().next().is_some_and(|ch| !ch.is_whitespace());
             write!(self.buf(), " *{}", if needs_space { " " } else { "" })?;
             self.write_comment_line(comment, line)?;
             self.write_whitespace_separator(true)?;
@@ -1192,22 +1229,114 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
 
-        write_chunk!(self, "{{")?;
+        // Determine if any of start / end of the block is disabled and block lines boundaries.
+        let is_start_disabled = self.inline_config.is_disabled(loc.with_end(loc.start()));
+        let is_end_disabled = self.inline_config.is_disabled(loc.with_start(loc.end()));
+        let end_of_first_line = self.find_next_line(loc.start()).unwrap_or_default();
+        let end_of_last_line = self.find_next_line(loc.end()).unwrap_or_default();
 
-        if let Some(statement) = statements.first() {
-            self.write_whitespace_separator(true)?;
-            self.write_postfix_comments_before(CodeLocation::loc(statement).start())?;
+        // Write first line of the block:
+        // - as it is until the end of line, if format disabled
+        // - start block if line formatted
+        if is_start_disabled {
+            self.write_raw_src(loc.with_end(end_of_first_line))?;
+        } else {
+            write_chunk!(self, "{{")?;
         }
 
-        self.indented(1, |fmt| {
-            fmt.write_lined_visitable(loc, statements.iter_mut(), |_, _| false)?;
-            Ok(())
-        })?;
+        // Write comments and close block if no statement.
+        if statements.is_empty() {
+            self.indented(1, |fmt| {
+                fmt.write_prefix_comments_before(loc.end())?;
+                fmt.write_postfix_comments_before(loc.end())?;
+                Ok(())
+            })?;
 
-        if !statements.is_empty() {
+            write_chunk!(self, "}}")?;
+            return Ok(false)
+        }
+
+        // Determine writable statements by excluding statements from disabled start / end lines.
+        // We check the position of last statement from first line (if disabled) and position of
+        // first statement from last line (if disabled) and slice accordingly.
+        let writable_statments = match (
+            statements.iter().rposition(|stmt| {
+                is_start_disabled &&
+                    self.find_next_line(stmt.loc().end()).unwrap_or_default() ==
+                        end_of_first_line
+            }),
+            statements.iter().position(|stmt| {
+                is_end_disabled &&
+                    self.find_next_line(stmt.loc().end()).unwrap_or_default() == end_of_last_line
+            }),
+        ) {
+            // We have statements on both disabled start / end lines.
+            (Some(start), Some(end)) => {
+                if start == end || start + 1 == end {
+                    None
+                } else {
+                    Some(&mut statements[start + 1..end])
+                }
+            }
+            // We have statements only on disabled start line.
+            (Some(start), None) => {
+                if start + 1 == statements.len() {
+                    None
+                } else {
+                    Some(&mut statements[start + 1..])
+                }
+            }
+            // We have statements only on disabled end line.
+            (None, Some(end)) => {
+                if end == 0 {
+                    None
+                } else {
+                    Some(&mut statements[..end])
+                }
+            }
+            // No statements on disabled start / end line.
+            (None, None) => Some(statements),
+        };
+
+        // Write statements that are not on any disabled first / last block line.
+        let mut statements_loc = loc;
+        if let Some(writable_statements) = writable_statments {
+            if let Some(first_statement) = writable_statements.first() {
+                statements_loc = statements_loc.with_start(first_statement.loc().start());
+                self.write_whitespace_separator(true)?;
+                self.write_postfix_comments_before(statements_loc.start())?;
+            }
+            // If last line is disabled then statements location ends where last block line starts.
+            if is_end_disabled {
+                if let Some(last_statement) = writable_statements.last() {
+                    statements_loc = statements_loc.with_end(
+                        self.find_next_line(last_statement.loc().end()).unwrap_or_default(),
+                    );
+                }
+            }
+            self.indented(1, |fmt| {
+                fmt.write_lined_visitable(
+                    statements_loc,
+                    writable_statements.iter_mut(),
+                    |_, _| false,
+                )?;
+                Ok(())
+            })?;
             self.write_whitespace_separator(true)?;
         }
-        write_chunk!(self, loc.end(), "}}")?;
+
+        // Write last line of the block:
+        // - as it is from where statements location ends until the end of last line, if format
+        // disabled
+        // - close block if line formatted
+        if is_end_disabled {
+            self.write_raw_src(loc.with_start(statements_loc.end()).with_end(end_of_last_line))?;
+        } else {
+            if end_of_first_line != end_of_last_line {
+                self.write_whitespace_separator(true)?;
+            }
+            write_chunk!(self, loc.end(), "}}")?;
+        }
 
         Ok(false)
     }
@@ -1459,7 +1588,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.extend_loc_until(&mut loc, ')');
             loc
         };
-        if self.inline_config.is_disabled(params_loc) {
+        let params_disabled = self.inline_config.is_disabled(params_loc);
+        if params_disabled {
             let chunk = self.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
             params_multiline = chunk.content.contains('\n');
             self.write_chunk(&chunk)?;
@@ -1494,7 +1624,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                     let should_multiline = header_multiline &&
                         matches!(
                             fmt.config.multiline_func_header,
-                            MultilineFuncHeaderStyle::ParamsFirst | MultilineFuncHeaderStyle::All
+                            MultilineFuncHeaderStyle::ParamsFirst |
+                                MultilineFuncHeaderStyle::ParamsFirstMulti |
+                                MultilineFuncHeaderStyle::All |
+                                MultilineFuncHeaderStyle::AllParams
                         );
                     params_multiline = should_multiline ||
                         multiline ||
@@ -1503,6 +1636,19 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
+                    // Write new line if we have only one parameter and params first set,
+                    // or if the function definition is multiline and all params set.
+                    let single_param_multiline = matches!(
+                        fmt.config.multiline_func_header,
+                        MultilineFuncHeaderStyle::ParamsFirst
+                    ) || params_multiline &&
+                        matches!(
+                            fmt.config.multiline_func_header,
+                            MultilineFuncHeaderStyle::AllParams
+                        );
+                    if params.len() == 1 && single_param_multiline {
+                        writeln!(fmt.buf())?;
+                    }
                     fmt.write_chunks_separated(&params, ",", params_multiline)?;
                     Ok(())
                 },
@@ -1519,7 +1665,16 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .loc()
                     .with_end_from(&func.attributes.last().unwrap().loc());
                 if fmt.inline_config.is_disabled(attrs_loc) {
-                    fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                    // If params are also disabled then write functions attributes on the same line.
+                    if params_disabled {
+                        fmt.write_whitespace_separator(false)?;
+                        let attrs_src =
+                            String::from_utf8(self.source.as_bytes()[attrs_loc.range()].to_vec())
+                                .map_err(FormatterError::custom)?;
+                        fmt.write_raw(attrs_src)?;
+                    } else {
+                        fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                    }
                 } else {
                     fmt.write_postfix_comments_before(attrs_loc.start())?;
                     fmt.write_whitespace_separator(multiline)?;
@@ -1537,7 +1692,11 @@ impl<'a, W: Write> Formatter<'a, W> {
                 let returns_start_loc = func.returns.first().unwrap().0;
                 let returns_loc = returns_start_loc.with_end_from(&func.returns.last().unwrap().0);
                 if fmt.inline_config.is_disabled(returns_loc) {
-                    fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
+                    fmt.write_whitespace_separator(false)?;
+                    let returns_src =
+                        String::from_utf8(self.source.as_bytes()[returns_loc.range()].to_vec())
+                            .map_err(FormatterError::custom)?;
+                    fmt.write_raw(format!("returns ({returns_src})"))?;
                 } else {
                     let mut returns = fmt.items_to_chunks(
                         returns_end,
@@ -1580,7 +1739,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         let should_multiline = header_multiline &&
             if params_multiline {
-                matches!(self.config.multiline_func_header, MultilineFuncHeaderStyle::All)
+                matches!(
+                    self.config.multiline_func_header,
+                    MultilineFuncHeaderStyle::All | MultilineFuncHeaderStyle::AllParams
+                )
             } else {
                 matches!(
                     self.config.multiline_func_header,
@@ -1616,6 +1778,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
                 SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
                 |fmt, _| {
+                    fmt.write_prefix_comments_before(cond.loc().end())?;
                     cond.visit(fmt)?;
                     fmt.write_postfix_comments_before(if_branch.loc().start())
                 },
@@ -1641,7 +1804,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.visit_if(*loc, cond, if_branch, else_branch, false)?;
             } else {
                 let else_branch_is_single_line =
-                    self.visit_stmt_as_block(else_branch, if_branch_is_single_line)?;
+                    self.visit_stmt_as_block(else_branch, attempt_single_line)?;
                 if single_line_stmt_wide && !else_branch_is_single_line {
                     bail!(FormatterError::fmt())
                 }
@@ -1684,7 +1847,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         // order all groups alphabetically
-        for group in import_groups.iter() {
+        for group in &import_groups {
             // SAFETY: group is not empty
             let first = group[0];
             let last = group.last().copied().expect("group is not empty");
@@ -1715,7 +1878,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
-impl<'a, W: Write> Visitor for Formatter<'a, W> {
+impl<W: Write> Visitor for Formatter<'_, W> {
     type Error = FormatterError;
 
     #[instrument(name = "source", skip(self))]
@@ -1780,7 +1943,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         )?;
 
         // EOF newline
-        if self.last_char().map_or(true, |char| char != '\n') {
+        if self.last_char() != Some('\n') {
             writeln!(self.buf())?;
         }
 
@@ -1930,7 +2093,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
         return_source_if_disabled!(self, loc, ';');
 
-        #[allow(clippy::if_same_then_else)]
         let pragma_descriptor = if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
@@ -2183,8 +2345,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             ""
         };
         let closing_bracket = format!("{prefix}{}", "}");
-        let closing_bracket_loc = args.last().unwrap().loc.end();
-        write_chunk!(self, closing_bracket_loc, "{closing_bracket}")?;
+        if let Some(arg) = args.last() {
+            write_chunk!(self, arg.loc.end(), "{closing_bracket}")?;
+        } else {
+            write_chunk!(self, "{closing_bracket}")?;
+        }
 
         Ok(())
     }
@@ -3026,6 +3191,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             match &mut func.body {
                 Some(body) => {
                     let body_loc = body.loc();
+                    // Handle case where block / statements starts on disabled line.
+                    if fmt.inline_config.is_disabled(body_loc.with_end(body_loc.start())) {
+                        match body {
+                            Statement::Block { statements, .. } if !statements.is_empty() => {
+                                fmt.write_whitespace_separator(false)?;
+                                fmt.visit_block(body_loc, statements, false, false)?;
+                                return Ok(())
+                            }
+                            _ => {
+                                // Attrs should be written on same line if first line is disabled
+                                // and there's no statement.
+                                attrs_multiline = false
+                            }
+                        }
+                    }
+
                     let byte_offset = body_loc.start();
                     let body = fmt.visit_to_chunk(byte_offset, Some(body_loc.end()), body)?;
                     fmt.write_whitespace_separator(
@@ -3035,7 +3216,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 None => fmt.write_semicolon()?,
             }
-
             Ok(())
         })?;
 
@@ -3072,11 +3252,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let is_constructor = self.context.is_constructor_function();
                 // we can't make any decisions here regarding trailing `()` because we'd need to
                 // find out if the `base` is a solidity modifier or an
-                // interface/contract therefor we we its raw content.
+                // interface/contract therefore we we its raw content.
 
                 // we can however check if the contract `is` the `base`, this however also does
                 // not cover all cases
-                let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
+                let is_contract_base = self.context.contract.as_ref().is_some_and(|contract| {
                     contract.base.iter().any(|contract_base| {
                         contract_base
                             .name
@@ -3097,7 +3277,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
                     let is_lowercase =
-                        base_or_modifier.content.chars().next().map_or(false, |c| c.is_lowercase());
+                        base_or_modifier.content.chars().next().is_some_and(|c| c.is_lowercase());
                     if is_lowercase && base_or_modifier.content.ends_with("()") {
                         base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
                     }
@@ -3671,14 +3851,14 @@ struct Transaction<'f, 'a, W> {
     comments: Comments,
 }
 
-impl<'f, 'a, W> std::ops::Deref for Transaction<'f, 'a, W> {
+impl<'a, W> std::ops::Deref for Transaction<'_, 'a, W> {
     type Target = Formatter<'a, W>;
     fn deref(&self) -> &Self::Target {
         self.fmt
     }
 }
 
-impl<'f, 'a, W> std::ops::DerefMut for Transaction<'f, 'a, W> {
+impl<W> std::ops::DerefMut for Transaction<'_, '_, W> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.fmt
     }

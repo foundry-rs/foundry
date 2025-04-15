@@ -4,7 +4,7 @@ use super::{
 };
 use crate::executors::Executor;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::Log;
+use alloy_primitives::{map::HashMap, Log};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_coverage::HitMaps;
@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 /// Replays a call sequence for collecting logs and traces.
 /// Returns counterexample to be used when the call sequence is a failed scenario.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn replay_run(
     invariant_contract: &InvariantContract<'_>,
     mut executor: Executor,
@@ -30,7 +30,9 @@ pub fn replay_run(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
+    deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
+    show_solidity: bool,
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
@@ -47,19 +49,14 @@ pub fn replay_run(
             tx.call_details.calldata.clone(),
             U256::ZERO,
         )?;
+
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-
-        if let Some(new_coverage) = call_result.coverage {
-            if let Some(old_coverage) = coverage {
-                *coverage = Some(std::mem::take(old_coverage).merged(new_coverage));
-            } else {
-                *coverage = Some(new_coverage);
-            }
-        }
+        HitMaps::merge_opt(coverage, call_result.coverage);
 
         // Identify newly generated contracts, if they exist.
-        ided_contracts.extend(load_contracts(call_result.traces.as_slice(), known_contracts));
+        ided_contracts
+            .extend(load_contracts(call_result.traces.iter().map(|a| &a.arena), known_contracts));
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::from_invariant_call(
@@ -68,6 +65,7 @@ pub fn replay_run(
             &tx.call_details.calldata,
             &ided_contracts,
             call_result.traces,
+            show_solidity,
         ));
     }
 
@@ -83,6 +81,12 @@ pub fn replay_run(
     )?;
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);
+    deprecated_cheatcodes.extend(
+        invariant_result
+            .cheatcodes
+            .as_ref()
+            .map_or_else(Default::default, |cheats| cheats.deprecated.clone()),
+    );
 
     // Collect after invariant logs and traces.
     if invariant_contract.call_after_invariant && invariant_success {
@@ -96,7 +100,7 @@ pub fn replay_run(
 }
 
 /// Replays the error case, shrinks the failing sequence and collects all necessary traces.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn replay_error(
     failed_case: &FailedInvariantCaseData,
     invariant_contract: &InvariantContract<'_>,
@@ -106,7 +110,9 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
+    deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
+    show_solidity: bool,
 ) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
@@ -132,7 +138,9 @@ pub fn replay_error(
                 logs,
                 traces,
                 coverage,
+                deprecated_cheatcodes,
                 &calls,
+                show_solidity,
             )
         }
     }

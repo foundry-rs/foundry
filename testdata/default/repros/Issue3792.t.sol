@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -16,10 +16,10 @@ contract TestSetup is Config, DSTest {
     // We now check for keccak256("failed") on the hevm address.
     // This test should succeed.
     function testSnapshotStorageShift() public {
-        uint256 snapshotId = vm.snapshot();
+        uint256 snapshotId = vm.snapshotState();
 
         vm.prank(test);
 
-        vm.revertTo(snapshotId);
+        vm.revertToState(snapshotId);
     }
 }

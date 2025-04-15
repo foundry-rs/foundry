@@ -8,8 +8,8 @@ use crate::{
     mem::inspector::Inspector,
     PrecompileFactory,
 };
-use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
+use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -28,8 +28,9 @@ use foundry_evm::{
         },
     },
     traces::CallTraceNode,
+    utils::odyssey_handler_register,
 };
-use revm::primitives::MAX_BLOB_GAS_PER_BLOCK;
+use revm::db::WrapDatabaseRef;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -38,7 +39,7 @@ pub struct ExecutedTransaction {
     transaction: Arc<PoolTransaction>,
     exit_reason: InstructionResult,
     out: Option<Output>,
-    gas_used: u128,
+    gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
     nonce: u64,
@@ -48,7 +49,7 @@ pub struct ExecutedTransaction {
 
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
-    fn create_receipt(&self, cumulative_gas_used: &mut u128) -> TypedReceipt {
+    fn create_receipt(&self, cumulative_gas_used: &mut u64) -> TypedReceipt {
         let logs = self.logs.clone();
         *cumulative_gas_used = cumulative_gas_used.saturating_add(self.gas_used);
 
@@ -66,6 +67,7 @@ impl ExecutedTransaction {
             TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
             TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
+            TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
             TypedTransaction::Deposit(tx) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: Some(tx.nonce),
@@ -80,7 +82,7 @@ impl ExecutedTransaction {
 pub struct ExecutedTransactions {
     /// The block created after executing the `included` transactions
     pub block: BlockInfo,
-    /// All transactions included in the
+    /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were invalid at the point of their execution and were not included in
     /// the block
@@ -88,11 +90,11 @@ pub struct ExecutedTransactions {
 }
 
 /// An executor for a series of transactions
-pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> {
+pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// where to insert the transactions
     pub db: &'a mut Db,
     /// type used to validate before inclusion
-    pub validator: Validator,
+    pub validator: &'a V,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
@@ -100,40 +102,44 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub cfg_env: CfgEnvWithHandlerCfg,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
-    pub gas_used: u128,
+    pub gas_used: u64,
     /// Cumulative blob gas used by all executed transactions
-    pub blob_gas_used: u128,
+    pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
+    pub odyssey: bool,
     pub print_logs: bool,
+    pub print_traces: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
-impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
+impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
     pub fn execute(mut self) -> ExecutedTransactions {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
         let mut bloom = Bloom::default();
-        let mut cumulative_gas_used: u128 = 0;
+        let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit.to::<u128>();
+        let gas_limit = self.block_env.gas_limit.to::<u64>();
         let parent_hash = self.parent_hash;
         let block_number = self.block_env.number.to::<u64>();
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
         let timestamp = self.block_env.timestamp.to::<u64>();
         let base_fee = if self.cfg_env.handler_cfg.spec_id.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee.to::<u128>())
+            Some(self.block_env.basefee.to::<u64>())
         } else {
             None
         };
 
+        let is_shanghai = self.cfg_env.handler_cfg.spec_id >= SpecId::SHANGHAI;
         let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
+        let is_prague = self.cfg_env.handler_cfg.spec_id >= SpecId::PRAGUE;
         let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
-        let mut cumulative_blob_gas_used = if is_cancun { Some(0u128) } else { None };
+        let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
             let tx = match tx {
@@ -170,7 +176,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     .blob_gas()
                     .unwrap_or(0);
                 cumulative_blob_gas_used =
-                    Some(cumulative_blob_gas_used.unwrap_or(0u128).saturating_add(tx_blob_gas));
+                    Some(cumulative_blob_gas_used.unwrap_or(0u64).saturating_add(tx_blob_gas));
             }
             let receipt = tx.create_receipt(&mut cumulative_gas_used);
 
@@ -205,7 +211,6 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             transactions.push(transaction.pending_transaction.transaction.clone());
         }
 
-        let ommers: Vec<Header> = Vec::new();
         let receipts_root =
             trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
 
@@ -224,12 +229,14 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             mix_hash: Default::default(),
             nonce: Default::default(),
             base_fee,
-            parent_beacon_block_root: Default::default(),
+            parent_beacon_block_root: is_cancun.then_some(Default::default()),
             blob_gas_used: cumulative_blob_gas_used,
-            excess_blob_gas: excess_blob_gas.map(|g| g as u128),
+            excess_blob_gas,
+            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
         };
 
-        let block = Block::new(partial_header, transactions.clone(), ommers);
+        let block = Block::new(partial_header, transactions.clone());
         let block = BlockInfo { block, transactions: transaction_infos, receipts };
         ExecutedTransactions { block, included, invalid }
     }
@@ -260,9 +267,7 @@ pub enum TransactionExecutionOutcome {
     DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
 
-impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
-    for &'b mut TransactionExecutor<'a, DB, Validator>
-{
+impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExecutor<'_, DB, V> {
     type Item = TransactionExecutionOutcome;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -275,16 +280,16 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let env = self.env_for(&transaction.pending_transaction);
 
         // check that we comply with the block's gas limit, if not disabled
-        let max_gas = self.gas_used.saturating_add(env.tx.gas_limit as u128);
-        if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u128>() {
+        let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
+        if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u64>() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
-            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0u128),
+            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
         );
-        if max_blob_gas > MAX_BLOB_GAS_PER_BLOCK as u128 {
+        if max_blob_gas > alloy_eips::eip4844::MAX_DATA_GAS_PER_BLOCK {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 
@@ -308,10 +313,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
+        if self.print_traces {
+            inspector = inspector.with_trace_printer();
+        }
 
         let exec_result = {
-            let mut evm =
-                foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
+            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -342,6 +349,10 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
                 }
             }
         };
+
+        if self.print_traces {
+            inspector.print_traces();
+        }
         inspector.print_logs();
 
         let (exit_reason, gas_used, out, logs) = match exec_result {
@@ -362,7 +373,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
         // Track the total gas used for total gas per block checks
-        self.gas_used = self.gas_used.saturating_add(gas_used as u128);
+        self.gas_used = self.gas_used.saturating_add(gas_used);
 
         // Track the total blob gas used for total blob gas per blob checks
         if let Some(blob_gas) = transaction.pending_transaction.transaction.transaction.blob_gas() {
@@ -375,7 +386,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             transaction,
             exit_reason,
             out,
-            gas_used: gas_used as u128,
+            gas_used,
             logs: logs.unwrap_or_default(),
             traces: inspector.tracer.map(|t| t.into_traces().into_nodes()).unwrap_or_default(),
             nonce,
@@ -393,4 +404,38 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
             bloom.accrue(BloomInput::Raw(&topic[..]));
         }
     }
+}
+
+/// Creates a database with given database and inspector, optionally enabling odyssey features.
+pub fn new_evm_with_inspector<DB: revm::Database>(
+    db: DB,
+    env: EnvWithHandlerCfg,
+    inspector: &mut dyn revm::Inspector<DB>,
+    odyssey: bool,
+) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
+    let EnvWithHandlerCfg { env, handler_cfg } = env;
+
+    let mut handler = revm::Handler::new(handler_cfg);
+
+    handler.append_handler_register_plain(revm::inspector_handle_register);
+    if odyssey {
+        handler.append_handler_register_plain(odyssey_handler_register);
+    }
+
+    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
+
+    revm::Evm::new(context, handler)
+}
+
+/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
+pub fn new_evm_with_inspector_ref<'a, DB>(
+    db: DB,
+    env: EnvWithHandlerCfg,
+    inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
+    odyssey: bool,
+) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
+where
+    DB: revm::DatabaseRef,
+{
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, odyssey)
 }

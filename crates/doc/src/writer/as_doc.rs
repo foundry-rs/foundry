@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 pub type AsDocResult = Result<String, std::fmt::Error>;
 
 /// A trait for formatting a parse unit as documentation.
-#[auto_impl::auto_impl(&)]
 pub trait AsDoc {
     /// Formats a parse tree item into a doc string.
     fn as_doc(&self) -> AsDocResult;
@@ -32,7 +31,7 @@ impl AsDoc for Comments {
     }
 }
 
-impl<'a> AsDoc for CommentsRef<'a> {
+impl AsDoc for CommentsRef<'_> {
     // TODO: support other tags
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
@@ -47,16 +46,31 @@ impl<'a> AsDoc for CommentsRef<'a> {
 
         // Write notice tags
         let notices = self.include_tag(CommentTag::Notice);
-        for notice in notices.iter() {
-            writer.writeln_raw(&notice.value)?;
+        for n in notices.iter() {
+            writer.writeln_raw(&n.value)?;
             writer.writeln()?;
         }
 
         // Write dev tags
         let devs = self.include_tag(CommentTag::Dev);
-        for dev in devs.iter() {
-            writer.write_italic(&dev.value)?;
+        for d in devs.iter() {
+            writer.write_italic(&d.value)?;
             writer.writeln()?;
+        }
+
+        // Write custom tags
+        let customs = self.get_custom_tags();
+        if !customs.is_empty() {
+            writer.write_bold(&format!("Note{}:", if customs.len() == 1 { "" } else { "s" }))?;
+            for c in customs.iter() {
+                writer.writeln_raw(format!(
+                    "{}{}: {}",
+                    if customs.len() == 1 { "" } else { "- " },
+                    &c.tag,
+                    &c.value
+                ))?;
+                writer.writeln()?;
+            }
         }
 
         Ok(writer.finish())
@@ -82,7 +96,7 @@ impl AsDoc for Document {
                     writer.writeln()?;
                 }
 
-                for item in items.iter() {
+                for item in items {
                     let func = item.as_function().unwrap();
                     let mut heading = item.source.ident();
                     if !func.params.is_empty() {
@@ -105,7 +119,7 @@ impl AsDoc for Document {
                     writer.writeln()?;
                 }
 
-                for item in items.iter() {
+                for item in items {
                     let var = item.as_variable().unwrap();
                     writer.write_heading(&var.name.safe_unwrap().name)?;
                     writer.write_section(&item.comments, &item.code)?;
@@ -133,7 +147,7 @@ impl AsDoc for Document {
                             let mut bases = vec![];
                             let linked =
                                 read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
-                            for base in contract.base.iter() {
+                            for base in &contract.base {
                                 let base_doc = base.as_doc()?;
                                 let base_ident = &base.name.identifiers.last().unwrap().name;
 
@@ -179,7 +193,7 @@ impl AsDoc for Document {
                         if let Some(funcs) = item.functions() {
                             writer.write_subtitle("Functions")?;
 
-                            for (func, comments, code) in funcs.iter() {
+                            for (func, comments, code) in &funcs {
                                 self.write_function(&mut writer, func, comments, code)?;
                             }
                         }
@@ -224,7 +238,7 @@ impl AsDoc for Document {
                         // TODO: cleanup
                         // Write function docs
                         writer.writeln_doc(
-                            item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
+                            &item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
                         )?;
 
                         // Write function header
@@ -235,7 +249,7 @@ impl AsDoc for Document {
                             func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
                         writer.try_write_param_table(CommentTag::Param, &params, &item.comments)?;
 
-                        // Write function parameter comments in a table
+                        // Write function return parameter comments in a table
                         let returns =
                             func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
                         writer.try_write_param_table(
@@ -295,7 +309,7 @@ impl Document {
         writer.writeln()?;
 
         // Write function docs
-        writer.writeln_doc(comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]))?;
+        writer.writeln_doc(&comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]))?;
 
         // Write function header
         writer.write_code(code)?;
@@ -304,7 +318,7 @@ impl Document {
         let params = func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
         writer.try_write_param_table(CommentTag::Param, &params, &comments)?;
 
-        // Write function parameter comments in a table
+        // Write function return parameter comments in a table
         let returns = func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
         writer.try_write_param_table(CommentTag::Return, &returns, &comments)?;
 

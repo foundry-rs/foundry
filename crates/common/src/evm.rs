@@ -1,6 +1,7 @@
-//! cli arguments for configuring the evm settings
-use alloy_primitives::{Address, B256, U256};
-use clap::{ArgAction, Parser};
+//! CLI arguments for configuring the EVM settings.
+
+use alloy_primitives::{map::HashMap, Address, B256, U256};
+use clap::Parser;
 use eyre::ContextCompat;
 use foundry_config::{
     figment::{
@@ -11,13 +12,15 @@ use foundry_config::{
     },
     Chain, Config,
 };
-use rustc_hash::FxHashMap;
 use serde::Serialize;
 
+use crate::shell;
+
 /// Map keyed by breakpoints char to their location (contract address, pc)
-pub type Breakpoints = FxHashMap<char, (Address, usize)>;
+pub type Breakpoints = HashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
+///
 /// All vars are opt-in, their default values are expected to be set by the
 /// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
 ///
@@ -85,7 +88,7 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_balance: Option<U256>,
 
-    /// The address which will be executing tests.
+    /// The address which will be executing tests/scripts.
     #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
@@ -100,18 +103,10 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub always_use_create_2_factory: bool,
 
-    /// Verbosity of the EVM.
-    ///
-    /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
-    ///
-    /// Verbosity levels:
-    /// - 2: Print logs for all tests
-    /// - 3: Print execution traces for failing tests
-    /// - 4: Print execution traces for all tests, and setup traces for failing tests
-    /// - 5: Print execution and setup traces for all tests
-    #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count)]
-    #[serde(skip)]
-    pub verbosity: u8,
+    /// The CREATE2 deployer address to use, this will override the one in the config.
+    #[arg(long, value_name = "ADDRESS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create2_deployer: Option<Address>,
 
     /// Sets the number of assumed available compute units per second for this provider
     ///
@@ -144,6 +139,11 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub isolate: bool,
+
+    /// Whether to enable Odyssey features.
+    #[arg(long, alias = "alphanet")]
+    #[serde(skip)]
+    pub odyssey: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -157,9 +157,9 @@ impl Provider for EvmArgs {
         let error = InvalidType(value.to_actual(), "map".into());
         let mut dict = value.into_dict().ok_or(error)?;
 
-        if self.verbosity > 0 {
+        if shell::verbosity() > 0 {
             // need to merge that manually otherwise `from_occurrences` does not work
-            dict.insert("verbosity".to_string(), self.verbosity.into());
+            dict.insert("verbosity".to_string(), shell::verbosity().into());
         }
 
         if self.ffi {
@@ -168,6 +168,10 @@ impl Provider for EvmArgs {
 
         if self.isolate {
             dict.insert("isolate".to_string(), self.isolate.into());
+        }
+
+        if self.odyssey {
+            dict.insert("odyssey".to_string(), self.odyssey.into());
         }
 
         if self.always_use_create_2_factory {
@@ -197,11 +201,6 @@ impl Provider for EvmArgs {
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Executor environment config")]
 pub struct EnvArgs {
-    /// The block gas limit.
-    #[arg(long, value_name = "GAS_LIMIT")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gas_limit: Option<u64>,
-
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
     /// default, it is 0x6000 (~25kb).
     #[arg(long, value_name = "CODE_SIZE")]
@@ -254,7 +253,7 @@ pub struct EnvArgs {
     pub block_prevrandao: Option<B256>,
 
     /// The block gas limit.
-    #[arg(long, value_name = "GAS_LIMIT")]
+    #[arg(long, visible_alias = "gas-limit", value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
 
@@ -268,6 +267,7 @@ pub struct EnvArgs {
 
     /// Whether to disable the block gas limit checks.
     #[arg(long, visible_alias = "no-gas-limit")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub disable_block_gas_limit: bool,
 }
 
@@ -280,7 +280,6 @@ impl EvmArgs {
 
 /// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects
 /// `chain_id` to be `u64`.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Error> {
     if let Some(chain) = chain {
         s.serialize_u64(chain.id())
@@ -301,7 +300,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
@@ -314,7 +313,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.memory_limit, Config::default().memory_limit);
 
         let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
@@ -329,7 +328,7 @@ mod tests {
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
         assert_eq!(env.chain, Some(Chain::mainnet()));
         let args = EvmArgs { env, ..Default::default() };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 }

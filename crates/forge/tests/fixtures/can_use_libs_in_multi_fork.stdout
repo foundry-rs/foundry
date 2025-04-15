@@ -1,9 +1,0 @@
-Compiling 2 files with 0.8.23
-Solc 0.8.23 finished in 1.95s
-Compiler run successful!
-
-Ran 1 test for test/Contract.t.sol:ContractTest
-[PASS] test() (gas: 70360)
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 3.21s
-
-Ran 1 test suite: 1 tests passed, 0 failed, 0 skipped (1 total tests)

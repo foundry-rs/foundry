@@ -2,15 +2,12 @@ use super::{
     transaction::{TransactionInfo, TypedReceipt},
     trie,
 };
-use alloy_consensus::Header;
+use alloy_consensus::{Header, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
-#[cfg(not(feature = "impersonated-tx"))]
-type Transaction = crate::eth::transaction::TypedTransaction;
-#[cfg(feature = "impersonated-tx")]
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Container type that gathers all block data
@@ -34,19 +31,11 @@ impl Block {
     ///
     /// Note: if the `impersonate-tx` feature is enabled this will also accept
     /// `MaybeImpersonatedTransaction`.
-    pub fn new<T>(
-        partial_header: PartialHeader,
-        transactions: impl IntoIterator<Item = T>,
-        ommers: Vec<Header>,
-    ) -> Self
+    pub fn new<T>(partial_header: PartialHeader, transactions: impl IntoIterator<Item = T>) -> Self
     where
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let mut encoded_ommers: Vec<u8> = Vec::new();
-        alloy_rlp::encode_list(&ommers, &mut encoded_ommers);
-        let ommers_hash =
-            B256::from_slice(alloy_primitives::utils::keccak256(encoded_ommers).as_slice());
         let transactions_root =
             trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
 
@@ -54,7 +43,7 @@ impl Block {
             header: Header {
                 parent_hash: partial_header.parent_hash,
                 beneficiary: partial_header.beneficiary,
-                ommers_hash,
+                ommers_hash: EMPTY_OMMER_ROOT_HASH,
                 state_root: partial_header.state_root,
                 transactions_root,
                 receipts_root: partial_header.receipts_root,
@@ -66,16 +55,16 @@ impl Block {
                 timestamp: partial_header.timestamp,
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
-                withdrawals_root: None,
+                withdrawals_root: partial_header.withdrawals_root,
                 blob_gas_used: partial_header.blob_gas_used,
                 excess_blob_gas: partial_header.excess_blob_gas,
                 parent_beacon_block_root: partial_header.parent_beacon_block_root,
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
-                requests_root: None,
+                requests_hash: partial_header.requests_hash,
             },
             transactions,
-            ommers,
+            ommers: vec![],
         }
     }
 }
@@ -90,16 +79,18 @@ pub struct PartialHeader {
     pub logs_bloom: Bloom,
     pub difficulty: U256,
     pub number: u64,
-    pub gas_limit: u128,
-    pub gas_used: u128,
+    pub gas_limit: u64,
+    pub gas_used: u64,
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: B256,
-    pub blob_gas_used: Option<u128>,
-    pub excess_blob_gas: Option<u128>,
+    pub blob_gas_used: Option<u64>,
+    pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<B256>,
     pub nonce: B64,
-    pub base_fee: Option<u128>,
+    pub base_fee: Option<u64>,
+    pub withdrawals_root: Option<B256>,
+    pub requests_hash: Option<B256>,
 }
 
 impl From<Header> for PartialHeader {
@@ -122,6 +113,8 @@ impl From<Header> for PartialHeader {
             blob_gas_used: value.blob_gas_used,
             excess_blob_gas: value.excess_blob_gas,
             parent_beacon_block_root: value.parent_beacon_block_root,
+            requests_hash: value.requests_hash,
+            withdrawals_root: value.withdrawals_root,
         }
     }
 }
@@ -150,7 +143,7 @@ mod tests {
             difficulty: Default::default(),
             number: 124u64,
             gas_limit: Default::default(),
-            gas_used: 1337u128,
+            gas_used: 1337u64,
             timestamp: 0,
             extra_data: Default::default(),
             mix_hash: Default::default(),
@@ -160,14 +153,14 @@ mod tests {
             excess_blob_gas: Default::default(),
             parent_beacon_block_root: Default::default(),
             base_fee_per_gas: None,
-            requests_root: None,
+            requests_hash: None,
         };
 
         let encoded = alloy_rlp::encode(&header);
         let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
         assert_eq!(header, decoded);
 
-        header.base_fee_per_gas = Some(12345u128);
+        header.base_fee_per_gas = Some(12345u64);
 
         let encoded = alloy_rlp::encode(&header);
         let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
@@ -190,8 +183,8 @@ mod tests {
             logs_bloom: Bloom::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             difficulty: U256::from(2222),
             number: 0xd05u64,
-            gas_limit: 0x115cu128,
-            gas_used: 0x15b3u128,
+            gas_limit: 0x115cu64,
+            gas_used: 0x15b3u64,
             timestamp: 0x1a0au64,
             extra_data: hex::decode("7788").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
@@ -201,7 +194,7 @@ mod tests {
             parent_beacon_block_root: None,
             nonce: B64::ZERO,
             base_fee_per_gas: None,
-            requests_root: None,
+            requests_hash: None,
         };
 
         header.encode(&mut data);
@@ -223,8 +216,8 @@ mod tests {
             logs_bloom: <[u8; 256]>::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
             difficulty: U256::from(2222),
             number: 0xd05u64,
-            gas_limit: 0x115cu128,
-            gas_used: 0x15b3u128,
+            gas_limit: 0x115cu64,
+            gas_used: 0x15b3u64,
             timestamp: 0x1a0au64,
             extra_data: hex::decode("7788").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
@@ -234,7 +227,7 @@ mod tests {
             excess_blob_gas: None,
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
-            requests_root: None,
+            requests_hash: None,
         };
         let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
@@ -244,7 +237,7 @@ mod tests {
     // Test vector from: https://github.com/ethereum/tests/blob/f47bbef4da376a49c8fc3166f09ab8a6d182f765/BlockchainTests/ValidBlocks/bcEIP1559/baseFee.json#L15-L36
     fn test_eip1559_block_header_hash() {
         let expected_hash =
-            b256!("6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
+            b256!("0x6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
         let header = Header {
             parent_hash: B256::from_str("e0a94a7a3c9617401586b1a27025d2d9671332d22d540e0af72b069170380f2a").unwrap(),
             ommers_hash: B256::from_str("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap(),
@@ -255,8 +248,8 @@ mod tests {
             logs_bloom: Bloom::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             difficulty: U256::from(0x020000),
             number: 1u64,
-            gas_limit: U256::from(0x016345785d8a0000u128).to::<u128>(),
-            gas_used: U256::from(0x015534).to::<u128>(),
+            gas_limit: U256::from(0x016345785d8a0000u128).to::<u64>(),
+            gas_used: U256::from(0x015534).to::<u64>(),
             timestamp: 0x079e,
             extra_data: hex::decode("42").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
@@ -266,7 +259,7 @@ mod tests {
             blob_gas_used: None,
             excess_blob_gas: None,
             parent_beacon_block_root: None,
-            requests_root: None,
+            requests_hash: None,
         };
         assert_eq!(header.hash_slow(), expected_hash);
     }

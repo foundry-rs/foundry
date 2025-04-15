@@ -1,62 +1,174 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{Address, B256, U256};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
+use alloy_primitives::{Address, Uint, B256, U256};
+use alloy_rpc_types::Authorization;
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
+use revm::primitives::{Bytecode, SignedAuthorization};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         broadcast(ccx, None, true)
     }
 }
 
 impl Cheatcode for broadcast_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), true)
     }
 }
 
 impl Cheatcode for broadcast_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, true)
     }
 }
 
+impl Cheatcode for attachDelegationCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { signedDelegation } = self;
+        let SignedDelegation { v, r, s, nonce, implementation } = signedDelegation;
+
+        let auth = Authorization {
+            address: *implementation,
+            nonce: *nonce,
+            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+        };
+        let signed_auth = SignedAuthorization::new_unchecked(
+            auth,
+            *v,
+            U256::from_be_bytes(r.0),
+            U256::from_be_bytes(s.0),
+        );
+        write_delegation(ccx, signed_auth.clone())?;
+        ccx.state.active_delegation = Some(signed_auth);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for signDelegation_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, false)
+    }
+}
+
+impl Cheatcode for signDelegation_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, nonce } = *self;
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), false)
+    }
+}
+
+impl Cheatcode for signAndAttachDelegation_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, true)
+    }
+}
+
+impl Cheatcode for signAndAttachDelegation_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, nonce } = *self;
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), true)
+    }
+}
+
+/// Helper function to sign and attach (if needed) an EIP-7702 delegation.
+/// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
+fn sign_delegation(
+    ccx: &mut CheatsCtxt,
+    private_key: Uint<256, 4>,
+    implementation: Address,
+    nonce: Option<u64>,
+    attach: bool,
+) -> Result<Vec<u8>> {
+    let signer = PrivateKeySigner::from_bytes(&B256::from(private_key))?;
+    let nonce = if let Some(nonce) = nonce {
+        nonce
+    } else {
+        let authority_acc =
+            ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
+        authority_acc.data.info.nonce
+    };
+    let auth = Authorization {
+        address: implementation,
+        nonce,
+        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+    };
+    let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+    // Attach delegation.
+    if attach {
+        let signed_auth = SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s());
+        write_delegation(ccx, signed_auth.clone())?;
+        ccx.state.active_delegation = Some(signed_auth);
+    }
+    Ok(SignedDelegation {
+        v: sig.v() as u8,
+        r: sig.r().into(),
+        s: sig.s().into(),
+        nonce,
+        implementation,
+    }
+    .abi_encode())
+}
+
+fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
+    let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
+    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
+    if authority_acc.data.info.nonce != auth.nonce {
+        return Err("invalid nonce".into());
+    }
+    authority_acc.data.info.nonce += 1;
+    let bytecode = Bytecode::new_eip7702(*auth.address());
+    ccx.ecx.journaled_state.set_code(authority, bytecode);
+    Ok(())
+}
+
 impl Cheatcode for startBroadcast_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         broadcast(ccx, None, false)
     }
 }
 
 impl Cheatcode for startBroadcast_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), false)
     }
 }
 
 impl Cheatcode for startBroadcast_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, false)
     }
 }
 
 impl Cheatcode for stopBroadcastCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         let Some(broadcast) = ccx.state.broadcast.take() else {
             bail!("no broadcast in progress to stop");
         };
         debug!(target: "cheatcodes", ?broadcast, "stopped");
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getWalletsCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let wallets = ccx.state.wallets().signers().unwrap_or_default();
+        Ok(wallets.abi_encode())
     }
 }
 
@@ -76,29 +188,29 @@ pub struct Broadcast {
 
 /// Contains context for wallet management.
 #[derive(Debug)]
-pub struct ScriptWalletsInner {
+pub struct WalletsInner {
     /// All signers in scope of the script.
     pub multi_wallet: MultiWallet,
     /// Optional signer provided as `--sender` flag.
     pub provided_sender: Option<Address>,
 }
 
-/// Clonable wrapper around [`ScriptWalletsInner`].
+/// Clonable wrapper around [`WalletsInner`].
 #[derive(Debug, Clone)]
-pub struct ScriptWallets {
+pub struct Wallets {
     /// Inner data.
-    pub inner: Arc<Mutex<ScriptWalletsInner>>,
+    pub inner: Arc<Mutex<WalletsInner>>,
 }
 
-impl ScriptWallets {
-    #[allow(missing_docs)]
+impl Wallets {
+    #[expect(missing_docs)]
     pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
-        Self { inner: Arc::new(Mutex::new(ScriptWalletsInner { multi_wallet, provided_sender })) }
+        Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
 
-    /// Consumes [ScriptWallets] and returns [MultiWallet].
+    /// Consumes [Wallets] and returns [MultiWallet].
     ///
-    /// Panics if [ScriptWallets] is still in use.
+    /// Panics if [Wallets] is still in use.
     pub fn into_multi_wallet(self) -> MultiWallet {
         Arc::into_inner(self.inner)
             .map(|m| m.into_inner().multi_wallet)
@@ -120,16 +232,28 @@ impl ScriptWallets {
     pub fn signers(&self) -> Result<Vec<Address>> {
         Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
     }
+
+    /// Number of signers in the [MultiWallet].
+    pub fn len(&self) -> usize {
+        let mut inner = self.inner.lock();
+        let signers = inner.multi_wallet.signers();
+        if signers.is_err() {
+            return 0;
+        }
+        signers.unwrap().len()
+    }
+
+    /// Whether the [MultiWallet] is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
-fn broadcast<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
-    new_origin: Option<&Address>,
-    single_call: bool,
-) -> Result {
+fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
+    let depth = ccx.ecx.journaled_state.depth();
     ensure!(
-        ccx.state.prank.is_none(),
+        ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
     );
     ensure!(ccx.state.broadcast.is_none(), "a broadcast is active already");
@@ -137,16 +261,14 @@ fn broadcast<DB: DatabaseExt>(
     let mut new_origin = new_origin.cloned();
 
     if new_origin.is_none() {
-        if let Some(script_wallets) = ccx.state.script_wallets() {
-            let mut script_wallets = script_wallets.inner.lock();
-            if let Some(provided_sender) = script_wallets.provided_sender {
-                new_origin = Some(provided_sender);
-            } else {
-                let signers = script_wallets.multi_wallet.signers()?;
-                if signers.len() == 1 {
-                    let address = signers.keys().next().unwrap();
-                    new_origin = Some(*address);
-                }
+        let mut wallets = ccx.state.wallets().inner.lock();
+        if let Some(provided_sender) = wallets.provided_sender {
+            new_origin = Some(provided_sender);
+        } else {
+            let signers = wallets.multi_wallet.signers()?;
+            if signers.len() == 1 {
+                let address = signers.keys().next().unwrap();
+                new_origin = Some(*address);
             }
         }
     }
@@ -155,7 +277,7 @@ fn broadcast<DB: DatabaseExt>(
         new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
         original_caller: ccx.caller,
         original_origin: ccx.ecx.env.tx.caller,
-        depth: ccx.ecx.journaled_state.depth(),
+        depth,
         single_call,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");
@@ -164,21 +286,16 @@ fn broadcast<DB: DatabaseExt>(
 }
 
 /// Sets up broadcasting from a script with the sender derived from `private_key`.
-/// Adds this private key to `state`'s `script_wallets` vector to later be used for signing
+/// Adds this private key to `state`'s `wallets` vector to later be used for signing
 /// if broadcast is successful.
-fn broadcast_key<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
-    private_key: &U256,
-    single_call: bool,
-) -> Result {
-    let wallet = super::utils::parse_wallet(private_key)?;
+fn broadcast_key(ccx: &mut CheatsCtxt, private_key: &U256, single_call: bool) -> Result {
+    let wallet = super::crypto::parse_wallet(private_key)?;
     let new_origin = wallet.address();
 
     let result = broadcast(ccx, Some(&new_origin), single_call);
     if result.is_ok() {
-        if let Some(script_wallets) = ccx.state.script_wallets() {
-            script_wallets.add_local_signer(wallet);
-        }
+        let wallets = ccx.state.wallets();
+        wallets.add_local_signer(wallet);
     }
     result
 }

@@ -2,6 +2,7 @@ use crate::{
     document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
     ParseSource, Parser, Preprocessor,
 };
+use alloy_primitives::map::HashMap;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{filter::expand_globs, DocConfig};
@@ -10,7 +11,6 @@ use mdbook::MDBook;
 use rayon::prelude::*;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -105,7 +105,7 @@ impl DocBuilder {
             .collect::<Vec<_>>();
 
         if sources.is_empty() {
-            println!("No sources detected at {}", self.sources.display());
+            sh_println!("No sources detected at {}", self.sources.display())?;
             return Ok(())
         }
 
@@ -389,7 +389,7 @@ impl DocBuilder {
         }
 
         if let Some(path) = base_path {
-            let title = path.iter().last().unwrap().to_string_lossy();
+            let title = path.iter().next_back().unwrap().to_string_lossy();
             if depth == 1 {
                 summary.write_title(&title)?;
             } else {
@@ -444,7 +444,7 @@ impl DocBuilder {
                     readme.write_link_list_item(ident, &readme_path.display().to_string(), 0)?;
                 }
             } else {
-                let name = path.iter().last().unwrap().to_string_lossy();
+                let name = path.iter().next_back().unwrap().to_string_lossy();
                 let readme_path = Path::new("/").join(&path).display().to_string();
                 readme.write_link_list_item(&name, &readme_path, 0)?;
                 self.write_summary_section(summary, &files, Some(&path), depth + 1)?;

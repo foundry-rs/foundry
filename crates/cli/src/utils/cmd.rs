@@ -1,12 +1,15 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{cli_warn, fs, TestFunctionExt};
+use foundry_common::{
+    compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
+    TestFunctionExt,
+};
 use foundry_compilers::{
-    artifacts::{CompactBytecode, CompactDeployedBytecode, Settings},
+    artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
     utils::read_json_file,
-    Artifact, ProjectCompileOutput,
+    Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
@@ -14,10 +17,10 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        debug::DebugTraceIdentifier,
+        debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers},
+        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{
@@ -31,17 +34,21 @@ use yansi::Paint;
 /// Runtime Bytecode of the given contract.
 #[track_caller]
 pub fn remove_contract(
-    output: &mut ProjectCompileOutput,
+    output: ProjectCompileOutput,
     path: &Path,
     name: &str,
-) -> Result<(JsonAbi, CompactBytecode, CompactDeployedBytecode)> {
-    let contract = if let Some(contract) = output.remove(path, name) {
-        contract
-    } else {
+) -> Result<(JsonAbi, CompactBytecode, ArtifactId)> {
+    let mut other = Vec::new();
+    let Some((id, contract)) = output.into_artifacts().find_map(|(id, artifact)| {
+        if id.name == name && id.source == path {
+            Some((id, artifact))
+        } else {
+            other.push(id.name);
+            None
+        }
+    }) else {
         let mut err = format!("could not find artifact: `{name}`");
-        if let Some(suggestion) =
-            super::did_you_mean(name, output.artifacts().map(|(name, _)| name)).pop()
-        {
+        if let Some(suggestion) = super::did_you_mean(name, other).pop() {
             if suggestion != name {
                 err = format!(
                     r#"{err}
@@ -63,12 +70,7 @@ pub fn remove_contract(
         .ok_or_else(|| eyre::eyre!("contract {} does not contain bytecode", name))?
         .into_owned();
 
-    let runtime = contract
-        .get_deployed_bytecode()
-        .ok_or_else(|| eyre::eyre!("contract {} does not contain deployed bytecode", name))?
-        .into_owned();
-
-    Ok((abi, bin, runtime))
+    Ok((abi, bin, id))
 }
 
 /// Helper function for finding a contract by ContractName
@@ -81,8 +83,8 @@ pub fn get_cached_entry_by_name(
     let mut cached_entry = None;
     let mut alternatives = Vec::new();
 
-    for (abs_path, entry) in cache.files.iter() {
-        for (artifact_name, _) in entry.artifacts.iter() {
+    for (abs_path, entry) in &cache.files {
+        for artifact_name in entry.artifacts.keys() {
             if artifact_name == name {
                 if cached_entry.is_some() {
                     eyre::bail!(
@@ -125,11 +127,10 @@ pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
 pub fn needs_setup(abi: &JsonAbi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
-    for setup_fn in setup_fns.iter() {
+    for setup_fn in &setup_fns {
         if setup_fn.name != "setUp" {
-            println!(
-                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                "Warning:".yellow().bold(),
+            let _ = sh_warn!(
+                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 setup_fn.signature()
             );
         }
@@ -161,17 +162,25 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches!(
-            chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia |
-                NamedChain::Moonbeam |
-                NamedChain::Moonriver |
-                NamedChain::Moonbase |
-                NamedChain::MoonbeamDev
-        );
+        return chain.is_arbitrum() ||
+            matches!(
+                chain,
+                NamedChain::Acala |
+                    NamedChain::AcalaMandalaTestnet |
+                    NamedChain::AcalaTestnet |
+                    NamedChain::Etherlink |
+                    NamedChain::EtherlinkTestnet |
+                    NamedChain::Karura |
+                    NamedChain::KaruraTestnet |
+                    NamedChain::Mantle |
+                    NamedChain::MantleSepolia |
+                    NamedChain::MantleTestnet |
+                    NamedChain::Moonbase |
+                    NamedChain::Moonbeam |
+                    NamedChain::MoonbeamDev |
+                    NamedChain::Moonriver |
+                    NamedChain::Metis
+            );
     }
     false
 }
@@ -179,71 +188,53 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return !matches!(
-            chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
-        );
+        return !chain.is_arbitrum();
     }
     true
 }
 
 /// Helpers for loading configuration.
 ///
-/// This is usually implicitly implemented on a "&CmdArgs" struct via impl macros defined in
-/// `forge_config` (see [`foundry_config::impl_figment_convert`] for more details) and the impl
-/// definition on `T: Into<Config> + Into<Figment>` below.
+/// This is usually implemented through the macros defined in [`foundry_config`]. See
+/// [`foundry_config::impl_figment_convert`] for more details.
 ///
-/// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
-/// also prints `Config::__warnings` to stderr
+/// By default each function will emit warnings generated during loading, unless the `_no_warnings`
+/// variant is used.
 pub trait LoadConfig {
-    /// Load and sanitize the [`Config`] based on the options provided in self
-    ///
-    /// Returns an error if loading the config failed
-    fn try_load_config(self) -> Result<Config, ExtractConfigError>;
-    /// Load and sanitize the [`Config`] based on the options provided in self
-    fn load_config(self) -> Config;
-    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
-    fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)>;
-    /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
-    fn load_config_unsanitized(self) -> Config;
+    /// Load the [`Config`] based on the options provided in self.
+    fn figment(&self) -> Figment;
+
+    /// Load and sanitize the [`Config`] based on the options provided in self.
+    fn load_config(&self) -> Result<Config, ExtractConfigError> {
+        self.load_config_no_warnings().inspect(emit_warnings)
+    }
+
+    /// Same as [`LoadConfig::load_config`] but does not emit warnings.
+    fn load_config_no_warnings(&self) -> Result<Config, ExtractConfigError> {
+        self.load_config_unsanitized_no_warnings().map(Config::sanitized)
+    }
+
     /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information.
-    ///
-    /// Returns an error if loading failed
-    fn try_load_config_unsanitized(self) -> Result<Config, ExtractConfigError>;
-    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
-    fn load_config_emit_warnings(self) -> Config;
-    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
-    ///
-    /// Returns an error if loading failed
-    fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError>;
-    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
-    fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)>;
+    fn load_config_unsanitized(&self) -> Result<Config, ExtractConfigError> {
+        self.load_config_unsanitized_no_warnings().inspect(emit_warnings)
+    }
+
     /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
-    fn load_config_unsanitized_emit_warnings(self) -> Config;
-    fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError>;
-}
-
-impl<T> LoadConfig for T
-where
-    T: Into<Config> + Into<Figment>,
-{
-    fn try_load_config(self) -> Result<Config, ExtractConfigError> {
-        let figment: Figment = self.into();
-        Ok(Config::try_from(figment)?.sanitized())
+    fn load_config_unsanitized_no_warnings(&self) -> Result<Config, ExtractConfigError> {
+        Config::from_provider(self.figment())
     }
 
-    fn load_config(self) -> Config {
-        self.into()
+    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
+    fn load_config_and_evm_opts(&self) -> Result<(Config, EvmOpts)> {
+        self.load_config_and_evm_opts_no_warnings().inspect(|(config, _)| emit_warnings(config))
     }
 
-    fn load_config_and_evm_opts(self) -> Result<(Config, EvmOpts)> {
-        let figment: Figment = self.into();
+    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
+    fn load_config_and_evm_opts_no_warnings(&self) -> Result<(Config, EvmOpts)> {
+        let figment = self.figment();
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
-        let config = Config::try_from(figment)?.sanitized();
+        let config = Config::from_provider(figment)?.sanitized();
 
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
@@ -253,45 +244,20 @@ where
 
         Ok((config, evm_opts))
     }
+}
 
-    fn load_config_unsanitized(self) -> Config {
-        let figment: Figment = self.into();
-        Config::from_provider(figment)
+impl<T> LoadConfig for T
+where
+    for<'a> Figment: From<&'a T>,
+{
+    fn figment(&self) -> Figment {
+        self.into()
     }
+}
 
-    fn try_load_config_unsanitized(self) -> Result<Config, ExtractConfigError> {
-        let figment: Figment = self.into();
-        Config::try_from(figment)
-    }
-
-    fn load_config_emit_warnings(self) -> Config {
-        let config = self.load_config();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
-        config
-    }
-
-    fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
-        let config = self.try_load_config()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
-        Ok(config)
-    }
-
-    fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
-        let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
-        Ok((config, evm_opts))
-    }
-
-    fn load_config_unsanitized_emit_warnings(self) -> Config {
-        let config = self.load_config_unsanitized();
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
-        config
-    }
-
-    fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
-        let config = self.try_load_config_unsanitized()?;
-        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
-        Ok(config)
+fn emit_warnings(config: &Config) {
+    for warning in &config.warnings {
+        let _ = sh_warn!("{warning}");
     }
 }
 
@@ -345,15 +311,48 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
+impl From<RawCallResult> for TraceResult {
+    fn from(result: RawCallResult) -> Self {
+        Self::from_raw(result, TraceKind::Execution)
+    }
+}
+
+impl TryFrom<Result<RawCallResult>> for TraceResult {
+    type Error = EvmError;
+
+    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
+        match value {
+            Ok(result) => Ok(Self::from(result)),
+            Err(err) => Err(EvmError::from(err)),
+        }
+    }
+}
+
 /// labels the traces, conditionally prints them or opens the debugger
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
     chain: Option<Chain>,
     labels: Vec<String>,
+    with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
 ) -> Result<()> {
+    let (known_contracts, mut sources) = if with_local_artifacts {
+        let _ = sh_println!("Compiling project to generate artifacts");
+        let project = config.project()?;
+        let compiler = ProjectCompiler::new();
+        let output = compiler.compile(&project)?;
+        (
+            Some(ContractsByArtifact::new(
+                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+            )),
+            ContractSources::from_project_output(&output, project.root(), None)?,
+        )
+    } else {
+        (None, ContractSources::default())
+    };
+
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
@@ -365,65 +364,94 @@ pub async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
-    let mut decoder = CallTraceDecoderBuilder::new()
-        .with_labels(labels.chain(config_labels))
-        .with_signature_identifier(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-            config.offline,
-        )?)
-        .build();
 
-    let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
-    if let Some(etherscan_identifier) = &mut etherscan_identifier {
-        for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
-            decoder.identify(trace, etherscan_identifier);
-        }
+    let mut builder = CallTraceDecoderBuilder::new()
+        .with_labels(labels.chain(config_labels))
+        .with_signature_identifier(SignaturesIdentifier::from_config(config)?);
+    let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
+    if let Some(contracts) = &known_contracts {
+        builder = builder.with_known_contracts(contracts);
+        identifier = identifier.with_local(contracts);
     }
 
-    if decode_internal {
-        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
+    let mut decoder = builder.build();
+
+    for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    if decode_internal || debug {
+        if let Some(ref etherscan_identifier) = identifier.etherscan {
+            sources.merge(etherscan_identifier.get_compiled_contracts().await?);
+        }
+
+        if debug {
+            let mut debugger = Debugger::builder()
+                .traces(result.traces.expect("missing traces"))
+                .decoder(&decoder)
+                .sources(sources)
+                .build();
+            debugger.try_run_tui()?;
+            return Ok(())
+        }
+
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    if debug {
-        let sources = if let Some(etherscan_identifier) = etherscan_identifier {
-            etherscan_identifier.get_compiled_contracts().await?
-        } else {
-            Default::default()
-        };
-        let mut debugger = Debugger::builder()
-            .traces(result.traces.expect("missing traces"))
-            .decoder(&decoder)
-            .sources(sources)
-            .build();
-        debugger.try_run()?;
-    } else {
-        print_traces(&mut result, &decoder).await?;
-    }
+    print_traces(&mut result, &decoder, shell::verbosity() > 0, shell::verbosity() > 4).await?;
 
     Ok(())
 }
 
-pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: &CallTraceDecoder,
+    verbose: bool,
+    state_changes: bool,
+) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    println!("Traces:");
+    if !shell::is_json() {
+        sh_println!("Traces:")?;
+    }
+
     for (_, arena) in traces {
-        decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena(arena));
+        decode_trace_arena(arena, decoder).await;
+        sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
-    println!();
 
+    if shell::is_json() {
+        return Ok(());
+    }
+
+    sh_println!()?;
     if result.success {
-        println!("{}", "Transaction successfully executed.".green());
+        sh_println!("{}", "Transaction successfully executed.".green())?;
     } else {
-        println!("{}", "Transaction failed.".red());
+        sh_err!("Transaction failed.")?;
     }
+    sh_println!("Gas used: {}", result.gas_used)?;
 
-    println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_dir: &Path) -> Result<()> {
+    let path = cache_dir.join("signatures");
+    let mut signatures = SignaturesCache::load(&path);
+    for (_, artifact) in output.artifacts() {
+        if let Some(abi) = &artifact.abi {
+            signatures.extend_from_abi(abi);
+        }
+
+        // External libraries don't have functions included in the ABI, but `methodIdentifiers`.
+        if let Some(method_identifiers) = &artifact.method_identifiers {
+            signatures.extend(method_identifiers.iter().filter_map(|(signature, selector)| {
+                Some((SelectorKind::Function(selector.parse().ok()?), signature.clone()))
+            }));
+        }
+    }
+    signatures.save(&path);
     Ok(())
 }

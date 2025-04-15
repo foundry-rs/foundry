@@ -1,6 +1,6 @@
 //! In-memory database.
 
-use crate::snapshot::Snapshots;
+use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -20,12 +20,12 @@ pub type FoundryEvmInMemoryDB = CacheDB<EmptyDBWrapper>;
 #[derive(Debug)]
 pub struct MemDb {
     pub inner: FoundryEvmInMemoryDB,
-    pub snapshots: Snapshots<FoundryEvmInMemoryDB>,
+    pub state_snapshots: StateSnapshots<FoundryEvmInMemoryDB>,
 }
 
 impl Default for MemDb {
     fn default() -> Self {
-        Self { inner: CacheDB::new(Default::default()), snapshots: Default::default() }
+        Self { inner: CacheDB::new(Default::default()), state_snapshots: Default::default() }
     }
 }
 
@@ -168,7 +168,7 @@ mod tests {
     fn mem_db_insert_basic_default() {
         let mut db = MemDb::default();
         let address = Address::from_word(b256!(
-            "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
+            "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
         ));
 
         let info = Database::basic(&mut db, address).unwrap();

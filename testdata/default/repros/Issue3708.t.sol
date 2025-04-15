@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -11,8 +11,7 @@ contract Issue3708Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
-        string memory RPC_URL = "https://mainnet.optimism.io";
-        uint256 forkId = vm.createSelectFork(RPC_URL);
+        uint256 forkId = vm.createSelectFork("optimism");
 
         bytes memory code =
             hex"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3";

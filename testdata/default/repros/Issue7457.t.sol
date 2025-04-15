@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -61,27 +61,16 @@ contract Issue7457Test is DSTest, ITarget {
         target.emitAnonymousEventEmpty();
     }
 
-    function testFailEmitEventNonIndexed() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testEmitEventNonIndexedReverts() public {
         vm.expectEmit(false, false, false, true);
+        vm.expectRevert("use vm.expectEmitAnonymous to match anonymous events");
         emit AnonymousEventNonIndexed(1);
-        target.emitAnonymousEventNonIndexed(1);
     }
 
     function testEmitEventNonIndexed() public {
         vm.expectEmitAnonymous(false, false, false, false, true);
         emit AnonymousEventNonIndexed(1);
-        target.emitAnonymousEventNonIndexed(1);
-    }
-
-    // function testFailEmitDifferentEvent() public {
-    //     vm.expectEmitAnonymous(false, false, false, true);
-    //     emit DifferentAnonymousEventEmpty();
-    //     target.emitAnonymousEventEmpty();
-    // }
-
-    function testFailEmitDifferentEventNonIndexed() public {
-        vm.expectEmitAnonymous(false, false, false, false, true);
-        emit DifferentAnonymousEventNonIndexed("1");
         target.emitAnonymousEventNonIndexed(1);
     }
 

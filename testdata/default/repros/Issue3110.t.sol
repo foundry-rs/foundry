@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -17,7 +17,7 @@ abstract contract ZeroState is DSTest {
         vm.label(deployer, "Deployer");
 
         vm.startPrank(deployer);
-        mainnetFork = vm.createFork("rpcAlias");
+        mainnetFork = vm.createFork("mainnet");
         vm.selectFork(mainnetFork);
 
         vm.rollFork(block.number - 20);

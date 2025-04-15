@@ -1,8 +1,12 @@
-use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
-use crate::{provider::VerificationContext, retry::RETRY_CHECK_ON_VERIFY};
+use crate::{
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    retry::RETRY_CHECK_ON_VERIFY,
+    verify::{VerifyArgs, VerifyCheckArgs},
+};
 use alloy_json_abi::Function;
 use alloy_primitives::hex;
 use alloy_provider::Provider;
+use alloy_rpc_types::TransactionTrait;
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
     errors::EtherscanError,
@@ -10,26 +14,21 @@ use foundry_block_explorers::{
     verify::{CodeFormat, VerifyContract},
     Client,
 };
-use foundry_cli::utils::{self, read_constructor_args_file, LoadConfig};
-use foundry_common::{
-    abi::encode_function_args,
-    retry::{Retry, RetryError},
-    shell,
-};
+use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
+use foundry_common::{abi::encode_function_args, retry::RetryError};
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
-use futures::FutureExt;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::LazyLock};
 
 mod flatten;
+
 mod standard_json;
 
-pub static RE_BUILD_COMMIT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
+pub static RE_BUILD_COMMIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -48,50 +47,52 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,
     ) -> Result<()> {
-        let _ = self.prepare_request(&args, &context).await?;
+        let _ = self.prepare_verify_request(&args, &context).await?;
         Ok(())
     }
 
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
-        let (etherscan, verify_args) = self.prepare_request(&args, &context).await?;
+        let (etherscan, verify_args) = self.prepare_verify_request(&args, &context).await?;
 
         if !args.skip_is_verified_check &&
             self.is_contract_verified(&etherscan, &verify_args).await?
         {
-            println!(
+            sh_println!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
                 verify_args.address.to_checksum(None)
-            );
+            )?;
 
             return Ok(())
         }
 
-        trace!(target: "forge::verify", ?verify_args, "submitting verification request");
+        trace!(?verify_args, "submitting verification request");
 
-        let retry: Retry = args.retry.into();
-        let resp = retry
+        let resp = args
+            .retry
+            .into_retry()
             .run_async(|| async {
-                println!(
+                sh_println!(
                     "\nSubmitting verification for [{}] {}.",
-                    verify_args.contract_name, verify_args.address
-                );
+                    verify_args.contract_name,
+                    verify_args.address
+                )?;
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target: "forge::verify", ?args, "Failed to submit verification");
+                        error!(?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target: "forge::verify", ?resp, "Received verification response");
+                trace!(?resp, "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified"
@@ -101,16 +102,20 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         return Ok(None)
                     }
 
-                    if resp.result.starts_with("Unable to locate ContractCode at") {
+                    if resp.result.starts_with("Unable to locate ContractCode at") ||
+                        resp.result.starts_with("The address is not a smart contract")
+                    {
                         warn!("{}", resp.result);
-                        return Err(eyre!("Etherscan could not detect the deployment."))
+                        return Err(eyre!("Could not detect the deployment."))
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
-                    eprintln!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                    sh_err!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
+                        `{}`",
+                        resp.message,
+                        resp.result
+                    )?;
                     std::process::exit(1);
                 }
 
@@ -119,12 +124,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            println!(
+            sh_println!(
                 "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(args.address)
-            );
+            )?;
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
@@ -133,11 +138,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     retry: RETRY_CHECK_ON_VERIFY,
                     verifier: args.verifier,
                 };
-                // return check_args.run().await
                 return self.check(check_args).await
             }
         } else {
-            println!("Contract source code already verified");
+            sh_println!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -145,54 +149,53 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let config = args.try_load_config_emit_warnings()?;
+        let config = args.load_config()?;
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
+            &args.verifier.verifier,
             args.verifier.verifier_url.as_deref(),
             args.etherscan.key().as_deref(),
             &config,
         )?;
-        let retry: Retry = args.retry.into();
-        retry
-            .run_async_until_break(|| {
-                async {
-                    let resp = etherscan
-                        .check_contract_verification_status(args.id.clone())
-                        .await
-                        .wrap_err("Failed to request verification status")
-                        .map_err(RetryError::Retry)?;
+        args.retry
+            .into_retry()
+            .run_async_until_break(|| async {
+                let resp = etherscan
+                    .check_contract_verification_status(args.id.clone())
+                    .await
+                    .wrap_err("Failed to request verification status")
+                    .map_err(RetryError::Retry)?;
 
-                    trace!(target: "forge::verify", ?resp, "Received verification response");
+                trace!(?resp, "Received verification response");
 
-                    eprintln!(
-                        "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message, resp.result
-                    );
+                let _ = sh_println!(
+                    "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
+                    resp.message,
+                    resp.result
+                );
 
-                    if resp.result == "Pending in queue" {
-                        return Err(RetryError::Retry(eyre!("Verification is still pending...",)))
-                    }
-
-                    if resp.result == "Unable to verify" {
-                        return Err(RetryError::Retry(eyre!("Unable to verify.",)))
-                    }
-
-                    if resp.result == "Already Verified" {
-                        println!("Contract source code already verified");
-                        return Ok(())
-                    }
-
-                    if resp.status == "0" {
-                        return Err(RetryError::Break(eyre!("Contract failed to verify.",)))
-                    }
-
-                    if resp.result == "Pass - Verified" {
-                        println!("Contract successfully verified");
-                    }
-
-                    Ok(())
+                if resp.result == "Pending in queue" {
+                    return Err(RetryError::Retry(eyre!("Verification is still pending...")))
                 }
-                .boxed()
+
+                if resp.result == "Unable to verify" {
+                    return Err(RetryError::Retry(eyre!("Unable to verify.")))
+                }
+
+                if resp.result == "Already Verified" {
+                    let _ = sh_println!("Contract source code already verified");
+                    return Ok(())
+                }
+
+                if resp.status == "0" {
+                    return Err(RetryError::Break(eyre!("Contract failed to verify.")))
+                }
+
+                if resp.result == "Pass - Verified" {
+                    let _ = sh_println!("Contract successfully verified");
+                }
+
+                Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
@@ -209,15 +212,16 @@ impl EtherscanVerificationProvider {
         }
     }
 
-    /// Configures the API request to the etherscan API using the given [`VerifyArgs`].
-    async fn prepare_request(
+    /// Configures the API request to the Etherscan API using the given [`VerifyArgs`].
+    async fn prepare_verify_request(
         &mut self,
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<(Client, VerifyContract)> {
-        let config = args.try_load_config_emit_warnings()?;
+        let config = args.load_config()?;
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
+            &args.verifier.verifier,
             args.verifier.verifier_url.as_deref(),
             args.etherscan.key().as_deref(),
             &config,
@@ -227,7 +231,7 @@ impl EtherscanVerificationProvider {
         Ok((etherscan, verify_args))
     }
 
-    /// Queries the etherscan API to verify if the contract is already verified.
+    /// Queries the Etherscan API to verify if the contract is already verified.
     async fn is_contract_verified(
         &self,
         etherscan: &Client,
@@ -245,10 +249,11 @@ impl EtherscanVerificationProvider {
         Ok(true)
     }
 
-    /// Create an etherscan client
+    /// Create an Etherscan client.
     pub(crate) fn client(
         &self,
         chain: Chain,
+        verifier_type: &VerificationProviderType,
         verifier_url: Option<&str>,
         etherscan_key: Option<&str>,
         config: &Config,
@@ -273,10 +278,18 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-            builder
-                .with_chain_id(chain)
-                .with_api_url(api_url)?
-                .with_url(base_url.unwrap_or(api_url))?
+
+            // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
+            // API key passed.
+            let is_etherscan = verifier_type.is_etherscan() ||
+                (verifier_type.is_sourcify() && etherscan_key.is_some());
+            let base_url = if !is_etherscan {
+                // If verifier is not Etherscan then set base url as api url without /api suffix.
+                api_url.strip_prefix("/api").unwrap_or(api_url)
+            } else {
+                base_url.unwrap_or(api_url)
+            };
+            builder.with_chain_id(chain).with_api_url(api_url)?.with_url(base_url)?
         } else {
             builder.chain(chain)?
         };
@@ -284,10 +297,10 @@ impl EtherscanVerificationProvider {
         builder
             .with_api_key(etherscan_key.unwrap_or_default())
             .build()
-            .wrap_err("Failed to create etherscan client")
+            .wrap_err("Failed to create Etherscan client")
     }
 
-    /// Creates the `VerifyContract` etherscan request in order to verify the contract
+    /// Creates the `VerifyContract` Etherscan request in order to verify the contract
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
@@ -317,15 +330,17 @@ impl EtherscanVerificationProvider {
             // we explicitly set this __undocumented__ argument to true if provided by the user,
             // though this info is also available in the compiler settings of the standard json
             // object if standard json is used
-            // unclear how etherscan interprets this field in standard-json mode
+            // unclear how Etherscan interprets this field in standard-json mode
             verify_args = verify_args.via_ir(true);
         }
 
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(optimizations as u32)
-            } else if context.config.optimizer {
-                verify_args.optimized().runs(context.config.optimizer_runs.try_into()?)
+            } else if context.config.optimizer == Some(true) {
+                verify_args
+                    .optimized()
+                    .runs(context.config.optimizer_runs.unwrap_or(200).try_into()?)
             } else {
                 verify_args.not_optimized()
             };
@@ -347,7 +362,6 @@ impl EtherscanVerificationProvider {
             let constructor = abi
                 .constructor()
                 .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
-            #[allow(deprecated)]
             let func = Function {
                 name: "constructor".to_string(),
                 inputs: constructor.inputs.clone(),
@@ -377,9 +391,10 @@ impl EtherscanVerificationProvider {
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<String> {
-        let provider = utils::get_provider(&context.config)?;
+        let provider = get_provider(&context.config)?;
         let client = self.client(
             args.etherscan.chain.unwrap_or_default(),
+            &args.verifier.verifier,
             args.verifier.verifier_url.as_deref(),
             args.etherscan.key.as_deref(),
             &context.config,
@@ -396,9 +411,9 @@ impl EtherscanVerificationProvider {
             .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
 
         let maybe_creation_code = if receipt.contract_address == Some(args.address) {
-            &transaction.input
-        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-            &transaction.input[32..]
+            transaction.inner.inner.input()
+        } else if transaction.to() == Some(DEFAULT_CREATE2_DEPLOYER) {
+            &transaction.inner.inner.input()[32..]
         } else {
             eyre::bail!("Fetching of constructor arguments is not supported for contracts created by contracts")
         };
@@ -421,7 +436,7 @@ impl EtherscanVerificationProvider {
         if maybe_creation_code.starts_with(bytecode) {
             let constructor_args = &maybe_creation_code[bytecode.len()..];
             let constructor_args = hex::encode(constructor_args);
-            shell::println(format!("Identified constructor arguments: {constructor_args}"))?;
+            sh_println!("Identified constructor arguments: {constructor_args}")?;
             Ok(constructor_args)
         } else {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")
@@ -452,7 +467,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_common::fs;
-    use foundry_test_utils::forgetest_async;
+    use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
 
     #[test]
@@ -480,12 +495,13 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan
             .client(
                 args.etherscan.chain.unwrap_or_default(),
+                &args.verifier.verifier,
                 args.verifier.verifier_url.as_deref(),
                 args.etherscan.key().as_deref(),
                 &config,
@@ -507,12 +523,13 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan
             .client(
                 args.etherscan.chain.unwrap_or_default(),
+                &args.verifier.verifier,
                 args.verifier.verifier_url.as_deref(),
                 args.etherscan.key().as_deref(),
                 &config,
@@ -563,7 +580,13 @@ mod tests {
         prj.add_source("Counter1", "contract Counter {}").unwrap();
         prj.add_source("Counter2", "contract Counter {}").unwrap();
 
-        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
+        cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+...
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
         let args = VerifyArgs::parse_from([
             "foundry-cli",
@@ -575,6 +598,6 @@ mod tests {
         let context = args.resolve_context().await.unwrap();
 
         let mut etherscan = EtherscanVerificationProvider::default();
-        etherscan.preflight_check(args, context).await.unwrap();
+        etherscan.preflight_verify_check(args, context).await.unwrap();
     });
 }

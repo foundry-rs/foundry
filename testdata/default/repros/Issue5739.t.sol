@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -14,7 +14,7 @@ contract Issue5739Test is DSTest {
     IERC20 dai;
 
     function setUp() public {
-        vm.createSelectFork("rpcAlias", 19000000);
+        vm.createSelectFork("mainnet", 19000000);
         dai = IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
     }
 

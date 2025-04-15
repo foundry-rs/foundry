@@ -1,10 +1,1 @@
-* @danipopes @evalir @mattsse
-
-crates/anvil/        @danipopes @mattsse @evalir
-crates/cheatcodes/   @danipopes @mattsse @klkvr @evalir
-crates/evm/coverage/ @onbjerg
-crates/fmt/          @rkrasiuk
-crates/linking/      @klkvr
-crates/macros/       @danipopes
-crates/script/       @danipopes @mattsse @klkvr
-crates/wallets/      @klkvr
+* @danipopes @klkvr @mattsse @grandizzy @yash-atreya @zerosnacks

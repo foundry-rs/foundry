@@ -1,7 +1,6 @@
 //! Uncategorised utilities.
 
 use alloy_primitives::{keccak256, B256, U256};
-
 /// Block on a future using the current tokio runtime on the current thread.
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     block_on_handle(&tokio::runtime::Handle::current(), future)
@@ -31,7 +30,7 @@ pub fn block_on_handle<F: std::future::Future>(
 ///
 /// assert_eq!(
 ///     erc7201("example.main"),
-///     b256!("183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500"),
+///     b256!("0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500"),
 /// );
 /// ```
 pub fn erc7201(id: &str) -> B256 {

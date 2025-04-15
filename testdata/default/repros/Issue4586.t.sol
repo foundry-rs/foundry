@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -13,7 +13,7 @@ contract Issue4586Test is DSTest {
     InvariantHandler handler;
 
     function setUp() public {
-        vm.createSelectFork("rpcAlias", initialBlock);
+        vm.createSelectFork("mainnet", initialBlock);
         handler = new InvariantHandler();
     }
 

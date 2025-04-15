@@ -15,17 +15,16 @@ workspace = true
 
 [dependencies]
 forge-fmt.workspace = true
+foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 
-auto_impl.workspace = true
-derive_more = "0.99"
+derive_more.workspace = true
 eyre.workspace = true
 itertools.workspace = true
 mdbook = { version = "0.4", default-features = false, features = ["search"] }
-once_cell.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -33,4 +32,4 @@ solang-parser.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
-regex = "1.10.2"
+regex.workspace = true

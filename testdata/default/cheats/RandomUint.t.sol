@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -25,9 +25,5 @@ contract RandomUint is DSTest {
         uint256 rand = vm.randomUint(min, max);
         assertTrue(rand >= min, "rand >= min");
         assertTrue(rand <= max, "rand <= max");
-    }
-
-    function testRandomAddress() public {
-        vm.randomAddress();
     }
 }

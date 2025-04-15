@@ -13,16 +13,12 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "cast"
+
 [[bin]]
 name = "cast"
 path = "bin/main.rs"
-
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
 
 [dependencies]
 # lib
@@ -41,9 +37,15 @@ alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-provider = { workspace = true, features = [
+    "reqwest",
+    "ws",
+    "ipc",
+    "trace-api",
+    "txpool-api",
+] }
 alloy-rlp.workspace = true
-alloy-rpc-types = { workspace = true, features = ["eth"] }
+alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-serde.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true
@@ -51,7 +53,6 @@ alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 
 chrono.workspace = true
-evm-disassembler.workspace = true
 eyre.workspace = true
 futures.workspace = true
 rand.workspace = true
@@ -63,7 +64,7 @@ serde.workspace = true
 aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # gcp-kms
-gcloud-sdk = { version = "0.24", default-features = false, optional = true }
+gcloud-sdk = { version = "0.27", default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
@@ -71,37 +72,29 @@ foundry-cli.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
-comfy-table = "7"
+comfy-table.workspace = true
 dunce.workspace = true
-indicatif = "0.17"
 itertools.workspace = true
-regex = { version = "1", default-features = false }
+regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
-evmole = "0.3.1"
+evmole.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
+anvil.workspace = true
 foundry-test-utils.workspace = true
-async-trait.workspace = true
-criterion = "0.5"
 
 [features]
-default = ["rustls", "jemalloc"]
-rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
-openssl = ["foundry-cli/openssl"]
+default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms", "dep:gcloud-sdk"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
-
-[[bench]]
-name = "vanity"
-harness = false

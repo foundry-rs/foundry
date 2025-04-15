@@ -23,18 +23,16 @@ alloy-primitives.workspace = true
 alloy-provider.workspace = true
 
 eyre.workspace = true
-fd-lock = "4.0.0"
-once_cell.workspace = true
+fd-lock = "4.0"
 parking_lot.workspace = true
-similar-asserts.workspace = true
-regex = "1"
+regex.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-walkdir.workspace = true
 rand.workspace = true
-snapbox = { version = "0.6.9", features = ["json"] }
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
+tempfile.workspace = true
 
-[features]
-# feature for integration tests that test external projects
-external-integration-tests = []
+[dev-dependencies]
+tokio.workspace = true
+foundry-block-explorers.workspace = true

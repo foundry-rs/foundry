@@ -1,64 +1,74 @@
-use crate::{
-    receipts::{check_tx_status, format_receipt, TxStatus},
-    sequence::ScriptSequence,
-};
+use crate::receipts::{check_tx_status, format_receipt, TxStatus};
 use alloy_chains::Chain;
-use alloy_primitives::B256;
+use alloy_primitives::{
+    map::{B256HashMap, HashMap},
+    B256,
+};
 use eyre::Result;
+use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
-use foundry_common::provider::RetryProvider;
+use foundry_common::{provider::RetryProvider, shell};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
-use std::{collections::HashMap, fmt::Write, sync::Arc, time::Duration};
+use std::{fmt::Write, sync::Arc, time::Duration};
 use yansi::Paint;
 
 /// State of [ProgressBar]s displayed for the given [ScriptSequence].
 #[derive(Debug)]
 pub struct SequenceProgressState {
-    /// The top spinner with containt of the format "Sequence #{id} on {network} | {status}""
+    /// The top spinner with content of the format "Sequence #{id} on {network} | {status}""
     top_spinner: ProgressBar,
     /// Progress bar with the count of transactions.
     txs: ProgressBar,
     /// Progress var with the count of confirmed transactions.
     receipts: ProgressBar,
     /// Standalone spinners for pending transactions.
-    tx_spinners: HashMap<B256, ProgressBar>,
+    tx_spinners: B256HashMap<ProgressBar>,
     /// Copy of the main [MultiProgress] instance.
     multi: MultiProgress,
 }
 
 impl SequenceProgressState {
     pub fn new(sequence_idx: usize, sequence: &ScriptSequence, multi: MultiProgress) -> Self {
-        let mut template = "{spinner:.green}".to_string();
-        write!(template, " Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain))
-            .unwrap();
-        template.push_str("{msg}");
+        let mut state = if shell::is_quiet() || shell::is_json() {
+            let top_spinner = ProgressBar::hidden();
+            let txs = ProgressBar::hidden();
+            let receipts = ProgressBar::hidden();
 
-        let top_spinner = ProgressBar::new_spinner()
-            .with_style(ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈✅"));
-        let top_spinner = multi.add(top_spinner);
+            Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
+        } else {
+            let mut template = "{spinner:.green}".to_string();
+            write!(template, " Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain))
+                .unwrap();
+            template.push_str("{msg}");
 
-        let txs = multi.insert_after(
-            &top_spinner,
-            init_progress(sequence.transactions.len() as u64, "txes").with_prefix("    "),
-        );
+            let top_spinner = ProgressBar::new_spinner().with_style(
+                ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈✅"),
+            );
+            let top_spinner = multi.add(top_spinner);
 
-        let receipts = multi.insert_after(
-            &txs,
-            init_progress(sequence.transactions.len() as u64, "receipts").with_prefix("    "),
-        );
+            let txs = multi.insert_after(
+                &top_spinner,
+                init_progress(sequence.transactions.len() as u64, "txes").with_prefix("    "),
+            );
 
-        top_spinner.enable_steady_tick(Duration::from_millis(100));
-        txs.enable_steady_tick(Duration::from_millis(1000));
-        receipts.enable_steady_tick(Duration::from_millis(1000));
+            let receipts = multi.insert_after(
+                &txs,
+                init_progress(sequence.transactions.len() as u64, "receipts").with_prefix("    "),
+            );
 
-        txs.set_position(sequence.receipts.len() as u64);
-        receipts.set_position(sequence.receipts.len() as u64);
+            top_spinner.enable_steady_tick(Duration::from_millis(100));
+            txs.enable_steady_tick(Duration::from_millis(1000));
+            receipts.enable_steady_tick(Duration::from_millis(1000));
 
-        let mut state = Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi };
+            txs.set_position(sequence.receipts.len() as u64);
+            receipts.set_position(sequence.receipts.len() as u64);
 
-        for tx_hash in sequence.pending.iter() {
+            Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
+        };
+
+        for tx_hash in &sequence.pending {
             state.tx_sent(*tx_hash);
         }
 
@@ -70,16 +80,21 @@ impl SequenceProgressState {
     pub fn tx_sent(&mut self, tx_hash: B256) {
         // Avoid showing more than 10 spinners.
         if self.tx_spinners.len() < 10 {
-            let spinner = ProgressBar::new_spinner()
-                .with_style(
-                    ProgressStyle::with_template("    {spinner:.green} {msg}")
-                        .unwrap()
-                        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
-                )
-                .with_message(format!("{} {}", "[Pending]".yellow(), tx_hash));
+            let spinner = if shell::is_quiet() || shell::is_json() {
+                ProgressBar::hidden()
+            } else {
+                let spinner = ProgressBar::new_spinner()
+                    .with_style(
+                        ProgressStyle::with_template("    {spinner:.green} {msg}")
+                            .unwrap()
+                            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈"),
+                    )
+                    .with_message(format!("{} {}", "[Pending]".yellow(), tx_hash));
 
-            let spinner = self.multi.insert_before(&self.txs, spinner);
-            spinner.enable_steady_tick(Duration::from_millis(100));
+                let spinner = self.multi.insert_before(&self.txs, spinner);
+                spinner.enable_steady_tick(Duration::from_millis(100));
+                spinner
+            };
 
             self.tx_spinners.insert(tx_hash, spinner);
         }
@@ -97,7 +112,10 @@ impl SequenceProgressState {
     /// Same as finish_tx_spinner but also prints a message to stdout above all other progress bars.
     pub fn finish_tx_spinner_with_msg(&mut self, tx_hash: B256, msg: &str) -> std::io::Result<()> {
         self.finish_tx_spinner(tx_hash);
-        self.multi.println(msg)?;
+
+        if !(shell::is_quiet() || shell::is_json()) {
+            self.multi.println(msg)?;
+        }
 
         Ok(())
     }
@@ -168,6 +186,7 @@ impl ScriptProgress {
         sequence_idx: usize,
         deployment_sequence: &mut ScriptSequence,
         provider: &RetryProvider,
+        timeout: u64,
     ) -> Result<()> {
         if deployment_sequence.pending.is_empty() {
             return Ok(());
@@ -180,8 +199,11 @@ impl ScriptProgress {
 
         trace!("Checking status of {count} pending transactions");
 
-        let futs =
-            deployment_sequence.pending.clone().into_iter().map(|tx| check_tx_status(provider, tx));
+        let futs = deployment_sequence
+            .pending
+            .clone()
+            .into_iter()
+            .map(|tx| check_tx_status(provider, tx, timeout));
         let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
 
         let mut errors: Vec<String> = vec![];

@@ -23,18 +23,18 @@ pub struct Cheatcode<'a> {
     /// The group that the cheatcode belongs to.
     pub group: Group,
     /// The current status of the cheatcode. E.g. whether it is stable or experimental, etc.
-    pub status: Status,
+    pub status: Status<'a>,
     /// Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an
     /// unexpected way.
     pub safety: Safety,
 }
 
 /// The status of a cheatcode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
-pub enum Status {
+pub enum Status<'a> {
     /// The cheatcode and its API is currently stable.
     Stable,
     /// The cheatcode is unstable, meaning it may contain bugs and may break its API on any
@@ -44,8 +44,10 @@ pub enum Status {
     Experimental,
     /// The cheatcode has been deprecated, meaning it will be removed in a future release.
     ///
+    /// Contains the optional reason for deprecation.
+    ///
     /// Use of deprecated cheatcodes is discouraged and will result in a warning.
-    Deprecated,
+    Deprecated(Option<&'a str>),
     /// The cheatcode has been removed and is no longer available for use.
     ///
     /// Use of removed cheatcodes will result in a hard error.
@@ -114,6 +116,12 @@ pub enum Group {
     ///
     /// Safety: safe.
     Toml,
+    /// Cryptography-related cheatcodes.
+    ///
+    /// Examples: `sign*`.
+    ///
+    /// Safety: safe.
+    Crypto,
     /// Generic, uncategorized utilities.
     ///
     /// Examples: `toString`, `parse*`, `serialize*`.
@@ -137,6 +145,7 @@ impl Group {
             Self::String |
             Self::Json |
             Self::Toml |
+            Self::Crypto |
             Self::Utilities => Some(Safety::Safe),
         }
     }
@@ -153,6 +162,7 @@ impl Group {
             Self::String => "string",
             Self::Json => "json",
             Self::Toml => "toml",
+            Self::Crypto => "crypto",
             Self::Utilities => "utilities",
         }
     }

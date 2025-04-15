@@ -1,8 +1,8 @@
 //! Handler that can get current storage related data
 
 use crate::mem::Backend;
+use alloy_network::AnyRpcBlock;
 use alloy_primitives::B256;
-use alloy_rpc_types::Block as AlloyBlock;
 use anvil_core::eth::{block::Block, transaction::TypedReceipt};
 use std::{fmt, sync::Arc};
 
@@ -42,7 +42,7 @@ impl StorageInfo {
     }
 
     /// Returns the block with the given hash in the format of the ethereum API
-    pub fn eth_block(&self, hash: B256) -> Option<AlloyBlock> {
+    pub fn eth_block(&self, hash: B256) -> Option<AnyRpcBlock> {
         let block = self.block(hash)?;
         Some(self.backend.convert_block(block))
     }

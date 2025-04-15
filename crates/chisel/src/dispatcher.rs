@@ -10,10 +10,10 @@ use crate::{
     },
     session_source::SessionSource,
 };
-use alloy_json_abi::JsonAbi;
+use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use forge_fmt::FormatterConfig;
-use foundry_config::{Config, RpcEndpoint};
+use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
@@ -22,7 +22,6 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -33,26 +32,29 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    sync::LazyLock,
 };
 use strum::IntoEnumIterator;
 use tracing::debug;
 use yansi::Paint;
 
-/// Prompt arrow character
-pub static PROMPT_ARROW: char = '➜';
-static DEFAULT_PROMPT: &str = "➜ ";
+/// Prompt arrow character.
+pub const PROMPT_ARROW: char = '➜';
+/// Prompt arrow string.
+pub const PROMPT_ARROW_STR: &str = "➜";
+const DEFAULT_PROMPT: &str = "➜ ";
 
 /// Command leader character
-pub static COMMAND_LEADER: char = '!';
+pub const COMMAND_LEADER: char = '!';
 /// Chisel character
-pub static CHISEL_CHAR: &str = "⚒️";
+pub const CHISEL_CHAR: &str = "⚒️";
 
 /// Matches Solidity comments
-static COMMENT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
+static COMMENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
 
 /// Matches Ethereum addresses that are not strings
-static ADDRESS_RE: Lazy<Regex> = Lazy::new(|| {
+static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)(([^"']\s*)|^)(?P<address>0x[a-fA-F0-9]{40})((\s*[^"'\w])|$)"#).unwrap()
 });
 
@@ -256,7 +258,10 @@ impl ChiselDispatcher {
                         self.session.id.as_ref().unwrap()
                     )))
                 } else {
-                    DispatchResult::CommandFailed(Self::make_error("Too many arguments supplied!"))
+                    DispatchResult::CommandFailed(Self::make_error(format!(
+                        "Too many arguments supplied: [{}]. Please check command syntax.",
+                        args.join(", ")
+                    )))
                 }
             }
             ChiselCommand::Load => {
@@ -275,7 +280,7 @@ impl ChiselDispatcher {
                     if let Err(e) = self.session.write() {
                         return DispatchResult::FileIoError(e.into())
                     }
-                    println!("{}", "Saved current session!".green());
+                    let _ = sh_println!("{}", "Saved current session!".green());
                 }
 
                 // Parse the arguments
@@ -320,7 +325,7 @@ impl ChiselDispatcher {
             },
             ChiselCommand::Source => match self.format_source() {
                 Ok(formatted_source) => DispatchResult::CommandSuccess(Some(
-                    SolidityHelper::highlight(&formatted_source).into_owned(),
+                    SolidityHelper::new().highlight(&formatted_source).into_owned(),
                 )),
                 Err(_) => {
                     DispatchResult::CommandFailed(String::from("Failed to format session source"))
@@ -331,7 +336,9 @@ impl ChiselDispatcher {
                     self.session.id = None;
                     DispatchResult::CommandSuccess(Some(String::from("Cleared chisel cache!")))
                 }
-                Err(_) => DispatchResult::CommandFailed(Self::make_error("Failed to clear cache!")),
+                Err(_) => DispatchResult::CommandFailed(Self::make_error(
+                    "Failed to clear cache! Check file permissions or disk space.",
+                )),
             },
             ChiselCommand::Fork => {
                 if args.is_empty() || args[0].trim().is_empty() {
@@ -355,9 +362,9 @@ impl ChiselDispatcher {
                 {
                     endpoint.clone()
                 } else {
-                    RpcEndpoint::Env(arg.to_string()).into()
+                    RpcEndpointUrl::Env(arg.to_string()).into()
                 };
-                let fork_url = match endpoint.resolve() {
+                let fork_url = match endpoint.resolve().url() {
                     Ok(fork_url) => fork_url,
                     Err(e) => {
                         return DispatchResult::CommandFailed(Self::make_error(format!(
@@ -369,7 +376,9 @@ impl ChiselDispatcher {
 
                 // Check validity of URL
                 if Url::parse(&fork_url).is_err() {
-                    return DispatchResult::CommandFailed(Self::make_error("Invalid fork URL!"))
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "Invalid fork URL! Please provide a valid RPC endpoint URL.",
+                    ))
                 }
 
                 // Create success message before moving the fork_url
@@ -426,7 +435,7 @@ impl ChiselDispatcher {
                             if matches!(cmd, ChiselCommand::MemDump) {
                                 // Print memory by word
                                 (0..mem.len()).step_by(32).for_each(|i| {
-                                    println!(
+                                    let _ = sh_println!(
                                         "{}: {}",
                                         format!("[0x{:02x}:0x{:02x}]", i, i + 32).yellow(),
                                         hex::encode_prefixed(&mem[i..i + 32]).cyan()
@@ -435,7 +444,7 @@ impl ChiselDispatcher {
                             } else {
                                 // Print all stack items
                                 (0..stack.len()).rev().for_each(|i| {
-                                    println!(
+                                    let _ = sh_println!(
                                         "{}: {}",
                                         format!("[{}]", stack.len() - i - 1).yellow(),
                                         format!("0x{:02x}", stack[i]).cyan()
@@ -514,8 +523,7 @@ impl ChiselDispatcher {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
                         if json.status == "1" && json.result.is_some() {
                             let abi = json.result.unwrap();
-                            let abi: serde_json::Result<JsonAbi> =
-                                serde_json::from_slice(abi.as_bytes());
+                            let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
                             if let Ok(abi) = abi {
                                 let mut interface = format!(
                                     "// Interface of {}\ninterface {} {{\n",
@@ -529,7 +537,22 @@ impl ChiselDispatcher {
                                         err.name,
                                         err.inputs
                                             .iter()
-                                            .map(|input| format_param!(input))
+                                            .map(|input| {
+                                                let mut param_type = &input.ty;
+                                                // If complex type then add the name of custom type.
+                                                // see <https://github.com/foundry-rs/foundry/issues/6618>.
+                                                if input.is_complex_type() {
+                                                    if let Some(
+                                                        InternalType::Enum { contract: _, ty } |
+                                                        InternalType::Struct { contract: _, ty } |
+                                                        InternalType::Other { contract: _, ty },
+                                                    ) = &input.internal_type
+                                                    {
+                                                        param_type = ty;
+                                                    }
+                                                }
+                                                format!("{} {}", param_type, input.name)
+                                            })
                                             .collect::<Vec<_>>()
                                             .join(",")
                                     ));
@@ -618,7 +641,9 @@ impl ChiselDispatcher {
             }
             ChiselCommand::Exec => {
                 if args.is_empty() {
-                    return DispatchResult::CommandFailed(Self::make_error("No command supplied!"))
+                    return DispatchResult::CommandFailed(Self::make_error(
+                        "No command supplied! Please provide a valid command after '!'.",
+                    ))
                 }
 
                 let mut cmd = Command::new(args[0]);
@@ -698,25 +723,27 @@ impl ChiselDispatcher {
                                 // Show console logs, if there are any
                                 let decoded_logs = decode_console_logs(&res.logs);
                                 if !decoded_logs.is_empty() {
-                                    println!("{}", "Logs:".green());
+                                    let _ = sh_println!("{}", "Logs:".green());
                                     for log in decoded_logs {
-                                        println!("  {log}");
+                                        let _ = sh_println!("  {log}");
                                     }
                                 }
                             }
 
-                            // If the contract execution failed, continue on without
-                            // updating the source.
-                            DispatchResult::CommandFailed(Self::make_error(
-                                "Failed to execute edited contract!",
-                            ))
-                        } else {
-                            // the code could be compiled, save it
-                            *self.source_mut() = new_session_source;
-                            DispatchResult::CommandSuccess(Some(String::from(
-                                "Successfully edited `run()` function's body!",
-                            )))
+                            if failed {
+                                // If the contract execution failed, continue on without
+                                // updating the source.
+                                return DispatchResult::CommandFailed(Self::make_error(
+                                    "Failed to execute edited contract!",
+                                ));
+                            }
                         }
+
+                        // the code could be compiled, save it
+                        *self.source_mut() = new_session_source;
+                        DispatchResult::CommandSuccess(Some(String::from(
+                            "Successfully edited `run()` function's body!",
+                        )))
                     }
                     Err(_) => {
                         DispatchResult::CommandFailed("The code could not be compiled".to_string())
@@ -814,7 +841,9 @@ impl ChiselDispatcher {
         // Should change up how this works.
         match source.inspect(input).await {
             // Continue and print
-            Ok((true, Some(res))) => println!("{res}"),
+            Ok((true, Some(res))) => {
+                let _ = sh_println!("{res}");
+            }
             Ok((true, None)) => {}
             // Return successfully
             Ok((false, res)) => {
@@ -843,9 +872,9 @@ impl ChiselDispatcher {
                             // Show console logs, if there are any
                             let decoded_logs = decode_console_logs(&res.logs);
                             if !decoded_logs.is_empty() {
-                                println!("{}", "Logs:".green());
+                                let _ = sh_println!("{}", "Logs:".green());
                                 for log in decoded_logs {
-                                    println!("  {log}");
+                                    let _ = sh_println!("  {log}");
                                 }
                             }
 
@@ -896,9 +925,8 @@ impl ChiselDispatcher {
     ) -> eyre::Result<CallTraceDecoder> {
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
-            .with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                session_config.foundry_config.offline,
+            .with_signature_identifier(SignaturesIdentifier::from_config(
+                &session_config.foundry_config,
             )?)
             .build();
 
@@ -932,12 +960,12 @@ impl ChiselDispatcher {
             eyre::bail!("Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
         }
 
-        println!("{}", "Traces:".green());
+        sh_println!("{}", "Traces:".green())?;
         for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
-                decode_trace_arena(trace, decoder).await?;
-                println!("{}", render_trace_arena(trace));
+                decode_trace_arena(trace, decoder).await;
+                sh_println!("{}", render_trace_arena(trace))?;
             }
         }
 
@@ -954,7 +982,7 @@ impl ChiselDispatcher {
     ///
     /// A formatted error [String].
     pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
-        format!("{} {}", format!("{CHISEL_CHAR} Chisel Error:").red(), msg.red())
+        format!("{}", msg.red())
     }
 }
 

@@ -44,6 +44,11 @@ pub trait TestFunctionExt {
         matches!(self.test_function_kind(), TestFunctionKind::UnitTest { .. })
     }
 
+    /// Returns `true` if this function is a `beforeTestSetup` function.
+    fn is_before_test_setup(&self) -> bool {
+        self.tfe_as_str().eq_ignore_ascii_case("beforetestsetup")
+    }
+
     /// Returns `true` if this function is a fuzz test.
     fn is_fuzz_test(&self) -> bool {
         self.test_function_kind().is_fuzz_test()

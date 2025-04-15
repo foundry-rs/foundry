@@ -4,6 +4,7 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
+use alloy_primitives::map::HashMap;
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
@@ -15,7 +16,8 @@ use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::{diagnostics::Diagnostic, pt};
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
+use walkdir::WalkDir;
 use yansi::Paint;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -97,7 +99,7 @@ impl SessionSourceConfig {
             SolcReq::Version(version)
         } else {
             if !self.foundry_config.offline {
-                print!("{}", "No solidity versions installed! ".green());
+                sh_print!("{}", "No solidity versions installed! ".green())?;
             }
             // use default
             SolcReq::Version(Version::new(0, 8, 19))
@@ -105,23 +107,13 @@ impl SessionSourceConfig {
 
         match solc_req {
             SolcReq::Version(version) => {
-                // Validate that the requested evm version is supported by the solc version
-                let req_evm_version = self.foundry_config.evm_version;
-                if let Some(compat_evm_version) = req_evm_version.normalize_version_solc(&version) {
-                    if req_evm_version > compat_evm_version {
-                        eyre::bail!(
-                            "The set evm version, {req_evm_version}, is not supported by solc {version}. Upgrade to a newer solc version."
-                        );
-                    }
-                }
-
                 let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
                     solc
                 } else {
                     if self.foundry_config.offline {
                         eyre::bail!("can't install missing solc {version} in offline mode")
                     }
-                    println!("{}", format!("Installing solidity version {version}...").green());
+                    sh_println!("{}", format!("Installing solidity version {version}...").green())?;
                     Solc::blocking_install(&version)?
                 };
                 Ok(solc)
@@ -321,7 +313,11 @@ impl SessionSource {
 
         let settings = Settings {
             remappings,
-            evm_version: Some(self.config.foundry_config.evm_version),
+            evm_version: self
+                .config
+                .foundry_config
+                .evm_version
+                .normalize_version_solc(&self.solc.version),
             ..Default::default()
         };
 
@@ -349,7 +345,7 @@ impl SessionSource {
     ///
     /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
     pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
-        let mut res_map = HashMap::new();
+        let mut res_map = HashMap::default();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
             Self::get_intermediate_contract(&source.content, &mut res_map);
@@ -471,15 +467,26 @@ contract {contract_name} is Script {{
     pub fn to_repl_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version;
         let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
-
-        let (vm_import, vm_constant) = if !config.no_vm {
-            (
-                "import {Vm} from \"forge-std/Vm.sol\";\n",
-                "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n"
-            )
-        } else {
-            ("", "")
-        };
+        let (mut vm_import, mut vm_constant) = (String::new(), String::new());
+        if !config.no_vm {
+            // Check if there's any `forge-std` remapping and determine proper path to it by
+            // searching remapping path.
+            if let Some(remapping) = config
+                .foundry_config
+                .remappings
+                .iter()
+                .find(|remapping| remapping.name == "forge-std/")
+            {
+                if let Some(vm_path) = WalkDir::new(&remapping.path.path)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .find(|e| e.file_name() == "Vm.sol")
+                {
+                    vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().display());
+                    vm_constant = "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n".to_string();
+                }
+            }
+        }
 
         format!(
             r#"

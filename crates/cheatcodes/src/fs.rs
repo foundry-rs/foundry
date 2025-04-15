@@ -4,16 +4,18 @@ use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{hex, Bytes, U256};
+use alloy_network::AnyTransactionReceipt;
+use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_provider::network::ReceiptResponse;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::backend::DatabaseExt;
 use revm::interpreter::CreateInputs;
+use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
-    collections::hash_map::Entry,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -250,6 +252,34 @@ impl Cheatcode for writeLineCall {
     }
 }
 
+impl Cheatcode for getArtifactPathByCodeCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { code } = self;
+        let (artifact_id, _) = state
+            .config
+            .available_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.find_by_creation_code(code))
+            .ok_or_else(|| fmt_err!("no matching artifact found"))?;
+
+        Ok(artifact_id.path.to_string_lossy().abi_encode())
+    }
+}
+
+impl Cheatcode for getArtifactPathByDeployedCodeCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { deployedCode } = self;
+        let (artifact_id, _) = state
+            .config
+            .available_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.find_by_deployed_code(deployedCode))
+            .ok_or_else(|| fmt_err!("no matching artifact found"))?;
+
+        Ok(artifact_id.path.to_string_lossy().abi_encode())
+    }
+}
+
 impl Cheatcode for getCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
@@ -265,54 +295,100 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 impl Cheatcode for deployCode_0Call {
-    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
-        &self,
-        ccx: &mut CheatsCtxt<DB>,
-        executor: &mut E,
-    ) -> Result {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { artifactPath: path } = self;
-        let bytecode = get_artifact_code(ccx.state, path, false)?;
-        let output = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode,
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )
-            .unwrap();
-
-        Ok(output.address.unwrap().abi_encode())
+        deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
-        &self,
-        ccx: &mut CheatsCtxt<DB>,
-        executor: &mut E,
-    ) -> Result {
-        let Self { artifactPath: path, constructorArgs } = self;
-        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-        bytecode.extend_from_slice(constructorArgs);
-        let output = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode.into(),
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )
-            .unwrap();
-
-        Ok(output.address.unwrap().abi_encode())
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args } = self;
+        deploy_code(ccx, executor, path, Some(args), None, None)
     }
+}
+
+impl Cheatcode for deployCode_2Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_3Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_4Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, salt } = self;
+        deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_5Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_6Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value, salt } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_7Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
+    }
+}
+
+/// Helper function to deploy contract from artifact code.
+/// Uses CREATE2 scheme if salt specified.
+fn deploy_code(
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
+    path: &str,
+    constructor_args: Option<&Bytes>,
+    value: Option<U256>,
+    salt: Option<U256>,
+) -> Result {
+    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    if let Some(args) = constructor_args {
+        bytecode.extend_from_slice(args);
+    }
+
+    let scheme = if let Some(salt) = salt {
+        revm::primitives::CreateScheme::Create2 { salt }
+    } else {
+        revm::primitives::CreateScheme::Create
+    };
+
+    let outcome = executor.exec_create(
+        CreateInputs {
+            caller: ccx.caller,
+            scheme,
+            value: value.unwrap_or(U256::ZERO),
+            init_code: bytecode.into(),
+            gas_limit: ccx.gas_limit,
+        },
+        ccx,
+    )?;
+
+    if !outcome.result.result.is_ok() {
+        return Err(crate::Error::from(outcome.result.output))
+    }
+
+    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+    Ok(address.abi_encode())
 }
 
 /// Returns the path to the json artifact depending on the input
@@ -352,7 +428,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         }
 
         let version = if let Some(version) = version {
-            Some(Version::parse(version).map_err(|_| fmt_err!("Error parsing version"))?)
+            Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
         } else {
             None
         };
@@ -387,24 +463,35 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                 })
                 .collect::<Vec<_>>();
 
-            let artifact = match filtered.len() {
-                0 => Err(fmt_err!("No matching artifact found")),
-                1 => Ok(filtered[0]),
-                _ => {
+            let artifact = match &filtered[..] {
+                [] => Err(fmt_err!("no matching artifact found")),
+                [artifact] => Ok(*artifact),
+                filtered => {
+                    let mut filtered = filtered.to_vec();
                     // If we know the current script/test contract solc version, try to filter by it
                     state
                         .config
-                        .running_version
+                        .running_artifact
                         .as_ref()
-                        .and_then(|version| {
-                            let filtered = filtered
-                                .into_iter()
-                                .filter(|(id, _)| id.version == *version)
-                                .collect::<Vec<_>>();
+                        .and_then(|running| {
+                            // Firstly filter by version
+                            filtered.retain(|(id, _)| id.version == running.version);
 
-                            (filtered.len() == 1).then_some(filtered[0])
+                            // Return artifact if only one matched
+                            if filtered.len() == 1 {
+                                return Some(filtered[0])
+                            }
+
+                            // Try filtering by profile as well
+                            filtered.retain(|(id, _)| id.profile == running.profile);
+
+                            if filtered.len() == 1 {
+                                Some(filtered[0])
+                            } else {
+                                None
+                            }
                         })
-                        .ok_or_else(|| fmt_err!("Multiple matching artifacts found"))
+                        .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }
             }?;
 
@@ -415,7 +502,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             };
 
             return maybe_bytecode
-                .ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"));
+                .ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"));
         } else {
             let path_in_artifacts =
                 match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
@@ -440,7 +527,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
     let data = fs::read_to_string(path)?;
     let artifact = serde_json::from_str::<ContractObject>(&data)?;
     let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
-    maybe_bytecode.ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
+    maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
 }
 
 impl Cheatcode for ffiCall {
@@ -597,14 +684,179 @@ fn prompt(
 
     match rx.recv_timeout(timeout) {
         Ok(res) => res.map_err(|err| {
-            println!();
+            let _ = sh_println!();
             err.to_string().into()
         }),
         Err(_) => {
-            println!();
+            let _ = sh_eprintln!();
             Err("Prompt timed out".into())
         }
     }
+}
+
+impl Cheatcode for getBroadcastCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![map_broadcast_tx_type(*txType)],
+        )?;
+
+        Ok(latest_broadcast.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(map_broadcast_tx_type(*txType));
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { contractName } = self;
+        let chain_id = ccx.ecx.env.cfg.chain_id;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            chain_id,
+            &ccx.state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeploymentsCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(CallKind::Create)
+            .with_tx_type(CallKind::Create2);
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        let deployed_addresses =
+            summaries.into_iter().map(|summary| summary.contractAddress).collect::<Vec<_>>();
+
+        Ok(deployed_addresses.abi_encode())
+    }
+}
+
+fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
+    match tx_type {
+        BroadcastTxType::Call => CallKind::Call,
+        BroadcastTxType::Create => CallKind::Create,
+        BroadcastTxType::Create2 => CallKind::Create2,
+        _ => unreachable!("invalid tx type"),
+    }
+}
+
+fn parse_broadcast_results(
+    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+) -> Vec<BroadcastTxSummary> {
+    results
+        .into_iter()
+        .map(|(tx, receipt)| BroadcastTxSummary {
+            txHash: receipt.transaction_hash,
+            blockNumber: receipt.block_number.unwrap_or_default(),
+            txType: match tx.opcode {
+                CallKind::Call => BroadcastTxType::Call,
+                CallKind::Create => BroadcastTxType::Create,
+                CallKind::Create2 => BroadcastTxType::Create2,
+                _ => unreachable!("invalid tx type"),
+            },
+            contractAddress: tx.contract_address.unwrap_or_default(),
+            success: receipt.status(),
+        })
+        .collect()
+}
+
+fn latest_broadcast(
+    contract_name: &String,
+    chain_id: u64,
+    broadcast_path: &Path,
+    filters: Vec<CallKind>,
+) -> Result<BroadcastTxSummary> {
+    let mut reader = BroadcastReader::new(contract_name.clone(), chain_id, broadcast_path)?;
+
+    for filter in filters {
+        reader = reader.with_tx_type(filter);
+    }
+
+    let broadcast = reader.read_latest()?;
+
+    let results = reader.into_tx_receipts(broadcast);
+
+    let summaries = parse_broadcast_results(results);
+
+    summaries
+        .first()
+        .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
+        .cloned()
 }
 
 #[cfg(test)]
@@ -619,7 +871,7 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        Cheatcodes { config: Arc::new(config), ..Default::default() }
+        Cheatcodes::new(Arc::new(config))
     }
 
     #[test]

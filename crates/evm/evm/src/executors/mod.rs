@@ -11,7 +11,10 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, U256,
+};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
@@ -19,20 +22,24 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
-    decode::RevertDecoder,
+    decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
+    InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{CallTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
     primitives::{
-        BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TxEnv, TxKind,
+        AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,
+        ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
     },
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -50,6 +57,9 @@ sol! {
     interface ITest {
         function setUp() external;
         function failed() external view returns (bool failed);
+
+        #[derive(Default)]
+        function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
     }
 }
 
@@ -76,9 +86,7 @@ pub struct Executor {
     env: EnvWithHandlerCfg,
     /// The Revm inspector stack.
     inspector: InspectorStack,
-    /// The gas limit for calls and deployments. This is different from the gas limit imposed by
-    /// the passed in environment, as those limits are used by the EVM for certain opcodes like
-    /// `gaslimit`.
+    /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
@@ -156,6 +164,36 @@ impl Executor {
         self.env.spec_id()
     }
 
+    /// Sets the EVM spec ID.
+    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+        self.env.handler_cfg.spec_id = spec_id;
+    }
+
+    /// Returns the gas limit for calls and deployments.
+    ///
+    /// This is different from the gas limit imposed by the passed in environment, as those limits
+    /// are used by the EVM for certain opcodes like `gaslimit`.
+    pub fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+
+    /// Sets the gas limit for calls and deployments.
+    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.gas_limit = gas_limit;
+    }
+
+    /// Returns whether `failed()` should be called on the test contract to determine if the test
+    /// failed.
+    pub fn legacy_assertions(&self) -> bool {
+        self.legacy_assertions
+    }
+
+    /// Sets whether `failed()` should be called on the test contract to determine if the test
+    /// failed.
+    pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
+        self.legacy_assertions = legacy_assertions;
+    }
+
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
@@ -165,7 +203,7 @@ impl Executor {
             .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         // If the deployer is not currently deployed, deploy the default one.
-        if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
+        if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
             let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
@@ -226,9 +264,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
-        self.gas_limit = gas_limit;
-        self
+    pub fn create2_deployer(&self) -> Address {
+        self.inspector().create2_deployer()
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -372,6 +409,21 @@ impl Executor {
         self.call_with_env(env)
     }
 
+    /// Performs a raw call to an account on the current state of the VM with an EIP-7702
+    /// authorization list.
+    pub fn call_raw_with_authorization(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> eyre::Result<RawCallResult> {
+        let mut env = self.build_test_env(from, to.into(), calldata, value);
+        env.tx.authorization_list = Some(AuthorizationList::Signed(authorization_list));
+        self.call_with_env(env)
+    }
+
     /// Performs a raw call to an account on the current state of the VM.
     pub fn transact_raw(
         &mut self,
@@ -392,7 +444,7 @@ impl Executor {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result, backend.has_snapshot_failure())
+        convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
     }
 
     /// Execute the transaction configured in `env.tx`.
@@ -402,7 +454,7 @@ impl Executor {
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
         let mut result =
-            convert_executed_result(env, inspector, result, backend.has_snapshot_failure())?;
+            convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
         Ok(result)
     }
@@ -421,9 +473,13 @@ impl Executor {
         if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
+            cheats.ignored_traces.ignored.clear();
 
-            // corrected_nonce value is needed outside of this context (setUp), so we don't
-            // reset it.
+            // if tracing was paused but never unpaused, we should begin next frame with tracing
+            // still paused
+            if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
+                *last_pause_call = (0, 0);
+            }
         }
 
         // Persist the changed environment.
@@ -458,7 +514,7 @@ impl Executor {
         call_result: &RawCallResult,
         should_fail: bool,
     ) -> bool {
-        if call_result.has_snapshot_failure {
+        if call_result.has_state_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return should_fail;
         }
@@ -510,7 +566,7 @@ impl Executor {
         }
 
         // A failure occurred in a reverted snapshot, which is considered a failed test.
-        if self.backend().has_snapshot_failure() {
+        if self.backend().has_state_snapshot_failure() {
             return false;
         }
 
@@ -569,7 +625,7 @@ impl Executor {
     /// Creates the environment to use when executing a transaction in a test context
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
-    /// the cheatcode state inbetween calls.
+    /// the cheatcode state in between calls.
     fn build_test_env(
         &self,
         caller: Address,
@@ -602,6 +658,16 @@ impl Executor {
 
         EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
     }
+
+    pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
+    where
+        C::Return: Default,
+    {
+        self.call_sol(CALLER, to, args, U256::ZERO, None)
+            .map(|c| c.decoded_result)
+            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
+            .unwrap_or_default()
+    }
 }
 
 /// Represents the context after an execution error occurred.
@@ -632,18 +698,22 @@ impl std::ops::DerefMut for ExecutionErr {
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvmError {
-    /// Error which occurred during execution of a transaction
+    /// Error which occurred during execution of a transaction.
     #[error(transparent)]
     Execution(#[from] Box<ExecutionErr>),
-    /// Error which occurred during ABI encoding/decoding
+    /// Error which occurred during ABI encoding/decoding.
     #[error(transparent)]
-    AbiError(#[from] alloy_dyn_abi::Error),
-    /// Error caused which occurred due to calling the skip() cheatcode.
-    #[error("Skipped")]
-    SkipError,
+    Abi(#[from] alloy_dyn_abi::Error),
+    /// Error caused which occurred due to calling the `skip` cheatcode.
+    #[error("{0}")]
+    Skip(SkipReason),
     /// Any other error.
-    #[error(transparent)]
-    Eyre(#[from] eyre::Error),
+    #[error("{0}")]
+    Eyre(
+        #[from]
+        #[source]
+        eyre::Report,
+    ),
 }
 
 impl From<ExecutionErr> for EvmError {
@@ -654,7 +724,7 @@ impl From<ExecutionErr> for EvmError {
 
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
-        Self::AbiError(err.into())
+        Self::Abi(err.into())
     }
 }
 
@@ -683,6 +753,12 @@ impl std::ops::DerefMut for DeployResult {
     }
 }
 
+impl From<DeployResult> for RawCallResult {
+    fn from(d: DeployResult) -> Self {
+        d.raw
+    }
+}
+
 /// The result of a raw call.
 #[derive(Debug)]
 pub struct RawCallResult {
@@ -694,7 +770,7 @@ pub struct RawCallResult {
     ///
     /// This is tracked separately from revert because a snapshot failure can occur without a
     /// revert, since assert failures are stored in a global variable (ds-test legacy)
-    pub has_snapshot_failure: bool,
+    pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
     /// The gas used for the call
@@ -706,9 +782,9 @@ pub struct RawCallResult {
     /// The logs emitted during the call
     pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
     /// The traces of the call
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
     /// Scripted transactions generated from this call
@@ -730,13 +806,13 @@ impl Default for RawCallResult {
         Self {
             exit_reason: InstructionResult::Continue,
             reverted: false,
-            has_snapshot_failure: false,
+            has_state_snapshot_failure: false,
             result: Bytes::new(),
             gas_used: 0,
             gas_refunded: 0,
             stipend: 0,
             logs: Vec::new(),
-            labels: HashMap::new(),
+            labels: HashMap::default(),
             traces: None,
             coverage: None,
             transactions: None,
@@ -750,10 +826,27 @@ impl Default for RawCallResult {
 }
 
 impl RawCallResult {
+    /// Unpacks an EVM result.
+    pub fn from_evm_result(r: Result<Self, EvmError>) -> eyre::Result<(Self, Option<String>)> {
+        match r {
+            Ok(r) => Ok((r, None)),
+            Err(EvmError::Execution(e)) => Ok((e.raw, Some(e.reason))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Unpacks an execution result.
+    pub fn from_execution_result(r: Result<Self, ExecutionErr>) -> (Self, Option<String>) {
+        match r {
+            Ok(r) => (r, None),
+            Err(e) => (e.raw, Some(e.reason)),
+        }
+    }
+
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
-        if self.result[..] == crate::constants::MAGIC_SKIP[..] {
-            return EvmError::SkipError;
+        if let Some(reason) = SkipReason::decode(&self.result) {
+            return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
@@ -825,7 +918,7 @@ fn convert_executed_result(
     env: EnvWithHandlerCfg,
     inspector: InspectorStack,
     ResultAndState { result, state: state_changeset }: ResultAndState,
-    has_snapshot_failure: bool,
+    has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
@@ -839,7 +932,7 @@ fn convert_executed_result(
             (reason.into(), 0_u64, gas_used, None, vec![])
         }
     };
-    let stipend = revm::interpreter::gas::validate_initial_tx_gas(
+    let gas = revm::interpreter::gas::calculate_initial_tx_gas(
         env.spec_id(),
         &env.tx.data,
         env.tx.transact_to.is_create(),
@@ -867,11 +960,11 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
-        has_snapshot_failure,
+        has_state_snapshot_failure,
         result,
         gas_used,
         gas_refunded,
-        stipend,
+        stipend: gas.initial_gas,
         logs,
         labels,
         traces,
@@ -883,4 +976,21 @@ fn convert_executed_result(
         out,
         chisel_state,
     })
+}
+
+/// Timer for a fuzz test.
+pub struct FuzzTestTimer {
+    /// Inner fuzz test timer - (test start time, test duration).
+    inner: Option<(Instant, Duration)>,
+}
+
+impl FuzzTestTimer {
+    pub fn new(timeout: Option<u32>) -> Self {
+        Self { inner: timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into()))) }
+    }
+
+    /// Whether the current fuzz test timed out and should be stopped.
+    pub fn is_timed_out(&self) -> bool {
+        self.inner.is_some_and(|(start, duration)| start.elapsed() > duration)
+    }
 }

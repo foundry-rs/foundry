@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity =0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -71,7 +71,9 @@ contract GetCodeTest is DSTest {
     }
     */
 
-    function testFailGetUnlinked() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfGetUnlinked() public {
+        vm.expectRevert("vm.getCode: no matching artifact found");
         vm.getCode("UnlinkedContract.sol");
     }
 
@@ -79,7 +81,7 @@ contract GetCodeTest is DSTest {
         bytes memory code = vm.getCode("cheats/GetCode.t.sol:TestContract:0.8.18");
         assertEq(type(TestContract).creationCode, code);
 
-        vm._expectCheatcodeRevert("No matching artifact found");
+        vm._expectCheatcodeRevert("no matching artifact found");
         vm.getCode("cheats/GetCode.t.sol:TestContract:0.8.19");
     }
 

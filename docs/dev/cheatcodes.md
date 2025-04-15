@@ -6,26 +6,19 @@ manipulate the environment in which the execution is run.
 Most of the time, simply testing your smart contracts outputs isn't enough. To manipulate the state of the EVM, as well
 as test for specific reverts and events, Foundry is shipped with a set of cheatcodes.
 
-## [`revm::Inspector`](https://docs.rs/revm/3.3.0/revm/trait.Inspector.html)
+## [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html)
 
-To understand how cheatcodes are implemented, we first need to look at [`revm::Inspector`](https://docs.rs/revm/3.3.0/revm/trait.Inspector.html),
+To understand how cheatcodes are implemented, we first need to look at [`revm::Inspector`](https://docs.rs/revm/latest/revm/trait.Inspector.html),
 a trait that provides a set of callbacks to be notified at certain stages of EVM execution.
 
-For example, [`Inspector::call`](https://docs.rs/revm/3.3.0/revm/trait.Inspector.html#method.call)
-is called when the EVM is about to execute a call:
-
-```rust
-fn call(
-    &mut self,
-    data: &mut EVMData<'_, DB>,
-    inputs: &mut CallInputs,
-    is_static: bool,
-) -> (InstructionResult, Gas, Bytes) { ... }
-```
+For example, [`Inspector::call`](https://docs.rs/revm/latest/revm/trait.Inspector.html#method.call)
+is called when the EVM is about to execute a call and is provided with the call's inputs and the
+current state of the EVM.
 
 ## [Foundry inspectors](../../crates/evm/evm/src/inspectors/)
 
 The [`evm`](../../crates/evm/evm/) crate has a variety of inspectors for different use cases, such as
+
 - coverage
 - tracing
 - debugger
@@ -45,12 +38,7 @@ Since cheatcodes are bound to a constant address, the cheatcode inspector listen
 
 ```rust
 impl Inspector for Cheatcodes {
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-        is_static: bool,
-    ) -> (Return, Gas, Bytes) {
+    fn call(&mut self, ...) -> ... {
         if call.contract == CHEATCODE_ADDRESS {
             // intercepted cheatcode call
             // --snip--
@@ -130,6 +118,7 @@ The `Cheatcode` derive macro also parses the `#[cheatcode(...)]` attributes on f
 used to specify additional properties of the JSON interface.
 
 These are all the attributes that can be specified on cheatcode functions:
+
 - `#[cheatcode(group = <ident>)]`: The group that the cheatcode belongs to. Required.
 - `#[cheatcode(status = <ident>)]`: The current status of the cheatcode. E.g. whether it is stable or experimental, etc. Defaults to `Stable`.
 - `#[cheatcode(safety = <ident>)]`: Whether the cheatcode is safe to use inside of scripts. E.g. it does not change state in an unexpected way. Defaults to the group's safety if unspecified. If the group is ambiguous, then it must be specified manually.
@@ -140,8 +129,10 @@ Multiple attributes can be specified by separating them with commas, e.g. `#[che
 
 This trait defines the interface that all cheatcode implementations must implement.
 There are two methods that can be implemented:
+
 - `apply`: implemented when the cheatcode is pure and does not need to access EVM data
-- `apply_full`: implemented when the cheatcode needs to access EVM data
+- `apply_stateful`: implemented when the cheatcode needs to access EVM data
+- `apply_full`: implemented when the cheatcode needs to access EVM data and the EVM executor itself, for example to recursively call back into the EVM to execute an arbitrary transaction
 
 Only one of these methods can be implemented.
 
@@ -170,4 +161,4 @@ update of the files.
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
 [`cheatcodes`]: ../../crates/cheatcodes/
 [`spec::Cheatcodes::new`]: ../../crates/cheatcodes/spec/src/lib.rs#L74
-[`testdata/cheats/`]: ../../testdata/cheats/
+[`testdata/cheats/`]: ../../testdata/default/cheats/

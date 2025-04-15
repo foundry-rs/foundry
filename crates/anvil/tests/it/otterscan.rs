@@ -1,6 +1,7 @@
 //! Tests for otterscan endpoints.
 
-use crate::abi::MulticallContract;
+use crate::abi::Multicall;
+use alloy_network::TransactionResponse;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -9,7 +10,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{sol, SolCall, SolError, SolValue};
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{spawn, EthereumHardfork, NodeConfig};
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -18,10 +19,10 @@ async fn erigon_get_header_by_number() {
     api.mine_one().await;
 
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
-    assert_eq!(res0.header.number, Some(0));
+    assert_eq!(res0.header.number, 0);
 
     let res1 = api.erigon_get_header_by_number(1.into()).await.unwrap().unwrap();
-    assert_eq!(res1.header.number, Some(1));
+    assert_eq!(res1.header.number, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -37,13 +38,8 @@ async fn ots_get_internal_operations_contract_deploy() {
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
 
-    let contract_receipt = MulticallContract::deploy_builder(&provider)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let contract_receipt =
+        Multicall::deploy_builder(&provider).send().await.unwrap().get_receipt().await.unwrap();
 
     let res = api.ots_get_internal_operations(contract_receipt.transaction_hash).await.unwrap();
     assert_eq!(
@@ -109,8 +105,8 @@ async fn ots_get_internal_operations_contract_create2() {
         res,
         [InternalOperation {
             r#type: OperationType::OpCreate2,
-            from: address!("4e59b44847b379578588920cA78FbF26c0B4956C"),
-            to: address!("347bcdad821abc09b8c275881b368de36476b62c"),
+            from: address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"),
+            to: address!("0x347bcdad821abc09b8c275881b368de36476b62c"),
             value: U256::from(0),
         }],
     );
@@ -118,15 +114,15 @@ async fn ots_get_internal_operations_contract_create2() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_internal_operations_contract_selfdestruct_london() {
-    ots_get_internal_operations_contract_selfdestruct(Hardfork::London).await;
+    ots_get_internal_operations_contract_selfdestruct(EthereumHardfork::London).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ots_get_internal_operations_contract_selfdestruct_cancun() {
-    ots_get_internal_operations_contract_selfdestruct(Hardfork::Cancun).await;
+    ots_get_internal_operations_contract_selfdestruct(EthereumHardfork::Cancun).await;
 }
 
-async fn ots_get_internal_operations_contract_selfdestruct(hardfork: Hardfork) {
+async fn ots_get_internal_operations_contract_selfdestruct(hardfork: EthereumHardfork) {
     sol!(
         #[sol(rpc, bytecode = "608080604052607f908160108239f3fe6004361015600c57600080fd5b6000803560e01c6375fc8e3c14602157600080fd5b346046578060031936011260465773dcdd539da22bffaa499dbea4d37d086dde196e75ff5b80fdfea264697066735822122080a9ad005cc408b2d4e30ca11216d8e310700fbcdf58a629d6edbb91531f9c6164736f6c63430008190033")]
         contract Contract {
@@ -137,7 +133,7 @@ async fn ots_get_internal_operations_contract_selfdestruct(hardfork: Hardfork) {
         }
     );
 
-    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork))).await;
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
     let provider = handle.http_provider();
 
     let sender = handle.dev_accounts().next().unwrap();
@@ -149,12 +145,8 @@ async fn ots_get_internal_operations_contract_selfdestruct(hardfork: Hardfork) {
 
     let receipt = contract.goodbye().send().await.unwrap().get_receipt().await.unwrap();
 
-    // TODO: This is currently not supported by revm-inspectors
-    let (expected_to, expected_value) = if hardfork < Hardfork::Cancun {
-        (address!("DcDD539DA22bfFAa499dBEa4d37d086Dde196E75"), value)
-    } else {
-        (Address::ZERO, U256::ZERO)
-    };
+    let expected_to = address!("0xDcDD539DA22bfFAa499dBEa4d37d086Dde196E75");
+    let expected_value = value;
 
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
@@ -181,7 +173,7 @@ async fn ots_has_code() {
     // no code in the address before deploying
     assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(1)).await.unwrap());
 
-    let contract_builder = MulticallContract::deploy_builder(&provider);
+    let contract_builder = Multicall::deploy_builder(&provider);
     let contract_receipt = contract_builder.send().await.unwrap().get_receipt().await.unwrap();
 
     let num = provider.get_block_number().await.unwrap();
@@ -385,7 +377,7 @@ async fn ots_get_block_transactions() {
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
             assert_eq!(expected, Some(receipt.receipt.transaction_hash));
-            assert_eq!(expected, result.fullblock.block.transactions.hashes().nth(i).copied());
+            assert_eq!(expected, result.fullblock.block.transactions.hashes().nth(i));
         });
     }
 
@@ -418,7 +410,7 @@ async fn ots_search_transactions_before() {
 
         // check each individual hash
         result.txs.iter().for_each(|tx| {
-            assert_eq!(hashes.pop(), Some(tx.hash));
+            assert_eq!(hashes.pop(), Some(tx.tx_hash()));
         });
 
         block = result.txs.last().unwrap().block_number.unwrap();
@@ -453,7 +445,7 @@ async fn ots_search_transactions_after() {
 
         // check each individual hash
         result.txs.iter().rev().for_each(|tx| {
-            assert_eq!(hashes.pop_back(), Some(tx.hash));
+            assert_eq!(hashes.pop_back(), Some(tx.tx_hash()));
         });
 
         block = result.txs.first().unwrap().block_number.unwrap();
@@ -501,13 +493,8 @@ async fn ots_get_contract_creator() {
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
 
-    let receipt = MulticallContract::deploy_builder(&provider)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let receipt =
+        Multicall::deploy_builder(&provider).send().await.unwrap().get_receipt().await.unwrap();
     let contract_address = receipt.contract_address.unwrap();
 
     let creator = api.ots_get_contract_creator(contract_address).await.unwrap().unwrap();

@@ -1,16 +1,21 @@
 pub use crate::ic::*;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
+use crate::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, InspectorExt};
+use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Selector, TxKind, U256};
-use alloy_rpc_types::{Block, Transaction};
+use alloy_network::{AnyTxEnvelope, TransactionResponse};
+use alloy_primitives::{Address, Selector, TxKind, B256, U256};
+use alloy_provider::{network::BlockResponse, Network};
+use alloy_rpc_types::{Transaction, TransactionRequest};
+use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
+use foundry_fork_db::DatabaseError;
 use revm::{
-    db::WrapDatabaseRef,
     handler::register::EvmHandler,
     interpreter::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
+    precompile::secp256r1::P256VERIFY,
     primitives::{CreateScheme, EVMError, HandlerCfg, SpecId, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
@@ -24,12 +29,16 @@ pub use revm::primitives::EvmState as StateChangeset;
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::Env, block: &Block) {
+pub fn apply_chain_and_block_specific_env_changes<N: Network>(
+    env: &mut revm::primitives::Env,
+    block: &N::BlockResponse,
+) {
+    use NamedChain::*;
     if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
-        let block_number = block.header.number.unwrap_or_default();
+        let block_number = block.header().number();
 
         match chain {
-            NamedChain::Mainnet => {
+            Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
                     env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
@@ -37,16 +46,33 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
 
                 return;
             }
-            NamedChain::Arbitrum |
-            NamedChain::ArbitrumGoerli |
-            NamedChain::ArbitrumNova |
-            NamedChain::ArbitrumTestnet => {
+            BinanceSmartChain | BinanceSmartChainTestnet => {
+                // https://github.com/foundry-rs/foundry/issues/9942
+                // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
+                // is still in use and returned by the corresponding opcode but `prevrandao`
+                // (`mixHash`) is always zero, even though bsc adopts the newer EVM
+                // specification. This will confuse revm and causes emulation
+                // failure.
+                env.block.prevrandao = Some(env.block.difficulty.into());
+                return;
+            }
+            Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk => {
+                if env.block.prevrandao.is_none() {
+                    // <https://github.com/foundry-rs/foundry/issues/4232>
+                    env.block.prevrandao = Some(B256::random());
+                }
+            }
+            c if c.is_arbitrum() => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
-                if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
-                    if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number;
-                    }
+                if let Some(l1_block_number) = block
+                    .other_fields()
+                    .and_then(|other| other.get("l1BlockNumber").cloned())
+                    .and_then(|l1_block_number| {
+                        serde_json::from_value::<U256>(l1_block_number).ok()
+                    })
+                {
+                    env.block.number = l1_block_number;
                 }
             }
             _ => {}
@@ -54,7 +80,7 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
     }
 
     // if difficulty is `0` we assume it's past merge
-    if block.header.difficulty.is_zero() {
+    if block.header().difficulty().is_zero() {
         env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
@@ -70,17 +96,72 @@ pub fn get_function<'a>(
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
-/// Configures the env for the transaction
-pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
-    env.tx.gas_limit = tx.gas as u64;
-    env.tx.gas_price = U256::from(tx.gas_price.unwrap_or_default());
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
-    env.tx.nonce = Some(tx.nonce);
-    env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
-    env.tx.value = tx.value.to();
-    env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
-    env.tx.transact_to = tx.to.map(TxKind::Call).unwrap_or(TxKind::Create)
+/// Configures the env for the given RPC transaction.
+/// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
+pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction<AnyTxEnvelope>) {
+    let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from());
+    if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
+        configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
+    }
+}
+
+/// Configures the env for the given RPC transaction request.
+/// `impersonated_from` is the address of the impersonated account. This helps account for an
+/// impersonated transaction by resetting the `env.tx.caller` field to `impersonated_from`.
+pub fn configure_tx_req_env(
+    env: &mut revm::primitives::Env,
+    tx: &TransactionRequest,
+    impersonated_from: Option<Address>,
+) -> eyre::Result<()> {
+    let TransactionRequest {
+        nonce,
+        from,
+        to,
+        value,
+        gas_price,
+        gas,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        max_fee_per_blob_gas,
+        ref input,
+        chain_id,
+        ref blob_versioned_hashes,
+        ref access_list,
+        transaction_type: _,
+        ref authorization_list,
+        sidecar: _,
+    } = *tx;
+
+    // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
+    env.tx.transact_to = to.unwrap_or(TxKind::Create);
+    // If the transaction is impersonated, we need to set the caller to the from
+    // address Ref: https://github.com/foundry-rs/foundry/issues/9541
+    env.tx.caller =
+        impersonated_from.unwrap_or(from.ok_or_else(|| eyre::eyre!("missing `from` field"))?);
+    env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
+    env.tx.nonce = nonce;
+    env.tx.value = value.unwrap_or_default();
+    env.tx.data = input.input().cloned().unwrap_or_default();
+    env.tx.chain_id = chain_id;
+
+    // Type 1, EIP-2930
+    env.tx.access_list = access_list.clone().unwrap_or_default().0.into_iter().collect();
+
+    // Type 2, EIP-1559
+    env.tx.gas_price = U256::from(gas_price.or(max_fee_per_gas).unwrap_or_default());
+    env.tx.gas_priority_fee = max_priority_fee_per_gas.map(U256::from);
+
+    // Type 3, EIP-4844
+    env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
+    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.map(U256::from);
+
+    // Type 4, EIP-7702
+    if let Some(authorization_list) = authorization_list {
+        env.tx.authorization_list =
+            Some(revm::primitives::AuthorizationList::Signed(authorization_list.clone()));
+    }
+
+    Ok(())
 }
 
 /// Get the gas used, accounting for refunds
@@ -89,12 +170,16 @@ pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
     spent - (refunded).min(spent / refund_quotient)
 }
 
-fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInputs {
+fn get_create2_factory_call_inputs(
+    salt: U256,
+    inputs: CreateInputs,
+    deployer: Address,
+) -> CallInputs {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code[..]].concat();
     CallInputs {
         caller: inputs.caller,
-        bytecode_address: DEFAULT_CREATE2_DEPLOYER,
-        target_address: DEFAULT_CREATE2_DEPLOYER,
+        bytecode_address: deployer,
+        target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value),
         input: calldata.into(),
@@ -105,22 +190,22 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
     }
 }
 
-/// Used for routing certain CREATE2 invocations through [DEFAULT_CREATE2_DEPLOYER].
+/// Used for routing certain CREATE2 invocations through CREATE2_DEPLOYER.
 ///
 /// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
-/// true. Keeps track of overriden frames and handles outcome in the overriden insert_call_outcome
+/// true. Keeps track of overridden frames and handles outcome in the overridden insert_call_outcome
 /// hook by inserting decoded address directly into interpreter.
 ///
 /// Should be installed after [revm::inspector_handle_register] and before any other registers.
-pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
-    handler: &mut EvmHandler<'_, I, DB>,
+pub fn create2_handler_register<I: InspectorExt>(
+    handler: &mut EvmHandler<'_, I, &mut dyn DatabaseExt>,
 ) {
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
 
     let create2_overrides_inner = create2_overrides.clone();
     let old_handle = handler.execution.create.clone();
     handler.execution.create =
-        Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+        Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DatabaseError>> {
             let CreateScheme::Create2 { salt } = inputs.scheme else {
                 return old_handle(ctx, inputs);
             };
@@ -130,8 +215,10 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
 
             let gas_limit = inputs.gas_limit;
 
+            // Get CREATE2 deployer.
+            let create2_deployer = ctx.external.create2_deployer();
             // Generate call inputs for CREATE2 factory.
-            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs);
+            let mut call_inputs = get_create2_factory_call_inputs(salt, *inputs, create2_deployer);
 
             // Call inspector to change input or return outcome.
             let outcome = ctx.external.call(&mut ctx.evm, &mut call_inputs);
@@ -142,12 +229,21 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
 
             // Sanity check that CREATE2 deployer exists.
-            let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
+            let code_hash = ctx.evm.load_account(create2_deployer)?.info.code_hash;
             if code_hash == KECCAK_EMPTY {
                 return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
-                        output: "missing CREATE2 deployer".into(),
+                        output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    memory_offset: 0..0,
+                })))
+            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                return Ok(FrameOrResult::Result(FrameResult::Call(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 deployer bytecode".into(),
                         gas: Gas::new(gas_limit),
                     },
                     memory_offset: 0..0,
@@ -177,7 +273,7 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
             if create2_overrides_inner
                 .borrow()
                 .last()
-                .map_or(false, |(depth, _)| *depth == ctx.evm.journaled_state.depth())
+                .is_some_and(|(depth, _)| *depth == ctx.evm.journaled_state.depth())
             {
                 let (_, call_inputs) = create2_overrides_inner.borrow_mut().pop().unwrap();
                 outcome = ctx.external.call_end(&mut ctx.evm, &call_inputs, outcome);
@@ -207,16 +303,24 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
         });
 }
 
+/// Adds Odyssey P256 precompile to the list of loaded precompiles.
+pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
+    let prev = handler.pre_execution.load_precompiles.clone();
+    handler.pre_execution.load_precompiles = Arc::new(move || {
+        let mut loaded_precompiles = prev();
+
+        loaded_precompiles.extend([P256VERIFY]);
+
+        loaded_precompiles
+    });
+}
+
 /// Creates a new EVM with the given inspector.
-pub fn new_evm_with_inspector<'a, DB, I>(
-    db: DB,
+pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
+    db: &'db mut dyn DatabaseExt,
     env: revm::primitives::EnvWithHandlerCfg,
-    inspector: I,
-) -> revm::Evm<'a, I, DB>
-where
-    DB: revm::Database,
-    I: InspectorExt<DB>,
-{
+    inspector: &'i mut I,
+) -> revm::Evm<'evm, &'i mut I, &'db mut dyn DatabaseExt> {
     let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
 
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
@@ -232,60 +336,32 @@ where
         .build()
     */
 
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
+    if inspector.is_odyssey() {
+        handler.append_handler_register_plain(odyssey_handler_register);
+    }
     handler.append_handler_register_plain(create2_handler_register);
+
+    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
+
     revm::Evm::new(context, handler)
 }
 
-/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'a, DB, I>(
-    db: DB,
-    env: revm::primitives::EnvWithHandlerCfg,
-    inspector: I,
-) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
-where
-    DB: revm::DatabaseRef,
-    I: InspectorExt<WrapDatabaseRef<DB>>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
-}
-
-pub fn new_evm_with_existing_context<'a, DB, I>(
-    inner: revm::InnerEvmContext<DB>,
-    inspector: I,
-) -> revm::Evm<'a, I, DB>
-where
-    DB: revm::Database,
-    I: InspectorExt<DB>,
-{
+pub fn new_evm_with_existing_context<'a>(
+    inner: revm::InnerEvmContext<&'a mut dyn DatabaseExt>,
+    inspector: &'a mut dyn InspectorExt,
+) -> revm::Evm<'a, &'a mut dyn InspectorExt, &'a mut dyn DatabaseExt> {
     let handler_cfg = HandlerCfg::new(inner.spec_id());
+
+    let mut handler = revm::Handler::new(handler_cfg);
+    handler.append_handler_register_plain(revm::inspector_handle_register);
+    if inspector.is_odyssey() {
+        handler.append_handler_register_plain(odyssey_handler_register);
+    }
+    handler.append_handler_register_plain(create2_handler_register);
+
     let context =
         revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
-    let mut handler = revm::Handler::new(handler_cfg);
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    handler.append_handler_register_plain(create2_handler_register);
     revm::Evm::new(context, handler)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_evm() {
-        let mut db = revm::db::EmptyDB::default();
-
-        let env = Box::<revm::primitives::Env>::default();
-        let spec = SpecId::LATEST;
-        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
-        let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
-
-        let mut inspector = revm::inspectors::NoOpInspector;
-
-        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector);
-        let result = evm.transact().unwrap();
-        assert!(result.result.is_success());
-    }
 }

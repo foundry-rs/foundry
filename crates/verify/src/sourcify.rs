@@ -1,12 +1,15 @@
-use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
-use crate::provider::VerificationContext;
+use crate::{
+    provider::{VerificationContext, VerificationProvider},
+    verify::{VerifyArgs, VerifyCheckArgs},
+};
+use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use eyre::Result;
-use foundry_common::{fs, retry::Retry};
+use foundry_common::fs;
 use futures::FutureExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, str::FromStr};
+use std::str::FromStr;
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
@@ -17,7 +20,7 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,
@@ -33,15 +36,16 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
         let client = reqwest::Client::new();
 
-        let retry: Retry = args.retry.into();
-        let resp = retry
+        let resp = args
+            .retry
+            .into_retry()
             .run_async(|| {
                 async {
-                    println!(
+                    sh_println!(
                         "\nSubmitting verification for [{}] {:?}.",
                         context.target_name,
                         args.address.to_string()
-                    );
+                    )?;
                     let response = client
                         .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")
@@ -53,7 +57,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     if !status.is_success() {
                         let error: serde_json::Value = response.json().await?;
                         eyre::bail!(
-                            "Sourcify verification request for address ({}) failed with status code {status}\nDetails: {error:#}",
+                            "Sourcify verification request for address ({}) \
+                             failed with status code {status}\n\
+                             Details: {error:#}",
                             args.address,
                         );
                     }
@@ -69,8 +75,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let retry: Retry = args.retry.into();
-        let resp = retry
+        let resp = args
+            .retry
+            .into_retry()
             .run_async(|| {
                 async {
                     let url = Url::from_str(
@@ -110,7 +117,7 @@ impl SourcifyVerificationProvider {
         let metadata = context.get_target_metadata()?;
         let imports = context.get_target_imports()?;
 
-        let mut files = HashMap::with_capacity(2 + imports.len());
+        let mut files = HashMap::with_capacity_and_hasher(2 + imports.len(), Default::default());
 
         let metadata = serde_json::to_string_pretty(&metadata)?;
         files.insert("metadata.json".to_string(), metadata);
@@ -142,15 +149,15 @@ impl SourcifyVerificationProvider {
         match response.status.as_str() {
             "perfect" => {
                 if let Some(ts) = &response.storage_timestamp {
-                    println!("Contract source code already verified. Storage Timestamp: {ts}");
+                    sh_println!("Contract source code already verified. Storage Timestamp: {ts}")?;
                 } else {
-                    println!("Contract successfully verified");
+                    sh_println!("Contract successfully verified")?;
                 }
             }
             "partial" => {
-                println!("The recompiled contract partially matches the deployed version");
+                sh_println!("The recompiled contract partially matches the deployed version")?;
             }
-            "false" => println!("Contract source code is not verified"),
+            "false" => sh_println!("Contract source code is not verified")?,
             s => eyre::bail!("Unknown status from sourcify. Status: {s:?}"),
         }
         Ok(())

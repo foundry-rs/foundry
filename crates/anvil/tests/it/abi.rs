@@ -16,7 +16,7 @@ sol!(
 
 sol!(
     #[sol(rpc)]
-    MulticallContract,
+    Multicall,
     "test-data/multicall.json"
 );
 

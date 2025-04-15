@@ -1,15 +1,16 @@
 use super::fork::environment;
-use crate::fork::CreateFork;
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork};
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::Block;
+use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
-use foundry_config::{Chain, Config};
+use foundry_config::{Chain, Config, GasLimit};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
+use std::fmt::Write;
+use url::Url;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
     #[serde(flatten)]
@@ -27,6 +28,9 @@ pub struct EvmOpts {
 
     /// Initial retry backoff.
     pub fork_retry_backoff: Option<u64>,
+
+    /// Headers to use with `fork_url`
+    pub fork_headers: Option<Vec<String>>,
 
     /// The available compute units per second.
     ///
@@ -63,6 +67,38 @@ pub struct EvmOpts {
 
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
+
+    /// whether to enable Odyssey features.
+    pub odyssey: bool,
+
+    /// The CREATE2 deployer's address.
+    pub create2_deployer: Address,
+}
+
+impl Default for EvmOpts {
+    fn default() -> Self {
+        Self {
+            env: Env::default(),
+            fork_url: None,
+            fork_block_number: None,
+            fork_retries: None,
+            fork_retry_backoff: None,
+            fork_headers: None,
+            compute_units_per_second: None,
+            no_rpc_rate_limit: false,
+            no_storage_caching: false,
+            initial_balance: U256::default(),
+            sender: Address::default(),
+            ffi: false,
+            always_use_create_2_factory: false,
+            verbosity: 0,
+            memory_limit: 0,
+            isolate: false,
+            disable_block_gas_limit: false,
+            odyssey: false,
+            create2_deployer: DEFAULT_CREATE2_DEPLOYER,
+        }
+    }
 }
 
 impl EvmOpts {
@@ -82,9 +118,8 @@ impl EvmOpts {
     /// And the block that was used to configure the environment.
     pub async fn fork_evm_env(
         &self,
-        fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block)> {
-        let fork_url = fork_url.as_ref();
+        fork_url: &str,
+    ) -> eyre::Result<(revm::primitives::Env, AnyRpcBlock)> {
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
             .build()?;
@@ -99,7 +134,13 @@ impl EvmOpts {
         )
         .await
         .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {fork_url}")
+            let mut msg = "could not instantiate forked environment".to_string();
+            if let Ok(url) = Url::parse(fork_url) {
+                if let Some(provider) = url.host() {
+                    write!(msg, " with provider {provider}").unwrap();
+                }
+            }
+            msg
         })
     }
 
@@ -157,7 +198,7 @@ impl EvmOpts {
 
     /// Returns the gas limit to use
     pub fn gas_limit(&self) -> u64 {
-        self.env.block_gas_limit.unwrap_or(self.env.gas_limit)
+        self.env.block_gas_limit.unwrap_or(self.env.gas_limit).0
     }
 
     /// Returns the configured chain id, which will be
@@ -189,10 +230,6 @@ impl EvmOpts {
     /// Returns the chain ID from the RPC, if any.
     pub async fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
-            if url.contains("mainnet") {
-                trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::mainnet());
-            }
             trace!(?url, "retrieving chain via eth_chainId");
             let provider = ProviderBuilder::new(url.as_str())
                 .compute_units_per_second(self.get_compute_units_per_second())
@@ -203,6 +240,14 @@ impl EvmOpts {
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
             }
+
+            // Provider URLs could be of the format `{CHAIN_IDENTIFIER}-mainnet`
+            // (e.g. Alchemy `opt-mainnet`, `arb-mainnet`), fallback to this method only
+            // if we're not able to retrieve chain id from `RetryProvider`.
+            if url.contains("mainnet") {
+                trace!(?url, "auto detected mainnet chain");
+                return Some(Chain::mainnet());
+            }
         }
 
         None
@@ -212,8 +257,7 @@ impl EvmOpts {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Env {
     /// The block gas limit.
-    #[serde(deserialize_with = "string_or_number")]
-    pub gas_limit: u64,
+    pub gas_limit: GasLimit,
 
     /// The `CHAINID` opcode value.
     pub chain_id: Option<u64>,
@@ -247,47 +291,10 @@ pub struct Env {
     pub block_prevrandao: B256,
 
     /// the block.gaslimit value during EVM execution
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "string_or_number_opt"
-    )]
-    pub block_gas_limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_gas_limit: Option<GasLimit>,
 
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum Gas {
-    Number(u64),
-    Text(String),
-}
-
-fn string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-    match Gas::deserialize(deserializer)? {
-        Gas::Number(num) => Ok(num),
-        Gas::Text(s) => s.parse().map_err(D::Error::custom),
-    }
-}
-
-fn string_or_number_opt<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-
-    match Option::<Gas>::deserialize(deserializer)? {
-        Some(gas) => match gas {
-            Gas::Number(num) => Ok(Some(num)),
-            Gas::Text(s) => s.parse().map(Some).map_err(D::Error::custom),
-        },
-        _ => Ok(None),
-    }
 }

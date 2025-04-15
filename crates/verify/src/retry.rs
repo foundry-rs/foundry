@@ -20,10 +20,10 @@ pub struct RetryArgs {
     )]
     pub retries: u32,
 
-    /// Optional delay to apply inbetween verification attempts, in seconds.
+    /// Optional delay to apply in between verification attempts, in seconds.
     #[arg(
         long,
-        value_parser = RangedU64ValueParser::<u32>::new().range(0..=30),
+        value_parser = RangedU64ValueParser::<u32>::new().range(0..=180),
         default_value = "5",
     )]
     pub delay: u32,
@@ -35,9 +35,10 @@ impl Default for RetryArgs {
     }
 }
 
-impl From<RetryArgs> for Retry {
-    fn from(r: RetryArgs) -> Self {
-        Self::new(r.retries, Some(Duration::from_secs(r.delay as u64)))
+impl RetryArgs {
+    /// Converts the arguments into a `Retry` instance.
+    pub fn into_retry(self) -> Retry {
+        Retry::new(self.retries, Duration::from_secs(self.delay as u64))
     }
 }
 

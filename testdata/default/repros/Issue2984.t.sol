@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -11,15 +11,15 @@ contract Issue2984Test is DSTest {
     uint256 snapshot;
 
     function setUp() public {
-        fork = vm.createSelectFork("https://api.avax-test.network/ext/bc/C/rpc", 12880747);
-        snapshot = vm.snapshot();
+        fork = vm.createSelectFork("avaxTestnet", 12880747);
+        snapshot = vm.snapshotState();
     }
 
     function testForkRevertSnapshot() public {
-        vm.revertTo(snapshot);
+        vm.revertToState(snapshot);
     }
 
     function testForkSelectSnapshot() public {
-        uint256 fork2 = vm.createSelectFork("https://api.avax-test.network/ext/bc/C/rpc", 12880749);
+        uint256 fork2 = vm.createSelectFork("avaxTestnet", 12880749);
     }
 }

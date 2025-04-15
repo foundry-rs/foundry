@@ -1,17 +1,19 @@
 //! CLI dependency parsing
 
 use eyre::Result;
-use once_cell::sync::Lazy;
 use regex::Regex;
-use std::str::FromStr;
+use std::{str::FromStr, sync::LazyLock};
 
-static GH_REPO_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
+static GH_REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
 
 /// Git repo prefix regex
-pub static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"((git@)|(git\+https://)|(https://)|(org-([A-Za-z0-9-])+@))?(?P<brand>[A-Za-z0-9-]+)\.(?P<tld>[A-Za-z0-9-]+)(/|:)")
+pub static GH_REPO_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"((git@)|(git\+https://)|(https://)|https://(?P<token>[^@]+)@|(org-([A-Za-z0-9-])+@))?(?P<brand>[A-Za-z0-9-]+)\.(?P<tld>[A-Za-z0-9-]+)(/|:)")
         .unwrap()
 });
+
+static VERSION_PREFIX_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"@(tag|branch|rev)="#).unwrap());
 
 const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
@@ -50,6 +52,12 @@ pub struct Dependency {
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
+        // Handle dependency exact ref type (`@tag=`, `@branch=` or `@rev=`)`.
+        // Only extract version for first tag/branch/commit specified.
+        let url_and_version: Vec<&str> = VERSION_PREFIX_REGEX.split(dependency).collect();
+        let dependency = url_and_version[0];
+        let mut tag_or_branch = url_and_version.get(1).map(|version| version.to_string());
+
         // everything before "=" should be considered the alias
         let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
             (Some(String::from(split.0)), split.1.to_string())
@@ -57,7 +65,7 @@ impl FromStr for Dependency {
             let mut dependency = dependency.to_string();
             // this will autocorrect wrong conventional aliases for tag, but only autocorrect if
             // it's not used as alias
-            for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
+            for (alias, real_org) in COMMON_ORG_ALIASES {
                 if dependency.starts_with(alias) {
                     dependency = dependency.replacen(alias, real_org, 1);
                     break
@@ -73,7 +81,15 @@ impl FromStr for Dependency {
             let brand = captures.name("brand").unwrap().as_str();
             let tld = captures.name("tld").unwrap().as_str();
             let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")))
+            if let Some(token) = captures.name("token") {
+                Some(format!(
+                    "https://{}@{brand}.{tld}/{}",
+                    token.as_str(),
+                    project.trim_end_matches(".git")
+                ))
+            } else {
+                Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")))
+            }
         } else {
             // If we don't have a URL and we don't have a valid
             // GitHub repository name, then we assume this is the alias.
@@ -97,25 +113,26 @@ impl FromStr for Dependency {
             // `tag` does not contain a slash
             let mut split = url_with_version.rsplit(VERSION_SEPARATOR);
 
-            let mut tag = None;
             let mut url = url_with_version.as_str();
 
-            let maybe_tag = split.next().unwrap();
-            if let Some(actual_url) = split.next() {
-                if !maybe_tag.contains('/') {
-                    tag = Some(maybe_tag.to_string());
-                    url = actual_url;
+            if tag_or_branch.is_none() {
+                let maybe_tag_or_branch = split.next().unwrap();
+                if let Some(actual_url) = split.next() {
+                    if !maybe_tag_or_branch.contains('/') {
+                        tag_or_branch = Some(maybe_tag_or_branch.to_string());
+                        url = actual_url;
+                    }
                 }
             }
 
             let url = url.to_string();
             let name = url
                 .split('/')
-                .last()
+                .next_back()
                 .ok_or_else(|| eyre::eyre!("no dependency name found"))?
                 .to_string();
 
-            (Some(url), Some(name), tag)
+            (Some(url), Some(name), tag_or_branch)
         } else {
             (None, None, None)
         };
@@ -360,5 +377,41 @@ mod tests {
     fn can_parse_org_shh_url_dependency() {
         let dep: Dependency = "org-git12345678@github.com:my-org/my-repo.git".parse().unwrap();
         assert_eq!(dep.url.unwrap(), "https://github.com/my-org/my-repo");
+    }
+
+    #[test]
+    fn can_parse_with_explicit_ref_type() {
+        let dep = Dependency::from_str("smartcontractkit/ccip@tag=contracts-ccip/v1.2.1").unwrap();
+        assert_eq!(dep.name, "ccip");
+        assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
+        assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
+        assert_eq!(dep.alias, None);
+
+        let dep =
+            Dependency::from_str("smartcontractkit/ccip@branch=contracts-ccip/v1.2.1").unwrap();
+        assert_eq!(dep.name, "ccip");
+        assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
+        assert_eq!(dep.tag, Some("contracts-ccip/v1.2.1".to_string()));
+        assert_eq!(dep.alias, None);
+
+        let dep = Dependency::from_str("smartcontractkit/ccip@rev=80eb41b").unwrap();
+        assert_eq!(dep.name, "ccip");
+        assert_eq!(dep.url, Some("https://github.com/smartcontractkit/ccip".to_string()));
+        assert_eq!(dep.tag, Some("80eb41b".to_string()));
+        assert_eq!(dep.alias, None);
+    }
+
+    #[test]
+    fn can_parse_https_with_github_token() {
+        // <https://github.com/foundry-rs/foundry/issues/9717>
+        let dep = Dependency::from_str(
+            "https://ghp_mytoken@github.com/private-org/precompiles-solidity.git",
+        )
+        .unwrap();
+        assert_eq!(dep.name, "precompiles-solidity");
+        assert_eq!(
+            dep.url,
+            Some("https://ghp_mytoken@github.com/private-org/precompiles-solidity".to_string())
+        );
     }
 }

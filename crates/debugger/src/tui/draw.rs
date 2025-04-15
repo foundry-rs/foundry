@@ -1,22 +1,21 @@
 //! TUI draw implementation.
 
-use super::context::{BufferKind, DebuggerContext};
+use super::context::TUIContext;
 use crate::op::OpcodeParam;
-use alloy_primitives::U256;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
+use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
 use foundry_evm_traces::debug::SourceData;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    terminal::Frame,
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    Frame,
 };
-use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
 use std::{collections::VecDeque, fmt::Write, io};
 
-impl DebuggerContext<'_> {
+impl TUIContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
     pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
@@ -25,17 +24,17 @@ impl DebuggerContext<'_> {
     #[inline]
     fn draw_layout(&self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
-        let size = f.size();
+        let area = f.area();
         let min_width = 100;
         let min_height = 16;
-        if size.width < min_width || size.height < min_height {
+        if area.width < min_width || area.height < min_height {
             self.size_too_small(f, min_width, min_height);
             return;
         }
 
         // The horizontal layout draws these panes at 50% width.
         let min_column_width_for_horizontal = 200;
-        if size.width >= min_column_width_for_horizontal {
+        if area.width >= min_column_width_for_horizontal {
             self.horizontal_layout(f);
         } else {
             self.vertical_layout(f);
@@ -48,14 +47,14 @@ impl DebuggerContext<'_> {
         let l1 = "Terminal size too small:";
         lines.push(Line::from(l1));
 
-        let size = f.size();
-        let width_color = if size.width >= min_width { Color::Green } else { Color::Red };
-        let height_color = if size.height >= min_height { Color::Green } else { Color::Red };
+        let area = f.area();
+        let width_color = if area.width >= min_width { Color::Green } else { Color::Red };
+        let height_color = if area.height >= min_height { Color::Green } else { Color::Red };
         let l2 = vec![
             Span::raw("Width = "),
-            Span::styled(size.width.to_string(), Style::new().fg(width_color)),
+            Span::styled(area.width.to_string(), Style::new().fg(width_color)),
             Span::raw(" Height = "),
-            Span::styled(size.height.to_string(), Style::new().fg(height_color)),
+            Span::styled(area.height.to_string(), Style::new().fg(height_color)),
         ];
         lines.push(Line::from(l2));
 
@@ -66,7 +65,7 @@ impl DebuggerContext<'_> {
 
         let paragraph =
             Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, size)
+        f.render_widget(paragraph, area)
     }
 
     /// Draws the layout in vertical mode.
@@ -85,7 +84,7 @@ impl DebuggerContext<'_> {
     /// |-----------------------------|
     /// ```
     fn vertical_layout(&self, f: &mut Frame<'_>) {
-        let area = f.size();
+        let area = f.area();
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         // NOTE: `Layout::split` always returns a slice of the same length as the number of
@@ -135,7 +134,7 @@ impl DebuggerContext<'_> {
     /// |-----------------|-----------|
     /// ```
     fn horizontal_layout(&self, f: &mut Frame<'_>) {
-        let area = f.size();
+        let area = f.area();
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         // Split off footer.
@@ -344,15 +343,15 @@ impl DebuggerContext<'_> {
     /// Returns source map, source code and source name of the current line.
     fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         let address = self.address();
-        let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
+        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        self.debugger
+        self.debugger_context
             .contracts_sources
             .find_source_mapping(
                 contract_name,
-                self.current_step().pc,
+                self.current_step().pc as u32,
                 self.debug_call().kind.is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
@@ -465,7 +464,7 @@ impl DebuggerContext<'_> {
 
         // Color memory region based on read/write.
         let mut offset = None;
-        let mut size = None;
+        let mut len = None;
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
@@ -475,13 +474,13 @@ impl DebuggerContext<'_> {
                 if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
                     if let Some(read_access) = accesses.read {
                         offset = Some(read_access.1.offset);
-                        size = Some(read_access.1.size);
+                        len = Some(read_access.1.len);
                         color = Some(Color::Cyan);
                     }
                     if let Some(write_access) = accesses.write {
                         if self.active_buffer == BufferKind::Memory {
                             write_offset = Some(write_access.offset);
-                            write_size = Some(write_access.size);
+                            write_size = Some(write_access.len);
                         }
                     }
                 }
@@ -501,7 +500,7 @@ impl DebuggerContext<'_> {
                 {
                     if self.active_buffer == BufferKind::Memory {
                         offset = Some(write_access.offset);
-                        size = Some(write_access.size);
+                        len = Some(write_access.len);
                         color = Some(Color::Green);
                     }
                 }
@@ -530,10 +529,10 @@ impl DebuggerContext<'_> {
                     let mut byte_color = Color::White;
                     let mut end = None;
                     let idx = i * 32 + j;
-                    if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
-                        end = Some(offset + size);
-                        if (offset..offset + size).contains(&idx) {
-                            // [offset, offset + size] is the memory region to be colored.
+                    if let (Some(offset), Some(len), Some(color)) = (offset, len, color) {
+                        end = Some(offset + len);
+                        if (offset..offset + len).contains(&idx) {
+                            // [offset, offset + len] is the memory region to be colored.
                             // If a byte at row i and column j in the memory panel
                             // falls in this region, set the color.
                             byte_color = color;
@@ -621,91 +620,6 @@ impl<'a> SourceLines<'a> {
         line_spans.extend_from_slice(spans);
 
         self.lines.push(Line::from(line_spans));
-    }
-}
-
-/// Container for buffer access information.
-struct BufferAccess {
-    offset: usize,
-    size: usize,
-}
-
-/// Container for read and write buffer access information.
-struct BufferAccesses {
-    /// The read buffer kind and access information.
-    read: Option<(BufferKind, BufferAccess)>,
-    /// The only mutable buffer is the memory buffer, so don't store the buffer kind.
-    write: Option<BufferAccess>,
-}
-
-/// The memory_access variable stores the index on the stack that indicates the buffer
-/// offset/size accessed by the given opcode:
-///    (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
-///    \>= 1: the stack index
-///    0: no memory access
-///    -1: a fixed size of 32 bytes
-///    -2: a fixed size of 1 byte
-///
-/// The return value is a tuple about accessed buffer region by the given opcode:
-///    (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
-fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
-    let buffer_access = match op {
-        opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
-            (Some((BufferKind::Memory, 1, 2)), None)
-        }
-        opcode::CALLDATACOPY => (Some((BufferKind::Calldata, 2, 3)), Some((1, 3))),
-        opcode::RETURNDATACOPY => (Some((BufferKind::Returndata, 2, 3)), Some((1, 3))),
-        opcode::CALLDATALOAD => (Some((BufferKind::Calldata, 1, -1)), None),
-        opcode::CODECOPY => (None, Some((1, 3))),
-        opcode::EXTCODECOPY => (None, Some((2, 4))),
-        opcode::MLOAD => (Some((BufferKind::Memory, 1, -1)), None),
-        opcode::MSTORE => (None, Some((1, -1))),
-        opcode::MSTORE8 => (None, Some((1, -2))),
-        opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-            (Some((BufferKind::Memory, 1, 2)), None)
-        }
-        opcode::CREATE | opcode::CREATE2 => (Some((BufferKind::Memory, 2, 3)), None),
-        opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
-        opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
-        opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
-        opcode::RETURNDATALOAD => (Some((BufferKind::Returndata, 1, -1)), None),
-        opcode::EOFCREATE => (Some((BufferKind::Memory, 3, 4)), None),
-        opcode::RETURNCONTRACT => (Some((BufferKind::Memory, 1, 2)), None),
-        opcode::DATACOPY => (None, Some((1, 3))),
-        opcode::EXTCALL | opcode::EXTSTATICCALL | opcode::EXTDELEGATECALL => {
-            (Some((BufferKind::Memory, 2, 3)), None)
-        }
-        _ => Default::default(),
-    };
-
-    let stack_len = stack.len();
-    let get_size = |stack_index| match stack_index {
-        -2 => Some(1),
-        -1 => Some(32),
-        0 => None,
-        1.. => {
-            if (stack_index as usize) <= stack_len {
-                Some(stack[stack_len - stack_index as usize].saturating_to())
-            } else {
-                None
-            }
-        }
-        _ => panic!("invalid stack index"),
-    };
-
-    if buffer_access.0.is_some() || buffer_access.1.is_some() {
-        let (read, write) = buffer_access;
-        let read_access = read.and_then(|b| {
-            let (buffer, offset, size) = b;
-            Some((buffer, BufferAccess { offset: get_size(offset)?, size: get_size(size)? }))
-        });
-        let write_access = write.and_then(|b| {
-            let (offset, size) = b;
-            Some(BufferAccess { offset: get_size(offset)?, size: get_size(size)? })
-        });
-        Some(BufferAccesses { read: read_access, write: write_access })
-    } else {
-        None
     }
 }
 

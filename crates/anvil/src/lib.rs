@@ -1,8 +1,6 @@
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+//! Anvil is a fast local Ethereum development node.
 
-#[macro_use]
-extern crate tracing;
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use crate::{
     eth::{
@@ -23,6 +21,7 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
+use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
@@ -30,7 +29,6 @@ use parking_lot::Mutex;
 use server::try_spawn_ipc;
 use std::{
     future::Future,
-    io,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -45,10 +43,12 @@ use tokio::{
 mod service;
 
 mod config;
-pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+pub use config::{
+    AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, DEFAULT_GAS_LIMIT, VERSION_MESSAGE,
+};
 
 mod hardfork;
-pub use hardfork::Hardfork;
+pub use hardfork::EthereumHardfork;
 
 /// ethereum related implementations
 pub mod eth;
@@ -71,6 +71,18 @@ mod tasks;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+
+#[cfg(feature = "cmd")]
+pub mod args;
+
+#[cfg(feature = "cmd")]
+pub mod opts;
+
+#[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
+extern crate tracing;
 
 /// Creates the node and runs the server.
 ///
@@ -121,11 +133,11 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
-    let backend = Arc::new(config.setup().await);
+    let backend = Arc::new(config.setup().await?);
 
     if config.enable_auto_impersonate {
         backend.auto_impersonate_account(true);
@@ -142,13 +154,19 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         no_mining,
         transaction_order,
         genesis,
+        mixed_mining,
         ..
     } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
     let mode = if let Some(block_time) = block_time {
-        MiningMode::interval(block_time)
+        if mixed_mining {
+            let listener = pool.add_ready_listener();
+            MiningMode::mixed(max_transactions, listener, block_time)
+        } else {
+            MiningMode::interval(block_time)
+        }
     } else if no_mining {
         MiningMode::None
     } else {
@@ -240,75 +258,85 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         task_manager,
     };
 
-    handle.print(fork.as_ref());
+    handle.print(fork.as_ref())?;
 
     Ok((api, handle))
 }
 
 type IpcTask = JoinHandle<()>;
 
-/// A handle to the spawned node and server tasks
+/// A handle to the spawned node and server tasks.
 ///
 /// This future will resolve if either the node or server task resolve/fail.
 pub struct NodeHandle {
     config: NodeConfig,
-    /// The address of the running rpc server
+    /// The address of the running rpc server.
     addresses: Vec<SocketAddr>,
-    /// Join handle for the Node Service
+    /// Join handle for the Node Service.
     pub node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handles (one per socket) for the Anvil server.
     pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
-    // The future that joins the ipc server, if any
+    /// The future that joins the ipc server, if any.
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
     _signal: Option<Signal>,
-    /// A task manager that can be used to spawn additional tasks
+    /// A task manager that can be used to spawn additional tasks.
     task_manager: TaskManager,
 }
 
+impl Drop for NodeHandle {
+    fn drop(&mut self) {
+        // Fire shutdown signal to make sure anvil instance is terminated.
+        if let Some(signal) = self._signal.take() {
+            let _ = signal.fire();
+        }
+    }
+}
+
 impl NodeHandle {
-    /// The [NodeConfig] the node was launched with
+    /// The [NodeConfig] the node was launched with.
     pub fn config(&self) -> &NodeConfig {
         &self.config
     }
 
-    /// Prints the launch info
-    pub(crate) fn print(&self, fork: Option<&ClientFork>) {
-        self.config.print(fork);
+    /// Prints the launch info.
+    pub(crate) fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
+        self.config.print(fork)?;
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {ipc_path}");
+                sh_println!("IPC path: {ipc_path}")?;
             }
-            println!(
+            sh_println!(
                 "Listening on {}",
                 self.addresses
                     .iter()
                     .map(|addr| { addr.to_string() })
                     .collect::<Vec<String>>()
                     .join(", ")
-            );
+            )?;
         }
+        Ok(())
     }
 
-    /// The address of the launched server
+    /// The address of the launched server.
     ///
     /// **N.B.** this may not necessarily be the same `host + port` as configured in the
-    /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port
+    /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port.
     pub fn socket_address(&self) -> &SocketAddr {
         &self.addresses[0]
     }
 
-    /// Returns the http endpoint
+    /// Returns the http endpoint.
     pub fn http_endpoint(&self) -> String {
         format!("http://{}", self.socket_address())
     }
 
-    /// Returns the websocket endpoint
+    /// Returns the websocket endpoint.
     pub fn ws_endpoint(&self) -> String {
         format!("ws://{}", self.socket_address())
     }
 
-    /// Returns the path of the launched ipc server, if any
+    /// Returns the path of the launched ipc server, if any.
     pub fn ipc_path(&self) -> Option<String> {
         self.config.get_ipc_path()
     }
@@ -328,44 +356,44 @@ impl NodeHandle {
         ProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
     }
 
-    /// Signer accounts that can sign messages/transactions from the EVM node
+    /// Signer accounts that can sign messages/transactions from the EVM node.
     pub fn dev_accounts(&self) -> impl Iterator<Item = Address> + '_ {
         self.config.signer_accounts.iter().map(|wallet| wallet.address())
     }
 
-    /// Signer accounts that can sign messages/transactions from the EVM node
+    /// Signer accounts that can sign messages/transactions from the EVM node.
     pub fn dev_wallets(&self) -> impl Iterator<Item = PrivateKeySigner> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 
-    /// Accounts that will be initialised with `genesis_balance` in the genesis block
+    /// Accounts that will be initialised with `genesis_balance` in the genesis block.
     pub fn genesis_accounts(&self) -> impl Iterator<Item = Address> + '_ {
         self.config.genesis_accounts.iter().map(|w| w.address())
     }
 
-    /// Native token balance of every genesis account in the genesis block
+    /// Native token balance of every genesis account in the genesis block.
     pub fn genesis_balance(&self) -> U256 {
         self.config.genesis_balance
     }
 
-    /// Default gas price for all txs
+    /// Default gas price for all txs.
     pub fn gas_price(&self) -> u128 {
         self.config.get_gas_price()
     }
 
-    /// Returns the shutdown signal
+    /// Returns the shutdown signal.
     pub fn shutdown_signal(&self) -> &Option<Signal> {
         &self._signal
     }
 
-    /// Returns mutable access to the shutdown signal
+    /// Returns mutable access to the shutdown signal.
     ///
-    /// This can be used to extract the Signal
+    /// This can be used to extract the Signal.
     pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
         &mut self._signal
     }
 
-    /// Returns the task manager that can be used to spawn new tasks
+    /// Returns the task manager that can be used to spawn new tasks.
     ///
     /// ```
     /// use anvil::NodeHandle;
@@ -406,7 +434,7 @@ impl Future for NodeHandle {
         }
 
         // poll the axum server handles
-        for server in pin.servers.iter_mut() {
+        for server in &mut pin.servers {
             if let Poll::Ready(res) = server.poll_unpin(cx) {
                 return Poll::Ready(res);
             }

@@ -1,10 +1,13 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
-use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_common::{
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+};
 use foundry_config::{Chain, Config};
+use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -97,18 +100,24 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.chain(chain);
     }
 
-    let jwt = config.get_rpc_jwt_secret()?;
-    if let Some(jwt) = jwt {
+    if let Some(jwt) = config.get_rpc_jwt_secret()? {
         builder = builder.jwt(jwt.as_ref());
+    }
+
+    if let Some(rpc_timeout) = config.eth_rpc_timeout {
+        builder = builder.timeout(Duration::from_secs(rpc_timeout));
+    }
+
+    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
+        builder = builder.headers(rpc_headers);
     }
 
     Ok(builder)
 }
 
-pub async fn get_chain<P, T>(chain: Option<Chain>, provider: P) -> Result<Chain>
+pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
+    P: Provider<AnyNetwork>,
 {
     match chain {
         Some(chain) => Ok(chain),
@@ -131,6 +140,11 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
             .wrap_err("Could not parse ether value from string")?
             .0
     })
+}
+
+/// Parses a `T` from a string using [`serde_json::from_str`].
+pub fn parse_json<T: DeserializeOwned>(value: &str) -> serde_json::Result<T> {
+    serde_json::from_str(value)
 }
 
 /// Parses a `Duration` from a &str
@@ -161,23 +175,6 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
     rt.block_on(future)
 }
 
-/// Conditionally print a message
-///
-/// This macro accepts a predicate and the message to print if the predicate is tru
-///
-/// ```ignore
-/// let quiet = true;
-/// p_println!(!quiet => "message");
-/// ```
-#[macro_export]
-macro_rules! p_println {
-    ($p:expr => $($arg:tt)*) => {{
-        if $p {
-            println!($($arg)*)
-        }
-    }}
-}
-
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
@@ -191,9 +188,9 @@ pub fn load_dotenv() {
     };
 
     // we only want the .env file of the cwd and project root
-    // `find_project_root_path` calls `current_dir` internally so both paths are either both `Ok` or
+    // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
-    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root_path(None)) {
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root(None)) {
         load(&prj_root);
         if cwd != prj_root {
             // prj root and cwd can be identical
@@ -282,12 +279,12 @@ pub struct Git<'a> {
 impl<'a> Git<'a> {
     #[inline]
     pub fn new(root: &'a Path) -> Self {
-        Self { root, quiet: false, shallow: false }
+        Self { root, quiet: shell::is_quiet(), shallow: false }
     }
 
     #[inline]
     pub fn from_config(config: &'a Config) -> Self {
-        Self::new(config.root.0.as_path())
+        Self::new(config.root.as_path())
     }
 
     pub fn root_of(relative_to: &Path) -> Result<PathBuf> {
@@ -379,7 +376,7 @@ impl<'a> Git<'a> {
         self.cmd().arg("init").exec().map(drop)
     }
 
-    #[allow(clippy::should_implement_trait)] // this is not std::ops::Add clippy
+    #[expect(clippy::should_implement_trait)] // this is not std::ops::Add clippy
     pub fn add<I, S>(self, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,
@@ -444,8 +441,8 @@ impl<'a> Git<'a> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
     }
 
-    pub fn has_branch(self, branch: impl AsRef<OsStr>) -> Result<bool> {
-        self.cmd()
+    pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
+        self.cmd_at(at)
             .args(["branch", "--list", "--no-color"])
             .arg(branch)
             .get_stdout_lossy()
@@ -463,10 +460,7 @@ and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
-
-If none of the previous steps worked, please open an issue at:
-https://github.com/foundry-rs/foundry/issues/new/choose"
+ignore them in the `.gitignore` file."
             ))
         }
     }
@@ -570,6 +564,12 @@ https://github.com/foundry-rs/foundry/issues/new/choose"
         cmd
     }
 
+    pub fn cmd_at(self, path: &Path) -> Command {
+        let mut cmd = Self::cmd_no_root();
+        cmd.current_dir(path);
+        cmd
+    }
+
     pub fn cmd_no_root() -> Command {
         let mut cmd = Command::new("git");
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -602,7 +602,7 @@ mod tests {
         assert!(!p.is_sol_test());
     }
 
-    // loads .env from cwd and project dir, See [`find_project_root_path()`]
+    // loads .env from cwd and project dir, See [`find_project_root()`]
     #[test]
     fn can_load_dotenv() {
         let temp = tempdir().unwrap();

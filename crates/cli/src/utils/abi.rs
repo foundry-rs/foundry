@@ -2,7 +2,6 @@ use alloy_chains::Chain;
 use alloy_json_abi::Function;
 use alloy_primitives::{hex, Address};
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_transport::Transport;
 use eyre::{OptionExt, Result};
 use foundry_common::{
     abi::{encode_function_args, get_func, get_func_etherscan},
@@ -10,10 +9,7 @@ use foundry_common::{
 };
 use futures::future::join_all;
 
-async fn resolve_name_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
-    args: &[String],
-    provider: &P,
-) -> Vec<String> {
+async fn resolve_name_args<P: Provider<AnyNetwork>>(args: &[String], provider: &P) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
             let addr = NameOrAddress::Name(arg.to_string()).resolve(provider).await;
@@ -28,7 +24,7 @@ async fn resolve_name_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
     .await
 }
 
-pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+pub async fn parse_function_args<P: Provider<AnyNetwork>>(
     sig: &str,
     args: Vec<String>,
     to: Option<Address>,
@@ -51,7 +47,7 @@ pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork
         get_func(sig)?
     } else {
         let etherscan_api_key = etherscan_api_key.ok_or_eyre(
-            "If you wish to fetch function data from EtherScan, please provide an API key.",
+            "If you wish to fetch function data from Etherscan, please provide an Etherscan API key.",
         )?;
         let to = to.ok_or_eyre("A 'to' address must be provided to fetch function data.")?;
         get_func_etherscan(sig, to, &args, chain, etherscan_api_key).await?

@@ -2,14 +2,14 @@ use crate::{
     utils,
     wallet_signer::{PendingSigner, WalletSigner},
 };
-use alloy_primitives::Address;
+use alloy_primitives::{map::AddressHashMap, Address};
 use alloy_signer::Signer;
 use clap::Parser;
 use derive_builder::Builder;
 use eyre::Result;
 use foundry_config::Config;
 use serde::Serialize;
-use std::{collections::HashMap, iter::repeat, path::PathBuf};
+use std::path::PathBuf;
 
 /// Container for multiple wallets.
 #[derive(Debug, Default)]
@@ -18,7 +18,7 @@ pub struct MultiWallet {
     /// Those are lazily unlocked on the first access of the signers.
     pending_signers: Vec<PendingSigner>,
     /// Contains unlocked signers.
-    signers: HashMap<Address, WalletSigner>,
+    signers: AddressHashMap<WalletSigner>,
 }
 
 impl MultiWallet {
@@ -35,12 +35,12 @@ impl MultiWallet {
         Ok(())
     }
 
-    pub fn signers(&mut self) -> Result<&HashMap<Address, WalletSigner>> {
+    pub fn signers(&mut self) -> Result<&AddressHashMap<WalletSigner>> {
         self.maybe_unlock_pending()?;
         Ok(&self.signers)
     }
 
-    pub fn into_signers(mut self) -> Result<HashMap<Address, WalletSigner>> {
+    pub fn into_signers(mut self) -> Result<AddressHashMap<WalletSigner>> {
         self.maybe_unlock_pending()?;
         Ok(self.signers)
     }
@@ -162,7 +162,7 @@ pub struct MultiWalletOpts {
     )]
     pub mnemonic_indexes: Option<Vec<u32>>,
 
-    /// Use the keystore in the given folder or file.
+    /// Use the keystore by its filename in the given folder.
     #[arg(
         long = "keystore",
         visible_alias = "keystores",
@@ -173,7 +173,7 @@ pub struct MultiWalletOpts {
     #[builder(default = "None")]
     pub keystore_paths: Option<Vec<String>>,
 
-    /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
+    /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename.
     #[arg(
         long = "account",
         visible_alias = "accounts",
@@ -256,7 +256,10 @@ impl MultiWalletOpts {
             signers.extend(mnemonics);
         }
         if self.interactives > 0 {
-            pending.extend(repeat(PendingSigner::Interactive).take(self.interactives as usize));
+            pending.extend(std::iter::repeat_n(
+                PendingSigner::Interactive,
+                self.interactives as usize,
+            ));
         }
 
         Ok(MultiWallet::new(pending, signers))
@@ -443,7 +446,8 @@ impl MultiWalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, str::FromStr};
+    use alloy_primitives::address;
+    use std::path::Path;
 
     #[test]
     fn parse_keystore_args() {
@@ -481,10 +485,7 @@ mod tests {
 
         let (_, unlocked) = args.keystores().unwrap().unwrap();
         assert_eq!(unlocked.len(), 1);
-        assert_eq!(
-            unlocked[0].address(),
-            Address::from_str("0xec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
-        );
+        assert_eq!(unlocked[0].address(), address!("0xec554aeafe75601aaab43bd4621a22284db566c2"));
     }
 
     // https://github.com/foundry-rs/foundry/issues/5179
