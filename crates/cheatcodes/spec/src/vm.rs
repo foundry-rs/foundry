@@ -25,6 +25,9 @@ interface Vm {
     /// Error thrown by cheatcodes.
     error CheatcodeError(string message);
 
+    /// Error thrown by unemitted events
+    error UnemittedEventError(uint16 positionExpected);
+
     /// A modification applied to either `msg.sender` or `tx.origin`. Returned by `readCallers`.
     enum CallerMode {
         /// No caller modification is currently active.
@@ -2884,6 +2887,7 @@ impl fmt::Display for Vm::VmErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CheatcodeError(err) => err.fmt(f),
+            Self::UnemittedEventError(_) => write!(f, "unmatched event"),
         }
     }
 }
