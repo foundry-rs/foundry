@@ -2,8 +2,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-#[macro_use]
-extern crate tracing;
+// TODO(dani)
+// #[macro_use]
+// extern crate tracing;
+use tracing as _;
 
 pub mod inline_config;
 pub use inline_config::InlineConfig;
@@ -28,7 +30,7 @@ type Result<T> = std::result::Result<T, FormatterError>;
 pub enum FormatterError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error(transparent)]
+    #[error("\n{0}")]
     Parse(#[from] solar_parse::interface::diagnostics::EmittedDiagnostics),
 }
 
@@ -52,30 +54,18 @@ pub fn format_source(source: &str, path: Option<&Path>, config: FormatterConfig)
             .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
         let mut parser = solar_parse::Parser::from_source_file(&sess, &arena, &file);
         let ast = parser.parse_file().map_err(|e| e.emit())?;
-        let comments = Comments::new(sess.source_map(), &file);
+        let comments = Comments::new(&file);
         let inline_config = parse_inline_config(&sess, &comments, source);
-        Ok(format_source_unit(&ast, config, inline_config, comments))
+
+        let mut state = state::State::new(sess.source_map(), config, inline_config, comments);
+        state.print_source_unit(&ast);
+        Ok(state.s.eof())
     });
     sess.emitted_errors().unwrap()?;
     Ok(res.unwrap())
 }
 
-fn format_source_unit(
-    source_unit: &solar_parse::ast::SourceUnit<'_>,
-    config: FormatterConfig,
-    inline_config: InlineConfig,
-    comments: Comments<'_>,
-) -> String {
-    let mut state = state::State::new(config, inline_config, Some(comments));
-    // state.source_unit(source_unit);
-    // state.eof()
-    // TODO(dani)
-    let _ = source_unit;
-    let _ = &mut state;
-    todo!()
-}
-
-fn parse_inline_config(sess: &Session, comments: &Comments<'_>, src: &str) -> InlineConfig {
+fn parse_inline_config(sess: &Session, comments: &Comments, src: &str) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
         let item = comment.lines.first()?.trim_start().strip_prefix("forgefmt:")?.trim();
         let span = comment.span;

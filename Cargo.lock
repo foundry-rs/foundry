@@ -3571,7 +3571,6 @@ dependencies = [
 name = "forge-fmt-2"
 version = "1.1.0"
 dependencies = [
- "alloy-primitives",
  "foundry-config",
  "itertools 0.14.0",
  "similar-asserts",

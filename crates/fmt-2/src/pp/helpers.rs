@@ -2,7 +2,7 @@ use super::Printer;
 use std::borrow::Cow;
 
 impl Printer {
-    pub fn word_space<W: Into<Cow<'static, str>>>(&mut self, w: W) {
+    pub fn word_space(&mut self, w: impl Into<Cow<'static, str>>) {
         self.word(w);
         self.space();
     }
@@ -31,9 +31,9 @@ impl Printer {
         self.word(" ")
     }
 
-    pub fn word_nbsp<S: Into<Cow<'static, str>>>(&mut self, w: S) {
+    pub fn word_nbsp(&mut self, w: impl Into<Cow<'static, str>>) {
         self.word(w);
-        self.nbsp()
+        self.nbsp();
     }
 
     /// Synthesizes a comment that was not textually present in the original

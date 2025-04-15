@@ -5,8 +5,7 @@ use solar_parse::{
     lexer::token::RawTokenKind as TokenKind,
 };
 
-pub struct Comments<'a> {
-    sm: &'a SourceMap,
+pub struct Comments {
     // Stored in reverse order so we can consume them by popping.
     reversed_comments: Vec<Comment>,
 }
@@ -146,11 +145,11 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
     comments
 }
 
-impl<'a> Comments<'a> {
-    pub fn new(sm: &'a SourceMap, sf: &SourceFile) -> Self {
+impl Comments {
+    pub fn new(sf: &SourceFile) -> Self {
         let mut comments = gather_comments(sf);
         comments.reverse();
-        Comments { sm, reversed_comments: comments }
+        Comments { reversed_comments: comments }
     }
 
     pub fn peek(&self) -> Option<&Comment> {
@@ -165,13 +164,18 @@ impl<'a> Comments<'a> {
         self.reversed_comments.iter().rev()
     }
 
-    fn trailing_comment(&mut self, span: Span, next_pos: Option<BytePos>) -> Option<Comment> {
+    pub fn trailing_comment(
+        &mut self,
+        sm: &SourceMap,
+        span: Span,
+        next_pos: Option<BytePos>,
+    ) -> Option<Comment> {
         if let Some(cmnt) = self.peek() {
             if cmnt.style != CommentStyle::Trailing {
                 return None;
             }
-            let span_line = self.sm.lookup_char_pos(span.hi());
-            let comment_line = self.sm.lookup_char_pos(cmnt.pos());
+            let span_line = sm.lookup_char_pos(span.hi());
+            let comment_line = sm.lookup_char_pos(cmnt.pos());
             let next = next_pos.unwrap_or_else(|| cmnt.pos() + BytePos(1));
             if span.hi() < cmnt.pos() && cmnt.pos() < next && span_line.line == comment_line.line {
                 return Some(self.next().unwrap());

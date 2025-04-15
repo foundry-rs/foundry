@@ -23,13 +23,13 @@ const INDENT: isize = 4;
 const MIN_SPACE: isize = 60;
 
 /// How to break. Described in more detail in the module docs.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Breaks {
     Consistent,
     Inconsistent,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum IndentStyle {
     /// Vertically aligned under whatever column this block begins at.
     ///
@@ -45,20 +45,20 @@ enum IndentStyle {
     Block { offset: isize },
 }
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct BreakToken {
     offset: isize,
     blank_space: isize,
     pre_break: Option<char>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct BeginToken {
     indent: IndentStyle,
     breaks: Breaks,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum Token {
     // In practice a string token contains either a `&'static str` or a
     // `String`. `Cow` is overkill for this because we never modify the data,
@@ -69,7 +69,7 @@ pub(crate) enum Token {
     End,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 enum PrintFrame {
     Fits(Breaks),
     Broken(usize, Breaks),
@@ -77,6 +77,7 @@ enum PrintFrame {
 
 const SIZE_INFINITY: isize = 0xffff;
 
+#[derive(Debug)]
 pub struct Printer {
     out: String,
     /// Number of spaces left on line
@@ -105,6 +106,7 @@ pub struct Printer {
     last_printed: Option<Token>,
 }
 
+#[derive(Debug)]
 struct BufEntry {
     token: Token,
     size: isize,
@@ -263,7 +265,7 @@ impl Printer {
     }
 
     fn get_top(&self) -> PrintFrame {
-        *self.print_stack.last().unwrap_or(&PrintFrame::Broken(0, Breaks::Inconsistent))
+        self.print_stack.last().copied().unwrap_or(PrintFrame::Broken(0, Breaks::Inconsistent))
     }
 
     fn print_begin(&mut self, token: BeginToken, size: isize) {

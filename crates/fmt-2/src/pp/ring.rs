@@ -13,6 +13,7 @@ use std::{
 /// Holding a RingBuffer whose view is elements left..right gives the ability to
 /// use Index and IndexMut to access elements i in the infinitely long queue for
 /// which left <= i < right.
+#[derive(Debug)]
 pub(super) struct RingBuffer<T> {
     data: VecDeque<T>,
     // Abstract index of data[0] in the infinitely sized queue.

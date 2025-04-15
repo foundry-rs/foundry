@@ -33,9 +33,13 @@ impl Printer {
         self.scan_end()
     }
 
-    pub fn word<S: Into<Cow<'static, str>>>(&mut self, wrd: S) {
-        let string = wrd.into();
-        self.scan_string(string)
+    pub fn eof(mut self) -> String {
+        self.scan_eof();
+        self.out
+    }
+
+    pub fn word(&mut self, w: impl Into<Cow<'static, str>>) {
+        self.scan_string(w.into())
     }
 
     fn spaces(&mut self, n: usize) {

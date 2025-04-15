@@ -17,7 +17,7 @@ foundry-config.workspace = true
 
 solar-parse.workspace = true
 
-alloy-primitives.workspace = true
+# alloy-primitives.workspace = true
 itertools.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
