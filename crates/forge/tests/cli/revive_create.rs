@@ -284,7 +284,7 @@ Deployed to: [..]
     }
 });
 
-forgetest_async!(can_create_simple_on_localnode, |prj, cmd| {
+forgetest_async!(can_create_simple_on_polkadot_localnode, |prj, cmd| {
     if let Ok(_node) = PolkadotHubNode::start().await {
         create_on_chain(localnode_args(), prj, cmd, setup_with_simple_remapping);
     }
