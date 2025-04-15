@@ -16,7 +16,7 @@ pub struct RawWalletOpts {
     pub interactive: bool,
 
     /// Use the provided private key.
-    #[arg(long, value_name = "RAW_PRIVATE_KEY")]
+    #[arg(long, value_name = "RAW_PRIVATE_KEY", env = "PRIVATE_KEY")]
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrase of mnemonic file at the specified path.
