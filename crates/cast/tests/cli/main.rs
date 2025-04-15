@@ -199,7 +199,7 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
     cmd.cast_fuse()
@@ -500,7 +500,20 @@ casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
 
 "#]]);
 });
+// tests that `cast wallet public-key` correctly derives and outputs the public key
+casttest!(wallet_public_key_with_private_key, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "public-key",
+        "--raw-private-key",
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4
 
+"#]]);
+});
 // tests that `cast wallet private-key` with derivation path outputs the private key
 casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
     cmd.args([
@@ -529,7 +542,7 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
     cmd.cast_fuse()
@@ -585,7 +598,7 @@ casttest!(wallet_change_password, |prj, cmd| {
 
     // Default Anvil private key
     let test_private_key =
-        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key with initial password
     cmd.cast_fuse()
@@ -1676,6 +1689,70 @@ casttest!(block_number_hash, |_prj, cmd| {
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });
 
+// Tests that `cast --disable-block-gas-limit` commands are working correctly for BSC
+// <https://github.com/foundry-rs/foundry/pull/9996>
+// Equivalent transaction on Binance Smart Chain Testnet:
+// <https://testnet.bscscan.com/tx/0x0db4f279fc4d47dca1e6ace180f45f50c5bf12e2b968f210c217f57031e02744>
+casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
+    let bsc_testnet_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChainTestnet);
+
+    let latest_block_json: serde_json::Value = serde_json::from_str(
+        &cmd.args(["block", "--rpc-url", bsc_testnet_rpc_url.as_str(), "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy(),
+    )
+    .expect("Failed to parse latest block");
+
+    let latest_excessive_gas_limit_tx =
+        latest_block_json["transactions"].as_array().and_then(|txs| {
+            txs.iter()
+                .find(|tx| tx.get("gas").and_then(|gas| gas.as_str()) == Some("0x7fffffffffffffff"))
+        });
+
+    match latest_excessive_gas_limit_tx {
+        Some(tx) => {
+            let tx_hash =
+                tx.get("hash").and_then(|h| h.as_str()).expect("Transaction missing hash");
+
+            // If --disable-block-gas-limit is not provided, the transaction should fail as the gas
+            // limit exceeds the block gas limit.
+            cmd.cast_fuse()
+                .args(["run", "-v", tx_hash, "--quick", "--rpc-url", bsc_testnet_rpc_url.as_str()])
+                .assert_failure()
+                .stderr_eq(str![[r#"
+Error: EVM error; transaction validation error: caller gas limit exceeds the block gas limit
+
+"#]]);
+
+            // If --disable-block-gas-limit is provided, the transaction should succeed
+            // despite the gas limit exceeding the block gas limit.
+            cmd.cast_fuse()
+                .args([
+                    "run",
+                    "-v",
+                    tx_hash,
+                    "--quick",
+                    "--rpc-url",
+                    bsc_testnet_rpc_url.as_str(),
+                    "--disable-block-gas-limit",
+                ])
+                .assert_success()
+                .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+        }
+        None => {
+            eprintln!(
+                "Skipping test: No transaction with gas = 0x7fffffffffffffff found in the latest block."
+            );
+        }
+    }
+});
+
 casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
@@ -2102,11 +2179,9 @@ contract CounterInExternalLibScript is Script {
         .tx_hash();
 
     // Cache project selectors.
-    cmd.forge_fuse().set_current_dir(prj.root());
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
     // Assert cast with local artifacts can decode external lib signature.
-    cmd.cast_fuse().set_current_dir(prj.root());
     cmd.cast_fuse()
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
@@ -2159,8 +2234,8 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 
     // send impersonated tx
     let tx = TransactionRequest::default()
-        .with_from(address!("041563c07028Fc89106788185763Fc73028e8511"))
-        .with_to(address!("F38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+        .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
+        .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
         .with_input(
             Bytes::from_str(
                 "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
@@ -2182,7 +2257,7 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 casttest!(fetch_src_blockscout, |_prj, cmd| {
     let url = "https://eth.blockscout.com/api";
 
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
     cmd.args([
         "source",
@@ -2204,7 +2279,7 @@ contract WETH9 {
 });
 
 casttest!(fetch_src_default, |_prj, cmd| {
-    let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     let etherscan_api_key = next_mainnet_etherscan_api_key();
 
     cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])

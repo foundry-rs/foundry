@@ -186,7 +186,7 @@ impl RunArgs {
             trace_mode,
             odyssey,
             create2_deployer,
-        );
+        )?;
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
