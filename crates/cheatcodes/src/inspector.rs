@@ -74,7 +74,7 @@ use std::{
 
 mod utils;
 
-pub type Ecx<'a, 'db, I: InspectorExt = NoOpInspector> = &'a mut FoundryHandler<'db, I>;
+pub type Ecx<'a, 'db> = &'a mut FoundryEvmContext<'db>;
 
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
@@ -140,7 +140,7 @@ pub trait CheatcodesExecutor {
         //     // revm::JournaledState::new(Default::default(), Default::default()),
         // );
 
-        let mut evm = new_evm_with_context(ccx.inner, &mut *inspector);
+        let mut evm = new_evm_with_context(ccx.ecx, &mut *inspector);
 
         // with_evm(self, ccx, |evm| {
         evm.journaled_state.depth += 1;
@@ -734,9 +734,9 @@ impl Cheatcodes {
                     input.set_caller(broadcast.new_origin);
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
 
-                    let account = &ecx.journaled_state.state()[&broadcast.new_origin];
+                    let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.journaled_state.db().active_fork_url(),
+                        rpc: ecx.journaled_state.database.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
                             to: None,
@@ -790,7 +790,6 @@ impl Cheatcodes {
         mut outcome: CreateOutcome,
     ) -> CreateOutcome
 where {
-        let ecx = &mut ecx.inner;
         let curr_depth: u64 =
             ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
 
@@ -1126,7 +1125,7 @@ where {
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
 
                     let account =
-                        ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
+                        ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
 
                     let mut tx_req = TransactionRequest {
                         from: Some(broadcast.new_origin),
@@ -1146,7 +1145,7 @@ where {
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.journaled_state.db().active_fork_url(),
+                        rpc: ecx.journaled_state.database.active_fork_url(),
                         transaction: tx_req.into(),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
@@ -1284,7 +1283,7 @@ where {
     }
 }
 
-impl<'a, 'db, I: InspectorExt> Inspector<&'a mut FoundryHandler<'db, I>> for Cheatcodes {
+impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
     #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
@@ -1389,7 +1388,6 @@ impl<'a, 'db, I: InspectorExt> Inspector<&'a mut FoundryHandler<'db, I>> for Che
     }
 
     fn call_end(&mut self, ecx: Ecx, call: &CallInputs, mut outcome: CallOutcome) -> CallOutcome {
-        let ecx = &mut ecx.inner;
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 

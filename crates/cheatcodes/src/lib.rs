@@ -138,25 +138,19 @@ impl dyn DynCheatcode {
 }
 
 /// The cheatcode context, used in `Cheatcode`.
-pub struct CheatsCtxt<'cheats, 'evm, 'db, I = NoOpInspector>
-where
-    I: InspectorExt,
-{
+pub struct CheatsCtxt<'cheats, 'evm, 'db> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut FoundryHandler<'db, I>,
+    pub(crate) ecx: &'evm mut FoundryEvmContext<'db>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
 
-impl<'db, I> std::ops::Deref for CheatsCtxt<'_, '_, 'db, I>
-where
-    I: InspectorExt,
-{
-    type Target = FoundryHandler<'db, I>;
+impl<'db> std::ops::Deref for CheatsCtxt<'_, '_, 'db> {
+    type Target = FoundryEvmContext<'db>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -174,6 +168,6 @@ impl std::ops::DerefMut for CheatsCtxt<'_, '_, '_> {
 impl CheatsCtxt<'_, '_, '_> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        PrecompileProvider::<FoundryEvmContext<'_>>::contains(&self.ecx.inner.precompiles, address)
+        self.ecx.journaled_state.inner.precompiles.contains(address)
     }
 }

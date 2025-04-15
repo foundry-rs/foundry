@@ -1,7 +1,7 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    inspector::{InnerEcx, RecordDebugStepInfo},
+    inspector::{Ecx, RecordDebugStepInfo},
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*,
 };
@@ -14,7 +14,7 @@ use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
-    AsEnvMut,
+    AsEnvMut, ContextExt,
 };
 use foundry_evm_traces::StackSnapshotType;
 use itertools::Itertools;
@@ -228,12 +228,9 @@ impl Cheatcode for loadAllocsCall {
             }
         };
 
+        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
         // Then, load the allocs into the database.
-        ccx.ecx
-            .inner
-            .journaled_state
-            .database
-            .load_allocs(&allocs, &mut ccx.ecx.inner.journaled_state.inner)
+        db.load_allocs(&allocs, journal)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))
     }
@@ -243,13 +240,10 @@ impl Cheatcode for cloneAccountCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { source, target } = self;
 
-        let account = ccx.ecx.journaled_state.load_account(*source)?;
+        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
+        let account = journal.load_account(db, *source)?;
         let genesis = &genesis_account(account.data);
-        ccx.ecx.journaled_state.database.clone_account(
-            genesis,
-            target,
-            &mut ccx.ecx.journaled_state.inner,
-        )?;
+        db.clone_account(genesis, target, journal)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.journaled_state.database.add_persistent_account(*target);
         Ok(Default::default())
@@ -834,10 +828,11 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        ccx.ecx.journaled_state.database.transact_from_tx(
+        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        db.transact_from_tx(
             &tx.clone().into(),
-            &mut ccx.ecx.as_env_mut(),
-            &mut ccx.ecx.journaled_state.inner,
+            &mut env,
+            journal,
             &mut *executor.get_inspector(ccx.state),
         )?;
 
@@ -939,22 +934,15 @@ pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
 }
 
 fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
-    Ok(ccx
-        .ecx
-        .inner
-        .journaled_state
-        .database
-        .snapshot_state(&mut ccx.ecx.journaled_state.inner, &mut ccx.ecx.as_env_mut())
-        .abi_encode())
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    Ok(db.snapshot_state(journal, &mut env).abi_encode())
 }
 
 fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = if let Some(journaled_state) = ccx.ecx.inner.journaled_state.database.revert_state(
-        snapshot_id,
-        &ccx.journaled_state.inner,
-        &mut ccx.ecx.as_env_mut(),
-        RevertStateSnapshotAction::RevertKeep,
-    ) {
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    let result = if let Some(journaled_state) =
+        db.revert_state(snapshot_id, &*journal, &mut env, RevertStateSnapshotAction::RevertKeep)
+    {
         // we reset the evm's journaled_state to the state of the snapshot previous state
         ccx.ecx.journaled_state.inner = journaled_state;
         true
@@ -965,12 +953,11 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
 }
 
 fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
-    let result = if let Some(journaled_state) = ccx.ecx.journaled_state.database.revert_state(
-        snapshot_id,
-        &ccx.journaled_state.inner,
-        &mut ccx.ecx.as_env_mut(),
-        RevertStateSnapshotAction::RevertRemove,
-    ) {
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+
+    let result = if let Some(journaled_state) =
+        db.revert_state(snapshot_id, &*journal, &mut env, RevertStateSnapshotAction::RevertRemove)
+    {
         // we reset the evm's journaled_state to the state of the snapshot previous state
         ccx.ecx.journaled_state.inner = journaled_state;
         true
@@ -1153,11 +1140,8 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -
 }
 
 /// Ensures the `Account` is loaded and touched.
-pub(super) fn journaled_account<'a>(
-    ecx: InnerEcx<'a, '_, '_>,
-    addr: Address,
-) -> Result<&'a mut Account> {
-    ecx.load_account(addr)?;
+pub(super) fn journaled_account<'a>(ecx: Ecx<'a, '_>, addr: Address) -> Result<&'a mut Account> {
+    ecx.journaled_state.load_account(addr)?;
     ecx.journaled_state.touch(&addr);
     Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))
 }

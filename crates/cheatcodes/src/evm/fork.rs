@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{fork::CreateFork, AsEnvMut};
+use foundry_evm_core::{fork::CreateFork, AsEnvMut, ContextExt};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -68,12 +68,8 @@ impl Cheatcode for rollFork_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blockNumber } = self;
         persist_caller(ccx);
-        ccx.ecx.inner.journaled_state.database.roll_fork(
-            None,
-            (*blockNumber).to(),
-            &mut ccx.ecx.as_env_mut(),
-            &mut ccx.ecx.journaled_state.inner,
-        )?;
+        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        db.roll_fork(None, (*blockNumber).to(), &mut env, journal)?;
         Ok(Default::default())
     }
 }
@@ -82,12 +78,8 @@ impl Cheatcode for rollFork_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { txHash } = self;
         persist_caller(ccx);
-        ccx.ecx.journaled_state.database.roll_fork_to_transaction(
-            None,
-            *txHash,
-            &mut ccx.ecx.as_env_mut(),
-            &mut ccx.ecx.journaled_state.inner,
-        )?;
+        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        db.roll_fork_to_transaction(None, *txHash, &mut env, journal)?;
         Ok(Default::default())
     }
 }
@@ -96,12 +88,8 @@ impl Cheatcode for rollFork_2Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { forkId, blockNumber } = self;
         persist_caller(ccx);
-        ccx.ecx.journaled_state.database.roll_fork(
-            Some(*forkId),
-            (*blockNumber).to(),
-            &mut ccx.ecx.as_env_mut(),
-            &mut ccx.ecx.journaled_state.inner,
-        )?;
+        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        db.roll_fork(Some(*forkId), (*blockNumber).to(), &mut env, journal)?;
         Ok(Default::default())
     }
 }
@@ -110,12 +98,8 @@ impl Cheatcode for rollFork_3Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { forkId, txHash } = self;
         persist_caller(ccx);
-        ccx.ecx.journaled_state.database.roll_fork_to_transaction(
-            Some(*forkId),
-            *txHash,
-            &mut ccx.ecx.as_env_mut(),
-            &mut ccx.ecx.journaled_state.inner,
-        )?;
+        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        db.roll_fork_to_transaction(Some(*forkId), *txHash, &mut env, journal)?;
         Ok(Default::default())
     }
 }
@@ -125,11 +109,8 @@ impl Cheatcode for selectForkCall {
         let Self { forkId } = self;
         persist_caller(ccx);
         check_broadcast(ccx.state)?;
-        ccx.ecx.journaled_state.database.select_fork(
-            *forkId,
-            &mut ccx.ecx.as_env_mut(),
-            &mut ccx.ecx.journaled_state.inner,
-        )?;
+        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        db.select_fork(*forkId, &mut env, journal)?;
         Ok(Default::default())
     }
 }
@@ -290,11 +271,8 @@ fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u6
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let id = ccx.ecx.journaled_state.database.create_select_fork(
-        fork,
-        &mut ccx.ecx.as_env_mut(),
-        &mut ccx.ecx.journaled_state.inner,
-    )?;
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    let id = db.create_select_fork(fork, &mut env, journal)?;
     Ok(id.abi_encode())
 }
 
@@ -314,12 +292,8 @@ fn create_select_fork_at_transaction(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let id = ccx.ecx.inner.journaled_state.database.create_select_fork_at_transaction(
-        fork,
-        &mut ccx.ecx.as_env_mut(),
-        &mut ccx.ecx.journaled_state.inner,
-        *transaction,
-    )?;
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    let id = db.create_select_fork_at_transaction(fork, &mut env, journal, *transaction)?;
     Ok(id.abi_encode())
 }
 
@@ -375,13 +349,8 @@ fn transact(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    ccx.ecx.journaled_state.database.transact(
-        fork_id,
-        transaction,
-        &mut ccx.ecx.as_env_mut(),
-        &mut ccx.ecx.journaled_state.inner,
-        &mut *executor.get_inspector(ccx.state),
-    )?;
+    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+    db.transact(fork_id, transaction, &mut env, journal, &mut *executor.get_inspector(ccx.state))?;
     Ok(Default::default())
 }
 

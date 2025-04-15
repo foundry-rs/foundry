@@ -233,9 +233,9 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        if let Ok(from_account) = ccx.journaled_state.load_account(*from) {
+        if let Ok(from_account) = ccx.ecx.journaled_state.load_account(*from) {
             let from_storage = from_account.storage.clone();
-            if let Ok(mut to_account) = ccx.journaled_state.load_account(*to) {
+            if let Ok(mut to_account) = ccx.ecx.journaled_state.load_account(*to) {
                 to_account.storage = from_storage;
                 if let Some(ref mut arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
