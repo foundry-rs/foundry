@@ -1,3 +1,3 @@
-import {a}from"path.sol";
-// import {a,b,c} from "path.sol";
-// import "a";
+import {a}from"a.sol";
+import {a,b,c} from "a.sol";
+import "a.sol";

@@ -3,7 +3,7 @@ use super::{
     comments::Comments,
     pp::{self, Breaks, Token},
 };
-use crate::{FormatterConfig, InlineConfig};
+use crate::{iter::IterDelimited, FormatterConfig, InlineConfig};
 use foundry_config::fmt as config;
 use itertools::Itertools;
 use solar_parse::{
@@ -13,7 +13,7 @@ use solar_parse::{
 use std::borrow::Cow;
 
 // TODO(dani): config
-const INDENT_UNIT: isize = 4;
+const INDENT: isize = 4;
 
 pub(super) struct State<'a> {
     pub(crate) s: pp::Printer,
@@ -206,7 +206,7 @@ impl<'a> State<'a> {
     fn bclose_maybe_open(&mut self, span: Span, empty: bool, close_box: bool) {
         let has_comment = self.maybe_print_comment(span.hi());
         if !empty || has_comment {
-            self.break_offset_if_not_bol(1, -INDENT_UNIT);
+            self.break_offset_if_not_bol(1, -INDENT);
         }
         self.word("}");
         if close_box {
@@ -257,7 +257,6 @@ impl State<'_> {
         self.hardbreak_if_not_bol();
         self.print_docs(docs);
         self.maybe_print_comment(span.lo());
-        self.cbox(0);
         match kind {
             ast::ItemKind::Pragma(ast::PragmaDirective { tokens }) => {
                 self.word("pragma ");
@@ -279,6 +278,7 @@ impl State<'_> {
                     }
                 }
                 self.word(";");
+                self.hardbreak();
             }
             ast::ItemKind::Import(ast::ImportDirective { path, items }) => {
                 self.word("import ");
@@ -286,27 +286,30 @@ impl State<'_> {
                     ast::ImportItems::Plain(ident) => {
                         self.print_ast_str_lit(path);
                         if let Some(ident) = ident {
-                            self.nbsp();
-                            self.word("as ");
+                            self.word(" as ");
                             self.print_ident(*ident);
                         }
                     }
                     ast::ImportItems::Aliases(aliases) => {
-                        self.bopen();
-                        self.commasep(
-                            Breaks::Consistent,
-                            aliases.iter(),
-                            |this, (ident, alias)| {
-                                this.print_ident(*ident);
-                                if let Some(alias) = alias {
-                                    this.word("as ");
-                                    this.print_ident(*alias);
-                                }
-                            },
-                        );
-                        self.bclose(item.span, aliases.is_empty());
-                        self.nbsp();
-                        self.word("from ");
+                        self.cbox(INDENT);
+                        self.word("{");
+                        self.zerobreak(); // TODO(dani): braces space
+                        for (pos, (ident, alias)) in aliases.iter().delimited() {
+                            self.print_ident(*ident);
+                            if let Some(alias) = alias {
+                                self.word(" as ");
+                                self.print_ident(*alias);
+                            }
+                            if !pos.is_last {
+                                self.word(",");
+                                self.space();
+                            }
+                        }
+                        self.zerobreak(); // TODO(dani): braces space
+                        self.offset(-INDENT);
+                        self.word("}");
+                        self.end();
+                        self.word(" from ");
                         self.print_ast_str_lit(path);
                     }
                     ast::ImportItems::Glob(ident) => {
@@ -317,16 +320,17 @@ impl State<'_> {
                     }
                 }
                 self.word(";");
+                self.hardbreak();
             }
-            ast::ItemKind::Using(using) => todo!("Using"),
-            ast::ItemKind::Contract(contract) => todo!("Contract"),
-            ast::ItemKind::Function(func) => todo!("Function"),
-            ast::ItemKind::Variable(var) => todo!("Variable"),
-            ast::ItemKind::Struct(strukt) => todo!("Struct"),
-            ast::ItemKind::Enum(enumm) => todo!("Enum"),
-            ast::ItemKind::Udvt(udvt) => todo!("Udvt"),
-            ast::ItemKind::Error(error) => todo!("Error"),
-            ast::ItemKind::Event(event) => todo!("Event"),
+            ast::ItemKind::Using(_using) => todo!("Using"),
+            ast::ItemKind::Contract(_contract) => todo!("Contract"),
+            ast::ItemKind::Function(_func) => todo!("Function"),
+            ast::ItemKind::Variable(_var) => todo!("Variable"),
+            ast::ItemKind::Struct(_strukt) => todo!("Struct"),
+            ast::ItemKind::Enum(_enumm) => todo!("Enum"),
+            ast::ItemKind::Udvt(_udvt) => todo!("Udvt"),
+            ast::ItemKind::Error(_error) => todo!("Error"),
+            ast::ItemKind::Event(_event) => todo!("Event"),
         }
     }
 
@@ -353,10 +357,11 @@ impl State<'_> {
     }
 
     fn print_tokens(&mut self, tokens: &[token::Token]) {
-        let s = tokens.iter().map(|t| self.token_to_string(t)).join(" ").to_string();
+        let s = tokens.iter().map(|t| self.token_to_string(t)).join(" ");
         self.word(s);
     }
 
+    #[allow(clippy::single_match)]
     fn token_to_string<'a>(&self, token: &'a token::Token) -> Cow<'a, str> {
         match token.kind {
             token::TokenKind::Literal(kind, sym) => match kind {

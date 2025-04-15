@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![allow(dead_code)] // TODO(dani)
 
 // TODO(dani)
 // #[macro_use]
@@ -16,6 +17,8 @@ mod comments;
 pub use comments::Comments;
 
 mod state;
+
+pub(crate) mod iter;
 
 mod pp;
 

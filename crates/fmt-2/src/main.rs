@@ -1,3 +1,7 @@
+// TODO(dani): tmp for testing
+
+#![allow(dead_code, clippy::disallowed_macros)]
+
 use std::{io::Read, path::PathBuf};
 
 fn main() {

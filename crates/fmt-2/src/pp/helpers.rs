@@ -7,17 +7,9 @@ impl Printer {
         self.space();
     }
 
-    pub fn popen(&mut self) {
-        self.word("(");
-    }
-
-    pub fn pclose(&mut self) {
-        self.word(")");
-    }
-
     pub fn hardbreak_if_not_bol(&mut self) {
         if !self.is_beginning_of_line() {
-            self.hardbreak()
+            self.hardbreak();
         }
     }
 
@@ -28,7 +20,7 @@ impl Printer {
     }
 
     pub fn nbsp(&mut self) {
-        self.word(" ")
+        self.word(" ");
     }
 
     pub fn word_nbsp(&mut self, w: impl Into<Cow<'static, str>>) {
@@ -43,6 +35,6 @@ impl Printer {
         self.space();
         self.word(text);
         self.space();
-        self.word("*/")
+        self.word("*/");
     }
 }

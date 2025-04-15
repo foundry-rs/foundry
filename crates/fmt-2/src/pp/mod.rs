@@ -8,7 +8,7 @@ mod convenience;
 mod helpers;
 mod ring;
 
-const DEBUG: bool = false;
+const DEBUG: bool = true;
 const DEBUG_INDENT: bool = false;
 
 // TODO(dani): config
@@ -23,13 +23,13 @@ const INDENT: isize = 4;
 const MIN_SPACE: isize = 60;
 
 /// How to break. Described in more detail in the module docs.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Breaks {
     Consistent,
     Inconsistent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum IndentStyle {
     /// Vertically aligned under whatever column this block begins at.
     ///
@@ -45,20 +45,22 @@ enum IndentStyle {
     Block { offset: isize },
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct BreakToken {
     offset: isize,
-    blank_space: isize,
+    blank_space: usize,
     pre_break: Option<char>,
+    if_nonempty: bool,
+    never_break: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct BeginToken {
     indent: IndentStyle,
     breaks: Breaks,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub(crate) enum Token {
     // In practice a string token contains either a `&'static str` or a
     // `String`. `Cow` is overkill for this because we never modify the data,
@@ -69,7 +71,7 @@ pub(crate) enum Token {
     End,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 enum PrintFrame {
     Fits(Breaks),
     Broken(usize, Breaks),
@@ -77,7 +79,6 @@ enum PrintFrame {
 
 const SIZE_INFINITY: isize = 0xffff;
 
-#[derive(Debug)]
 pub struct Printer {
     out: String,
     /// Number of spaces left on line
@@ -106,7 +107,6 @@ pub struct Printer {
     last_printed: Option<Token>,
 }
 
-#[derive(Debug)]
 struct BufEntry {
     token: Token,
     size: isize,
@@ -114,7 +114,7 @@ struct BufEntry {
 
 impl Printer {
     pub fn new() -> Self {
-        Printer {
+        Self {
             out: String::new(),
             space: MARGIN,
             buf: RingBuffer::new(),
@@ -129,16 +129,19 @@ impl Printer {
     }
 
     pub(crate) fn last_token(&self) -> Option<&Token> {
-        self.last_token_still_buffered().or_else(|| self.last_printed.as_ref())
+        self.last_token_still_buffered().or(self.last_printed.as_ref())
     }
 
     pub(crate) fn last_token_still_buffered(&self) -> Option<&Token> {
-        self.buf.last().map(|last| &last.token)
+        if self.buf.is_empty() {
+            return None;
+        }
+        Some(&self.buf.last().token)
     }
 
     /// Be very careful with this!
     pub(crate) fn replace_last_token_still_buffered(&mut self, token: Token) {
-        self.buf.last_mut().unwrap().token = token;
+        self.buf.last_mut().token = token;
     }
 
     fn scan_eof(&mut self) {
@@ -162,6 +165,25 @@ impl Printer {
         if self.scan_stack.is_empty() {
             self.print_end();
         } else {
+            if !self.buf.is_empty() {
+                if let Token::Break(break_token) = self.buf.last().token {
+                    if self.buf.len() >= 2 {
+                        if let Token::Begin(_) = self.buf.second_last().token {
+                            self.buf.pop_last();
+                            self.buf.pop_last();
+                            self.scan_stack.pop_back();
+                            self.scan_stack.pop_back();
+                            self.right_total -= break_token.blank_space as isize;
+                            return;
+                        }
+                    }
+                    if break_token.if_nonempty {
+                        self.buf.pop_last();
+                        self.scan_stack.pop_back();
+                        self.right_total -= break_token.blank_space as isize;
+                    }
+                }
+            }
             let right = self.buf.push(BufEntry { token: Token::End, size: -1 });
             self.scan_stack.push_back(right);
         }
@@ -177,7 +199,7 @@ impl Printer {
         }
         let right = self.buf.push(BufEntry { token: Token::Break(token), size: -self.right_total });
         self.scan_stack.push_back(right);
-        self.right_total += token.blank_space;
+        self.right_total += token.blank_space as isize;
     }
 
     fn scan_string(&mut self, string: Cow<'static, str>) {
@@ -191,19 +213,24 @@ impl Printer {
         }
     }
 
+    #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
-        if let Some(BufEntry { token: Token::Break(token), .. }) = self.buf.last_mut() {
-            token.offset += offset;
+        match &mut self.buf.last_mut().token {
+            Token::Break(token) => token.offset += offset,
+            Token::Begin(_) => {}
+            Token::String(_) | Token::End => unreachable!(),
         }
     }
 
     fn check_stream(&mut self) {
         while self.right_total - self.left_total > self.space {
-            if *self.scan_stack.front().unwrap() == self.buf.index_of_first() {
+            if *self.scan_stack.front().unwrap() == self.buf.index_range().start {
                 self.scan_stack.pop_front().unwrap();
-                self.buf.first_mut().unwrap().size = SIZE_INFINITY;
+                self.buf.first_mut().size = SIZE_INFINITY;
             }
+
             self.advance_left();
+
             if self.buf.is_empty() {
                 break;
             }
@@ -211,16 +238,16 @@ impl Printer {
     }
 
     fn advance_left(&mut self) {
-        while self.buf.first().unwrap().size >= 0 {
-            let left = self.buf.pop_first().unwrap();
+        while self.buf.first().size >= 0 {
+            let left = self.buf.pop_first();
 
             match &left.token {
                 Token::String(string) => {
-                    self.left_total += string.len() as isize;
+                    self.left_total += left.size;
                     self.print_string(string);
                 }
                 Token::Break(token) => {
-                    self.left_total += token.blank_space;
+                    self.left_total += token.blank_space as isize;
                     self.print_break(*token, left.size);
                 }
                 Token::Begin(token) => self.print_begin(*token, left.size),
@@ -274,17 +301,16 @@ impl Printer {
                 Breaks::Consistent => '«',
                 Breaks::Inconsistent => '‹',
             });
-            // TODO(dani)
-            /*
             if DEBUG_INDENT {
-                self.out.extend(token.offset.to_string().chars().map(|ch| match ch {
-                    '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
-                        [(ch as u8 - b'0') as usize],
-                    '-' => '₋',
-                    _ => unreachable!(),
-                }));
+                if let IndentStyle::Block { offset } = token.indent {
+                    self.out.extend(offset.to_string().chars().map(|ch| match ch {
+                        '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
+                            [(ch as u8 - b'0') as usize],
+                        '-' => '₋',
+                        _ => unreachable!(),
+                    }));
+                }
             }
-            */
         }
 
         if size > self.space {
@@ -317,22 +343,15 @@ impl Printer {
     }
 
     fn print_break(&mut self, token: BreakToken, size: isize) {
-        let fits = /* token.never_break || */
+        let fits = token.never_break ||
             match self.get_top() {
                 PrintFrame::Fits(..) => true,
                 PrintFrame::Broken(.., Breaks::Consistent) => false,
                 PrintFrame::Broken(.., Breaks::Inconsistent) => size <= self.space,
             };
         if fits {
-            self.pending_indentation += usize::try_from(token.blank_space).unwrap();
+            self.pending_indentation += token.blank_space;
             self.space -= token.blank_space as isize;
-            // TODO(dani)
-            /*
-            if let Some(no_break) = token.no_break {
-                self.out.push(no_break);
-                self.space -= no_break.len_utf8() as isize;
-            }
-            */
             if DEBUG {
                 self.out.push('·');
             }
@@ -349,14 +368,6 @@ impl Printer {
             self.pending_indentation = usize::try_from(indent).unwrap();
             // TODO(dani): config
             self.space = cmp::max(MARGIN - indent, MIN_SPACE);
-            // TODO(dani)
-            /*
-            if !token.post_break.is_empty() {
-                self.print_indent();
-                self.out.push_str(token.post_break);
-                self.space -= token.post_break.len() as isize;
-            }
-            */
         }
     }
 
@@ -368,7 +379,7 @@ impl Printer {
 
     fn print_indent(&mut self) {
         self.out.reserve(self.pending_indentation);
-        self.out.extend(iter::repeat(' ').take(self.pending_indentation));
+        self.out.extend(iter::repeat_n(' ', self.pending_indentation));
         self.pending_indentation = 0;
     }
 }

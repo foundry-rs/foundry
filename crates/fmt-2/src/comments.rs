@@ -149,13 +149,14 @@ impl Comments {
     pub fn new(sf: &SourceFile) -> Self {
         let mut comments = gather_comments(sf);
         comments.reverse();
-        Comments { reversed_comments: comments }
+        Self { reversed_comments: comments }
     }
 
     pub fn peek(&self) -> Option<&Comment> {
         self.reversed_comments.last()
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Comment> {
         self.reversed_comments.pop()
     }

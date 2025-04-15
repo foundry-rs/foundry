@@ -4,17 +4,17 @@ use std::borrow::Cow;
 impl Printer {
     /// "raw box"
     pub fn rbox(&mut self, indent: isize, breaks: Breaks) {
-        self.scan_begin(BeginToken { indent: IndentStyle::Block { offset: indent }, breaks })
+        self.scan_begin(BeginToken { indent: IndentStyle::Block { offset: indent }, breaks });
     }
 
     /// Inconsistent breaking box
     pub fn ibox(&mut self, indent: isize) {
-        self.rbox(indent, Breaks::Inconsistent)
+        self.rbox(indent, Breaks::Inconsistent);
     }
 
     /// Consistent breaking box
     pub fn cbox(&mut self, indent: isize) {
-        self.rbox(indent, Breaks::Consistent)
+        self.rbox(indent, Breaks::Consistent);
     }
 
     pub fn visual_align(&mut self) {
@@ -22,15 +22,11 @@ impl Printer {
     }
 
     pub fn break_offset(&mut self, n: usize, off: isize) {
-        self.scan_break(BreakToken {
-            offset: off,
-            blank_space: n as isize,
-            ..BreakToken::default()
-        });
+        self.scan_break(BreakToken { offset: off, blank_space: n, ..BreakToken::default() });
     }
 
     pub fn end(&mut self) {
-        self.scan_end()
+        self.scan_end();
     }
 
     pub fn eof(mut self) -> String {
@@ -39,23 +35,23 @@ impl Printer {
     }
 
     pub fn word(&mut self, w: impl Into<Cow<'static, str>>) {
-        self.scan_string(w.into())
+        self.scan_string(w.into());
     }
 
     fn spaces(&mut self, n: usize) {
-        self.break_offset(n, 0)
+        self.break_offset(n, 0);
     }
 
     pub fn zerobreak(&mut self) {
-        self.spaces(0)
+        self.spaces(0);
     }
 
     pub fn space(&mut self) {
-        self.spaces(1)
+        self.spaces(1);
     }
 
     pub fn hardbreak(&mut self) {
-        self.spaces(SIZE_INFINITY as usize)
+        self.spaces(SIZE_INFINITY as usize);
     }
 
     pub fn is_beginning_of_line(&self) -> bool {
@@ -66,19 +62,49 @@ impl Printer {
     }
 
     pub(crate) fn hardbreak_tok_offset(offset: isize) -> Token {
-        Token::Break(BreakToken { offset, blank_space: SIZE_INFINITY, ..BreakToken::default() })
+        Token::Break(BreakToken {
+            offset,
+            blank_space: SIZE_INFINITY as usize,
+            ..BreakToken::default()
+        })
     }
 
-    pub fn trailing_comma(&mut self) {
-        self.scan_break(BreakToken { pre_break: Some(','), ..BreakToken::default() });
+    pub fn space_if_nonempty(&mut self) {
+        self.scan_break(BreakToken { blank_space: 1, if_nonempty: true, ..BreakToken::default() });
     }
 
-    pub fn trailing_comma_or_space(&mut self) {
+    pub fn hardbreak_if_nonempty(&mut self) {
         self.scan_break(BreakToken {
-            blank_space: 1,
-            pre_break: Some(','),
+            blank_space: SIZE_INFINITY as usize,
+            if_nonempty: true,
             ..BreakToken::default()
         });
+    }
+
+    pub fn trailing_comma(&mut self, is_last: bool) {
+        if is_last {
+            self.scan_break(BreakToken { pre_break: Some(','), ..BreakToken::default() });
+        } else {
+            self.word(",");
+            self.space();
+        }
+    }
+
+    pub fn trailing_comma_or_space(&mut self, is_last: bool) {
+        if is_last {
+            self.scan_break(BreakToken {
+                blank_space: 1,
+                pre_break: Some(','),
+                ..BreakToken::default()
+            });
+        } else {
+            self.word(",");
+            self.space();
+        }
+    }
+
+    pub fn neverbreak(&mut self) {
+        self.scan_break(BreakToken { never_break: true, ..BreakToken::default() });
     }
 }
 

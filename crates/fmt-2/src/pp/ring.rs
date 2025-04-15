@@ -1,68 +1,69 @@
 use std::{
     collections::VecDeque,
-    ops::{Index, IndexMut},
+    ops::{Index, IndexMut, Range},
 };
 
-/// A view onto a finite range of an infinitely long sequence of T.
-///
-/// The Ts are indexed 0..infinity. A RingBuffer begins as a view of elements
-/// 0..0 (i.e. nothing). The user of the RingBuffer advances its left and right
-/// position independently, although only in the positive direction, and only
-/// with left <= right at all times.
-///
-/// Holding a RingBuffer whose view is elements left..right gives the ability to
-/// use Index and IndexMut to access elements i in the infinitely long queue for
-/// which left <= i < right.
 #[derive(Debug)]
-pub(super) struct RingBuffer<T> {
+pub struct RingBuffer<T> {
     data: VecDeque<T>,
     // Abstract index of data[0] in the infinitely sized queue.
     offset: usize,
 }
 
 impl<T> RingBuffer<T> {
-    pub(super) fn new() -> Self {
-        RingBuffer { data: VecDeque::new(), offset: 0 }
+    pub fn new() -> Self {
+        Self { data: VecDeque::new(), offset: 0 }
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    pub(super) fn push(&mut self, value: T) -> usize {
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn push(&mut self, value: T) -> usize {
         let index = self.offset + self.data.len();
         self.data.push_back(value);
         index
     }
 
-    pub(super) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.data.clear();
     }
 
-    pub(super) fn index_of_first(&self) -> usize {
-        self.offset
+    pub fn index_range(&self) -> Range<usize> {
+        self.offset..self.offset + self.data.len()
     }
 
-    pub(super) fn first(&self) -> Option<&T> {
-        self.data.front()
+    pub fn first(&self) -> &T {
+        &self.data[0]
     }
 
-    pub(super) fn first_mut(&mut self) -> Option<&mut T> {
-        self.data.front_mut()
+    pub fn first_mut(&mut self) -> &mut T {
+        &mut self.data[0]
     }
 
-    pub(super) fn pop_first(&mut self) -> Option<T> {
-        let first = self.data.pop_front()?;
+    pub fn pop_first(&mut self) -> T {
         self.offset += 1;
-        Some(first)
+        self.data.pop_front().unwrap()
     }
 
-    pub(super) fn last(&self) -> Option<&T> {
-        self.data.back()
+    pub fn last(&self) -> &T {
+        self.data.back().unwrap()
     }
 
-    pub(super) fn last_mut(&mut self) -> Option<&mut T> {
-        self.data.back_mut()
+    pub fn last_mut(&mut self) -> &mut T {
+        self.data.back_mut().unwrap()
+    }
+
+    pub fn second_last(&self) -> &T {
+        &self.data[self.data.len() - 2]
+    }
+
+    pub fn pop_last(&mut self) {
+        self.data.pop_back().unwrap();
     }
 }
 
