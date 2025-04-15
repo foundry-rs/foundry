@@ -64,7 +64,7 @@ serde.workspace = true
 aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # gcp-kms
-gcloud-sdk = { version = "0.27", default-features = false, optional = true }
+gcloud-sdk = { version = "0.26.4", default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
