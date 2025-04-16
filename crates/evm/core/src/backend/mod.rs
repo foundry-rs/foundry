@@ -777,7 +777,7 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, &env.as_env_mut(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(self, &mut env.as_env_mut(), inspector);
 
         let res = evm.replay().wrap_err("EVM error")?;
 
@@ -1300,7 +1300,7 @@ impl DatabaseExt for Backend {
             let mut env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, &env.as_env_mut(), inspector);
+            let mut evm = new_evm_with_inspector(&mut db, &mut env.as_env_mut(), inspector);
             evm.data.ctx.journaled_state.depth = journaled_state.depth + 1;
             evm.replay().wrap_err("EVM error")?
         };

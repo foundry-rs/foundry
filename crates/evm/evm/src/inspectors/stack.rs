@@ -43,7 +43,7 @@ pub struct InspectorStackBuilder {
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
     /// in the execution environment.
-    pub gas_price: Option<U256>,
+    pub gas_price: Option<u128>,
     /// The cheatcodes config.
     pub cheatcodes: Option<Arc<CheatsConfig>>,
     /// The fuzzer inspector and its state, if it exists.
@@ -86,7 +86,7 @@ impl InspectorStackBuilder {
 
     /// Set the gas price.
     #[inline]
-    pub fn gas_price(mut self, gas_price: U256) -> Self {
+    pub fn gas_price(mut self, gas_price: u128) -> Self {
         self.gas_price = Some(gas_price);
         self
     }
@@ -374,7 +374,7 @@ impl InspectorStack {
 
     /// Sets the gas price for the relevant inspectors.
     #[inline]
-    pub fn set_gas_price(&mut self, gas_price: U256) {
+    pub fn set_gas_price(&mut self, gas_price: u128) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.gas_price = Some(gas_price);
         }
@@ -505,7 +505,7 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmCtx,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
-    ) -> CallOutcome {
+    ) -> &mut CallOutcome {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
@@ -530,7 +530,7 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmCtx,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) -> &mut CreateOutcome {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
@@ -555,7 +555,7 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmCtx,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) -> &mut CreateOutcome {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]

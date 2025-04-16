@@ -360,32 +360,37 @@ fn deploy_code(
     value: Option<U256>,
     salt: Option<U256>,
 ) -> Result {
-    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-    if let Some(args) = constructor_args {
-        bytecode.extend_from_slice(args);
-    }
+    // TODO: implement exec_create
 
-    let scheme =
-        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
+    // let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    // if let Some(args) = constructor_args {
+    //     bytecode.extend_from_slice(args);
+    // }
 
-    let outcome = executor.exec_create(
-        CreateInputs {
-            caller: ccx.caller,
-            scheme,
-            value: value.unwrap_or(U256::ZERO),
-            init_code: bytecode.into(),
-            gas_limit: ccx.gas_limit,
-        },
-        ccx,
-    )?;
+    // let scheme =
+    //     if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create
+    // };
 
-    if !outcome.result.result.is_ok() {
-        return Err(crate::Error::from(outcome.result.output))
-    }
+    // let outcome = executor.exec_create(
+    //     CreateInputs {
+    //         caller: ccx.caller,
+    //         scheme,
+    //         value: value.unwrap_or(U256::ZERO),
+    //         init_code: bytecode.into(),
+    //         gas_limit: ccx.gas_limit,
+    //     },
+    //     ccx,
+    // )?;
 
-    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+    // if !outcome.result.result.is_ok() {
+    //     return Err(crate::Error::from(outcome.result.output))
+    // }
 
-    Ok(address.abi_encode())
+    // let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+    // Ok(address.abi_encode())
+
+    Ok(Default::default())
 }
 
 /// Returns the path to the json artifact depending on the input

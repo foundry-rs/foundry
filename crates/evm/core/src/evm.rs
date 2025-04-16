@@ -10,6 +10,7 @@ use crate::{
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, U256};
 use revm::{
+    bytecode::EOF_MAGIC_BYTES,
     context::{
         result::{EVMError, HaltReason},
         ContextTr, CreateScheme, Evm, EvmData, JournalTr,
@@ -22,10 +23,10 @@ use revm::{
     inspector::InspectorHandler,
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
-        CreateInputs, CreateOutcome, FrameInput, Gas, Host, InputsImpl, InstructionResult,
-        InterpreterResult, EMPTY_SHARED_MEMORY,
+        CreateInputs, CreateOutcome, EOFCreateInputs, EOFCreateKind, FrameInput, Gas, Host,
+        InputsImpl, InstructionResult, InterpreterResult, EMPTY_SHARED_MEMORY,
     },
-    primitives::{HashMap, KECCAK_EMPTY},
+    primitives::{hardfork::SpecId, HashMap, KECCAK_EMPTY},
     Database, Journal,
 };
 
@@ -147,14 +148,31 @@ where
         evm: &mut Self::Evm,
         frame_input: <Self::Frame as Frame>::FrameInit,
     ) -> Result<FrameOrResult<Self::Frame>, Self::Error> {
+        if self.inner.cfg.spec.is_enabled_in(SpecId::OSAKA) {
+            if let FrameInput::Create(inputs) = &frame_input {
+                if inputs.scheme == CreateScheme::Create &&
+                    inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+                {
+                    let frame_input = FrameInput::EOFCreate(Box::new(EOFCreateInputs::new(
+                        inputs.caller,
+                        inputs.value,
+                        inputs.gas_limit,
+                        EOFCreateKind::Tx { initdata: inputs.init_code.clone() },
+                    )));
+
+                    return Self::Frame::init_first(evm, frame_input);
+                }
+            }
+        }
+
         if self.is_enabled(Features::Create2Factory) {
             if let FrameInput::Create(inputs) = &frame_input {
-                // Early return if we are not using CREATE2.
+                // Early continue if we are not using CREATE2.
                 let CreateScheme::Create2 { salt } = inputs.scheme else {
                     return Self::Frame::init_first(evm, frame_input);
                 };
 
-                // Early return if we should not use the CREATE2 factory.
+                // Early continue if we should not use the CREATE2 factory.
                 if !self.inspector().should_use_create2_factory(evm.ctx(), inputs) {
                     return Self::Frame::init_first(evm, frame_input);
                 }

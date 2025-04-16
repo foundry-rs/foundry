@@ -89,7 +89,7 @@ pub struct Executor {
     // so the performance difference should be negligible.
     backend: Backend,
     /// The EVM environment.
-    env: EnvWithHandlerCfg,
+    env: Env,
     /// The Revm inspector stack.
     inspector: InspectorStack,
     /// The gas limit for calls and deployments.

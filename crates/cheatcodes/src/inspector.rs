@@ -34,10 +34,10 @@ use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_handler_with_inspector, FoundryEvmContext},
-    AsEnvMut, ContextExt, Env, InspectorExt,
+    evm::FoundryEvmContext,
+    InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
@@ -47,13 +47,14 @@ use rand::Rng;
 use revm::{
     self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{BlockEnv, JournalInner, JournalTr},
+    context::{result::ResultAndState, BlockEnv, JournalInner, JournalTr},
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
-    handler::Handler,
+    handler::{Handler, ItemOrResult},
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs, Gas,
-        Host, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        Host, InitialAndFloorGas, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult,
     },
     primitives::hardfork::SpecId,
     state::EvmStorageSlot,
@@ -83,71 +84,6 @@ pub trait CheatcodesExecutor {
     /// Core trait method accepting mutable reference to [Cheatcodes] and returning
     /// [revm::Inspector].
     fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
-
-    /// Obtains [revm::Evm] instance and executes the given CREATE frame.
-    fn exec_create(
-        &mut self,
-        inputs: CreateInputs,
-        ccx: &mut CheatsCtxt,
-    ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
-        let mut inspector = self.get_inspector(ccx.state);
-        std::mem::replace(&mut ccx.ecx.error, Ok(()));
-
-        let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
-        std::mem::replace(journal, JournalInner::new());
-
-        let mut handler = new_handler_with_inspector(
-            db,
-            &Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone()).as_env_mut(),
-            &mut *inspector,
-        );
-
-        handler.journaled_state.depth += 1;
-
-        // Handle EOF bytecode
-        let first_frame_or_result = if handler.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
-            inputs.scheme == CreateScheme::Create &&
-            inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
-        {
-            // handler
-            //     .execution(&mut handler.inner, &InitialAndFloorGas { initial_gas: 0, floor_gas: 0
-            // })
-
-            //     handler.execution().eofcreate(
-            //         &mut evm.context,
-            //         &mut EOFCreateInputs::new(
-            //             inputs.caller,
-            //             inputs.value,
-            //             inputs.gas_limit,
-            //             EOFCreateKind::Tx { initdata: inputs.init_code },
-            //         ),
-            //     )?
-        } else {
-            // handler.execution().create(&mut evm.context, inputs)?
-        };
-
-        // let mut result = match first_frame_or_result {
-        //     FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
-        //     FrameOrResult::Result(result) => result,
-        // };
-
-        // evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
-
-        // let outcome = match result {
-        //     FrameResult::Call(_) => unreachable!(),
-        //     FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
-        // };
-
-        handler.journaled_state.depth -= 1;
-
-        ccx.ecx.journaled_state.inner = handler.inner.journaled_state.inner;
-        ccx.ecx.block = handler.inner.block;
-        ccx.ecx.cfg = handler.inner.cfg;
-        ccx.ecx.tx = handler.inner.tx;
-        ccx.ecx.error = handler.inner.error;
-
-        Ok(outcome)
-    }
 
     fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
         self.get_inspector(ccx.state).console_log(msg);
@@ -380,7 +316,7 @@ pub struct Cheatcodes {
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
     /// in the execution environment.
-    pub gas_price: Option<U256>,
+    pub gas_price: Option<u128>,
 
     /// Address labels
     pub labels: AddressHashMap<String>,
@@ -1255,7 +1191,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
             ecx.block = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            ecx.tx.gas_price = gas_price.saturating_to();
+            ecx.tx.gas_price = gas_price;
         }
 
         // Record gas for current frame.
