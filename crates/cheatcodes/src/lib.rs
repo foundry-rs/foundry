@@ -16,18 +16,14 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::Address;
-use foundry_evm_core::{
-    backend::DatabaseExt,
-    evm::{FoundryEvmContext, FoundryHandler},
-    InspectorExt,
-};
-use revm::{handler::PrecompileProvider, inspector::NoOpInspector};
+use foundry_evm_core::{backend::DatabaseExt, evm::FoundryEvmContext};
+
 use spec::Status;
 
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
-    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor, Context,
+    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
 };
 pub use spec::{CheatcodeDef, Vm};
 pub use Vm::ForgeContext;

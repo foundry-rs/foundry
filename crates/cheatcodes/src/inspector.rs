@@ -36,7 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_context, FoundryEvmContext, FoundryHandler},
+    evm::{new_evm_with_context, FoundryEvmContext},
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -50,12 +50,11 @@ use revm::{
     context::{BlockEnv, JournalTr},
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
     handler::{FrameOrResult, FrameResult},
-    inspector::NoOpInspector,
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
-        CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        EOFCreateInputs, EOFCreateKind, Gas, Host, InstructionResult, Interpreter,
-        InterpreterAction, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        EOFCreateKind, Gas, Host, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult,
     },
     primitives::hardfork::SpecId,
     state::EvmStorageSlot,
@@ -189,6 +188,45 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
         None
     }
+}
+
+/// Constructs [revm::Evm] and runs a given closure with it.
+fn with_evm<E, F, O>(
+    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    f: F,
+) -> Result<O, EVMError<DatabaseError>>
+where
+    E: CheatcodesExecutor + ?Sized,
+    F: for<'a, 'b> FnOnce(
+        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
+    ) -> Result<O, EVMError<DatabaseError>>,
+{
+    let mut inspector = executor.get_inspector(ccx.state);
+    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+    let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
+
+    let inner = revm::InnerEvmContext {
+        env: ccx.ecx.env.clone(),
+        journaled_state: std::mem::replace(
+            &mut ccx.ecx.journaled_state,
+            revm::JournaledState::new(Default::default(), Default::default()),
+        ),
+        db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
+        error,
+        l1_block_info,
+    };
+
+    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
+
+    let res = f(&mut evm)?;
+
+    ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
+    ccx.ecx.env = evm.context.evm.inner.env;
+    ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+    ccx.ecx.error = evm.context.evm.inner.error;
+
+    Ok(res)
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
@@ -787,9 +825,8 @@ impl Cheatcodes {
         &mut self,
         ecx: Ecx,
         call: Option<&CreateInputs>,
-        mut outcome: CreateOutcome,
-    ) -> CreateOutcome
-where {
+        outcome: &mut CreateOutcome,
+    ) {
         let curr_depth: u64 =
             ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
 
@@ -841,12 +878,10 @@ where {
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
-                        outcome
                     }
                     Err(err) => {
                         outcome.result.result = InstructionResult::Revert;
                         outcome.result.output = err.abi_encode().into();
-                        outcome
                     }
                 };
             }
@@ -929,8 +964,6 @@ where {
                 }
             }
         }
-
-        outcome
     }
 
     pub fn call_with_executor(
@@ -1368,9 +1401,9 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
         if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, log, interpreter);
+            expect::handle_expect_emit(self, &log, interpreter);
         }
 
         // `recordLogs`
@@ -1387,7 +1420,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
-    fn call_end(&mut self, ecx: Ecx, call: &CallInputs, mut outcome: CallOutcome) -> CallOutcome {
+    fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1448,7 +1481,6 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                         // to reject this run
                         Ok(_) => {
                             outcome.result.output = Error::from(MAGIC_ASSUME).abi_encode().into();
-                            outcome
                         }
                         // if result is Error, it was an unanticipated revert; should revert
                         // normally
@@ -1456,13 +1488,11 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                             trace!(expected=?assume_no_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;
                             outcome.result.output = error.abi_encode().into();
-                            outcome
                         }
                     }
                 } else {
                     // Call didn't revert, reset `assume_no_revert` state.
                     self.assume_no_revert = None;
-                    return outcome;
                 }
             }
         }
@@ -1509,7 +1539,6 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
                             outcome.result.result = InstructionResult::Revert;
                             outcome.result.output = error.abi_encode().into();
-                            outcome
                         }
                         Ok((_, retdata)) => {
                             expected_revert.actual_count += 1;
@@ -1518,7 +1547,6 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
-                            outcome
                         }
                     };
                 }
@@ -1536,7 +1564,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
         // invocations
         if cheatcode_call {
-            return outcome;
+            return;
         }
 
         // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
@@ -1651,7 +1679,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
             if self.expected_emits.iter().any(|(expected, _)| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
-                return outcome;
+                return;
             }
 
             if !expected_counts.is_empty() {
@@ -1666,7 +1694,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
 
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
-                return outcome;
+                return;
             }
 
             // All emits were found, we're good.
@@ -1684,7 +1712,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
         if outcome.result.is_revert() {
             if let Some(err) = diag {
                 outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-                return outcome;
+                return;
             }
         }
 
@@ -1709,7 +1737,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
             // earlier error that happened first with unrelated information about
             // another error when using cheatcodes.
             if outcome.result.is_revert() {
-                return outcome;
+                return;
             }
 
             // If there's not a revert, we can continue on to run the last logic for expect*
@@ -1759,7 +1787,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                         outcome.result.result = InstructionResult::Revert;
                         outcome.result.output = Error::encode(msg);
 
-                        return outcome;
+                        return;
                     }
                 }
             }
@@ -1778,7 +1806,7 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                 };
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
-                return outcome;
+                return;
             }
 
             // Check for leftover expected creates
@@ -1791,23 +1819,16 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                 );
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
-                return outcome;
+                return;
             }
         }
-
-        outcome
     }
 
     fn create(&mut self, ecx: Ecx, call: &mut CreateInputs) -> Option<CreateOutcome> {
         self.create_common(ecx, call)
     }
 
-    fn create_end(
-        &mut self,
-        ecx: Ecx,
-        call: &CreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+    fn create_end(&mut self, ecx: Ecx, call: &CreateInputs, outcome: &mut CreateOutcome) {
         self.create_end_common(ecx, Some(call), outcome)
     }
 
@@ -1815,18 +1836,13 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
         self.create_common(ecx, call)
     }
 
-    fn eofcreate_end(
-        &mut self,
-        ecx: Ecx,
-        _call: &EOFCreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+    fn eofcreate_end(&mut self, ecx: Ecx, _call: &EOFCreateInputs, outcome: &mut CreateOutcome) {
         self.create_end_common(ecx, None, outcome)
     }
 }
 
 impl InspectorExt for Cheatcodes {
-    fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &mut CreateInputs) -> bool {
+    fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
             let depth: u64 =
                 ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
