@@ -245,6 +245,7 @@ fn trimmed_hex(s: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_trimmed_hex() {
         assert_eq!(trimmed_hex(&hex::decode("1234567890").unwrap()), "1234567890");
@@ -252,5 +253,36 @@ mod tests {
             trimmed_hex(&hex::decode("492077697368207275737420737570706F72746564206869676865722D6B696E646564207479706573").unwrap()),
             "49207769736820727573742073757070…6865722d6b696e646564207479706573 (41 bytes)"
         );
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/10162
+    #[test]
+    fn partial_decode() {
+        /*
+        error ValidationFailed(bytes);
+        error InvalidNonce();
+        */
+        let mut decoder = RevertDecoder::default();
+        decoder.push_error("ValidationFailed(bytes)".parse().unwrap());
+
+        /*
+        abi.encodeWithSelector(ValidationFailed.selector, InvalidNonce.selector)
+        */
+        let data = &hex!(
+            "0xe17594de"
+            "756688fe00000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x)");
+
+        /*
+        abi.encodeWithSelector(ValidationFailed.selector, abi.encodeWithSelector(InvalidNonce.selector))
+        */
+        let data = &hex!(
+            "0xe17594de"
+            "0000000000000000000000000000000000000000000000000000000000000020"
+            "0000000000000000000000000000000000000000000000000000000000000004"
+            "756688fe00000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
     }
 }
