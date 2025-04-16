@@ -789,6 +789,16 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
             ],
             |inspector| inspector.step(interpreter, ecx),
         );
+
+        // Check for address(this) usage in the main script contract, but ignore if it's within a DELEGATECALL context
+        if let Some(script_addr) = self.inner.script_address {
+            if interpreter.current_opcode() == opcode::ADDRESS &&
+               interpreter.contract.address == script_addr &&
+               interpreter.call_context().scheme != CallScheme::DelegateCall
+            {
+                tracing::warn!(target: "forge::script", script_address=%script_addr, "Usage of `address(this)` detected directly in script contract. Script contracts are ephemeral and their addresses should not be relied upon.");
+            }
+        }
     }
 
     fn step_end(
