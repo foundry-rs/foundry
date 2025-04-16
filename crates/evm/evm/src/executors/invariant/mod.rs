@@ -55,6 +55,8 @@ mod shrink;
 use crate::executors::{EvmError, FuzzTestTimer};
 pub use shrink::check_sequence;
 
+use libafl_bolts::simd::{covmap_is_interesting_simd, vector::u8x32, SimdOrReducer};
+
 sol! {
     interface IInvariantTest {
         #[derive(Default)]
@@ -509,44 +511,14 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
-                // Cribbed from https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L20
                 if let Some(ref mut x) = call_result.edge_coverage {
                     if !x.is_empty() {
-                        let mut new_coverage = false;
-
-                        // Iterate over the current map and the history map together and update
-                        // the history map, if we discover some new coverage, report true
-                        x.iter_mut()
-                            // Use zip to add history map to the iterator, now we get tuple back
-                            .zip(self.history_map.iter_mut())
-                            // For the tuple pair
-                            .for_each(|(curr, hist)| {
-                                // If we got a hitcount of at least 1
-                                if *curr > 0 {
-                                    // Convert hitcount into bucket count
-                                    // Convert hitcount into bucket count
-                                    let bucket = match *curr {
-                                        0 => 0,
-                                        1 => 1,
-                                        2 => 2,
-                                        3 => 4,
-                                        4..=7 => 8,
-                                        8..=15 => 16,
-                                        16..=31 => 32,
-                                        32..=127 => 64,
-                                        128..=255 => 128,
-                                    };
-
-                                    // If the old record for this edge pair is lower, update
-                                    if *hist < bucket {
-                                        *hist = bucket;
-                                        new_coverage = true;
-                                    }
-
-                                    // Zero out the current map for next fuzzing iteration
-                                    *curr = 0;
-                                }
-                            });
+                        // AFL-style novelty detection https://github.com/AFLplusplus/LibAFL/blob/a198b33096c0b79fea83162cbace5876915957bb/libafl/src/feedbacks/map.rs#L40-L41
+                        let (new_coverage, _) = covmap_is_interesting_simd::<SimdOrReducer, u8x32>(
+                            &self.history_map,
+                            x.as_slice(),
+                            false,
+                        );
 
                         if !discarded && new_coverage {
                             // TODO save at very end
@@ -648,7 +620,7 @@ impl<'a> InvariantExecutor<'a> {
                 let generate_new = self.runner.rng().gen_ratio(1, 10);
                 // Initial sequence's length is less than depth
                 let must_generate =
-                    (current_run.depth as usize > initial_seq.len().saturating_sub(1));
+                    current_run.depth as usize > initial_seq.len().saturating_sub(1);
 
                 if discarded || must_generate || generate_new {
                     // Generates the next call from the run using the recently updated dictionary
@@ -870,7 +842,7 @@ impl<'a> InvariantExecutor<'a> {
                     .abi
                     .functions()
                     .find(|func| func.selector().as_slice() == selector.as_slice())
-                    .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
+                    .context(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
             return Ok(artifact.identifier());
