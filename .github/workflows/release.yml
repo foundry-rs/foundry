@@ -5,6 +5,7 @@ on:
     tags:
       - "stable"
       - "rc"
+      - "rc-*"
       - "v*.*.*"
   schedule:
     - cron: "0 6 * * *"
