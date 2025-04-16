@@ -2656,17 +2656,22 @@ impl EthApi {
             }
         }
 
-        self.backend
-            .with_database_at(Some(block_request), |mut state, block| {
-                if let Some(overrides) = overrides {
-                    state = Box::new(state::apply_state_override(
-                        overrides.into_iter().collect(),
-                        state,
-                    )?);
-                }
-                self.do_estimate_gas_with_state(request, &state, block)
-            })
-            .await?
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            this.backend
+                .with_database_at(Some(block_request), |mut state, block| {
+                    if let Some(overrides) = overrides {
+                        state = Box::new(state::apply_state_override(
+                            overrides.into_iter().collect(),
+                            state,
+                        )?);
+                    }
+                    this.do_estimate_gas_with_state(request, &state, block)
+                })
+                .await?
+        })
+        .await
     }
 
     /// Estimates the gas usage of the `request` with the state.
