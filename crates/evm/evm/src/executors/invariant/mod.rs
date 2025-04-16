@@ -306,13 +306,14 @@ pub struct InvariantExecutor<'a> {
 }
 const COVERAGE_MAP_SIZE: usize = 65536;
 
-pub struct Corpus {
+pub struct TxCorpusManager {
     pub corpus_dir: Option<PathBuf>,
-    pub corpus: Vec<Vec<BasicTxDetails>>,
+    pub in_memory_corpus: Vec<Vec<BasicTxDetails>>, /* TODO need some sort of corpus management
+                                                     * (limit memory usage and flush). */
     pub tx_generator: BoxedStrategy<BasicTxDetails>,
 }
 
-impl Corpus {
+impl TxCorpusManager {
     pub fn new(corpus_dir: PathBuf, tx_generator: BoxedStrategy<BasicTxDetails>) -> Self {
         // assert!(corpus_dir.is_dir());
         let mut corpus = vec![];
@@ -326,7 +327,7 @@ impl Corpus {
                 }
             }
         }
-        Self { corpus_dir: Some(corpus_dir), corpus, tx_generator }
+        Self { corpus_dir: Some(corpus_dir), in_memory_corpus: corpus, tx_generator }
     }
 
     // pub fn save(&self) -> Result<()> { TODO order or key by timestamp?
@@ -338,17 +339,17 @@ impl Corpus {
     // }
 
     pub fn insert(&mut self, tx_seq: Vec<BasicTxDetails>) {
-        self.corpus.push(tx_seq);
+        self.in_memory_corpus.push(tx_seq);
     }
 
     pub fn new_sequence(&self, test_runnner: &mut TestRunner) -> Vec<BasicTxDetails> {
         let rng = test_runnner.rng();
 
-        if self.corpus.len() > 1 {
-            let idx1 = rng.gen_range(0..self.corpus.len());
-            let idx2 = rng.gen_range(0..self.corpus.len());
-            let one = &self.corpus[idx1];
-            let two = &self.corpus[idx2];
+        if self.in_memory_corpus.len() > 1 {
+            let idx1 = rng.gen_range(0..self.in_memory_corpus.len());
+            let idx2 = rng.gen_range(0..self.in_memory_corpus.len());
+            let one = &self.in_memory_corpus[idx1];
+            let two = &self.in_memory_corpus[idx2];
             let mut new_seq = vec![];
             // TODO rounds of mutations on elements?
             match rng.gen_range(0..3) {
@@ -443,19 +444,32 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
+        let generator = invariant_strategy.boxed();
         if let Some(corpus_dir) = &self.config.corpus_dir {
             if !corpus_dir.is_dir() {
                 foundry_common::fs::create_dir_all(corpus_dir)?;
             }
-        } else {
-            // TOOD rerun corpus
+            // TOOD rerun corpus and initialize history map
+            // let mut corpus =
+            //     TxCorpusManager::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
+
+            // for tx_seq in corpus.in_memory_corpus.iter() {
+            //     if tx_seq.is_empty() {
+            //         continue;
+            //     }
+            //     let mut current_run = InvariantTestRun::new(
+            //         tx_seq[0].clone(),
+            //         // Before each run, we must reset the backend state.
+            //         self.executor.clone(),
+            //         self.config.depth as usize,
+            //     );
+            //     for tx in tx_seq[1..].iter() {
+
+            //     }
+            // }
         }
-
-        let generator = invariant_strategy.boxed();
-
-        // TODO check for none
-        let mut corpus: Corpus =
-            Corpus::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
+        let mut corpus =
+            TxCorpusManager::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
 
         // Start timer for this invariant test.
         let timer = FuzzTestTimer::new(self.config.timeout);
@@ -517,7 +531,7 @@ impl<'a> InvariantExecutor<'a> {
                         let (new_coverage, _) = covmap_is_interesting_simd::<SimdOrReducer, u8x32>(
                             &self.history_map,
                             x.as_slice(),
-                            false,
+                            false, // TODO this metadata could be used in a scheduler
                         );
 
                         if !discarded && new_coverage {
