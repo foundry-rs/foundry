@@ -137,7 +137,7 @@ pub fn parse_ether_value(value: &str) -> Result<U256> {
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
-            .wrap_err("Could not parse ether value from string")?
+            .context("Could not parse ether value from string")?
             .0
     })
 }

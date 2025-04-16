@@ -274,7 +274,7 @@ pub struct EnvArgs {
 impl EvmArgs {
     /// Ensures that fork url exists and returns its reference.
     pub fn ensure_fork_url(&self) -> eyre::Result<&String> {
-        self.fork_url.as_ref().wrap_err("Missing `--fork-url` field.")
+        self.fork_url.as_ref().context("Missing `--fork-url` field.")
     }
 }
 

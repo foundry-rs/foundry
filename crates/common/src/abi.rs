@@ -123,7 +123,7 @@ pub async fn get_func_etherscan(
 ) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;
     let source = find_source(client, contract).await?;
-    let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
+    let metadata = source.items.first().context("etherscan returned empty metadata")?;
 
     let mut abi = metadata.abi()?;
     let funcs = abi.functions.remove(function_name).unwrap_or_default();
@@ -146,7 +146,7 @@ pub fn find_source(
     Box::pin(async move {
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
-        let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
+        let metadata = source.items.first().context("Etherscan returned no data")?;
         if metadata.proxy == 0 {
             Ok(source)
         } else {

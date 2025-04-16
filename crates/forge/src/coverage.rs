@@ -4,14 +4,13 @@ use alloy_primitives::map::HashMap;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
+pub use foundry_evm::coverage::*;
 use semver::Version;
 use std::{
     collections::hash_map,
     io::Write,
     path::{Path, PathBuf},
 };
-
-pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
@@ -248,7 +247,8 @@ impl CoverageReporter for BytecodeReporter {
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
 
         for (contract_id, hits) in &report.bytecode_hits {
-            let ops = disassemble_bytes(hits.bytecode().to_vec())?;
+            let ops = disassemble_bytes(hits.bytecode().to_vec())
+                .or_else(|_| Err(eyre::eyre!("Failed to disassemble bytecode")))?;
             let mut formatted = String::new();
 
             let source_elements =

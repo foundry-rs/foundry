@@ -363,7 +363,7 @@ impl ScriptArgs {
             let func = get_func(&self.sig)?;
             abi.functions()
                 .find(|&abi_func| abi_func.selector() == func.selector())
-                .wrap_err(format!("Function `{}` is not implemented in your script.", self.sig))?
+                .context(format!("Function `{}` is not implemented in your script.", self.sig))?
         } else {
             let matching_functions =
                 abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();

@@ -179,7 +179,7 @@ impl ScriptSequence {
         let mut cache = config.cache_path.to_path_buf();
         let mut common = PathBuf::new();
 
-        let target_fname = target.source.file_name().wrap_err("No filename.")?;
+        let target_fname = target.source.file_name().context("No filename.")?;
         common.push(target_fname);
         common.push(chain_id.to_string());
         if dry_run {

@@ -1366,7 +1366,7 @@ impl SimpleCast {
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
         let value = DynSolType::coerce_str(&DynSolType::Uint(256), value)?
             .as_uint()
-            .wrap_err("Could not convert to uint")?
+            .context("Could not convert to uint")?
             .0;
         let unit = unit.parse().wrap_err("could not parse units")?;
         Ok(Self::format_unit_as_string(value, unit))

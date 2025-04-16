@@ -71,7 +71,7 @@ impl MultiChainSequence {
         let target_fname = target
             .source
             .file_name()
-            .wrap_err_with(|| format!("No filename for {:?}", target.source))?
+            .with_context(|| format!("No filename for {:?}", target.source))?
             .to_string_lossy();
 
         common.push(format!("{target_fname}-latest"));

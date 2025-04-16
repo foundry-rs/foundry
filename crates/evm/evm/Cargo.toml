@@ -51,3 +51,4 @@ thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
 serde.workspace = true
+libafl_bolts = { git = "https://github.com/AFLplusplus/LibAFL", features = ["wide"] }
