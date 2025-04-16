@@ -68,14 +68,6 @@ impl GlobalArgs {
             self.force_init_thread_pool()?;
         }
 
-        // Display a warning message if the current version is not stable.
-        if IS_NIGHTLY_VERSION
-            && !self.json
-            && std::env::var_os("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_none()
-        {
-            let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
-        }
-
         Ok(())
     }
 
