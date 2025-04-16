@@ -183,12 +183,7 @@ where
     let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
     std::mem::replace(journal, JournalInner::new());
 
-    let mut evm: Evm<
-        Context<BlockEnv, TxEnv, CfgEnv, &mut dyn DatabaseExt>,
-        &mut dyn InspectorExt,
-        EthInstructions<EthInterpreter, Context<BlockEnv, TxEnv, CfgEnv, &mut dyn DatabaseExt>>,
-        FoundryPrecompiles,
-    > = new_evm_with_inspector(
+    let mut evm = new_evm_with_inspector(
         db,
         &Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone()).as_env_mut(),
         &mut *inspector,
