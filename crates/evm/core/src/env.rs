@@ -1,6 +1,7 @@
 pub use alloy_evm::EvmEnv;
 use revm::{
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
+    primitives::hardfork::SpecId,
     Context, Database, Journal, JournalEntry,
 };
 
@@ -13,8 +14,22 @@ pub struct Env {
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
 impl Env {
+    pub fn default_with_spec_id(spec_id: SpecId) -> Self {
+        let mut cfg = CfgEnv::default();
+        cfg.spec = spec_id;
+
+        Self::from(cfg, BlockEnv::default(), TxEnv::default())
+    }
+
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
         Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
+    }
+
+    pub fn from_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
+        let mut cfg = cfg;
+        cfg.spec = spec_id;
+
+        Self::from(cfg, block, tx)
     }
 }
 
