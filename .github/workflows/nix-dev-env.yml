@@ -1,0 +1,47 @@
+name: Nix developer enviroment
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0' # runs weekly on Sunday at 00:00
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Opens a PR with an updated flake.lock file
+  update_flake_lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cachix/install-nix-action@v30
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/update-flake-lock@main
+        with:
+          pr-title: "Update flake.lock"
+          pr-labels: |
+            L-ignore
+            A-dependencies
+
+  nix-dev-env-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cachix/install-nix-action@v30
+      - uses: actions/checkout@v4
+
+      - name: Activate nix env
+        run: nix develop --accept-flake-config -c echo Ok
+
+      - name: Check that we can compile all crates
+        run: nix develop --accept-flake-config -c cargo check --all-targets
+
+  nix-env-macos-arm:
+    runs-on: macos-latest
+    steps:
+      - uses: cachix/install-nix-action@v30
+      - uses: actions/checkout@v4
+
+      - name: Activate nix env
+        run: nix develop --accept-flake-config -c echo Ok
+
+      - name: Check that we can compile all crates
+        run: nix develop --accept-flake-config -c cargo check --all-targets
