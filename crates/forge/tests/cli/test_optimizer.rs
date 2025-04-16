@@ -1300,3 +1300,48 @@ Compiling 1 files with [..]
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10312>
+forgetest_init!(preprocess_contract_with_constructor_args_struct, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    struct ConstructorArgs {
+        uint256 _number;
+    }
+
+    constructor(uint256 no) {
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_assert_constructor_revert() public {
+        Counter counter = new Counter(1);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // All 20 files should properly compile.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 20 files with [..]
+...
+
+"#]]);
+});
