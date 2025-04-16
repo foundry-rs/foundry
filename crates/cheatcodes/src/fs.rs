@@ -97,7 +97,7 @@ impl Cheatcode for closeFileCall {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         Ok(Default::default())
     }
@@ -167,7 +167,7 @@ impl Cheatcode for readLineCall {
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
         // Get reader for previously opened file to continue reading OR initialize new reader
-        let reader = match state.context.opened_read_files.entry(path.clone()) {
+        let reader = match state.test_context.opened_read_files.entry(path.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(BufReader::new(fs::open(path)?)),
         };
@@ -212,7 +212,7 @@ impl Cheatcode for removeFileCall {
         state.config.ensure_not_foundry_toml(&path)?;
 
         // also remove from the set if opened previously
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         if state.fs_commit {
             fs::remove_file(&path)?;

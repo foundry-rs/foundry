@@ -17,7 +17,6 @@ extern crate tracing;
 
 use alloy_primitives::Address;
 use foundry_evm_core::{backend::DatabaseExt, evm::FoundryEvmContext};
-
 use spec::Status;
 
 pub use config::CheatsConfig;

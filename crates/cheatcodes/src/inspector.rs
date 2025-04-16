@@ -90,7 +90,6 @@ pub trait CheatcodesExecutor {
     fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
 
     /// Obtains [revm::Evm] instance and executes the given CREATE frame.
-    /// Obtains [revm::Evm] instance and executes the given CREATE frame.
     fn exec_create(
         &mut self,
         inputs: CreateInputs,
@@ -222,19 +221,19 @@ macro_rules! try_or_return {
 
 /// Contains additional, test specific resources that should be kept for the duration of the test
 #[derive(Debug, Default)]
-pub struct Context {
+pub struct TestContext {
     /// Buffered readers for files opened for reading (path => BufReader mapping)
     pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
 }
 
 /// Every time we clone `Context`, we want it to be empty
-impl Clone for Context {
+impl Clone for TestContext {
     fn clone(&self) -> Self {
         Default::default()
     }
 }
 
-impl Context {
+impl TestContext {
     /// Clears the context.
     #[inline]
     pub fn clear(&mut self) {
@@ -484,7 +483,7 @@ pub struct Cheatcodes {
     pub config: Arc<CheatsConfig>,
 
     /// Test-scoped context holding data that needs to be reset every test run
-    pub context: Context,
+    pub test_context: TestContext,
 
     /// Whether to commit FS changes such as file creations, writes and deletes.
     /// Used to prevent duplicate changes file executing non-committing calls.
@@ -568,7 +567,7 @@ impl Cheatcodes {
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
             access_list: Default::default(),
-            context: Default::default(),
+            test_context: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
