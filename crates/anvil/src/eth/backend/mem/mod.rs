@@ -106,7 +106,6 @@ use revm::{
     primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
     DatabaseCommit,
 };
-use revm_inspectors::transfer::TransferInspector;
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -1561,20 +1560,19 @@ impl Backend {
                         env.block.basefee = U256::from(0);
                     }
 
-                    // transact
-                    let ResultAndState { result, state } = if trace_transfers {
+                    let mut inspector =  self.build_inspector();
+                    if trace_transfers {
                         // prepare inspector to capture transfer inside the evm so they are
                         // recorded and included in logs
-                        let mut inspector = TransferInspector::new(false).with_logs(true);
+                        inspector = inspector.with_transfers();
+                    }
+
+                    // transact
+                    let ResultAndState { result, state } = {
                         let mut evm =
-                            self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
+                        self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
+
                         trace!(target: "backend", env=?evm.context.env(), spec=?evm.spec_id(), "simulate evm env");
-                        evm.transact()?
-                    } else {
-                        let mut inspector = self.build_inspector();
-                        let mut evm =
-                            self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
-                        trace!(target: "backend", env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
                         evm.transact()?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
@@ -1582,6 +1580,11 @@ impl Backend {
                     // commit the transaction
                     cache_db.commit(state);
                     gas_used += result.gas_used();
+
+                    inspector.print_logs();
+                    if self.print_traces {
+                        inspector.into_print_traces();
+                    }
 
                     // TODO: this is likely incomplete
                     // create the transaction from a request

@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
-    inspectors::{LogCollector, TracingInspector},
+    inspectors::{LogCollector, TracingInspector, TransferInspector},
     revm::{
         interpreter::{
             CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs, Interpreter,
@@ -25,6 +25,8 @@ pub struct Inspector {
     pub tracer: Option<TracingInspector>,
     /// Collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
+    /// Collects all internal ETH transfers as ERC20 transfer events.
+    pub transfer: Option<TransferInspector>,
 }
 
 impl Inspector {
@@ -80,6 +82,12 @@ impl Inspector {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
+
+    /// Configures the `Tracer` [`revm::Inspector`] with a transfer event collector
+    pub fn with_transfers(mut self) -> Self {
+        self.transfer = Some(TransferInspector::new(false).with_logs(true));
+        self
+    }
 }
 
 /// Prints the traces for the inspector
@@ -132,7 +140,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.log_collector],
+            [&mut self.tracer, &mut self.log_collector, &mut self.transfer],
             |inspector| inspector.call(ecx, inputs).map(Some),
         );
         None
@@ -156,11 +164,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.create(ecx, inputs) {
-                return Some(out);
-            }
-        }
+        call_inspectors!(
+            #[ret]
+            [&mut self.tracer, &mut self.transfer],
+            |inspector| { inspector.create(ecx, inputs).map(Some) },
+        );
         None
     }
 
@@ -183,11 +191,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         ecx: &mut EvmContext<DB>,
         inputs: &mut EOFCreateInputs,
     ) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.eofcreate(ecx, inputs) {
-                return Some(out);
-            }
-        }
+        call_inspectors!(
+            #[ret]
+            [&mut self.tracer, &mut self.transfer],
+            |inspector| { inspector.eofcreate(ecx, inputs).map(Some) },
+        );
         None
     }
 
@@ -207,9 +215,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
 
     #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        if let Some(tracer) = &mut self.tracer {
-            revm::Inspector::<DB>::selfdestruct(tracer, contract, target, value);
-        }
+        call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
+            revm::Inspector::<DB>::selfdestruct(inspector, contract, target, value);
+        },);
     }
 }
 
