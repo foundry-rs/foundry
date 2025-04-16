@@ -618,7 +618,6 @@ impl ScriptConfig {
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
-                    .script(true)
                     .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
                     .odyssey(self.evm_opts.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)

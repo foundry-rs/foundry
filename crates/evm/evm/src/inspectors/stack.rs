@@ -61,8 +61,6 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
-    /// The address of the script contract being executed.
-    pub script: bool,
 }
 
 impl InspectorStackBuilder {
@@ -166,13 +164,6 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to enable script execution protection.
-    #[inline]
-    pub fn script(mut self, yes: bool) -> Self {
-        self.script = yes;
-        self
-    }
-
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -189,7 +180,6 @@ impl InspectorStackBuilder {
             odyssey,
             wallets,
             create2_deployer,
-            script,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -210,7 +200,6 @@ impl InspectorStackBuilder {
             stack.set_chisel(chisel_state);
         }
 
-        stack.set_script_execution_inspector(script);
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
@@ -450,12 +439,11 @@ impl InspectorStack {
         }
     }
 
-    /// Set the script execution inspector.
+    /// Set whether to enable script execution inspector.
     #[inline]
-    pub fn set_script_execution_inspector(&mut self, script: bool) {
-        if script {
-            self.script_execution_inspector = Some(ScriptExecutionInspector {});
-        }
+    pub fn script(&mut self, script_address: Address) {
+        self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
+            script_address;
     }
 
     /// Collects all the data gathered during inspection into a single struct.
