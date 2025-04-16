@@ -17,7 +17,7 @@ pub struct TracingExecutor {
 
 impl TracingExecutor {
     pub fn new(
-        env: revm::primitives::Env,
+        env: Env,
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         trace_mode: TraceMode,
