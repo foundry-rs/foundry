@@ -8,7 +8,7 @@ mod convenience;
 mod helpers;
 mod ring;
 
-const DEBUG: bool = true;
+const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
 const DEBUG_INDENT: bool = false;
 
 // TODO(dani): config

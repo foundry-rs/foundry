@@ -1,3 +1,3 @@
-import {a}from"a.sol";
-import {a,b,c} from "a.sol";
-import "a.sol";
+using {test, test as +} for uint;
+using {test, test as +} for uint256 global;
+using {test, test as +, insanelylongstringinsanelylongstringinsanelylongstringinsanelylongstringinsanelylongstringinsanelylongstringinsanelylongstring} for uint global;

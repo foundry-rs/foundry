@@ -70,7 +70,7 @@ impl FmtArgs {
             }
             [one] if one == Path::new("-") => {
                 let mut s = String::new();
-                io::stdin().read_to_string(&mut s).expect("Failed to read from stdin");
+                io::stdin().read_to_string(&mut s).wrap_err("failed to read from stdin")?;
                 Input::Stdin(s)
             }
             paths => {
