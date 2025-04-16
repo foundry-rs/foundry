@@ -109,7 +109,7 @@ impl Executor {
     #[inline]
     pub fn new(
         mut backend: Backend,
-        env: EnvWithHandlerCfg,
+        env: Env,
         inspector: InspectorStack,
         gas_limit: u64,
         legacy_assertions: bool,
@@ -131,7 +131,12 @@ impl Executor {
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
+        let env = Env::from_with_spec_id(
+            self.env.evm_env.cfg_env.clone(),
+            self.env.evm_env.block_env.clone(),
+            self.env.tx.clone(),
+            self.spec_id(),
+        );
         Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
     }
 
@@ -147,12 +152,12 @@ impl Executor {
 
     /// Returns a reference to the EVM environment.
     pub fn env(&self) -> &Env {
-        &self.env.env
+        &self.env
     }
 
     /// Returns a mutable reference to the EVM environment.
     pub fn env_mut(&mut self) -> &mut Env {
-        &mut self.env.env
+        &mut self.env
     }
 
     /// Returns a reference to the EVM inspector.
@@ -167,12 +172,12 @@ impl Executor {
 
     /// Returns the EVM spec ID.
     pub fn spec_id(&self) -> SpecId {
-        self.env.spec_id()
+        self.env.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec ID.
     pub fn set_spec_id(&mut self, spec_id: SpecId) {
-        self.env.handler_cfg.spec_id = spec_id;
+        self.env.evm_env.cfg_env.spec = spec_id;
     }
 
     /// Returns the gas limit for calls and deployments.
