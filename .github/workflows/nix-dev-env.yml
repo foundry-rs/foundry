@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Activate nix env
-        run: nix develop --accept-flake-config -c echo Ok
+        run: nix develop -c echo Ok
 
       - name: Check that we can compile all crates
-        run: nix develop --accept-flake-config -c cargo check --all-targets
+        run: nix develop -c cargo check --all-targets
