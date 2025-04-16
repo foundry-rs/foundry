@@ -4,65 +4,79 @@ use std::{
 };
 
 #[derive(Debug)]
-pub struct RingBuffer<T> {
+pub(crate) struct RingBuffer<T> {
     data: VecDeque<T>,
     // Abstract index of data[0] in the infinitely sized queue.
     offset: usize,
 }
 
 impl<T> RingBuffer<T> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { data: VecDeque::new(), offset: 0 }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.data.len()
     }
 
-    pub fn push(&mut self, value: T) -> usize {
+    pub(crate) fn push(&mut self, value: T) -> usize {
         let index = self.offset + self.data.len();
         self.data.push_back(value);
         index
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.data.clear();
     }
 
-    pub fn index_range(&self) -> Range<usize> {
+    pub(crate) fn index_range(&self) -> Range<usize> {
         self.offset..self.offset + self.data.len()
     }
 
-    pub fn first(&self) -> &T {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn first(&self) -> &T {
         &self.data[0]
     }
 
-    pub fn first_mut(&mut self) -> &mut T {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn first_mut(&mut self) -> &mut T {
         &mut self.data[0]
     }
 
-    pub fn pop_first(&mut self) -> T {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn pop_first(&mut self) -> T {
         self.offset += 1;
         self.data.pop_front().unwrap()
     }
 
-    pub fn last(&self) -> &T {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn last(&self) -> &T {
         self.data.back().unwrap()
     }
 
-    pub fn last_mut(&mut self) -> &mut T {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn last_mut(&mut self) -> &mut T {
         self.data.back_mut().unwrap()
     }
 
-    pub fn second_last(&self) -> &T {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn second_last(&self) -> &T {
         &self.data[self.data.len() - 2]
     }
 
-    pub fn pop_last(&mut self) {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn pop_last(&mut self) {
         self.data.pop_back().unwrap();
     }
 }

@@ -15,6 +15,8 @@ use std::borrow::Cow;
 // TODO(dani): config
 const INDENT: isize = 4;
 
+// TODO(dani): bunch docs into `Comments` since misplaced docs get ignored
+
 /*
 - [ ]
 /// Maximum line length where formatter will try to wrap the line
@@ -164,7 +166,7 @@ impl<'a> State<'a> {
             }
             CommentStyle::Trailing => {
                 if !self.is_beginning_of_line() {
-                    self.word(" ");
+                    self.nbsp();
                 }
                 if cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
@@ -305,6 +307,21 @@ impl State<'_> {
             Err(e) => panic!("failed to print {span:?}: {e:#?}"),
         }
     }
+}
+
+#[derive(Default)]
+struct FunctionLike<'a, 'b> {
+    kind: &'static str,
+    name: Option<ast::Ident>,
+    parameters: &'a [ast::VariableDefinition<'b>],
+    visibility: Option<ast::Visibility>,
+    state_mutability: ast::StateMutability,
+    virtual_: bool,
+    override_: Option<&'a ast::Override<'b>>,
+    modifiers: &'a [ast::Modifier<'b>],
+    returns: &'a [ast::VariableDefinition<'b>],
+    anonymous: bool,
+    body: Option<&'a [ast::Stmt<'b>]>,
 }
 
 /// Language-specific pretty printing.
@@ -460,14 +477,232 @@ impl State<'_> {
                 self.word("}");
                 self.hardbreak();
             }
-            ast::ItemKind::Function(_func) => todo!("Function"),
-            ast::ItemKind::Variable(_var) => todo!("Variable"),
-            ast::ItemKind::Struct(_strukt) => todo!("Struct"),
-            ast::ItemKind::Enum(_enumm) => todo!("Enum"),
-            ast::ItemKind::Udvt(_udvt) => todo!("Udvt"),
-            ast::ItemKind::Error(_error) => todo!("Error"),
-            ast::ItemKind::Event(_event) => todo!("Event"),
+            ast::ItemKind::Function(func) => self.print_function(func),
+            ast::ItemKind::Variable(var) => self.print_var_def(var),
+            ast::ItemKind::Struct(ast::ItemStruct { name, fields }) => {
+                self.cbox(INDENT);
+                self.word("struct ");
+                self.print_ident(*name);
+                self.word("{");
+                self.hardbreak_if_nonempty();
+                for var in fields.iter() {
+                    self.print_var_def(var);
+                }
+                self.offset(-INDENT);
+                self.end();
+                self.word("}");
+                self.hardbreak();
+            }
+            ast::ItemKind::Enum(ast::ItemEnum { name, variants }) => {
+                self.cbox(INDENT);
+                self.word("enum ");
+                self.print_ident(*name);
+                self.word(" {");
+                self.hardbreak_if_nonempty();
+                for (pos, ident) in variants.iter().delimited() {
+                    self.print_ident(*ident);
+                    if !pos.is_last {
+                        self.word(",");
+                        self.space();
+                    }
+                }
+                self.zerobreak();
+                self.offset(-INDENT);
+                self.end();
+                self.word("}");
+                self.hardbreak();
+            }
+            ast::ItemKind::Udvt(ast::ItemUdvt { name, ty }) => {
+                self.word("type ");
+                self.print_ident(*name);
+                self.word(" is ");
+                self.print_ty(ty);
+                self.word(";");
+                self.hardbreak();
+            }
+            ast::ItemKind::Error(ast::ItemError { name, parameters }) => {
+                self.print_function_like(FunctionLike {
+                    kind: "error",
+                    name: Some(*name),
+                    parameters,
+                    ..Default::default()
+                });
+                self.word(";");
+                self.hardbreak();
+            }
+            ast::ItemKind::Event(ast::ItemEvent { name, parameters, anonymous }) => {
+                self.print_function_like(FunctionLike {
+                    kind: "event",
+                    name: Some(*name),
+                    parameters,
+                    ..Default::default()
+                });
+                if *anonymous {
+                    self.word(" anonymous");
+                }
+                self.word(";");
+                self.hardbreak();
+            }
         }
+    }
+
+    fn print_function(&mut self, func: &ast::ItemFunction<'_>) {
+        let ast::ItemFunction { kind, header, body, body_span: _ } = func;
+        let ast::FunctionHeader {
+            name,
+            ref parameters,
+            visibility,
+            state_mutability,
+            ref modifiers,
+            virtual_,
+            ref override_,
+            ref returns,
+        } = *header;
+        self.print_function_like(FunctionLike {
+            kind: kind.to_str(),
+            name,
+            parameters,
+            visibility,
+            state_mutability,
+            virtual_,
+            override_: override_.as_ref(),
+            modifiers,
+            returns,
+            anonymous: false,
+            body: body.as_deref(),
+        });
+    }
+
+    fn print_function_like(&mut self, args: FunctionLike<'_, '_>) {
+        let FunctionLike {
+            kind,
+            name,
+            parameters,
+            visibility,
+            state_mutability,
+            virtual_,
+            override_,
+            modifiers,
+            returns,
+            anonymous,
+            body,
+        } = args;
+        self.word(kind);
+        if let Some(name) = name {
+            self.nbsp();
+            self.print_ident(name);
+        }
+        self.print_parameter_list(parameters);
+        if let Some(visibility) = visibility {
+            self.nbsp();
+            self.word(visibility.to_str());
+        }
+        if state_mutability != ast::StateMutability::NonPayable {
+            self.nbsp();
+            self.word(state_mutability.to_str());
+        }
+        if virtual_ {
+            self.nbsp();
+            self.word("virtual");
+        }
+        if let Some(override_) = override_ {
+            self.nbsp();
+            self.print_override(override_);
+        }
+        for modifier in modifiers.iter() {
+            self.nbsp();
+            self.print_modifier_call(modifier);
+        }
+        if !returns.is_empty() {
+            self.nbsp();
+            self.word("returns");
+            self.print_parameter_list(returns);
+        }
+        if anonymous {
+            self.nbsp();
+            self.word("anonymous");
+        }
+        if let Some(body) = body {
+            self.nbsp();
+            self.print_block(body);
+        } else {
+            self.word(";");
+        }
+        self.hardbreak();
+    }
+
+    fn print_var_def(&mut self, var: &ast::VariableDefinition<'_>) {
+        self.print_var(var);
+        self.word(";");
+        self.hardbreak();
+    }
+
+    fn print_var(&mut self, var: &ast::VariableDefinition<'_>) {
+        let ast::VariableDefinition {
+            span,
+            ty,
+            visibility,
+            mutability,
+            data_location,
+            override_,
+            indexed,
+            name,
+            initializer,
+        } = var;
+
+        if self.handle_span(*span) {
+            return;
+        }
+
+        self.print_ty(ty);
+        self.nbsp();
+        if let Some(visibility) = visibility {
+            self.nbsp();
+            self.word(visibility.to_str());
+        }
+        if let Some(mutability) = mutability {
+            self.nbsp();
+            self.word(mutability.to_str());
+        }
+        if let Some(data_location) = data_location {
+            self.nbsp();
+            self.word(data_location.to_str());
+        }
+        if let Some(override_) = override_ {
+            self.nbsp();
+            self.print_override(override_);
+        }
+        if *indexed {
+            self.nbsp();
+            self.word("indexed");
+        }
+        if let Some(ident) = name {
+            self.print_ident(*ident);
+        }
+        if let Some(initializer) = initializer {
+            self.word(" = ");
+            self.print_expr(initializer);
+        }
+    }
+
+    fn print_parameter_list(&mut self, parameters: &[ast::VariableDefinition<'_>]) {
+        if parameters.is_empty() {
+            self.word("()");
+        }
+        self.cbox(INDENT);
+        self.word("(");
+        self.zerobreak();
+        for (pos, var) in parameters.iter().delimited() {
+            self.print_var(var);
+            if !pos.is_last {
+                self.word(",");
+                self.space();
+            }
+        }
+        self.zerobreak();
+        self.offset(-INDENT);
+        self.word(")");
+        self.end();
     }
 
     fn print_docs(&mut self, docs: &ast::DocComments<'_>) {
@@ -572,6 +807,8 @@ impl State<'_> {
                 out.push_str(chunk);
             }
         }
+
+        dbg!(source);
 
         debug_assert!(source.is_ascii(), "{source:?}");
 
@@ -707,24 +944,93 @@ impl State<'_> {
                 self.word("mapping(");
                 self.print_ty(key);
                 if let Some(ident) = key_name {
-                    self.word(" ");
+                    self.nbsp();
                     self.print_ident(*ident);
                 }
                 self.word(" => ");
                 self.print_ty(value);
                 if let Some(ident) = value_name {
-                    self.word(" ");
+                    self.nbsp();
                     self.print_ident(*ident);
                 }
+                self.word(")");
             }
             ast::TypeKind::Custom(path) => self.print_path(path),
         }
     }
 
+    fn print_override(&mut self, override_: &ast::Override<'_>) {
+        let ast::Override { span, paths } = override_;
+        if self.handle_span(*span) {
+            return;
+        }
+        self.word("override");
+        if !paths.is_empty() {
+            if self.config.override_spacing {
+                self.nbsp();
+            }
+            self.cbox(INDENT);
+            self.word("(");
+            self.zerobreak();
+            for (pos, path) in paths.iter().delimited() {
+                self.print_path(path);
+                if !pos.is_last {
+                    self.word(",");
+                    self.space();
+                }
+            }
+            self.zerobreak();
+            self.offset(-INDENT);
+            self.word(")");
+            self.end();
+        }
+    }
+
+    /* --- Expressions --- */
+
+    #[expect(unused_variables)]
     fn print_expr(&mut self, expr: &ast::Expr<'_>) {
-        // TODO
-        let _ = expr;
-        self.word("<expr>");
+        let ast::Expr { span, kind } = expr;
+        if self.handle_span(*span) {
+            return;
+        }
+
+        match kind {
+            ast::ExprKind::Array(exprs) => todo!(),
+            ast::ExprKind::Assign(expr, bin_op, expr1) => todo!(),
+            ast::ExprKind::Binary(expr, bin_op, expr1) => todo!(),
+            ast::ExprKind::Call(expr, call_args) => todo!(),
+            ast::ExprKind::CallOptions(expr, named_args) => todo!(),
+            ast::ExprKind::Delete(expr) => todo!(),
+            ast::ExprKind::Ident(ident) => todo!(),
+            ast::ExprKind::Index(expr, index_kind) => todo!(),
+            ast::ExprKind::Lit(lit, unit) => {
+                self.print_lit(lit);
+                if let Some(unit) = unit {
+                    self.nbsp();
+                    self.word(unit.to_str());
+                }
+            }
+            ast::ExprKind::Member(expr, ident) => todo!(),
+            ast::ExprKind::New(_) => todo!(),
+            ast::ExprKind::Payable(call_args) => todo!(),
+            ast::ExprKind::Ternary(expr, expr1, expr2) => todo!(),
+            ast::ExprKind::Tuple(exprs) => todo!(),
+            ast::ExprKind::TypeCall(_) => todo!(),
+            ast::ExprKind::Type(_) => todo!(),
+            ast::ExprKind::Unary(un_op, expr) => {
+                let prefix = un_op.kind.is_prefix();
+                let op = un_op.kind.to_str();
+                if prefix {
+                    self.word(op);
+                }
+                self.print_expr(expr);
+                if !prefix {
+                    debug_assert!(un_op.kind.is_postfix());
+                    self.word(op);
+                }
+            }
+        }
     }
 
     fn print_modifier_call(&mut self, modifier: &ast::Modifier<'_>) {
@@ -748,6 +1054,7 @@ impl State<'_> {
                         self.space();
                     }
                 }
+                self.zerobreak();
             }
             ast::CallArgs::Named(named_args) => {
                 self.word("{");
@@ -768,5 +1075,85 @@ impl State<'_> {
         self.offset(-INDENT);
         self.end();
         self.word(")");
+    }
+
+    /* --- Statements --- */
+
+    #[expect(unused_variables)]
+    fn print_stmt(&mut self, stmt: &ast::Stmt<'_>) {
+        // TODO(dani)
+        let ast::Stmt { docs, span, kind } = stmt;
+        self.print_docs(docs);
+        if self.handle_span(*span) {
+            return;
+        }
+        match kind {
+            ast::StmtKind::Assembly(stmt_assembly) => todo!(),
+            ast::StmtKind::DeclSingle(variable_definition) => todo!(),
+            ast::StmtKind::DeclMulti(variable_definitions, expr) => todo!(),
+            ast::StmtKind::Block(stmts) => todo!(),
+            ast::StmtKind::Break => self.word("break"),
+            ast::StmtKind::Continue => self.word("continue"),
+            ast::StmtKind::DoWhile(stmt, expr) => todo!(),
+            ast::StmtKind::Emit(path_slice, call_args) => todo!(),
+            ast::StmtKind::Expr(expr) => self.print_expr(expr),
+            ast::StmtKind::For { init, cond, next, body } => todo!(),
+            ast::StmtKind::If(expr, stmt, stmt1) => todo!(),
+            ast::StmtKind::Return(expr) => {
+                self.word("return");
+                if let Some(expr) = expr {
+                    self.nbsp();
+                    self.print_expr(expr);
+                }
+            }
+            ast::StmtKind::Revert(path_slice, call_args) => todo!(),
+            ast::StmtKind::Try(stmt_try) => todo!(),
+            ast::StmtKind::UncheckedBlock(block) => {
+                self.word("unchecked ");
+                self.print_block(block);
+            }
+            ast::StmtKind::While(expr, stmt) => todo!(),
+            ast::StmtKind::Placeholder => self.word("_"),
+        }
+        if stmt_needs_semi(kind) {
+            self.word(";");
+        }
+    }
+
+    fn print_block(&mut self, block: &[ast::Stmt<'_>]) {
+        self.cbox(INDENT);
+        self.word("{");
+        self.hardbreak_if_nonempty();
+        for stmt in block.iter() {
+            self.print_stmt(stmt);
+            self.hardbreak();
+        }
+        self.offset(-INDENT);
+        self.end();
+        self.word("}");
+        self.hardbreak();
+    }
+}
+
+fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+    match stmt {
+        ast::StmtKind::Assembly { .. } |
+        ast::StmtKind::Block { .. } |
+        ast::StmtKind::For { .. } |
+        ast::StmtKind::If { .. } |
+        ast::StmtKind::Try { .. } |
+        ast::StmtKind::UncheckedBlock { .. } |
+        ast::StmtKind::While { .. } => false,
+
+        ast::StmtKind::DeclSingle { .. } |
+        ast::StmtKind::DeclMulti { .. } |
+        ast::StmtKind::Break { .. } |
+        ast::StmtKind::Continue { .. } |
+        ast::StmtKind::DoWhile { .. } |
+        ast::StmtKind::Emit { .. } |
+        ast::StmtKind::Expr { .. } |
+        ast::StmtKind::Return { .. } |
+        ast::StmtKind::Revert { .. } |
+        ast::StmtKind::Placeholder { .. } => true,
     }
 }
