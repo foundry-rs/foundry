@@ -36,8 +36,11 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_context, FoundryEvmContext},
-    InspectorExt,
+    evm::{
+        new_evm_with_context, new_evm_with_inspector, FoundryEvm, FoundryEvmContext,
+        FoundryPrecompiles,
+    },
+    AsEnvMut, ContextExt, Env, InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
@@ -47,10 +50,11 @@ use rand::Rng;
 use revm::{
     self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{BlockEnv, JournalTr},
+    context::{BlockEnv, CfgEnv, Evm, JournalInner, JournalTr, TxEnv},
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
-    handler::{FrameOrResult, FrameResult},
+    handler::{instructions::EthInstructions, FrameOrResult, FrameResult},
     interpreter::{
+        interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
         EOFCreateKind, Gas, Host, InstructionResult, Interpreter, InterpreterAction,
@@ -58,7 +62,7 @@ use revm::{
     },
     primitives::hardfork::SpecId,
     state::EvmStorageSlot,
-    Inspector,
+    Context, Inspector,
 };
 use serde_json::Value;
 use std::{
@@ -93,39 +97,39 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.context.evm.inner.journaled_state.depth += 1;
+            evm.journaled_state.depth += 1;
 
             // Handle EOF bytecode
-            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::OSAKA) &&
+            let first_frame_or_result = if evm.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
                 inputs.scheme == CreateScheme::Create &&
                 inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
-                    Box::new(EOFCreateInputs::new(
+                    &mut EOFCreateInputs::new(
                         inputs.caller,
                         inputs.value,
                         inputs.gas_limit,
                         EOFCreateKind::Tx { initdata: inputs.init_code },
-                    )),
+                    ),
                 )?
             } else {
-                evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
+                evm.handler.execution().create(&mut evm.context, inputs)?
             };
 
             let mut result = match first_frame_or_result {
-                revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
-                revm::FrameOrResult::Result(result) => result,
+                FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
+                FrameOrResult::Result(result) => result,
             };
 
             evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
 
             let outcome = match result {
-                revm::FrameResult::Call(_) => unreachable!(),
-                revm::FrameResult::Create(create) | revm::FrameResult::EOFCreate(create) => create,
+                FrameResult::Call(_) => unreachable!(),
+                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
-            evm.context.evm.inner.journaled_state.depth -= 1;
+            evm.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -150,32 +154,53 @@ fn with_evm<E, F, O>(
 where
     E: CheatcodesExecutor + ?Sized,
     F: for<'a, 'b> FnOnce(
-        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
+        &'a mut Evm<
+            Context<BlockEnv, TxEnv, CfgEnv, &'b mut dyn DatabaseExt>,
+            &'a mut dyn InspectorExt,
+            EthInstructions<
+                EthInterpreter,
+                Context<BlockEnv, TxEnv, CfgEnv, &'b mut dyn DatabaseExt>,
+            >,
+            FoundryPrecompiles,
+        >,
     ) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
-    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
-    let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
+    std::mem::replace(&mut ccx.ecx.error, Ok(()));
+    // let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
 
-    let inner = revm::InnerEvmContext {
-        env: ccx.ecx.env.clone(),
-        journaled_state: std::mem::replace(
-            &mut ccx.ecx.journaled_state,
-            revm::JournaledState::new(Default::default(), Default::default()),
-        ),
-        db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
-        error,
-        l1_block_info,
-    };
+    // let inner = revm::InnerEvmContext {
+    //     env: ccx.ecx.env.clone(),
+    //     journaled_state: std::mem::replace(
+    //         &mut ccx.ecx.journaled_state,
+    //         revm::JournaledState::new(Default::default(), Default::default()),
+    //     ),
+    //     db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
+    //     error,
+    //     l1_block_info,
+    // };
 
-    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
+    let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+    std::mem::replace(journal, JournalInner::new());
+
+    let mut evm: Evm<
+        Context<BlockEnv, TxEnv, CfgEnv, &mut dyn DatabaseExt>,
+        &mut dyn InspectorExt,
+        EthInstructions<EthInterpreter, Context<BlockEnv, TxEnv, CfgEnv, &mut dyn DatabaseExt>>,
+        FoundryPrecompiles,
+    > = new_evm_with_inspector(
+        db,
+        &Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone()).as_env_mut(),
+        &mut *inspector,
+    );
 
     let res = f(&mut evm)?;
 
-    ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
-    ccx.ecx.env = evm.context.evm.inner.env;
-    ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
-    ccx.ecx.error = evm.context.evm.inner.error;
+    ccx.ecx.journaled_state.inner = evm.journaled_state.inner;
+    ccx.ecx.block = evm.block;
+    ccx.ecx.cfg = evm.cfg;
+    ccx.ecx.tx = evm.tx;
+    ccx.ecx.error = evm.error;
 
     Ok(res)
 }
