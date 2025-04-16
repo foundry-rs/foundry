@@ -113,17 +113,6 @@ jobs:
           chmod +x resolc-universal-apple-darwin
           xattr -d com.apple.quarantine resolc-universal-apple-darwin || true
           sudo mv resolc-universal-apple-darwin /usr/local/bin/resolc
-      - name: Install system deps (Linux)
-        if: contains(matrix.runner_label, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      - name: Install system deps (macOS)
-        if: contains(matrix.runner_label, 'macos')
-        run: |
-          brew update
-          brew install protobuf
 
       - name: Cache substrate-node binary
         id: cache-substrate
@@ -131,6 +120,27 @@ jobs:
         with:
           path: polkadot-sdk/target/release/substrate-node
           key: substrate-node-${{ matrix.runner_label }}-${{ env.SUBSTRATE_NODE_COMMIT_SHA }}
+
+      - name: Cache eth-rpc binary
+        id: cache-ethrpc
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin/eth-rpc
+          key: eth-rpc-${{ matrix.runner_label }}-${{ env.ETH_RPC_VERSION }}
+
+      - name: Install system deps (Linux)
+        if: (steps.cache-substrate.outputs.cache-hit != 'true' || steps.cache-ethrpc.outputs.cache-hit != 'true')
+              && contains(matrix.runner_label, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install system deps (macOS)
+        if: (steps.cache-substrate.outputs.cache-hit != 'true' || steps.cache-ethrpc.outputs.cache-hit != 'true')
+              && contains(matrix.runner_label, 'macos')
+        run: |
+          brew update
+          brew install protobuf
 
       - name: Build substrate-node (if not cached)
         if: steps.cache-substrate.outputs.cache-hit != 'true' && !contains(matrix.runner_label, 'windows')
@@ -144,13 +154,6 @@ jobs:
 
       - name: Add substrate-node to $PATH
         run: echo "${{github.workspace}}/polkadot-sdk/target/release" >> $GITHUB_PATH
-
-      - name: Cache eth-rpc binary
-        id: cache-ethrpc
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/bin/eth-rpc
-          key: eth-rpc-${{ matrix.runner_label }}-${{ env.ETH_RPC_VERSION }}
 
       - name: Install eth-rpc proxy (if not cached)
         if: steps.cache-ethrpc.outputs.cache-hit != 'true' && !contains(matrix.runner_label, 'windows')
