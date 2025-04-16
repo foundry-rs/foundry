@@ -22,20 +22,11 @@ jobs:
             L-ignore
             A-dependencies
 
-  nix-dev-env-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: cachix/install-nix-action@v30
-      - uses: actions/checkout@v4
-
-      - name: Activate nix env
-        run: nix develop --accept-flake-config -c echo Ok
-
-      - name: Check that we can compile all crates
-        run: nix develop --accept-flake-config -c cargo check --all-targets
-
-  nix-env-macos-arm:
-    runs-on: macos-latest
+  nix-dev-env:
+    strategy:
+      matrix:
+        runs-on: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: cachix/install-nix-action@v30
       - uses: actions/checkout@v4
