@@ -1,24 +1,20 @@
 //! EVM inspectors.
 
-pub mod cheatcodes;
-pub mod chisel_state;
-pub mod coverage;
-pub mod debugger;
-pub mod fuzz;
-pub mod logs;
-pub mod printer;
-pub mod script;
-pub mod stack;
-pub mod tracer;
+pub use foundry_cheatcodes::{self as cheatcodes, Cheatcodes, CheatsConfig};
+pub use foundry_evm_coverage::CoverageCollector;
+pub use foundry_evm_fuzz::Fuzzer;
+pub use foundry_evm_traces::{StackSnapshotType, TracingInspector, TracingInspectorConfig};
 
-// Re-export inspectors
-pub use cheatcodes::{Cheatcodes, CheatsConfig};
+pub use revm_inspectors::access_list::AccessListInspector;
+
+mod chisel_state;
 pub use chisel_state::ChiselState;
-pub use coverage::CoverageCollector;
-pub use debugger::Debugger;
-pub use fuzz::Fuzzer;
+
+mod logs;
 pub use logs::LogCollector;
-pub use printer::TracePrinter;
+
+mod script;
 pub use script::ScriptExecutionInspector;
+
+mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
-pub use tracer::TracingInspector;

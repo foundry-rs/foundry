@@ -62,7 +62,7 @@ pub struct InspectorStackBuilder {
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
     /// The address of the script contract being executed.
-    pub script_address: Option<Address>,
+    pub script: bool,
 }
 
 impl InspectorStackBuilder {
@@ -166,10 +166,10 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set the script address for the ScriptExecutionInspector.
+    /// Set whether to enable script execution protection.
     #[inline]
-    pub fn script_address(mut self, address: Option<Address>) -> Self {
-        self.script_address = address;
+    pub fn script(mut self, yes: bool) -> Self {
+        self.script = yes;
         self
     }
 
@@ -189,7 +189,7 @@ impl InspectorStackBuilder {
             odyssey,
             wallets,
             create2_deployer,
-            script_address,
+            script,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -209,9 +209,8 @@ impl InspectorStackBuilder {
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
         }
-        if script_address.is_some() {
-            stack.set_script_execution_inspector(script_address);
-        }
+
+        stack.set_script_execution_inspector(script);
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
@@ -453,8 +452,10 @@ impl InspectorStack {
 
     /// Set the script execution inspector.
     #[inline]
-    pub fn set_script_execution_inspector(&mut self, address: Option<Address>) {
-        self.script_execution_inspector = Some(ScriptExecutionInspector::new(address));
+    pub fn set_script_execution_inspector(&mut self, script: bool) {
+        if script {
+            self.script_execution_inspector = Some(ScriptExecutionInspector {});
+        }
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -462,16 +463,8 @@ impl InspectorStack {
     pub fn collect(self) -> InspectorData {
         let Self {
             mut cheatcodes,
-            inner: InspectorStackInner {
-                chisel_state,
-                coverage,
-                log_collector,
-                tracer,
-                script_execution_inspector,
-                .. },
+            inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
         } = self;
-
-        let _ = script_execution_inspector;
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
             let ignored = cheatcodes
@@ -784,31 +777,27 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
     ) {
-        // do not modify the interpreter state if we are in the inner context
-        // check is done in the `step` function
-        if self.in_inner_context {
-            return;
-        }
-
         call_inspectors!(
-            [&mut self.cheatcodes, &mut self.inner.tracer],
+            [
+                &mut self.coverage,
+                &mut self.tracer,
+                &mut self.cheatcodes,
+                &mut self.script_execution_inspector,
+                &mut self.printer
+            ],
             |inspector| inspector.initialize_interp(interpreter, ecx),
         );
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
-        if self.in_inner_context {
-            return;
-        }
-
         call_inspectors!(
             [
-                &mut self.cheatcodes,
                 &mut self.fuzzer,
                 &mut self.tracer,
                 &mut self.coverage,
-                &mut self.printer,
-                &mut self.inner.script_execution_inspector,
+                &mut self.cheatcodes,
+                &mut self.script_execution_inspector,
+                &mut self.printer
             ],
             |inspector| inspector.step(interpreter, ecx),
         );
@@ -820,7 +809,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
     ) {
         call_inspectors!(
-            [&mut self.cheatcodes, &mut self.inner.tracer, &mut self.inner.chisel_state],
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
         );
     }
@@ -832,7 +821,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         log: &Log,
     ) {
         call_inspectors!(
-            [&mut self.cheatcodes, &mut self.inner.log_collector, &mut self.inner.tracer],
+            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| inspector.log(interpreter, ecx, log),
         );
     }
