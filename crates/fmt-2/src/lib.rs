@@ -64,6 +64,7 @@ pub fn format_source(source: &str, path: Option<&Path>, config: FormatterConfig)
         state.print_source_unit(&ast);
         Ok(state.s.eof())
     });
+    // TODO(dani): add a non-fatal error that returns the formatted source with the errors
     sess.emitted_errors().unwrap()?;
     Ok(res.unwrap())
 }

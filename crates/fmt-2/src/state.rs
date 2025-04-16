@@ -1,7 +1,7 @@
 use super::{
     comment::{Comment, CommentStyle},
     comments::Comments,
-    pp::{self, Breaks, Token},
+    pp::{self, Token},
 };
 use crate::{iter::IterDelimited, FormatterConfig, InlineConfig};
 use foundry_config::fmt as config;
@@ -84,12 +84,14 @@ pub(super) struct State<'a> {
 impl std::ops::Deref for State<'_> {
     type Target = pp::Printer;
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.s
     }
 }
 
 impl std::ops::DerefMut for State<'_> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.s
     }
@@ -112,41 +114,6 @@ impl<'a> State<'a> {
 
     fn comments_mut(&mut self) -> &mut Comments {
         &mut self.comments
-    }
-
-    fn strsep<'x, T: 'x, F, I>(
-        &mut self,
-        sep: &'static str,
-        space_before: bool,
-        b: Breaks,
-        elts: I,
-        mut op: F,
-    ) where
-        F: FnMut(&mut Self, &T),
-        I: IntoIterator<Item = &'x T>,
-    {
-        let mut it = elts.into_iter();
-
-        self.rbox(0, b);
-        if let Some(first) = it.next() {
-            op(self, first);
-            for elt in it {
-                if space_before {
-                    self.space();
-                }
-                self.word_space(sep);
-                op(self, elt);
-            }
-        }
-        self.end();
-    }
-
-    fn commasep<'x, T: 'x, F, I>(&mut self, b: Breaks, elts: I, op: F)
-    where
-        F: FnMut(&mut Self, &T),
-        I: IntoIterator<Item = &'x T>,
-    {
-        self.strsep(",", false, b, elts, op)
     }
 
     // TODO(dani): remove bool?
@@ -351,7 +318,6 @@ impl State<'_> {
 
     fn print_item(&mut self, item: &ast::Item<'_>) {
         let ast::Item { docs, span, kind } = item;
-        self.hardbreak_if_not_bol();
         self.print_docs(docs);
         self.maybe_print_comment(span.lo());
         match kind {
@@ -458,7 +424,42 @@ impl State<'_> {
                 self.word(";");
                 self.hardbreak();
             }
-            ast::ItemKind::Contract(_contract) => todo!(),
+            ast::ItemKind::Contract(ast::ItemContract { kind, name, layout, bases, body }) => {
+                self.cbox(INDENT);
+                self.cbox(0);
+                self.word_nbsp(kind.to_str());
+                self.print_ident(*name);
+                self.nbsp();
+                if !bases.is_empty() {
+                    self.word("is");
+                    self.space();
+                    for (pos, base) in bases.iter().delimited() {
+                        self.print_modifier_call(base);
+                        if !pos.is_last {
+                            self.word(",");
+                            self.space();
+                        }
+                    }
+                    self.space();
+                    self.offset(-INDENT);
+                }
+                self.end();
+                if let Some(layout) = layout {
+                    self.word("layout at ");
+                    self.print_expr(layout.slot);
+                    self.space();
+                }
+
+                self.word("{");
+                self.hardbreak_if_nonempty();
+                for item in body.iter() {
+                    self.print_item(item);
+                }
+                self.offset(-INDENT);
+                self.end();
+                self.word("}");
+                self.hardbreak();
+            }
             ast::ItemKind::Function(_func) => todo!("Function"),
             ast::ItemKind::Variable(_var) => todo!("Variable"),
             ast::ItemKind::Struct(_strukt) => todo!("Struct"),
@@ -724,5 +725,48 @@ impl State<'_> {
         // TODO
         let _ = expr;
         self.word("<expr>");
+    }
+
+    fn print_modifier_call(&mut self, modifier: &ast::Modifier<'_>) {
+        let ast::Modifier { name, arguments } = modifier;
+        self.print_path(name);
+        if !arguments.is_empty() {
+            self.print_call_args(arguments);
+        }
+    }
+
+    fn print_call_args(&mut self, args: &ast::CallArgs<'_>) {
+        self.cbox(INDENT);
+        self.word("(");
+        match args {
+            ast::CallArgs::Unnamed(exprs) => {
+                self.zerobreak();
+                for (pos, expr) in exprs.iter().delimited() {
+                    self.print_expr(expr);
+                    if !pos.is_last {
+                        self.word(",");
+                        self.space();
+                    }
+                }
+            }
+            ast::CallArgs::Named(named_args) => {
+                self.word("{");
+                self.braces_break();
+                for (pos, ast::NamedArg { name, value }) in named_args.iter().delimited() {
+                    self.print_ident(*name);
+                    self.word(": ");
+                    self.print_expr(value);
+                    if !pos.is_last {
+                        self.word(",");
+                        self.space();
+                    }
+                }
+                self.braces_break();
+                self.word("}");
+            }
+        }
+        self.offset(-INDENT);
+        self.end();
+        self.word(")");
     }
 }
