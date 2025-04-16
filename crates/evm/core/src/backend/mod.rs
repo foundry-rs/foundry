@@ -1981,8 +1981,7 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm =
-            crate::evm::new_evm_with_inspector(&mut db as _, &mut env.as_env_mut(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.data.ctx.journaled_state.depth = depth + 1;
         evm.replay().wrap_err("EVM error")?

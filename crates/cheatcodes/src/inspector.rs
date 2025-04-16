@@ -36,10 +36,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{
-        new_evm_with_context, new_evm_with_inspector, FoundryEvm, FoundryEvmContext,
-        FoundryPrecompiles,
-    },
+    evm::{new_handler_with_inspector, FoundryEvmContext},
     AsEnvMut, ContextExt, Env, InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -50,19 +47,17 @@ use rand::Rng;
 use revm::{
     self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{BlockEnv, CfgEnv, Evm, JournalInner, JournalTr, TxEnv},
+    context::{BlockEnv, JournalInner, JournalTr},
     context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
-    handler::{instructions::EthInstructions, FrameOrResult, FrameResult},
+    handler::Handler,
     interpreter::{
-        interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
-        EOFCreateKind, Gas, Host, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs, Gas,
+        Host, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::hardfork::SpecId,
     state::EvmStorageSlot,
-    Context, Inspector,
+    Inspector,
 };
 use serde_json::Value;
 use std::{
@@ -95,43 +90,63 @@ pub trait CheatcodesExecutor {
         inputs: CreateInputs,
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
-        with_evm(self, ccx, |evm| {
-            evm.journaled_state.depth += 1;
+        let mut inspector = self.get_inspector(ccx.state);
+        std::mem::replace(&mut ccx.ecx.error, Ok(()));
 
-            // Handle EOF bytecode
-            let first_frame_or_result = if evm.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
-                inputs.scheme == CreateScheme::Create &&
-                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
-            {
-                evm.handler.execution().eofcreate(
-                    &mut evm.context,
-                    &mut EOFCreateInputs::new(
-                        inputs.caller,
-                        inputs.value,
-                        inputs.gas_limit,
-                        EOFCreateKind::Tx { initdata: inputs.init_code },
-                    ),
-                )?
-            } else {
-                evm.handler.execution().create(&mut evm.context, inputs)?
-            };
+        let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+        std::mem::replace(journal, JournalInner::new());
 
-            let mut result = match first_frame_or_result {
-                FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
-                FrameOrResult::Result(result) => result,
-            };
+        let mut handler = new_handler_with_inspector(
+            db,
+            &Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone()).as_env_mut(),
+            &mut *inspector,
+        );
 
-            evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+        handler.journaled_state.depth += 1;
 
-            let outcome = match result {
-                FrameResult::Call(_) => unreachable!(),
-                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
-            };
+        // Handle EOF bytecode
+        let first_frame_or_result = if handler.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
+            inputs.scheme == CreateScheme::Create &&
+            inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+        {
+            // handler
+            //     .execution(&mut handler.inner, &InitialAndFloorGas { initial_gas: 0, floor_gas: 0
+            // })
 
-            evm.journaled_state.depth -= 1;
+            //     handler.execution().eofcreate(
+            //         &mut evm.context,
+            //         &mut EOFCreateInputs::new(
+            //             inputs.caller,
+            //             inputs.value,
+            //             inputs.gas_limit,
+            //             EOFCreateKind::Tx { initdata: inputs.init_code },
+            //         ),
+            //     )?
+        } else {
+            // handler.execution().create(&mut evm.context, inputs)?
+        };
 
-            Ok(outcome)
-        })
+        // let mut result = match first_frame_or_result {
+        //     FrameOrResult::Item(first_frame) => evm.run_the_loop(first_frame)?,
+        //     FrameOrResult::Result(result) => result,
+        // };
+
+        // evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+
+        // let outcome = match result {
+        //     FrameResult::Call(_) => unreachable!(),
+        //     FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
+        // };
+
+        handler.journaled_state.depth -= 1;
+
+        ccx.ecx.journaled_state.inner = handler.inner.journaled_state.inner;
+        ccx.ecx.block = handler.inner.block;
+        ccx.ecx.cfg = handler.inner.cfg;
+        ccx.ecx.tx = handler.inner.tx;
+        ccx.ecx.error = handler.inner.error;
+
+        Ok(outcome)
     }
 
     fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
@@ -142,61 +157,6 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
         None
     }
-}
-
-/// Constructs [revm::Evm] and runs a given closure with it.
-fn with_evm<E, F, O>(
-    executor: &mut E,
-    ccx: &mut CheatsCtxt,
-    f: F,
-) -> Result<O, EVMError<DatabaseError>>
-where
-    E: CheatcodesExecutor + ?Sized,
-    F: for<'a, 'b> FnOnce(
-        &'a mut Evm<
-            Context<BlockEnv, TxEnv, CfgEnv, &'b mut dyn DatabaseExt>,
-            &'a mut dyn InspectorExt,
-            EthInstructions<
-                EthInterpreter,
-                Context<BlockEnv, TxEnv, CfgEnv, &'b mut dyn DatabaseExt>,
-            >,
-            FoundryPrecompiles,
-        >,
-    ) -> Result<O, EVMError<DatabaseError>>,
-{
-    let mut inspector = executor.get_inspector(ccx.state);
-    std::mem::replace(&mut ccx.ecx.error, Ok(()));
-    // let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
-
-    // let inner = revm::InnerEvmContext {
-    //     env: ccx.ecx.env.clone(),
-    //     journaled_state: std::mem::replace(
-    //         &mut ccx.ecx.journaled_state,
-    //         revm::JournaledState::new(Default::default(), Default::default()),
-    //     ),
-    //     db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
-    //     error,
-    //     l1_block_info,
-    // };
-
-    let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
-    std::mem::replace(journal, JournalInner::new());
-
-    let mut evm = new_evm_with_inspector(
-        db,
-        &Env::from(env.cfg.clone(), env.block.clone(), env.tx.clone()).as_env_mut(),
-        &mut *inspector,
-    );
-
-    let res = f(&mut evm)?;
-
-    ccx.ecx.journaled_state.inner = evm.journaled_state.inner;
-    ccx.ecx.block = evm.block;
-    ccx.ecx.cfg = evm.cfg;
-    ccx.ecx.tx = evm.tx;
-    ccx.ecx.error = evm.error;
-
-    Ok(res)
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an

@@ -375,16 +375,17 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     env: &EnvMut<'_>,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
-    new_evm_with_context(new_evm_context(db, env), inspector)
-}
-
-pub fn new_evm_with_context<'db, 'i, I: InspectorExt + ?Sized>(
-    ctx: FoundryEvmContext<'db>,
-    inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
     Evm {
-        data: EvmData { ctx, inspector },
+        data: EvmData { ctx: new_evm_context(db, env), inspector },
         instruction: EthInstructions::default(),
         precompiles: FoundryPrecompiles::new(),
     }
+}
+
+pub fn new_handler_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
+    db: &'db mut dyn DatabaseExt,
+    env: &EnvMut<'_>,
+    inspector: &'i mut I,
+) -> FoundryHandler<'db, &'i mut I> {
+    FoundryHandler::new(new_evm_context(db, env), inspector)
 }
