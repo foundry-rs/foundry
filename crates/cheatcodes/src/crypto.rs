@@ -18,6 +18,11 @@ use k256::{
 use p256::ecdsa::{
     signature::hazmat::PrehashSigner, Signature as P256Signature, SigningKey as P256SigningKey,
 };
+use ethers::{
+    signers::LocalWallet,
+    types::transaction::eip712::{TypedData,Eip712},
+    core::types::H256,
+};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -49,6 +54,18 @@ impl Cheatcode for sign_0Call {
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_full_sig(sig))
     }
+}
+
+impl Cheatcode for signTypedDataCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {privateKey,jsonData} = self;
+        let typed_data: TypedData = serde_json::from_str(jsonData)?;
+        let digest = typed_data.encode_eip712()?;
+        let sig = sign(&privateKey, digest)?;
+        Ok(encode_full_sig(sig))
+        // let wallet = privateKey.parse()?;
+        // let signature = wallet.sign_hash(H256::from(digest));
+ }
 }
 
 impl Cheatcode for signCompact_0Call {

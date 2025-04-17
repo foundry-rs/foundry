@@ -62,3 +62,4 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+ethers = "2.0.14"
