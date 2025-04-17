@@ -4,8 +4,7 @@ use crate::{
     Cast,
 };
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
-use alloy_rpc_types::state::StateOverride;
+use alloy_rpc_types::{state::StateOverride, BlockId, BlockNumberOrTag};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -32,9 +31,8 @@ use std::{str::FromStr, sync::LazyLock};
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
-static OVERRIDE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap()
-});
+static OVERRIDE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap());
 
 /// CLI arguments for `cast call`.
 ///
@@ -195,7 +193,6 @@ impl CallArgs {
             ..
         } = self;
 
-
         if let Some(data) = data {
             sig = Some(data);
         }
@@ -290,7 +287,10 @@ impl CallArgs {
             return Ok(());
         }
 
-        sh_println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, state_override.clone()).await?)?;
+        sh_println!(
+            "{}",
+            Cast::new(provider).call(&tx, func.as_ref(), block, state_override.clone()).await?
+        )?;
 
         Ok(())
     }
@@ -302,7 +302,7 @@ impl CallArgs {
         let balance_overrides = &self.balance_overrides;
         // Parse balance overrides
         for override_str in balance_overrides.iter().flatten() {
-            let (addr, balance) = Self::parse_address_value(&override_str)?;
+            let (addr, balance) = Self::parse_address_value(override_str)?;
             state_override.entry(addr).or_default().balance = Some(balance);
         }
 
@@ -310,7 +310,7 @@ impl CallArgs {
         let nonce_overrides = &self.nonce_overrides;
         // Parse nonce overrides
         for override_str in nonce_overrides.iter().flatten() {
-            let (addr, nonce) = Self::parse_address_value(&override_str)?;
+            let (addr, nonce) = Self::parse_address_value(override_str)?;
             state_override.entry(addr).or_default().nonce = Some(nonce);
         }
 
@@ -330,7 +330,7 @@ impl CallArgs {
         let state_overrides = &self.state_overrides;
         // Parse state overrides
         for override_str in state_overrides.iter().flatten() {
-            let (addr, slot, value) = Self::parse_address_slot_value(&override_str)?;
+            let (addr, slot, value) = Self::parse_address_slot_value(override_str)?;
             let state_map = state_override.entry(addr).or_default().state.get_or_insert_default();
             state_map.insert(slot.into(), value.into());
         }
@@ -339,16 +339,13 @@ impl CallArgs {
         let state_diff_overrides = &self.state_diff_overrides;
         // Parse state diff overrides
         for override_str in state_diff_overrides.iter().flatten() {
-            let (addr, slot, value) = Self::parse_address_slot_value(&override_str)?;
-            let state_diff_map = state_override.entry(addr).or_default().state_diff.get_or_insert_default();
+            let (addr, slot, value) = Self::parse_address_slot_value(override_str)?;
+            let state_diff_map =
+                state_override.entry(addr).or_default().state_diff.get_or_insert_default();
             state_diff_map.insert(slot.into(), value.into());
         }
 
-        Ok(if state_override.is_empty() {
-            None
-        } else {
-            Some(state_override)
-        })
+        Ok(if state_override.is_empty() { None } else { Some(state_override) })
     }
 
     /// Parse an override string in the format address:value
@@ -357,22 +354,22 @@ impl CallArgs {
         T: FromStr,
         T::Err: std::error::Error + Send + Sync + 'static,
     {
-        let (addr, value) = s.split_once(':').ok_or_else(|| {
-            eyre::eyre!("Invalid override format. Expected <address>:<value>")
-        })?;
+        let (addr, value) = s
+            .split_once(':')
+            .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<value>"))?;
         Ok((addr.parse()?, value.parse()?))
     }
 
     /// Parse an override string in the format address:slot:value
     pub fn parse_address_slot_value(s: &str) -> Result<(Address, U256, U256)> {
-        let captures = OVERRIDE_PATTERN
-            .captures(s)
-            .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"))?;
+        let captures = OVERRIDE_PATTERN.captures(s).ok_or_else(|| {
+            eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
+        })?;
 
         Ok((
-            captures[1].parse()?,  // Address
-            captures[2].parse()?,  // Slot (U256)
-            captures[3].parse()?,  // Value (U256)
+            captures[1].parse()?, // Address
+            captures[2].parse()?, // Slot (U256)
+            captures[3].parse()?, // Value (U256)
         ))
     }
 }
@@ -400,7 +397,7 @@ impl figment::Provider for CallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex};
+    use alloy_primitives::hex;
 
     #[test]
     fn can_parse_call_data() {
@@ -455,9 +452,18 @@ mod tests {
             "0x456:0x2:0x5678",
         ]);
 
-        assert_eq!(args.balance_overrides, Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()]));
+        assert_eq!(
+            args.balance_overrides,
+            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
+        );
         assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string(), "0x456:2".to_string()]));
-        assert_eq!(args.code_overrides, Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()]));
-        assert_eq!(args.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()]));
+        assert_eq!(
+            args.code_overrides,
+            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
+        );
+        assert_eq!(
+            args.state_overrides,
+            Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()])
+        );
     }
 }

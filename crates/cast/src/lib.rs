@@ -16,7 +16,9 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, state::StateOverride};
+use alloy_rpc_types::{
+    state::StateOverride, BlockId, BlockNumberOrTag, Filter, TransactionRequest,
+};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
@@ -146,7 +148,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> Result<String> {
-        let res = self.provider.call(req.clone())
+        let res = self
+            .provider
+            .call(req.clone())
             .block(block.unwrap_or_default())
             .overrides(state_override.unwrap_or_default())
             .await?;
