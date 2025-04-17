@@ -117,8 +117,17 @@ hashbrown.opt-level = 3
 foldhash.opt-level = 3
 keccak.opt-level = 3
 revm.opt-level = 3
+revm-primitives.opt-level = 3
 revm-interpreter.opt-level = 3
 revm-precompile.opt-level = 3
+revm-database-interface.opt-level = 3
+revm-database.opt-level = 3
+revm-bytecode.opt-level = 3
+revm-state.opt-level = 3
+revm-context-interface.opt-level = 3
+revm-context.opt-level = 3
+revm-handlers.opt-level = 3
+revm-inspector.opt-level = 3
 ruint.opt-level = 3
 sha2.opt-level = 3
 sha3.opt-level = 3
@@ -197,6 +206,7 @@ solar-sema = { version = "=0.1.2", default-features = false }
 ## revm
 revm = { version = "21.0.0", default-features = false }
 revm-inspectors = { version = "0.18.1", features = ["serde"] }
+op-revm = "3.0.2"
 
 ## alloy
 alloy-consensus = { version = "0.13.0", default-features = false }
