@@ -123,27 +123,27 @@ pub struct CallArgs {
     /// Override the balance of an account.
     /// Format: address:balance
     #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
-    pub balance_overrides: Vec<String>,
+    pub balance_overrides: Option<Vec<String>>,
 
     /// Override the nonce of an account.
     /// Format: address:nonce
     #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
-    pub nonce_overrides: Vec<String>,
+    pub nonce_overrides: Option<Vec<String>>,
 
     /// Override the code of an account.
     /// Format: address:code
     #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
-    pub code_overrides: Vec<String>,
+    pub code_overrides: Option<Vec<String>>,
 
     /// Override the state of an account.
     /// Format: address:slot:value
     #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
-    pub state_overrides: Vec<String>,
+    pub state_overrides: Option<Vec<String>>,
 
     /// Override the state diff of an account.
     /// Format: address:slot:value
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
-    pub state_diff_overrides: Vec<String>,
+    pub state_diff_overrides: Option<Vec<String>>,
 }
 
 #[derive(Debug, Parser)]
@@ -301,7 +301,7 @@ impl CallArgs {
         // Store state_diff_overrides in a local variable to avoid partial move
         let balance_overrides = &self.balance_overrides;
         // Parse balance overrides
-        for override_str in balance_overrides {
+        for override_str in balance_overrides.iter().flatten() {
             let (addr, balance) = Self::parse_address_value(&override_str)?;
             state_override.entry(addr).or_default().balance = Some(balance);
         }
@@ -309,7 +309,7 @@ impl CallArgs {
         // Store state_diff_overrides in a local variable to avoid partial move
         let nonce_overrides = &self.nonce_overrides;
         // Parse nonce overrides
-        for override_str in nonce_overrides {
+        for override_str in nonce_overrides.iter().flatten() {
             let (addr, nonce) = Self::parse_address_value(&override_str)?;
             state_override.entry(addr).or_default().nonce = Some(nonce);
         }
@@ -317,7 +317,7 @@ impl CallArgs {
         // Store state_diff_overrides in a local variable to avoid partial move
         let code_overrides = &self.code_overrides;
         // Parse code overrides
-        for override_str in code_overrides {
+        for override_str in code_overrides.iter().flatten() {
             let (addr, code_str) = override_str.split_once(':').ok_or_else(|| {
                 eyre::eyre!("Invalid code override format. Expected <address>:<code>")
             })?;
@@ -329,7 +329,7 @@ impl CallArgs {
         // Store state_diff_overrides in a local variable to avoid partial move
         let state_overrides = &self.state_overrides;
         // Parse state overrides
-        for override_str in state_overrides {
+        for override_str in state_overrides.iter().flatten() {
             let (addr, slot, value) = Self::parse_address_slot_value(&override_str)?;
             let state_map = state_override.entry(addr).or_default().state.get_or_insert_default();
             state_map.insert(slot.into(), value.into());
@@ -338,7 +338,7 @@ impl CallArgs {
         // Store state_diff_overrides in a local variable to avoid partial move
         let state_diff_overrides = &self.state_diff_overrides;
         // Parse state diff overrides
-        for override_str in state_diff_overrides {
+        for override_str in state_diff_overrides.iter().flatten() {
             let (addr, slot, value) = Self::parse_address_slot_value(&override_str)?;
             let state_diff_map = state_override.entry(addr).or_default().state_diff.get_or_insert_default();
             state_diff_map.insert(slot.into(), value.into());
@@ -427,10 +427,10 @@ mod tests {
             "0x123:0x1:0x1234",
         ]);
 
-        assert_eq!(args.balance_overrides, vec!["0x123:0x1234"]);
-        assert_eq!(args.nonce_overrides, vec!["0x123:1"]);
-        assert_eq!(args.code_overrides, vec!["0x123:0x1234"]);
-        assert_eq!(args.state_overrides, vec!["0x123:0x1:0x1234"]);
+        assert_eq!(args.balance_overrides, Some(vec!["0x123:0x1234".to_string()]));
+        assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string()]));
+        assert_eq!(args.code_overrides, Some(vec!["0x123:0x1234".to_string()]));
+        assert_eq!(args.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string()]));
     }
 
     #[test]
@@ -455,9 +455,9 @@ mod tests {
             "0x456:0x2:0x5678",
         ]);
 
-        assert_eq!(args.balance_overrides, vec!["0x123:0x1234", "0x456:0x5678"]);
-        assert_eq!(args.nonce_overrides, vec!["0x123:1", "0x456:2"]);
-        assert_eq!(args.code_overrides, vec!["0x123:0x1234", "0x456:0x5678"]);
-        assert_eq!(args.state_overrides, vec!["0x123:0x1:0x1234", "0x456:0x2:0x5678"]);
+        assert_eq!(args.balance_overrides, Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()]));
+        assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string(), "0x456:2".to_string()]));
+        assert_eq!(args.code_overrides, Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()]));
+        assert_eq!(args.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()]));
     }
 }
