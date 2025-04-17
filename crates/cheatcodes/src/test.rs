@@ -6,6 +6,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
+use revm::context::JournalTr;
 use std::str::FromStr;
 
 pub(crate) mod assert;

@@ -23,10 +23,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use revm::{
-    interpreter::InstructionResult,
-    primitives::{OptimismFields, TxEnv},
-};
+use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
@@ -399,15 +396,15 @@ impl PendingTransaction {
                 let TxLegacy { nonce, gas_price, gas_limit, value, to, input, .. } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    kind: transact_to(to),
                     data: input.clone(),
                     chain_id,
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: (*value),
-                    gas_price: U256::from(*gas_price),
+                    gas_price: *gas_price,
                     gas_priority_fee: None,
                     gas_limit: *gas_limit,
-                    access_list: vec![],
+                    access_list: vec![].into(),
                     ..Default::default()
                 }
             }
@@ -425,12 +422,12 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    kind: transact_to(to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
-                    gas_price: U256::from(*gas_price),
+                    gas_price: *gas_price,
                     gas_priority_fee: None,
                     gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
@@ -452,13 +449,13 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: transact_to(to),
+                    kind: transact_to(to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
-                    gas_price: U256::from(*max_fee_per_gas),
-                    gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
+                    gas_price: *max_fee_per_gas,
+                    gas_priority_fee: Some(*max_priority_fee_per_gas),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
                     ..Default::default()
@@ -481,14 +478,14 @@ impl PendingTransaction {
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
-                    transact_to: TxKind::Call(*to),
+                    kind: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
-                    gas_price: U256::from(*max_fee_per_gas),
-                    gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
-                    max_fee_per_blob_gas: Some(U256::from(*max_fee_per_blob_gas)),
+                    gas_price: *max_fee_per_gas,
+                    gas_priority_fee: Some(*max_priority_fee_per_gas),
+                    max_fee_per_blob_gas: *max_fee_per_blob_gas,
                     blob_hashes: blob_versioned_hashes.clone(),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
@@ -510,16 +507,16 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: TxKind::Call(*to),
+                    kind: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
-                    gas_price: U256::from(*max_fee_per_gas),
-                    gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
+                    gas_price: *max_fee_per_gas,
+                    gas_priority_fee: Some(*max_priority_fee_per_gas),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
-                    authorization_list: Some(authorization_list.clone().into()),
+                    authorization_list: authorization_list.clone(),
                     ..Default::default()
                 }
             }
@@ -538,21 +535,22 @@ impl PendingTransaction {
                 } = tx;
                 TxEnv {
                     caller,
-                    transact_to: transact_to(kind),
+                    kind: transact_to(kind),
                     data: input.clone(),
                     chain_id,
-                    nonce: Some(*nonce),
+                    nonce: *nonce,
                     value: *value,
-                    gas_price: U256::ZERO,
+                    gas_price: 0,
                     gas_priority_fee: None,
                     gas_limit: { *gas_limit },
-                    access_list: vec![],
-                    optimism: OptimismFields {
-                        source_hash: Some(*source_hash),
-                        mint: Some(mint.to::<u128>()),
-                        is_system_transaction: Some(*is_system_tx),
-                        enveloped_tx: None,
-                    },
+                    access_list: vec![].into(),
+                    // TODO: add Optimism support
+                    // optimism: OptimismFields {
+                    //     source_hash: Some(*source_hash),
+                    //     mint: Some(mint.to::<u128>()),
+                    //     is_system_transaction: Some(*is_system_tx),
+                    //     enveloped_tx: None,
+                    // },
                     ..Default::default()
                 }
             }

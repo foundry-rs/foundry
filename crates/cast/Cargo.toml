@@ -26,6 +26,7 @@ foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
+foundry-evm-core.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
 
@@ -42,7 +43,7 @@ alloy-provider = { workspace = true, features = [
     "ws",
     "ipc",
     "trace-api",
-    "txpool-api"
+    "txpool-api",
 ] }
 alloy-rlp.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }

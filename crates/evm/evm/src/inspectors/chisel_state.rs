@@ -1,7 +1,10 @@
 use alloy_primitives::U256;
+use foundry_evm_core::evm::FoundryEvmContext;
 use revm::{
-    interpreter::{InstructionResult, Interpreter},
-    Database, EvmContext, Inspector,
+    interpreter::{
+        interpreter::EthInterpreter, interpreter_types::Jumps, InstructionResult, Interpreter,
+    },
+    Inspector,
 };
 
 /// An inspector for Chisel
@@ -21,16 +24,16 @@ impl ChiselState {
     }
 }
 
-impl<DB: Database> Inspector<DB> for ChiselState {
+impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for ChiselState {
     #[cold]
-    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut FoundryEvmContext<'_>) {
         // If we are at the final pc of the REPL contract execution, set the state.
         // Subtraction can't overflow because `pc` is always at least 1 in `step_end`.
-        if self.final_pc == interp.program_counter() - 1 {
+        if self.final_pc == interp.bytecode.pc() - 1 {
             self.state = Some((
                 interp.stack.data().clone(),
-                interp.shared_memory.context_memory().to_vec(),
-                interp.instruction_result,
+                interp.memory.borrow().context_memory().to_vec(),
+                interp.control.instruction_result,
             ))
         }
     }

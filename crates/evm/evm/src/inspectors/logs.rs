@@ -1,12 +1,15 @@
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
-use foundry_evm_core::{abi::console, constants::HARDHAT_CONSOLE_ADDRESS, InspectorExt};
+use foundry_evm_core::{
+    abi::console, constants::HARDHAT_CONSOLE_ADDRESS, evm::FoundryEvmContext, InspectorExt,
+};
 use revm::{
     interpreter::{
-        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+        interpreter::EthInterpreter, CallInputs, CallOutcome, Gas, InstructionResult, Interpreter,
+        InterpreterResult,
     },
-    Database, EvmContext, Inspector,
+    Inspector,
 };
 
 /// An inspector that collects logs during execution.
@@ -39,14 +42,14 @@ impl LogCollector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
+impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for LogCollector {
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut FoundryEvmContext<'_>, log: Log) {
         self.logs.push(log.clone());
     }
 
     fn call(
         &mut self,
-        _context: &mut EvmContext<DB>,
+        _context: &mut FoundryEvmContext<'_>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
