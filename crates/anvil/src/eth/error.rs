@@ -262,7 +262,7 @@ pub enum InvalidTransactionError {
     AuthorizationListNotSupported,
     /// Forwards error from the revm
     #[error(transparent)]
-    Revm(revm::primitives::InvalidTransaction),
+    Revm(revm::context_interface::result::InvalidTransaction),
 }
 
 impl From<InvalidTransaction> for InvalidTransactionError {

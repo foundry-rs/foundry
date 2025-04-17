@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
-use foundry_evm::revm::{
+use revm::{
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::SpecId,
+    primitives::hardfork::SpecId,
 };
 use std::fmt;
 

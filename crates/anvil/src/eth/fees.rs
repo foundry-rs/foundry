@@ -1,17 +1,3 @@
-use crate::eth::{
-    backend::{info::StorageInfo, notifications::NewBlockNotifications},
-    error::BlockchainError,
-};
-use alloy_consensus::Header;
-use alloy_eips::{
-    calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
-    eip7840::BlobParams,
-};
-use alloy_primitives::B256;
-use anvil_core::eth::transaction::TypedTransaction;
-use foundry_evm::revm::primitives::{BlobExcessGasAndPrice, SpecId};
-use futures::StreamExt;
-use parking_lot::{Mutex, RwLock};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -19,6 +5,22 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+};
+
+use alloy_consensus::Header;
+use alloy_eips::{
+    calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
+    eip7840::BlobParams,
+};
+use alloy_primitives::B256;
+use anvil_core::eth::transaction::TypedTransaction;
+use futures::StreamExt;
+use parking_lot::{Mutex, RwLock};
+use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
+
+use crate::eth::{
+    backend::{info::StorageInfo, notifications::NewBlockNotifications},
+    error::BlockchainError,
 };
 
 /// Maximum number of entries in the fee history cache
@@ -54,7 +56,7 @@ pub struct FeeManager {
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
     /// This value will be updated after a new block was mined
-    blob_excess_gas_and_price: Arc<RwLock<foundry_evm::revm::primitives::BlobExcessGasAndPrice>>,
+    blob_excess_gas_and_price: Arc<RwLock<BlobExcessGasAndPrice>>,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
@@ -159,7 +161,7 @@ impl FeeManager {
     pub fn get_next_block_base_fee_per_gas(
         &self,
         gas_used: u128,
-        gas_limit: u128,
+        gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
         // It's naturally impossible for base fee to be 0;

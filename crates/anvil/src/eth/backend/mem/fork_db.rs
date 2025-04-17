@@ -1,9 +1,6 @@
-use crate::{
-    eth::backend::db::{
-        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
-    },
-    revm::primitives::AccountInfo,
+use crate::eth::backend::db::{
+    Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
+    SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
 };
 use alloy_primitives::{map::HashMap, Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
@@ -12,9 +9,12 @@ use foundry_evm::{
         BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction, StateSnapshot,
     },
     fork::database::ForkDbStateSnapshot,
-    revm::{primitives::BlockEnv, Database},
 };
-use revm::database::{DatabaseRef, DbAccount};
+use revm::{
+    context::BlockEnv,
+    database::{Database, DatabaseRef, DbAccount},
+    state::AccountInfo,
+};
 
 pub use foundry_evm::fork::database::ForkedDatabase;
 

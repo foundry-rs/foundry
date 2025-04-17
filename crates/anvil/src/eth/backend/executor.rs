@@ -18,19 +18,14 @@ use anvil_core::eth::{
     },
     trie,
 };
-use foundry_evm::{
-    backend::DatabaseError,
-    revm::{
-        interpreter::InstructionResult,
-        primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
-            SpecId,
-        },
-    },
-    traces::CallTraceNode,
-    utils::odyssey_handler_register,
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
+use revm::{
+    context::{BlockEnv, CfgEnv},
+    context_interface::result::{EVMError, ExecutionResult, Output},
+    database::WrapDatabaseRef,
+    interpreter::InstructionResult,
+    primitives::hardfork::SpecId,
 };
-use revm::database::WrapDatabaseRef;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -99,7 +94,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
     /// The configuration environment and spec id
-    pub cfg_env: CfgEnvWithHandlerCfg,
+    pub cfg_env: CfgEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u64,
@@ -241,7 +236,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         ExecutedTransactions { block, included, invalid }
     }
 
-    fn env_for(&self, tx: &PendingTransaction) -> EnvWithHandlerCfg {
+    fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
         if self.cfg_env.handler_cfg.is_optimism {
             tx_env.optimism.enveloped_tx =

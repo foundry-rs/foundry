@@ -1,7 +1,8 @@
+use std::str::FromStr;
+
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::bail;
-use foundry_evm::revm::primitives::SpecId;
-use std::str::FromStr;
+use revm::primitives::hardfork::SpecId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChainHardfork {

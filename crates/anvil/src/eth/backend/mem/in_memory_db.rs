@@ -6,15 +6,19 @@ use crate::{
         SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
     },
     mem::state::state_root,
-    revm::{db::DbAccount, primitives::AccountInfo},
 };
 use alloy_primitives::{map::HashMap, Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::backend::{BlockchainDb, DatabaseResult, StateSnapshot};
+use revm::{
+    context::BlockEnv,
+    database::{DatabaseRef, DbAccount},
+    state::AccountInfo,
+};
 
 // reexport for convenience
-pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
-use foundry_evm::{backend::RevertStateSnapshotAction, revm::primitives::BlockEnv};
+pub use foundry_evm::backend::MemDb;
+use foundry_evm::backend::RevertStateSnapshotAction;
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -144,7 +148,7 @@ impl MaybeForkedDatabase for MemDb {
 mod tests {
     use super::*;
     use alloy_primitives::{address, Bytes};
-    use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
+    use revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY};
     use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account

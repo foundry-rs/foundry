@@ -1,12 +1,13 @@
-use alloy_primitives::Address;
-use foundry_evm::revm::precompile::Precompile;
 use std::{fmt::Debug, sync::Arc};
+
+use alloy_primitives::Address;
+use revm::precompile::Precompiles;
 
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     /// Returns a set of precompiles to extend the EVM with.
-    fn precompiles(&self) -> Vec<(Address, Precompile)>;
+    fn precompiles(&self) -> Vec<(Address, Precompiles)>;
 }
 
 /// Appends a handler register to `evm` that injects the given `precompiles`.
@@ -15,7 +16,7 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
 /// precompiles.
 pub fn inject_precompiles<DB: revm::Database, I>(
     evm: &mut revm::Evm<'_, I, DB>,
-    precompiles: Vec<(Address, Precompile)>,
+    precompiles: Precompiles,
 ) {
     evm.handler.append_handler_register_box(Box::new(move |handler| {
         let precompiles = precompiles.clone();
@@ -31,9 +32,11 @@ pub fn inject_precompiles<DB: revm::Database, I>(
 #[cfg(test)]
 mod tests {
     use crate::{evm::inject_precompiles, PrecompileFactory};
-    use alloy_primitives::Address;
-    use foundry_evm::revm::primitives::{address, Bytes, Precompile, PrecompileResult, SpecId};
-    use revm::precompile::PrecompileOutput;
+    use alloy_primitives::{address, Address, Bytes};
+    use revm::{
+        precompile::{PrecompileOutput, PrecompileResult, Precompiles},
+        primitives::hardfork::SpecId,
+    };
 
     #[test]
     fn build_evm_with_extra_precompiles() {

@@ -1,24 +1,24 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{mem::storage::MinedTransaction, revm::primitives::AccountInfo};
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_common::errors::FsPathError;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction,
-        StateSnapshot,
-    },
-    revm::{
-        db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},
-        Database, DatabaseCommit,
-    },
+use foundry_evm::backend::{
+    BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
+};
+use revm::{
+    bytecode::Bytecode,
+    context::BlockEnv,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    primitives::KECCAK_EMPTY,
+    state::AccountInfo,
+    Database, DatabaseCommit,
 };
 use serde::{
     de::{MapAccess, Visitor},
@@ -388,7 +388,7 @@ pub struct SerializableState {
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
-    pub best_block_number: Option<U64>,
+    pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]

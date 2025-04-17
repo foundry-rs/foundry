@@ -37,13 +37,13 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     utils::apply_chain_and_block_specific_env_changes,
-    Env, EvmEnv,
+    Env,
 };
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::{
-    context::{BlockEnv, CfgEnv, TxEnv},
+    context::{BlockEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
 };
@@ -90,7 +90,7 @@ pub struct NodeConfig {
     /// Chain ID of the EVM chain
     pub chain_id: Option<u64>,
     /// Default gas limit for all txs
-    pub gas_limit: Option<u128>,
+    pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
     /// Default gas price for all txs
@@ -1037,19 +1037,19 @@ impl NodeConfig {
             cfg.memory_limit = value;
         }
 
-        let env = Env::from_with_spec_id(
+        let spec_id = cfg.spec.clone();
+        let mut env = Env::from(
             cfg,
             BlockEnv {
                 gas_limit: self.gas_limit(),
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            TxEnv::default(),
-            self.get_chain_id().into(),
+            TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
         );
 
         let fees = FeeManager::new(
-            cfg.spec,
+            spec_id,
             self.get_base_fee(),
             !self.disable_min_priority_fee,
             self.get_gas_price(),
@@ -1068,16 +1068,16 @@ impl NodeConfig {
             // --chain-id flag gets precedence over the genesis.json chain id
             // <https://github.com/foundry-rs/foundry/issues/10059>
             if self.chain_id.is_none() {
-                env.cfg.chain_id = genesis.config.chain_id;
+                env.evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
-            env.block.timestamp = U256::from(genesis.timestamp);
+            env.evm_env.block_env.timestamp = genesis.timestamp;
             if let Some(base_fee) = genesis.base_fee_per_gas {
-                env.block.basefee = U256::from(base_fee);
+                env.evm_env.block_env.basefee = base_fee.try_into()?;
             }
             if let Some(number) = genesis.number {
-                env.block.number = U256::from(number);
+                env.evm_env.block_env.number = number;
             }
-            env.block.coinbase = genesis.coinbase;
+            env.evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
         let genesis = GenesisConfig {
@@ -1181,7 +1181,7 @@ impl NodeConfig {
                     provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
                 if alloy_chains::NamedChain::Mainnet == chain_id {
                     let hardfork: EthereumHardfork = fork_block_number.into();
-                    env.handler_cfg.spec_id = hardfork.into();
+                    env.evm_env.cfg_env.spec = hardfork.into();
                     self.hardfork = Some(ChainHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
@@ -1289,7 +1289,7 @@ latest block number: {latest_block}"
 
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
-            env.cfg.chain_id = chain_id;
+            env.evm_env.cfg_env.chain_id = chain_id;
             env.tx.chain_id = chain_id.into();
             chain_id
         };
@@ -1297,7 +1297,7 @@ latest block number: {latest_block}"
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
         apply_chain_and_block_specific_env_changes::<AnyNetwork>(env, &block);
 
-        let meta = BlockchainDbMeta::new(*env.env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
@@ -1328,7 +1328,7 @@ latest block number: {latest_block}"
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
-            blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
+            blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price.clone(),
             force_transactions,
         };
 
@@ -1346,24 +1346,24 @@ latest block number: {latest_block}"
     pub(crate) fn fork_gas_limit<T: TransactionResponse, H: BlockHeader>(
         &self,
         block: &Block<T, H>,
-    ) -> u128 {
+    ) -> u64 {
         if !self.disable_block_gas_limit {
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
             } else if block.header.gas_limit() > 0 {
-                return block.header.gas_limit() as u128;
+                return block.header.gas_limit();
             }
         }
 
-        u64::MAX as u128
+        u64::MAX
     }
 
     /// Returns the gas limit for a non forked anvil instance
     ///
     /// Checks the config for the `disable_block_gas_limit` flag
-    pub(crate) fn gas_limit(&self) -> u128 {
+    pub(crate) fn gas_limit(&self) -> u64 {
         if self.disable_block_gas_limit {
-            return u64::MAX as u128;
+            return u64::MAX;
         }
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)

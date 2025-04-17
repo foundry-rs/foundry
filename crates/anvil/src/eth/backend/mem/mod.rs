@@ -28,10 +28,9 @@ use crate::{
     },
     inject_precompiles,
     mem::{
-        inspector::Inspector,
+        inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    revm::{db::DatabaseRef, primitives::AccountInfo},
     ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
@@ -45,7 +44,8 @@ use alloy_network::{
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
+    address, hex, keccak256, map::HashMap, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256,
+    U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
@@ -87,23 +87,22 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
-    revm::{
-        db::CacheDB,
-        interpreter::InstructionResult,
-        primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, Output, SpecId,
-            TxEnv, KECCAK_EMPTY,
-        },
-    },
     traces::TracingInspectorConfig,
+    Env,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context_interface::block::BlobExcessGasAndPrice,
-    database::WrapDatabaseRef,
-    primitives::{HashMap, OptimismFields, ResultAndState},
+    context::{BlockEnv, TxEnv},
+    context_interface::{
+        block::BlobExcessGasAndPrice,
+        result::{ExecutionResult, Output, ResultAndState},
+    },
+    database::{CacheDB, DatabaseRef, WrapDatabaseRef},
+    interpreter::InstructionResult,
+    primitives::{hardfork::SpecId, KECCAK_EMPTY},
+    state::AccountInfo,
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -186,7 +185,7 @@ pub struct Backend {
     /// Historic states of previous blocks.
     states: Arc<RwLock<InMemoryBlockStates>>,
     /// Env data of the chain
-    env: Arc<RwLock<EnvWithHandlerCfg>>,
+    env: Arc<RwLock<Env>>,
     /// This is set if this is currently forked off another client.
     fork: Arc<RwLock<Option<ClientFork>>>,
     /// Provides time related info, like timestamp.
@@ -226,7 +225,7 @@ impl Backend {
     #[expect(clippy::too_many_arguments)]
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<Box<dyn Db>>>,
-        env: Arc<RwLock<EnvWithHandlerCfg>>,
+        env: Arc<RwLock<Env>>,
         genesis: GenesisConfig,
         fees: FeeManager,
         fork: Arc<RwLock<Option<ClientFork>>>,
@@ -249,7 +248,7 @@ impl Backend {
             let env = env.read();
             Blockchain::new(
                 &env,
-                env.handler_cfg.spec_id,
+                env.evm_env.cfg_env.spec,
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
                 genesis.number,
@@ -306,7 +305,7 @@ impl Backend {
 
             let mut capabilities = WalletCapabilities::default();
 
-            let chain_id = env.read().cfg.chain_id;
+            let chain_id = env.read().evm_env.cfg_env.chain_id;
             capabilities.insert(
                 chain_id,
                 Capabilities {
@@ -557,17 +556,17 @@ impl Backend {
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
 
-                    env.cfg.chain_id = fork.chain_id();
-                    env.block = BlockEnv {
-                        number: U256::from(fork_block_number),
-                        timestamp: U256::from(fork_block.header.timestamp),
-                        gas_limit: U256::from(gas_limit),
+                    env.evm_env.cfg_env.chain_id = fork.chain_id();
+                    env.evm_env.block_env = BlockEnv {
+                        number: fork_block_number,
+                        timestamp: fork_block.header.timestamp,
+                        gas_limit,
                         difficulty: fork_block.header.difficulty,
                         prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
-                        // Keep previous `coinbase` and `basefee` value
-                        coinbase: env.block.coinbase,
-                        basefee: env.block.basefee,
-                        ..env.block.clone()
+                        // Keep previous `beneficiary` and `basefee` value
+                        beneficiary: env.evm_env.block_env.beneficiary,
+                        basefee: env.evm_env.block_env.basefee,
+                        ..env.evm_env.block_env.clone()
                     };
 
                     // this is the base fee of the current block, but we need the base fee of
@@ -647,7 +646,7 @@ impl Backend {
     }
 
     /// The env data of the blockchain
-    pub fn env(&self) -> &Arc<RwLock<EnvWithHandlerCfg>> {
+    pub fn env(&self) -> &Arc<RwLock<Env>> {
         &self.env
     }
 
@@ -884,18 +883,18 @@ impl Backend {
             self.time.reset(reset_time);
 
             let mut env = self.env.write();
-            env.block = BlockEnv {
-                number: U256::from(num),
-                timestamp: U256::from(block.header.timestamp),
+            env.evm_env.block_env = BlockEnv {
+                number: num,
+                timestamp: block.header.timestamp,
                 difficulty: block.header.difficulty,
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
-                gas_limit: U256::from(block.header.gas_limit),
-                // Keep previous `coinbase` and `basefee` value
-                coinbase: env.block.coinbase,
-                basefee: env.block.basefee,
+                gas_limit: block.header.gas_limit,
+                // Keep previous `beneficiary` and `basefee` value
+                beneficiary: env.evm_env.block_env.beneficiary,
+                basefee: env.evm_env.block_env.basefee,
                 ..Default::default()
-            };
+            }
         }
         Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
     }
@@ -909,7 +908,7 @@ impl Backend {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
-        let at = self.env.read().block.clone();
+        let at = self.env.read().evm_env.block_env.clone();
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
@@ -952,19 +951,19 @@ impl Backend {
         self.blockchain.storage.write().load_transactions(state.transactions.clone());
         // reset the block env
         if let Some(block) = state.block.clone() {
-            self.env.write().block = block.clone();
+            self.env.write().evm_env.block_env = block.clone();
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             if let Some((number, hash)) = fork_num_and_hash {
-                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                let best_number = state.best_block_number.unwrap_or(block.number);
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
-                if best_number.to::<u64>() > number {
+                if best_number > number {
                     self.blockchain.storage.write().best_number = best_number;
                     let best_hash =
                         self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
@@ -978,11 +977,11 @@ impl Backend {
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
-                    self.blockchain.storage.write().best_number = U64::from(number);
+                    self.blockchain.storage.write().best_number = number;
                     self.blockchain.storage.write().best_hash = hash;
                 }
             } else {
-                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+                let best_number = state.best_block_number.unwrap_or(block.number);
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
@@ -1470,8 +1469,8 @@ impl Backend {
     }
 
     /// Builds [`Inspector`] with the configured options.
-    fn build_inspector(&self) -> Inspector {
-        let mut inspector = Inspector::default();
+    fn build_inspector(&self) -> AnvilInspector {
+        let mut inspector = AnvilInspector::default();
 
         if self.print_logs {
             inspector = inspector.with_log_collector();

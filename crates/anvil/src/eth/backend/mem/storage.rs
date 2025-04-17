@@ -259,7 +259,7 @@ pub struct BlockchainStorage {
     /// The current best hash
     pub best_hash: B256,
     /// The current best block number
-    pub best_number: U64,
+    pub best_number: u64,
     /// genesis hash of the chain
     pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
