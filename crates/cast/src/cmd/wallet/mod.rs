@@ -1,8 +1,8 @@
-use crate::revm::primitives::Authorization;
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
+use alloy_rpc_types::Authorization;
 use alloy_signer::{
     k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
     Signer,

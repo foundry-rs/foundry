@@ -187,8 +187,8 @@ impl CallArgs {
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
-            env.cfg.disable_block_gas_limit = true;
-            env.block.gas_limit = U256::MAX;
+            env.evm_env.cfg_env.disable_block_gas_limit = true;
+            env.evm_env.block_env.gas_limit = u64::MAX;
 
             let trace_mode = TraceMode::Call
                 .with_debug(debug)

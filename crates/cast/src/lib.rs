@@ -31,6 +31,7 @@ use foundry_common::{
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
+use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 use revm::bytecode::Eof;
@@ -44,7 +45,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
