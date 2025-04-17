@@ -27,7 +27,14 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use std::str::FromStr;
+use regex::Regex;
+use std::{str::FromStr, sync::LazyLock};
+
+// matches override pattern <address>:<slot>:<value>
+// e.g. 0x123:0x1:0x1234
+static OVERRIDE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap()
+});
 
 /// CLI arguments for `cast call`.
 ///
@@ -357,21 +364,16 @@ impl CallArgs {
     }
 
     /// Parse an override string in the format address:slot:value
-    pub fn parse_address_slot_value(s: &str) -> eyre::Result<(Address, U256, U256)> {
-        let mut parts = s.split(':');
-        let addr = parts.next().ok_or_else(|| {
-            eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-        })?.parse()?;
-        let slot = parts.next().ok_or_else(|| {
-            eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-        })?.parse()?;
-        let value = parts.next().ok_or_else(|| {
-            eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-        })?.parse()?;
-        if parts.next().is_some() {
-            return Err(eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"));
-        }
-        Ok((addr, slot, value))
+    pub fn parse_address_slot_value(s: &str) -> Result<(Address, U256, U256)> {
+        let captures = OVERRIDE_PATTERN
+            .captures(s)
+            .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>"))?;
+
+        Ok((
+            captures[1].parse()?,  // Address
+            captures[2].parse()?,  // Slot (U256)
+            captures[3].parse()?,  // Value (U256)
+        ))
     }
 }
 
