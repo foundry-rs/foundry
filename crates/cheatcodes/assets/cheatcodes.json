@@ -6,9 +6,9 @@
       "declaration": "error CheatcodeError(string message);"
     },
     {
-      "name": "UnmatchedEventError",
-      "description": "Error thrown when an expected event isn't emitted",
-      "declaration": "error UnmatchedEventError(uint256 positionExpected, bytes rawLog);"
+      "name": "UnemittedEventError",
+      "description": "Error thrown by unemitted events",
+      "declaration": "error UnemittedEventError(uint16 positionExpected);"
     }
   ],
   "events": [],
