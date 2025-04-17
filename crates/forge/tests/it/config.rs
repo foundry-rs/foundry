@@ -77,9 +77,7 @@ impl TestConfig {
                     let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
                         let decoder = &call_trace_decoder;
                         async move {
-                            decode_trace_arena(arena, decoder)
-                                .await
-                                .expect("Failed to decode traces");
+                            decode_trace_arena(arena, decoder).await;
                             render_trace_arena(arena)
                         }
                     }))
