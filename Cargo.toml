@@ -204,7 +204,7 @@ solar-parse = { version = "=0.1.2", default-features = false }
 solar-sema = { version = "=0.1.2", default-features = false }
 
 ## revm
-revm = { version = "21.0.0", default-features = false }
+revm = "21.0.0"
 revm-inspectors = { version = "0.18.1", features = ["serde"] }
 op-revm = "3.0.2"
 

@@ -36,7 +36,7 @@ impl Db for ForkedDatabase {
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
@@ -44,6 +44,7 @@ impl Db for ForkedDatabase {
         let mut db = self.database().clone();
         let accounts = self
             .database()
+            .cache
             .accounts
             .clone()
             .into_iter()
@@ -93,7 +94,7 @@ impl MaybeFullDatabase for ForkedDatabase {
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.database().accounts)
+        Some(&self.database().cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
@@ -132,7 +133,7 @@ impl MaybeFullDatabase for ForkDbStateSnapshot {
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.local.accounts)
+        Some(&self.local.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {

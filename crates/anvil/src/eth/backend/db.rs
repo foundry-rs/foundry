@@ -215,7 +215,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.block_hashes.insert(number, hash);
+        self.cache.block_hashes.insert(number, hash);
     }
 
     fn dump_state(
@@ -248,37 +248,37 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.accounts)
+        Some(&self.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        let db_accounts = std::mem::take(&mut self.accounts);
+        let db_accounts = std::mem::take(&mut self.cache.accounts);
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash);
             accounts.insert(addr, info);
         }
-        let block_hashes = std::mem::take(&mut self.block_hashes);
+        let block_hashes = std::mem::take(&mut self.cache.block_hashes);
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        let db_accounts = self.accounts.clone();
+        let db_accounts = self.cache.accounts.clone();
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
         for (addr, acc) in db_accounts {
             account_storage.insert(addr, acc.storage.clone());
             let mut info = acc.info;
-            info.code = self.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash).cloned();
             accounts.insert(addr, info);
         }
 
-        let block_hashes = self.block_hashes.clone();
+        let block_hashes = self.cache.block_hashes.clone();
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
@@ -291,9 +291,9 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash, code);
             }
-            self.accounts.insert(
+            self.cache.accounts.insert(
                 addr,
                 DbAccount {
                     info: acc,
@@ -302,7 +302,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
                 },
             );
         }
-        self.block_hashes = block_hashes;
+        self.cache.block_hashes = block_hashes;
     }
 }
 

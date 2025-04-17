@@ -7,7 +7,7 @@ use crate::{
     },
     mem::state::state_root,
 };
-use alloy_primitives::{map::HashMap, Address, B256, U256, U64};
+use alloy_primitives::{map::HashMap, Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use foundry_evm::backend::{BlockchainDb, DatabaseResult, StateSnapshot};
 use revm::{
@@ -30,19 +30,20 @@ impl Db for MemDb {
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.inner.block_hashes.insert(number, hash);
+        self.inner.cache.block_hashes.insert(number, hash);
     }
 
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
+            .cache
             .accounts
             .clone()
             .into_iter()
@@ -96,7 +97,7 @@ impl Db for MemDb {
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
-        Some(state_root(&self.inner.accounts))
+        Some(state_root(&self.inner.cache.accounts))
     }
 
     fn current_state(&self) -> StateDb {
@@ -110,7 +111,7 @@ impl MaybeFullDatabase for MemDb {
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.inner.accounts)
+        Some(&self.inner.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
@@ -175,7 +176,7 @@ mod tests {
 
         // blocks dumping/loading tested in storage.rs
         let state = dump_db
-            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new(), Default::default())
+            .dump_state(Default::default(), 0, Vec::new(), Vec::new(), Default::default())
             .unwrap()
             .unwrap();
 
