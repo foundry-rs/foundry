@@ -1,11 +1,11 @@
-contract ContractDefinition1 is Contract1, Contract2{}
-
-contract ContractDefinition2 is Contract1, Contract2, Contract3Contract3Contract3Contract3Contract3Contract3Contract3, Contract4, Contract5{}
-
-contract ContractDefinition1 is Contract1, Contract2{
-    using A for uint;
-}
-
-contract ContractDefinition2 is Contract1, Contract2, Contract3Contract3Contract3Contract3Contract3Contract3Contract3, Contract4, Contract5{
-    using A for uint;
+contract C {
+    uint constant a = [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa];
+    uint constant b =
+        [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa];
+    uint constant c =
+        [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa];
+    uint constant c = [
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ];
 }

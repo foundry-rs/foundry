@@ -1,6 +1,6 @@
 alias forge-fmt="cargo r --quiet -p forge-fmt-2 --"
 forge-fmt-cmp() {
-    cargo b --quiet -p forge-fmt-2
+    cargo b --quiet -p forge-fmt-2 || exit 1
     forge_fmt_new="$(pwd)/target/debug/forge-fmt-2"
 
     tmp="$(mktemp -d)"

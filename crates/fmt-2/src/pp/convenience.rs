@@ -81,9 +81,11 @@ impl Printer {
         });
     }
 
+    // Doesn't actually print trailing comma since it's not allowed in Solidity.
     pub fn trailing_comma(&mut self, is_last: bool) {
         if is_last {
-            self.scan_break(BreakToken { pre_break: Some(','), ..BreakToken::default() });
+            // self.scan_break(BreakToken { pre_break: Some(','), ..BreakToken::default() });
+            self.zerobreak();
         } else {
             self.word(",");
             self.space();

@@ -627,8 +627,8 @@ impl State<'_> {
             self.print_block(body);
         } else {
             self.word(";");
+            self.hardbreak();
         }
-        self.hardbreak();
     }
 
     fn print_var_def(&mut self, var: &ast::VariableDefinition<'_>) {
@@ -654,8 +654,8 @@ impl State<'_> {
             return;
         }
 
+        self.cbox(0);
         self.print_ty(ty);
-        self.nbsp();
         if let Some(visibility) = visibility {
             self.nbsp();
             self.word(visibility.to_str());
@@ -677,17 +677,21 @@ impl State<'_> {
             self.word("indexed");
         }
         if let Some(ident) = name {
+            self.nbsp();
             self.print_ident(*ident);
         }
         if let Some(initializer) = initializer {
             self.word(" = ");
+            self.neverbreak();
             self.print_expr(initializer);
         }
+        self.end();
     }
 
     fn print_parameter_list(&mut self, parameters: &[ast::VariableDefinition<'_>]) {
         if parameters.is_empty() {
             self.word("()");
+            return;
         }
         self.cbox(INDENT);
         self.word("(");
@@ -766,9 +770,7 @@ impl State<'_> {
                 self.print_str_lit(kind, quote_pos, s);
                 return;
             }
-            ast::LitKind::Number(_) | ast::LitKind::Rational(_)
-                if !self.config.number_underscore.is_preserve() =>
-            {
+            ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
                 self.print_num_literal(s);
                 return;
             }
@@ -778,8 +780,8 @@ impl State<'_> {
     }
 
     fn print_num_literal(&mut self, source: &str) {
-        fn strip_underscores(s: &str) -> Cow<'_, str> {
-            if s.contains('_') {
+        fn strip_underscores_if(b: bool, s: &str) -> Cow<'_, str> {
+            if b && s.contains('_') {
                 Cow::Owned(s.replace('_', ""))
             } else {
                 Cow::Borrowed(s)
@@ -808,25 +810,23 @@ impl State<'_> {
             }
         }
 
-        dbg!(source);
-
         debug_assert!(source.is_ascii(), "{source:?}");
 
         let config = self.config.number_underscore;
-        debug_assert!(!config.is_preserve());
 
         let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
-        let val = strip_underscores(val);
-        let exp = strip_underscores(exp);
-        let fract = strip_underscores(fract);
+        let strip_undescores = !config.is_preserve();
+        let val = &strip_underscores_if(strip_undescores, val)[..];
+        let exp = &strip_underscores_if(strip_undescores, exp)[..];
+        let fract = &strip_underscores_if(strip_undescores, fract)[..];
 
         // strip any padded 0's
         let val = val.trim_start_matches('0');
         let fract = fract.trim_end_matches('0');
         let (exp_sign, exp) =
-            if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", &exp[..]) };
+            if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", exp) };
         let exp = exp.trim_start_matches('0');
 
         let mut out = String::with_capacity(source.len() * 2);
@@ -835,9 +835,13 @@ impl State<'_> {
         } else {
             add_underscores(&mut out, config, val, false);
         }
-        if !fract.is_empty() {
+        if source.contains('.') {
             out.push('.');
-            add_underscores(&mut out, config, fract, true);
+            if !fract.is_empty() {
+                add_underscores(&mut out, config, fract, true);
+            } else {
+                out.push('0');
+            }
         }
         if !exp.is_empty() {
             // TODO: preserve the `E`?
@@ -996,13 +1000,24 @@ impl State<'_> {
         }
 
         match kind {
-            ast::ExprKind::Array(exprs) => todo!(),
+            ast::ExprKind::Array(exprs) => {
+                self.word("[");
+                self.cbox(INDENT);
+                self.zerobreak();
+                for (pos, elem) in exprs.iter().delimited() {
+                    self.print_expr(elem);
+                    self.trailing_comma(pos.is_last);
+                }
+                self.offset(-INDENT);
+                self.end();
+                self.word("]");
+            }
             ast::ExprKind::Assign(expr, bin_op, expr1) => todo!(),
             ast::ExprKind::Binary(expr, bin_op, expr1) => todo!(),
             ast::ExprKind::Call(expr, call_args) => todo!(),
             ast::ExprKind::CallOptions(expr, named_args) => todo!(),
             ast::ExprKind::Delete(expr) => todo!(),
-            ast::ExprKind::Ident(ident) => todo!(),
+            ast::ExprKind::Ident(ident) => self.print_ident(*ident),
             ast::ExprKind::Index(expr, index_kind) => todo!(),
             ast::ExprKind::Lit(lit, unit) => {
                 self.print_lit(lit);
