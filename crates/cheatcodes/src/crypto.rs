@@ -63,8 +63,6 @@ impl Cheatcode for signTypedDataCall {
         let digest = typed_data.encode_eip712()?;
         let sig = sign(&privateKey, digest)?;
         Ok(encode_full_sig(sig))
-        // let wallet = privateKey.parse()?;
-        // let signature = wallet.sign_hash(H256::from(digest));
  }
 }
 
