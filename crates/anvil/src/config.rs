@@ -1246,7 +1246,7 @@ latest block number: {latest_block}"
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used as u128,
+                    block.header.gas_used,
                     gas_limit,
                     block.header.base_fee_per_gas.unwrap_or_default(),
                 );

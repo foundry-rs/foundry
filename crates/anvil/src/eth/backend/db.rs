@@ -139,7 +139,7 @@ pub trait Db:
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
@@ -221,7 +221,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     fn dump_state(
         &self,
         _at: BlockEnv,
-        _best_number: U64,
+        _best_number: u64,
         _blocks: Vec<SerializableBlock>,
         _transaction: Vec<SerializableTransaction>,
         _historical_states: Option<SerializableHistoricalStates>,

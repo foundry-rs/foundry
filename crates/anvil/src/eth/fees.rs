@@ -160,7 +160,7 @@ impl FeeManager {
     /// Calculates the base fee for the next block
     pub fn get_next_block_base_fee_per_gas(
         &self,
-        gas_used: u128,
+        gas_used: u64,
         gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {

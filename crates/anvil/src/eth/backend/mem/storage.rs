@@ -255,7 +255,7 @@ pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
     /// mapping from block number -> block hash
-    pub hashes: HashMap<U64, B256>,
+    pub hashes: HashMap<u64, B256>,
     /// The current best hash
     pub best_hash: B256,
     /// The current best block number
@@ -499,7 +499,7 @@ impl Blockchain {
 #[derive(Clone, Debug)]
 pub struct MinedBlockOutcome {
     /// The block that was mined
-    pub block_number: U64,
+    pub block_number: u64,
     /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were attempted to be included but were invalid at the time of
