@@ -14,11 +14,13 @@ pub struct ScriptExecutionInspector {
 }
 
 impl<DB: Database> Inspector<DB> for ScriptExecutionInspector {
-    #[cold]
+    #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
-        // Check for address(this) usage in the main script contract
+        // Check if both target and bytecode address are the same as script contract address
+        // (allow calling external libraries when bytecode address is different).
         if interpreter.current_opcode() == ADDRESS &&
-            interpreter.contract.target_address == self.script_address
+            interpreter.contract.target_address == self.script_address &&
+            interpreter.contract.bytecode_address.unwrap_or_default() == self.script_address
         {
             // Log the reason for revert
             tracing::error!(
