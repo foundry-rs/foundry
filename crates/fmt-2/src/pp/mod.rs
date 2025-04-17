@@ -312,7 +312,6 @@ impl Printer {
             }
         }
 
-        dbg!(size, self.space);
         if size > self.space {
             self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
             self.indent = match token.indent {

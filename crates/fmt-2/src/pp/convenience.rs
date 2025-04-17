@@ -61,6 +61,10 @@ impl Printer {
         }
     }
 
+    pub fn is_exactly_one_empty_line(&self) -> bool {
+        self.is_beginning_of_line()
+    }
+
     pub(crate) fn hardbreak_tok_offset(offset: isize) -> Token {
         Token::Break(BreakToken {
             offset,

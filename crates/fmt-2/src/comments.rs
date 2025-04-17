@@ -89,7 +89,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 if let Some(mut idx) = token_text.find('\n') {
                     code_to_the_left = false;
 
-                    while let Some(next_newline) = token_text[idx + 1..].find('\n') {
+                    if let Some(next_newline) = token_text[idx + 1..].find('\n') {
                         idx += 1 + next_newline;
                         let pos = pos + idx;
                         comments.push(Comment {

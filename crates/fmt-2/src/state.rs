@@ -63,7 +63,7 @@ pub wrap_comments: bool,
 /// Globs to ignore
 pub ignore: Vec<String>,
 
-- [ ]
+- [x]
 /// Add new line at start and end of contract declarations
 pub contract_new_lines: bool,
 
@@ -123,15 +123,18 @@ impl<'a> State<'a> {
         &mut self.comments
     }
 
-    // TODO(dani): remove bool?
-    fn maybe_print_comment(&mut self, pos: BytePos) -> bool {
-        let mut has_comment = false;
+    /// Prints comments that are before the given position.
+    ///
+    /// Returns `Some` with the style of the last comment printed, or `None` if no comment was
+    /// printed.
+    fn maybe_print_comments(&mut self, pos: BytePos) -> Option<CommentStyle> {
+        let mut has_comment = None;
         while let Some(cmnt) = self.peek_comment() {
             if cmnt.pos() >= pos {
                 break;
             }
-            has_comment = true;
             let cmnt = self.next_comment().unwrap();
+            has_comment = Some(cmnt.style);
             self.print_comment(cmnt);
         }
         has_comment
@@ -141,14 +144,16 @@ impl<'a> State<'a> {
         match cmnt.style {
             CommentStyle::Mixed => {
                 if !self.is_beginning_of_line() {
-                    self.zerobreak();
+                    // TODO(dani): ?
+                    // self.zerobreak();
+                    self.space();
                 }
                 if let Some(last) = cmnt.lines.pop() {
                     self.ibox(0);
 
                     for line in cmnt.lines {
                         self.word(line);
-                        self.hardbreak()
+                        self.hardbreak();
                     }
 
                     self.word(last);
@@ -156,7 +161,7 @@ impl<'a> State<'a> {
 
                     self.end();
                 }
-                self.zerobreak()
+                self.zerobreak();
             }
             CommentStyle::Isolated => {
                 self.hardbreak_if_not_bol();
@@ -175,7 +180,7 @@ impl<'a> State<'a> {
                 }
                 if cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
-                    self.hardbreak()
+                    self.hardbreak();
                 } else {
                     self.visual_align();
                     for line in cmnt.lines {
@@ -237,8 +242,8 @@ impl<'a> State<'a> {
     }
 
     fn bclose_maybe_open(&mut self, span: Span, empty: bool, close_box: bool) {
-        let has_comment = self.maybe_print_comment(span.hi());
-        if !empty || has_comment {
+        let comment = self.maybe_print_comments(span.hi());
+        if !empty || comment.is_some() {
             self.break_offset_if_not_bol(1, -self.ind);
         }
         self.word("}");
@@ -286,7 +291,7 @@ impl State<'_> {
     /// Returns `true` if the span is disabled and has been printed as-is.
     #[must_use]
     fn handle_span(&mut self, span: Span) -> bool {
-        self.maybe_print_comment(span.lo());
+        self.maybe_print_comments(span.lo());
         self.print_span_if_disabled(span)
     }
 
@@ -341,7 +346,7 @@ impl State<'_> {
     fn print_item(&mut self, item: &ast::Item<'_>) {
         let ast::Item { docs, span, kind } = item;
         self.print_docs(docs);
-        self.maybe_print_comment(span.lo());
+        self.maybe_print_comments(span.lo());
         match kind {
             ast::ItemKind::Pragma(ast::PragmaDirective { tokens }) => {
                 self.word("pragma ");
@@ -473,9 +478,22 @@ impl State<'_> {
                 }
 
                 self.word("{");
-                self.hardbreak_if_nonempty();
-                for item in body.iter() {
-                    self.print_item(item);
+                if !body.is_empty() {
+                    self.hardbreak();
+                    let comment = self.maybe_print_comments(body[0].span.lo());
+                    if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
+                        self.hardbreak();
+                    }
+                    for item in body.iter() {
+                        self.print_item(item);
+                    }
+                    let comment = self.maybe_print_comments(span.hi());
+                    if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
+                        self.hardbreak();
+                    }
+                } else {
+                    self.maybe_print_comments(span.hi());
+                    self.zerobreak();
                 }
                 self.s.offset(-self.ind);
                 self.end();
@@ -714,7 +732,7 @@ impl State<'_> {
 
     fn print_docs(&mut self, docs: &ast::DocComments<'_>) {
         for &ast::DocComment { kind, span, symbol } in docs.iter() {
-            self.maybe_print_comment(span.lo());
+            self.maybe_print_comments(span.lo());
             self.word(match kind {
                 ast::CommentKind::Line => {
                     format!("///{symbol}")
@@ -741,7 +759,7 @@ impl State<'_> {
     }
 
     fn print_ident(&mut self, ident: ast::Ident) {
-        self.maybe_print_comment(ident.span.lo());
+        self.maybe_print_comments(ident.span.lo());
         self.word(ident.to_string());
     }
 

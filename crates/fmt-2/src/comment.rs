@@ -17,7 +17,7 @@ pub enum CommentStyle {
     BlankLine,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Comment {
     pub style: CommentStyle,
     pub lines: Vec<String>,
