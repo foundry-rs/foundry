@@ -1,6 +1,6 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
-    TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, CustomPrintTracer, Fuzzer,
+    LogCollector, TracingInspector,
 };
 use alloy_primitives::{
     map::{AddressHashMap, HashMap},
@@ -20,7 +20,6 @@ use revm::{
         BlockEnv,
     },
     context_interface::CreateScheme,
-    inspectors::CustomPrintTracer,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
@@ -498,23 +497,13 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
-    ) -> &mut CallOutcome {
-        let result = outcome.result.result;
+    ) {
         call_inspectors!(
             [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 inspector.call_end(ecx, inputs, outcome);
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = outcome.result.result != result ||
-                    (outcome.result.result == InstructionResult::Revert &&
-                        outcome.output() != outcome.output());
-                different.then_some(outcome)
             },
         );
-
-        outcome
     }
 
     fn do_create_end(
@@ -522,23 +511,13 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> &mut CreateOutcome {
-        let result = outcome.result.result;
+    ) {
         call_inspectors!(
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 inspector.create_end(ecx, call, outcome);
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = outcome.result.result != result ||
-                    (outcome.result.result == InstructionResult::Revert &&
-                        outcome.output() != outcome.output());
-                different.then_some(outcome)
             },
         );
-
-        outcome
     }
 
     fn do_eofcreate_end(
@@ -546,23 +525,13 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> &mut CreateOutcome {
-        let result = outcome.result.result;
+    ) {
         call_inspectors!(
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 inspector.eofcreate_end(ecx, call, outcome);
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = outcome.result.result != result ||
-                    (outcome.result.result == InstructionResult::Revert &&
-                        outcome.output() != outcome.output());
-                different.then_some(outcome)
             },
         );
-
-        outcome
     }
 
     fn transact_inner(
@@ -776,7 +745,7 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
     fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>, log: Log) {
         call_inspectors!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log(interpreter, ecx, log),
+            |inspector| inspector.log(interpreter, ecx, log.clone()),
         );
     }
 
@@ -1013,7 +982,7 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.tracer, &mut self.printer], |inspector| {
-            inspector.selfdestruct(contract, target, value)
+            Inspector::<FoundryEvmContext<'_>>::selfdestruct(inspector, contract, target, value)
         });
     }
 }
