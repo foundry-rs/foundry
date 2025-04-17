@@ -11,17 +11,17 @@ use alloy_signer_local::{
     LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
+use ethers::{
+    core::types::H256,
+    signers::LocalWallet,
+    types::transaction::eip712::{Eip712, TypedData},
+};
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
 use p256::ecdsa::{
     signature::hazmat::PrehashSigner, Signature as P256Signature, SigningKey as P256SigningKey,
-};
-use ethers::{
-    signers::LocalWallet,
-    types::transaction::eip712::{TypedData,Eip712},
-    core::types::H256,
 };
 
 /// The BIP32 default derivation path prefix.
@@ -58,12 +58,12 @@ impl Cheatcode for sign_0Call {
 
 impl Cheatcode for signTypedDataCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self {privateKey,jsonData} = self;
+        let Self { privateKey, jsonData } = self;
         let typed_data: TypedData = serde_json::from_str(jsonData)?;
         let digest = typed_data.encode_eip712()?;
         let sig = sign(&privateKey, digest)?;
         Ok(encode_full_sig(sig))
- }
+    }
 }
 
 impl Cheatcode for signCompact_0Call {
