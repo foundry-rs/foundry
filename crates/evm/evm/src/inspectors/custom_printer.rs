@@ -1,6 +1,7 @@
 //! Custom print inspector, it has step level information of execution.
 //! It is a great tool if some debugging is needed.
 
+use foundry_common::sh_println;
 use foundry_evm_core::evm::FoundryEvmContext;
 use revm::{
     bytecode::opcode::OpCode,
@@ -41,7 +42,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
 
         let memory_size = interp.memory.size();
 
-        println!(
+        sh_println!(
             "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
             context.journaled_state.depth,
             interp.bytecode.pc(),
@@ -85,7 +86,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         _context: &mut FoundryEvmContext<'_>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        println!(
+        sh_println!(
             "SM Address: {:?}, caller:{:?},target:{:?} is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.bytecode_address,
             inputs.caller,
@@ -102,17 +103,23 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         _context: &mut FoundryEvmContext<'_>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        println!(
+        sh_println!(
             "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
-            inputs.caller, inputs.scheme, inputs.value, inputs.init_code, inputs.gas_limit
+            inputs.caller,
+            inputs.scheme,
+            inputs.value,
+            inputs.init_code,
+            inputs.gas_limit
         );
         None
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        println!(
+        sh_println!(
             "SELFDESTRUCT: contract: {:?}, refund target: {:?}, value {:?}",
-            contract, target, value
+            contract,
+            target,
+            value
         );
     }
 }
