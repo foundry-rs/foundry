@@ -11,25 +11,17 @@ mod ring;
 const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
 const DEBUG_INDENT: bool = false;
 
-// TODO(dani): config
-
-// Target line width.
-const MARGIN: isize = 89;
-
-// Number of spaces increment at each level of block indentation.
-const INDENT: isize = 4;
-
 // Every line is allowed at least this much space, even if highly indented.
 const MIN_SPACE: isize = 60;
 
 /// How to break. Described in more detail in the module docs.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Breaks {
     Consistent,
     Inconsistent,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndentStyle {
     /// Vertically aligned under whatever column this block begins at.
     ///
@@ -45,7 +37,7 @@ enum IndentStyle {
     Block { offset: isize },
 }
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct BreakToken {
     offset: isize,
     blank_space: usize,
@@ -54,13 +46,13 @@ pub(crate) struct BreakToken {
     never_break: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BeginToken {
     indent: IndentStyle,
     breaks: Breaks,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Token {
     // In practice a string token contains either a `&'static str` or a
     // `String`. `Cow` is overkill for this because we never modify the data,
@@ -105,18 +97,23 @@ pub struct Printer {
     /// The token most recently popped from the left boundary of the
     /// ring-buffer for printing
     last_printed: Option<Token>,
+
+    /// Target line width.
+    margin: isize,
 }
 
+#[derive(Debug)]
 struct BufEntry {
     token: Token,
     size: isize,
 }
 
 impl Printer {
-    pub fn new() -> Self {
+    pub fn new(margin: usize) -> Self {
+        let margin = (margin as isize).max(MIN_SPACE);
         Self {
             out: String::new(),
-            space: MARGIN,
+            space: margin,
             buf: RingBuffer::new(),
             left_total: 0,
             right_total: 0,
@@ -125,6 +122,8 @@ impl Printer {
             indent: 0,
             pending_indentation: 0,
             last_printed: None,
+
+            margin,
         }
     }
 
@@ -313,13 +312,14 @@ impl Printer {
             }
         }
 
+        dbg!(size, self.space);
         if size > self.space {
             self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
             self.indent = match token.indent {
                 IndentStyle::Block { offset } => {
                     usize::try_from(self.indent as isize + offset).unwrap()
                 }
-                IndentStyle::Visual => (MARGIN - self.space) as usize,
+                IndentStyle::Visual => (self.margin - self.space) as usize,
             };
         } else {
             self.print_stack.push(PrintFrame::Fits(token.breaks));
@@ -366,8 +366,7 @@ impl Printer {
             self.out.push('\n');
             let indent = self.indent as isize + token.offset;
             self.pending_indentation = usize::try_from(indent).unwrap();
-            // TODO(dani): config
-            self.space = cmp::max(MARGIN - indent, MIN_SPACE);
+            self.space = cmp::max(self.margin - indent, MIN_SPACE);
         }
     }
 

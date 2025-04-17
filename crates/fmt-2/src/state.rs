@@ -12,17 +12,14 @@ use solar_parse::{
 };
 use std::borrow::Cow;
 
-// TODO(dani): config
-const INDENT: isize = 4;
-
 // TODO(dani): bunch docs into `Comments` since misplaced docs get ignored
 
 /*
-- [ ]
+- [x]
 /// Maximum line length where formatter will try to wrap the line
 pub line_length: usize,
 
-- [ ]
+- [x]
 /// Number of spaces per indentation level
 pub tab_width: usize,
 
@@ -77,6 +74,7 @@ pub sort_imports: bool,
 
 pub(super) struct State<'a> {
     pub(crate) s: pp::Printer,
+    ind: isize,
     sm: &'a SourceMap,
     comments: Comments,
     config: FormatterConfig,
@@ -107,7 +105,14 @@ impl<'a> State<'a> {
         inline_config: InlineConfig,
         comments: Comments,
     ) -> Self {
-        Self { s: pp::Printer::new(), sm, comments, inline_config, config }
+        Self {
+            s: pp::Printer::new(config.line_length),
+            ind: config.tab_width as isize,
+            sm,
+            comments,
+            inline_config,
+            config,
+        }
     }
 
     fn comments(&self) -> &Comments {
@@ -234,7 +239,7 @@ impl<'a> State<'a> {
     fn bclose_maybe_open(&mut self, span: Span, empty: bool, close_box: bool) {
         let has_comment = self.maybe_print_comment(span.hi());
         if !empty || has_comment {
-            self.break_offset_if_not_bol(1, -INDENT);
+            self.break_offset_if_not_bol(1, -self.ind);
         }
         self.word("}");
         if close_box {
@@ -371,7 +376,7 @@ impl State<'_> {
                         }
                     }
                     ast::ImportItems::Aliases(aliases) => {
-                        self.cbox(INDENT);
+                        self.s.cbox(self.ind);
                         self.word("{");
                         self.braces_break();
                         for (pos, (ident, alias)) in aliases.iter().delimited() {
@@ -386,7 +391,7 @@ impl State<'_> {
                             }
                         }
                         self.braces_break();
-                        self.offset(-INDENT);
+                        self.s.offset(-self.ind);
                         self.word("}");
                         self.end();
                         self.word(" from ");
@@ -407,7 +412,7 @@ impl State<'_> {
                 match list {
                     ast::UsingList::Single(path) => self.print_path(path),
                     ast::UsingList::Multiple(items) => {
-                        self.cbox(INDENT);
+                        self.s.cbox(self.ind);
                         self.word("{");
                         self.braces_break();
                         for (pos, (path, op)) in items.iter().delimited() {
@@ -424,7 +429,7 @@ impl State<'_> {
                             }
                         }
                         self.braces_break();
-                        self.offset(-INDENT);
+                        self.s.offset(-self.ind);
                         self.word("}");
                         self.end();
                     }
@@ -442,8 +447,8 @@ impl State<'_> {
                 self.hardbreak();
             }
             ast::ItemKind::Contract(ast::ItemContract { kind, name, layout, bases, body }) => {
-                self.cbox(INDENT);
-                self.cbox(0);
+                self.s.cbox(self.ind);
+                self.s.cbox(0);
                 self.word_nbsp(kind.to_str());
                 self.print_ident(*name);
                 self.nbsp();
@@ -458,7 +463,7 @@ impl State<'_> {
                         }
                     }
                     self.space();
-                    self.offset(-INDENT);
+                    self.s.offset(-self.ind);
                 }
                 self.end();
                 if let Some(layout) = layout {
@@ -472,7 +477,7 @@ impl State<'_> {
                 for item in body.iter() {
                     self.print_item(item);
                 }
-                self.offset(-INDENT);
+                self.s.offset(-self.ind);
                 self.end();
                 self.word("}");
                 self.hardbreak();
@@ -480,7 +485,7 @@ impl State<'_> {
             ast::ItemKind::Function(func) => self.print_function(func),
             ast::ItemKind::Variable(var) => self.print_var_def(var),
             ast::ItemKind::Struct(ast::ItemStruct { name, fields }) => {
-                self.cbox(INDENT);
+                self.s.cbox(self.ind);
                 self.word("struct ");
                 self.print_ident(*name);
                 self.word("{");
@@ -488,13 +493,13 @@ impl State<'_> {
                 for var in fields.iter() {
                     self.print_var_def(var);
                 }
-                self.offset(-INDENT);
+                self.s.offset(-self.ind);
                 self.end();
                 self.word("}");
                 self.hardbreak();
             }
             ast::ItemKind::Enum(ast::ItemEnum { name, variants }) => {
-                self.cbox(INDENT);
+                self.s.cbox(self.ind);
                 self.word("enum ");
                 self.print_ident(*name);
                 self.word(" {");
@@ -507,7 +512,7 @@ impl State<'_> {
                     }
                 }
                 self.zerobreak();
-                self.offset(-INDENT);
+                self.s.offset(-self.ind);
                 self.end();
                 self.word("}");
                 self.hardbreak();
@@ -654,7 +659,6 @@ impl State<'_> {
             return;
         }
 
-        self.cbox(0);
         self.print_ty(ty);
         if let Some(visibility) = visibility {
             self.nbsp();
@@ -685,7 +689,6 @@ impl State<'_> {
             self.neverbreak();
             self.print_expr(initializer);
         }
-        self.end();
     }
 
     fn print_parameter_list(&mut self, parameters: &[ast::VariableDefinition<'_>]) {
@@ -693,7 +696,7 @@ impl State<'_> {
             self.word("()");
             return;
         }
-        self.cbox(INDENT);
+        self.s.cbox(self.ind);
         self.word("(");
         self.zerobreak();
         for (pos, var) in parameters.iter().delimited() {
@@ -704,7 +707,7 @@ impl State<'_> {
             }
         }
         self.zerobreak();
-        self.offset(-INDENT);
+        self.s.offset(-self.ind);
         self.word(")");
         self.end();
     }
@@ -973,7 +976,7 @@ impl State<'_> {
             if self.config.override_spacing {
                 self.nbsp();
             }
-            self.cbox(INDENT);
+            self.s.cbox(self.ind);
             self.word("(");
             self.zerobreak();
             for (pos, path) in paths.iter().delimited() {
@@ -984,7 +987,7 @@ impl State<'_> {
                 }
             }
             self.zerobreak();
-            self.offset(-INDENT);
+            self.s.offset(-self.ind);
             self.word(")");
             self.end();
         }
@@ -1001,16 +1004,20 @@ impl State<'_> {
 
         match kind {
             ast::ExprKind::Array(exprs) => {
-                self.word("[");
-                self.cbox(INDENT);
-                self.zerobreak();
-                for (pos, elem) in exprs.iter().delimited() {
-                    self.print_expr(elem);
-                    self.trailing_comma(pos.is_last);
+                if exprs.is_empty() {
+                    self.word("[]");
+                } else {
+                    self.word("[");
+                    self.s.cbox(self.ind);
+                    self.zerobreak();
+                    for (pos, elem) in exprs.iter().delimited() {
+                        self.print_expr(elem);
+                        self.trailing_comma(pos.is_last);
+                    }
+                    self.s.offset(-self.ind);
+                    self.end();
+                    self.word("]");
                 }
-                self.offset(-INDENT);
-                self.end();
-                self.word("]");
             }
             ast::ExprKind::Assign(expr, bin_op, expr1) => todo!(),
             ast::ExprKind::Binary(expr, bin_op, expr1) => todo!(),
@@ -1057,7 +1064,7 @@ impl State<'_> {
     }
 
     fn print_call_args(&mut self, args: &ast::CallArgs<'_>) {
-        self.cbox(INDENT);
+        self.s.cbox(self.ind);
         self.word("(");
         match args {
             ast::CallArgs::Unnamed(exprs) => {
@@ -1087,7 +1094,7 @@ impl State<'_> {
                 self.word("}");
             }
         }
-        self.offset(-INDENT);
+        self.s.offset(-self.ind);
         self.end();
         self.word(")");
     }
@@ -1136,14 +1143,14 @@ impl State<'_> {
     }
 
     fn print_block(&mut self, block: &[ast::Stmt<'_>]) {
-        self.cbox(INDENT);
+        self.s.cbox(self.ind);
         self.word("{");
         self.hardbreak_if_nonempty();
         for stmt in block.iter() {
             self.print_stmt(stmt);
             self.hardbreak();
         }
-        self.offset(-INDENT);
+        self.s.offset(-self.ind);
         self.end();
         self.word("}");
         self.hardbreak();
