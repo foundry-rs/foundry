@@ -274,10 +274,10 @@ impl From<InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::CallerGasLimitMoreThanBlock => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallerGasLimitMoreThanBlock") })
             }
-            InvalidTransaction::CallGasCostMoreThanGasLimit => {
+            InvalidTransaction::CallGasCostMoreThanGasLimit { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
-            InvalidTransaction::GasFloorMoreThanGasLimit => {
+            InvalidTransaction::GasFloorMoreThanGasLimit { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
@@ -301,8 +301,11 @@ impl From<InvalidTransaction> for InvalidTransactionError {
                 Self::AuthorizationListNotSupported
             }
             InvalidTransaction::AuthorizationListInvalidFields |
-            InvalidTransaction::OptimismError(_) |
-            InvalidTransaction::EofCrateShouldHaveToAddress |
+            InvalidTransaction::Eip1559NotSupported |
+            InvalidTransaction::Eip2930NotSupported |
+            InvalidTransaction::Eip4844NotSupported |
+            InvalidTransaction::Eip7702NotSupported |
+            InvalidTransaction::EofCreateShouldHaveToAddress |
             InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
         }
     }

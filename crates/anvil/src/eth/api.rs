@@ -1933,11 +1933,11 @@ impl EthApi {
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
-        let hard_fork: &str = env.handler_cfg.spec_id.into();
+        let hard_fork: &str = env.evm_env.cfg_env.spec.into();
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
+            current_block_timestamp: env.evm_env.block_env.timestamp.try_into().unwrap_or(u64::MAX),
             current_block_hash: self.backend.best_hash(),
             hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
@@ -2292,7 +2292,7 @@ impl EthApi {
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `anvil_setBlock`
-    pub fn anvil_set_block(&self, block_number: U256) -> Result<()> {
+    pub fn anvil_set_block(&self, block_number: u64) -> Result<()> {
         node_info!("anvil_setBlock");
         self.backend.set_block_number(block_number);
         Ok(())
@@ -2712,8 +2712,7 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit =
-            request.gas.map_or(block_env.gas_limit.to::<u128>(), |g| g as u128);
+        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
@@ -3181,7 +3180,8 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::MemoryOOG |
                 InstructionResult::MemoryLimitOOG |
                 InstructionResult::PrecompileOOG |
-                InstructionResult::InvalidOperandOOG => Ok(Self::OutOfGas),
+                InstructionResult::InvalidOperandOOG |
+                InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
 
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
@@ -3208,7 +3208,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 // Handle Revm EOF InstructionResults: Not supported yet
                 InstructionResult::ReturnContractInNotInitEOF |
                 InstructionResult::EOFOpcodeDisabledInLegacy |
-                InstructionResult::EOFFunctionStackOverflow |
+                InstructionResult::SubRoutineStackOverflow |
                 InstructionResult::CreateInitCodeStartingEF00 |
                 InstructionResult::InvalidEOFInitCode |
                 InstructionResult::EofAuxDataOverflow |

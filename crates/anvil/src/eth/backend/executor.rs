@@ -5,7 +5,7 @@ use crate::{
         pool::transactions::PoolTransaction,
     },
     inject_precompiles,
-    mem::inspector::Inspector,
+    mem::inspector::AnvilInspector,
     PrecompileFactory,
 };
 use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
@@ -20,7 +20,7 @@ use anvil_core::eth::{
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
 use revm::{
-    context::{BlockEnv, CfgEnv},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     interpreter::InstructionResult,
@@ -118,22 +118,22 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit.to::<u64>();
+        let gas_limit = self.block_env.gas_limit;
         let parent_hash = self.parent_hash;
-        let block_number = self.block_env.number.to::<u64>();
+        let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
-        let beneficiary = self.block_env.coinbase;
-        let timestamp = self.block_env.timestamp.to::<u64>();
-        let base_fee = if self.cfg_env.handler_cfg.spec_id.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee.to::<u64>())
+        let beneficiary = self.block_env.beneficiary;
+        let timestamp = self.block_env.timestamp;
+        let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
+            Some(self.block_env.basefee)
         } else {
             None
         };
 
-        let is_shanghai = self.cfg_env.handler_cfg.spec_id >= SpecId::SHANGHAI;
-        let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
-        let is_prague = self.cfg_env.handler_cfg.spec_id >= SpecId::PRAGUE;
-        let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
+        let is_shanghai = self.cfg_env.spec >= SpecId::SHANGHAI;
+        let is_cancun = self.cfg_env.spec >= SpecId::CANCUN;
+        let is_prague = self.cfg_env.spec >= SpecId::PRAGUE;
+        let excess_blob_gas = if is_cancun { self.block_env.blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
@@ -276,7 +276,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // check that we comply with the block's gas limit, if not disabled
         let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
-        if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u64>() {
+        if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
+        {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
@@ -301,7 +302,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let nonce = account.nonce;
 
         // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing();
+        let mut inspector = AnvilInspector::default().with_tracing();
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }

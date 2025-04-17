@@ -126,7 +126,6 @@ revm-bytecode.opt-level = 3
 revm-state.opt-level = 3
 revm-context-interface.opt-level = 3
 revm-context.opt-level = 3
-revm-handlers.opt-level = 3
 revm-inspector.opt-level = 3
 ruint.opt-level = 3
 sha2.opt-level = 3
@@ -204,9 +203,9 @@ solar-parse = { version = "=0.1.2", default-features = false }
 solar-sema = { version = "=0.1.2", default-features = false }
 
 ## revm
-revm = "21.0.0"
+revm = { version = "21.0.0", default-features = false }
 revm-inspectors = { version = "0.18.1", features = ["serde"] }
-op-revm = "3.0.2"
+op-revm = { version = "3.0.2", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "0.13.0", default-features = false }
@@ -245,7 +244,7 @@ alloy-sol-macro-input = "0.8.22"
 alloy-sol-types = "0.8.22"
 
 alloy-chains = "0.1"
-alloy-evm = "0.3.1"
+alloy-evm = "0.3.2"
 alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 

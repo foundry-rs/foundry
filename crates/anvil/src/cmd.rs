@@ -521,7 +521,7 @@ pub struct AnvilEvmArgs {
 
     /// The block gas limit.
     #[arg(long, alias = "block-gas-limit", help_heading = "Environment config")]
-    pub gas_limit: Option<u128>,
+    pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
     #[arg(

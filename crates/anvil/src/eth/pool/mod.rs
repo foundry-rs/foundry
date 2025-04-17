@@ -102,7 +102,7 @@ impl Pool {
     /// directly or are a dependency of the transaction associated with that marker.
     pub fn prune_markers(
         &self,
-        block_number: U64,
+        block_number: u64,
         markers: impl IntoIterator<Item = TxMarker>,
     ) -> PruneResult {
         debug!(target: "txpool", ?block_number, "pruning transactions");

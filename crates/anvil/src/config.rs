@@ -67,7 +67,7 @@ pub const NODE_PORT: u16 = 8545;
 /// Default chain id of the node
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
-pub const DEFAULT_GAS_LIMIT: u128 = 30_000_000;
+pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -591,7 +591,7 @@ impl NodeConfig {
 
     /// Sets the gas limit
     #[must_use]
-    pub fn with_gas_limit(mut self, gas_limit: Option<u128>) -> Self {
+    pub fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
         self.gas_limit = gas_limit;
         self
     }

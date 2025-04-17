@@ -179,9 +179,8 @@ pub enum OptimismHardfork {
     Fjord,
     Granite,
     Holocene,
-    Isthmus,
     #[default]
-    Latest,
+    Isthmus,
 }
 
 impl FromStr for OptimismHardfork {
@@ -198,7 +197,6 @@ impl FromStr for OptimismHardfork {
             "granite" => Self::Granite,
             "holocene" => Self::Holocene,
             "isthmus" => Self::Isthmus,
-            "latest" => Self::Latest,
             _ => bail!("Unknown hardfork {s}"),
         };
         Ok(hardfork)
@@ -216,7 +214,6 @@ impl From<OptimismHardfork> for SpecId {
             OptimismHardfork::Granite => Self::GRANITE,
             OptimismHardfork::Holocene => Self::HOLOCENE,
             OptimismHardfork::Isthmus => Self::ISTHMUS,
-            OptimismHardfork::Latest => Self::LATEST,
         }
     }
 }

@@ -42,7 +42,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
 
         let memory_size = interp.memory.size();
 
-        sh_println!(
+        let _ = sh_println!(
             "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
             context.journaled_state.depth,
             interp.bytecode.pc(),
@@ -86,7 +86,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         _context: &mut FoundryEvmContext<'_>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        sh_println!(
+        let _ = sh_println!(
             "SM Address: {:?}, caller:{:?},target:{:?} is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.bytecode_address,
             inputs.caller,
@@ -103,7 +103,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         _context: &mut FoundryEvmContext<'_>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        sh_println!(
+        let _ = sh_println!(
             "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,
             inputs.scheme,
@@ -115,7 +115,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        sh_println!(
+        let _ = sh_println!(
             "SELFDESTRUCT: contract: {:?}, refund target: {:?}, value {:?}",
             contract,
             target,
