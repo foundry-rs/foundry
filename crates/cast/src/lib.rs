@@ -146,13 +146,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
-        state_override: Option<StateOverride>,
+        state_override: StateOverride,
     ) -> Result<String> {
         let res = self
             .provider
             .call(req.clone())
             .block(block.unwrap_or_default())
-            .overrides(state_override.unwrap_or_default())
+            .overrides(state_override)
             .await?;
 
         let mut decoded = vec![];

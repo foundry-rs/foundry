@@ -4,7 +4,10 @@ use crate::{
     Cast,
 };
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_rpc_types::{state::StateOverride, BlockId, BlockNumberOrTag};
+use alloy_rpc_types::{
+    state::{StateOverride, StateOverridesBuilder},
+    BlockId, BlockNumberOrTag,
+};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -173,7 +176,7 @@ impl CallArgs {
         let figment = Into::<Figment>::into(&self.eth).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
-        let state_override = &self.get_state_overrides()?;
+        let state_overrides = self.get_state_overrides()?;
 
         let Self {
             to,
@@ -289,88 +292,51 @@ impl CallArgs {
 
         sh_println!(
             "{}",
-            Cast::new(provider).call(&tx, func.as_ref(), block, state_override.clone()).await?
+            Cast::new(provider).call(&tx, func.as_ref(), block, state_overrides).await?
         )?;
 
         Ok(())
     }
     /// Parse state overrides from command line arguments
-    pub fn get_state_overrides(&self) -> eyre::Result<Option<StateOverride>> {
-        let mut state_override = StateOverride::default();
+    pub fn get_state_overrides(&self) -> eyre::Result<StateOverride> {
+        let mut state_overrides_builder = StateOverridesBuilder::default();
 
-        // Store state_diff_overrides in a local variable to avoid partial move
-        let balance_overrides = &self.balance_overrides;
         // Parse balance overrides
-        for override_str in balance_overrides.iter().flatten() {
-            let (addr, balance) = Self::parse_address_value(override_str)?;
-            state_override.entry(addr).or_default().balance = Some(balance);
+        for override_str in self.balance_overrides.iter().flatten() {
+            let (addr, balance) = address_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_balance(addr.parse()?, balance.parse()?);
         }
 
-        // Store state_diff_overrides in a local variable to avoid partial move
-        let nonce_overrides = &self.nonce_overrides;
         // Parse nonce overrides
-        for override_str in nonce_overrides.iter().flatten() {
-            let (addr, nonce) = Self::parse_address_value(override_str)?;
-            state_override.entry(addr).or_default().nonce = Some(nonce);
+        for override_str in self.nonce_overrides.iter().flatten() {
+            let (addr, nonce) = address_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_nonce(addr.parse()?, nonce.parse()?);
         }
 
-        // Store state_diff_overrides in a local variable to avoid partial move
-        let code_overrides = &self.code_overrides;
         // Parse code overrides
-        for override_str in code_overrides.iter().flatten() {
-            let (addr, code_str) = override_str.split_once(':').ok_or_else(|| {
-                eyre::eyre!("Invalid code override format. Expected <address>:<code>")
-            })?;
-            let addr = addr.parse()?;
-            let code = Bytes::from_str(code_str)?;
-            state_override.entry(addr).or_default().code = Some(code);
+        for override_str in self.code_overrides.iter().flatten() {
+            let (addr, code_str) = address_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_code(addr.parse()?, Bytes::from_str(code_str)?);
         }
 
-        // Store state_diff_overrides in a local variable to avoid partial move
-        let state_overrides = &self.state_overrides;
         // Parse state overrides
-        for override_str in state_overrides.iter().flatten() {
-            let (addr, slot, value) = Self::parse_address_slot_value(override_str)?;
-            let state_map = state_override.entry(addr).or_default().state.get_or_insert_default();
-            state_map.insert(slot.into(), value.into());
+        for override_str in self.state_overrides.iter().flatten() {
+            let (addr, slot, value) = address_slot_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_state(addr, [(slot.into(), value.into())]);
         }
 
-        // Store state_diff_overrides in a local variable to avoid partial move
-        let state_diff_overrides = &self.state_diff_overrides;
         // Parse state diff overrides
-        for override_str in state_diff_overrides.iter().flatten() {
-            let (addr, slot, value) = Self::parse_address_slot_value(override_str)?;
-            let state_diff_map =
-                state_override.entry(addr).or_default().state_diff.get_or_insert_default();
-            state_diff_map.insert(slot.into(), value.into());
+        for override_str in self.state_diff_overrides.iter().flatten() {
+            let (addr, slot, value) = address_slot_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_state_diff(addr, [(slot.into(), value.into())]);
         }
 
-        Ok(if state_override.is_empty() { None } else { Some(state_override) })
-    }
-
-    /// Parse an override string in the format address:value
-    pub fn parse_address_value<T>(s: &str) -> eyre::Result<(Address, T)>
-    where
-        T: FromStr,
-        T::Err: std::error::Error + Send + Sync + 'static,
-    {
-        let (addr, value) = s
-            .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Invalid override format. Expected <address>:<value>"))?;
-        Ok((addr.parse()?, value.parse()?))
-    }
-
-    /// Parse an override string in the format address:slot:value
-    pub fn parse_address_slot_value(s: &str) -> Result<(Address, U256, U256)> {
-        let captures = OVERRIDE_PATTERN.captures(s).ok_or_else(|| {
-            eyre::eyre!("Invalid override format. Expected <address>:<slot>:<value>")
-        })?;
-
-        Ok((
-            captures[1].parse()?, // Address
-            captures[2].parse()?, // Slot (U256)
-            captures[3].parse()?, // Value (U256)
-        ))
+        Ok(state_overrides_builder.build())
     }
 }
 
@@ -392,6 +358,26 @@ impl figment::Provider for CallArgs {
 
         Ok(Map::from([(Config::selected_profile(), map)]))
     }
+}
+
+/// Parse an override string in the format address:value.
+fn address_value_override(address_override: &str) -> Result<(&str, &str)> {
+    address_override.split_once(':').ok_or_else(|| {
+        eyre::eyre!("Invalid override {address_override}. Expected <address>:<value>")
+    })
+}
+
+/// Parse an override string in the format address:slot:value.
+fn address_slot_value_override(address_override: &str) -> Result<(Address, U256, U256)> {
+    let captures = OVERRIDE_PATTERN.captures(address_override).ok_or_else(|| {
+        eyre::eyre!("Invalid override {address_override}. Expected <address>:<slot>:<value>")
+    })?;
+
+    Ok((
+        captures[1].parse()?, // Address
+        captures[2].parse()?, // Slot (U256)
+        captures[3].parse()?, // Value (U256)
+    ))
 }
 
 #[cfg(test)]
