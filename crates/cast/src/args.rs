@@ -482,14 +482,17 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, field, raw, rpc } => {
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
 
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            sh_println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw).await?)?
+            sh_println!(
+                "{}",
+                Cast::new(&provider).transaction(tx_hash, from, nonce, field, raw).await?
+            )?
         }
 
         // 4Byte
