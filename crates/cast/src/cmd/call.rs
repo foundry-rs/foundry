@@ -3,7 +3,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
     Cast,
 };
-use alloy_primitives::{Address, Bytes, TxKind, U256, map::FbBuildHasher};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use alloy_rpc_types::state::StateOverride;
 use clap::Parser;
@@ -28,7 +28,6 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceMode},
 };
 use std::str::FromStr;
-use std::collections::HashMap;
 
 /// CLI arguments for `cast call`.
 ///
@@ -293,7 +292,7 @@ impl CallArgs {
         let mut state_override = StateOverride::default();
 
         // Store state_diff_overrides in a local variable to avoid partial move
-        let balance_overrides = self.balance_overrides.clone();
+        let balance_overrides = &self.balance_overrides;
         // Parse balance overrides
         for override_str in balance_overrides {
             let (addr, balance) = Self::parse_address_value(&override_str)?;
@@ -301,15 +300,15 @@ impl CallArgs {
         }
 
         // Store state_diff_overrides in a local variable to avoid partial move
-        let nonce_overrides = self.nonce_overrides.clone();
+        let nonce_overrides = &self.nonce_overrides;
         // Parse nonce overrides
         for override_str in nonce_overrides {
-            let (addr, nonce) = Self::parse_address_value_for_nonce(&override_str)?;
+            let (addr, nonce) = Self::parse_address_value(&override_str)?;
             state_override.entry(addr).or_default().nonce = Some(nonce);
         }
 
         // Store state_diff_overrides in a local variable to avoid partial move
-        let code_overrides = self.code_overrides.clone();
+        let code_overrides = &self.code_overrides;
         // Parse code overrides
         for override_str in code_overrides {
             let (addr, code_str) = override_str.split_once(':').ok_or_else(|| {
@@ -321,20 +320,20 @@ impl CallArgs {
         }
 
         // Store state_diff_overrides in a local variable to avoid partial move
-        let state_overrides = self.state_overrides.clone();
+        let state_overrides = &self.state_overrides;
         // Parse state overrides
         for override_str in state_overrides {
             let (addr, slot, value) = Self::parse_address_slot_value(&override_str)?;
-            let state_map = state_override.entry(addr).or_default().state.get_or_insert_with(|| HashMap::with_hasher(FbBuildHasher::<32>::default()));
+            let state_map = state_override.entry(addr).or_default().state.get_or_insert_default();
             state_map.insert(slot.into(), value.into());
         }
 
         // Store state_diff_overrides in a local variable to avoid partial move
-        let state_diff_overrides = self.state_diff_overrides.clone();
+        let state_diff_overrides = &self.state_diff_overrides;
         // Parse state diff overrides
         for override_str in state_diff_overrides {
             let (addr, slot, value) = Self::parse_address_slot_value(&override_str)?;
-            let state_diff_map = state_override.entry(addr).or_default().state_diff.get_or_insert_with(|| HashMap::with_hasher(FbBuildHasher::<32>::default()));
+            let state_diff_map = state_override.entry(addr).or_default().state_diff.get_or_insert_default();
             state_diff_map.insert(slot.into(), value.into());
         }
 
@@ -346,15 +345,11 @@ impl CallArgs {
     }
 
     /// Parse an override string in the format address:value
-    pub fn parse_address_value(s: &str) -> eyre::Result<(Address, U256)> {
-        let (addr, value) = s.split_once(':').ok_or_else(|| {
-            eyre::eyre!("Invalid override format. Expected <address>:<value>")
-        })?;
-        Ok((addr.parse()?, value.parse()?))
-    }
-
-    /// Parse an override string in the format address:value
-    pub fn parse_address_value_for_nonce( s: &str) -> eyre::Result<(Address, u64)> {
+    pub fn parse_address_value<T>(s: &str) -> eyre::Result<(Address, T)>
+    where
+        T: FromStr,
+        T::Err: std::error::Error + Send + Sync + 'static,
+    {
         let (addr, value) = s.split_once(':').ok_or_else(|| {
             eyre::eyre!("Invalid override format. Expected <address>:<value>")
         })?;
