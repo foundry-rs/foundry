@@ -114,6 +114,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::{str::FromStr, collections::HashMap};
+    /// use alloy_rpc_types::state::StateOverridesBuilder;
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
@@ -133,7 +134,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let mut account_override = AccountOverride::default();
     /// account_override.balance = Some(U256::from(1000));
     /// state_override.insert(to, account_override);
-    /// let state_override_object = Some(state_override);
+    /// let state_override_object = StateOverridesBuilder::default().build();
     ///
     /// let cast = Cast::new(alloy_provider);
     /// let data = cast.call(&tx, None, None, state_override_object).await?;
