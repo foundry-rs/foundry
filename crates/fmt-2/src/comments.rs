@@ -89,6 +89,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 if let Some(mut idx) = token_text.find('\n') {
                     code_to_the_left = false;
 
+                    // NOTE(dani): this used to be `while`, but we want only a single blank line.
                     if let Some(next_newline) = token_text[idx + 1..].find('\n') {
                         idx += 1 + next_newline;
                         let pos = pos + idx;

@@ -51,7 +51,7 @@ pub hex_underscore: HexUnderscore,
 /// Style of single line blocks in statements
 pub single_line_statement_blocks: SingleLineBlockStyle,
 
-- [ ]
+- [x]
 /// Print space in state variable, function and modifier `override` attribute
 pub override_spacing: bool,
 
@@ -332,6 +332,7 @@ struct FunctionLike<'a, 'b> {
     returns: &'a [ast::VariableDefinition<'b>],
     anonymous: bool,
     body: Option<&'a [ast::Stmt<'b>]>,
+    body_span: Span,
 }
 
 /// Language-specific pretty printing.
@@ -570,7 +571,7 @@ impl State<'_> {
     }
 
     fn print_function(&mut self, func: &ast::ItemFunction<'_>) {
-        let ast::ItemFunction { kind, header, body, body_span: _ } = func;
+        let ast::ItemFunction { kind, header, body, body_span } = func;
         let ast::FunctionHeader {
             name,
             ref parameters,
@@ -593,6 +594,7 @@ impl State<'_> {
             returns,
             anonymous: false,
             body: body.as_deref(),
+            body_span: *body_span,
         });
     }
 
@@ -609,6 +611,7 @@ impl State<'_> {
             returns,
             anonymous,
             body,
+            body_span,
         } = args;
         self.word(kind);
         if let Some(name) = name {
@@ -647,7 +650,7 @@ impl State<'_> {
         }
         if let Some(body) = body {
             self.nbsp();
-            self.print_block(body);
+            self.print_block(body, body_span);
         } else {
             self.word(";");
             self.hardbreak();
@@ -1150,7 +1153,7 @@ impl State<'_> {
             ast::StmtKind::Try(stmt_try) => todo!(),
             ast::StmtKind::UncheckedBlock(block) => {
                 self.word("unchecked ");
-                self.print_block(block);
+                self.print_block(block, stmt.span);
             }
             ast::StmtKind::While(expr, stmt) => todo!(),
             ast::StmtKind::Placeholder => self.word("_"),
@@ -1160,18 +1163,40 @@ impl State<'_> {
         }
     }
 
-    fn print_block(&mut self, block: &[ast::Stmt<'_>]) {
-        self.s.cbox(self.ind);
+    fn print_block(&mut self, block: &[ast::Stmt<'_>], span: Span) {
+        // TODO: attempt_single_line, attempt_omit_braces
         self.word("{");
-        self.hardbreak_if_nonempty();
-        for stmt in block.iter() {
-            self.print_stmt(stmt);
+        if block.is_empty() {
+            self.maybe_print_comments(span.hi());
+        } else if self.single_line_block(block, span) {
+            self.space();
+            self.print_stmt(&block[0]);
+            self.maybe_print_comments(span.hi());
+            self.space();
+        } else {
+            self.s.cbox(self.ind);
             self.hardbreak();
+            for stmt in block.iter() {
+                self.print_stmt(stmt);
+                self.hardbreak();
+            }
+            self.s.offset(-self.ind);
+            self.end();
+            self.maybe_print_comments(span.hi());
         }
-        self.s.offset(-self.ind);
-        self.end();
         self.word("}");
         self.hardbreak();
+    }
+
+    fn single_line_block(&self, block: &[ast::Stmt<'_>], span: Span) -> bool {
+        if block.len() != 1 {
+            return false;
+        }
+        match self.config.single_line_statement_blocks {
+            config::SingleLineBlockStyle::Preserve => self.sm.is_multiline(span),
+            config::SingleLineBlockStyle::Single => true,
+            config::SingleLineBlockStyle::Multi => false,
+        }
     }
 }
 
