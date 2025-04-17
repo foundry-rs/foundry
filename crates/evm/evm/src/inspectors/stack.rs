@@ -10,14 +10,14 @@ use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{
     backend::JournaledState,
     evm::{new_evm_with_inspector, FoundryEvmContext},
-    AsEnvMut, Env, InspectorExt,
+    ContextExt, Env, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     context::{
         result::{ExecutionResult, Output},
-        BlockEnv, ContextTr,
+        BlockEnv,
     },
     context_interface::CreateScheme,
     inspectors::CustomPrintTracer,
@@ -574,7 +574,7 @@ impl InspectorStackRefMut<'_> {
         gas_limit: u64,
         value: U256,
     ) -> (InterpreterResult, Option<Address>) {
-        let cached_env = ecx.clone();
+        let cached_env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
 
         ecx.block.basefee = 0;
         ecx.tx.caller = caller;
@@ -594,17 +594,16 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
-        let mut env = Env::from_with_spec_id(ecx.cfg, ecx.block, ecx.tx, ecx.cfg.spec);
-
         let res = self.with_stack(|inspector| {
-            let mut evm = new_evm_with_inspector(&mut ecx.db(), &mut env.as_env_mut(), inspector);
+            let (db, journal, env) = ecx.as_db_env_and_journal();
+            let mut evm = new_evm_with_inspector(db, &env, inspector);
 
             evm.journaled_state.state = {
-                let mut state = ecx.journaled_state.state.clone();
+                let mut state = journal.state.clone();
 
                 for (addr, acc_mut) in &mut state {
                     // mark all accounts cold, besides preloaded addresses
-                    if !ecx.journaled_state.warm_preloaded_addresses.contains(addr) {
+                    if !journal.warm_preloaded_addresses.contains(addr) {
                         acc_mut.mark_cold();
                     }
 
@@ -624,14 +623,15 @@ impl InspectorStackRefMut<'_> {
             let res = evm.replay();
 
             // need to reset the env in case it was modified via cheatcodes during execution
-            ecx = cached_env;
+            ecx.cfg = cached_env.evm_env.cfg_env;
+            ecx.block = cached_env.evm_env.block_env;
+            ecx.tx = cached_env.tx;
+
             res
         });
 
         self.in_inner_context = false;
         self.inner_context_data = None;
-        ecx.tx = cached_env.tx;
-        ecx.block.basefee = cached_env.block.basefee;
 
         let mut gas = Gas::new(gas_limit);
 
