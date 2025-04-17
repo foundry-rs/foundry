@@ -299,17 +299,17 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
+    /// Panics if `env.tx.kind` is not `TxKind::Create(_)`.
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
-        env: EnvWithHandlerCfg,
+        env: Env,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TxKind::Create),
+            matches!(env.tx.kind, TxKind::Create),
             "Expected create transaction, got {:?}",
-            env.tx.transact_to
+            env.tx.kind
         );
         trace!(sender=%env.tx.caller, "deploying contract");
 
@@ -350,9 +350,9 @@ impl Executor {
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.env_mut().block = res.env.block.clone();
+        self.env_mut().evm_env.block_env = res.env.evm_env.block_env.clone();
         // and also the chainid, which can be set manually
-        self.env_mut().cfg.chain_id = res.env.cfg.chain_id;
+        self.env_mut().evm_env.cfg_env.chain_id = res.env.evm_env.cfg_env.chain_id;
 
         let success =
             self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
@@ -431,7 +431,7 @@ impl Executor {
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult> {
         let mut env = self.build_test_env(from, to.into(), calldata, value);
-        env.tx.authorization_list = Some(AuthorizationList::Signed(authorization_list));
+        env.tx.authorization_list = authorization_list;
         self.call_with_env(env)
     }
 
@@ -451,7 +451,7 @@ impl Executor {
     ///
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
-    pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
+    pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
@@ -460,7 +460,7 @@ impl Executor {
 
     /// Execute the transaction configured in `env.tx`.
     #[instrument(name = "transact", level = "debug", skip_all)]
-    pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
+    pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
@@ -637,23 +637,21 @@ impl Executor {
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
     /// the cheatcode state in between calls.
-    fn build_test_env(
-        &self,
-        caller: Address,
-        kind: TxKind,
-        data: Bytes,
-        value: U256,
-    ) -> EnvWithHandlerCfg {
-        let env = Env {
+    fn build_test_env(&self, caller: Address, kind: TxKind, data: Bytes, value: U256) -> Env {
+        Env {
             evm_env: EvmEnv {
-                cfg_env: self.env().evm_env.cfg_env.clone(),
+                cfg_env: {
+                    let mut cfg = self.env().evm_env.cfg_env.clone();
+                    cfg.spec = self.spec_id();
+                    cfg
+                },
                 // We always set the gas price to 0 so we can execute the transaction regardless of
                 // network conditions - the actual gas price is kept in `self.block` and is applied
                 // by the cheatcode handler if it is enabled
                 block_env: BlockEnv {
-                    basefee: U256::ZERO,
-                    gas_limit: U256::from(self.gas_limit),
-                    ..self.env().block.clone()
+                    basefee: 0,
+                    gas_limit: self.gas_limit,
+                    ..self.env().evm_env.block_env.clone()
                 },
             },
             tx: TxEnv {
@@ -662,14 +660,12 @@ impl Executor {
                 data,
                 value,
                 // As above, we set the gas price to 0.
-                gas_price: U256::ZERO,
+                gas_price: 0,
                 gas_priority_fee: None,
                 gas_limit: self.gas_limit,
                 ..self.env().tx.clone()
             },
-        };
-
-        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
+        }
     }
 
     pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
@@ -805,7 +801,7 @@ pub struct RawCallResult {
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
     /// The `revm::Env` after the call
-    pub env: EnvWithHandlerCfg,
+    pub env: Env,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
@@ -830,7 +826,7 @@ impl Default for RawCallResult {
             coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::default()),
+            env: Env::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -928,7 +924,7 @@ impl std::ops::DerefMut for CallResult {
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
-    env: EnvWithHandlerCfg,
+    env: Env,
     inspector: InspectorStack,
     ResultAndState { result, state: state_changeset }: ResultAndState,
     has_state_snapshot_failure: bool,
@@ -946,10 +942,10 @@ fn convert_executed_result(
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(
-        env.spec_id(),
+        env.evm_env.cfg_env.spec,
         &env.tx.data,
-        env.tx.transact_to.is_create(),
-        &env.tx.access_list,
+        env.tx.kind.is_create(),
+        env.tx.access_list.len().try_into()?,
         0,
         0,
     );
