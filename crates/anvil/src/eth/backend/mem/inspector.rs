@@ -130,11 +130,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     }
 
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.log_collector],
-            |inspector| inspector.call(ecx, inputs).map(Some),
-        );
+        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| inspector
+            .call(ecx, inputs)
+            .map(Some),);
         None
     }
 
@@ -142,7 +140,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         ecx: &mut EvmContext<DB>,
         inputs: &CallInputs,
-        outcome: CallOutcome,
+        outcome: &mut CallOutcome,
     ) -> CallOutcome {
         if let Some(tracer) = &mut self.tracer {
             return tracer.call_end(ecx, inputs, outcome);
@@ -168,8 +166,8 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         ecx: &mut EvmContext<DB>,
         inputs: &CreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+        outcome: &mut CreateOutcome,
+    ) -> &mut CreateOutcome {
         if let Some(tracer) = &mut self.tracer {
             return tracer.create_end(ecx, inputs, outcome);
         }
@@ -196,8 +194,8 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         &mut self,
         ecx: &mut EvmContext<DB>,
         inputs: &EOFCreateInputs,
-        outcome: CreateOutcome,
-    ) -> CreateOutcome {
+        outcome: &mut CreateOutcome,
+    ) -> &mut CreateOutcome {
         if let Some(tracer) = &mut self.tracer {
             return tracer.eofcreate_end(ecx, inputs, outcome);
         }

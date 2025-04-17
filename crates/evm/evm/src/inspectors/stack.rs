@@ -8,8 +8,8 @@ use alloy_primitives::{
 };
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{
-    backend::{DatabaseExt, JournaledState},
-    evm::{new_evm_with_inspector, FoundryEvm, FoundryEvmContext},
+    backend::JournaledState,
+    evm::{new_evm_with_inspector, FoundryEvmContext},
     AsEnvMut, Env, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
@@ -235,17 +235,8 @@ impl InspectorStackBuilder {
 macro_rules! call_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
         $(
-            if let Some($id) = $inspector {
+            if let Some(mut $id) = $inspector.as_mut() {
                 ({ #[inline(always)] #[cold] || $call })();
-            }
-        )+
-    };
-    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
-        $(
-            if let Some($id) = $inspector {
-                if let Some(result) = ({ #[inline(always)] #[cold] || $call })() {
-                    return result;
-                }
             }
         )+
     };
@@ -510,17 +501,16 @@ impl InspectorStackRefMut<'_> {
     ) -> &mut CallOutcome {
         let result = outcome.result.result;
         call_inspectors!(
-            #[ret]
             [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let new_outcome = inspector.call_end(ecx, inputs, outcome);
+                inspector.call_end(ecx, inputs, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
-                different.then_some(new_outcome)
+                let different = outcome.result.result != result ||
+                    (outcome.result.result == InstructionResult::Revert &&
+                        outcome.output() != outcome.output());
+                different.then_some(outcome)
             },
         );
 
@@ -535,17 +525,16 @@ impl InspectorStackRefMut<'_> {
     ) -> &mut CreateOutcome {
         let result = outcome.result.result;
         call_inspectors!(
-            #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let new_outcome = inspector.create_end(ecx, call, outcome);
+                inspector.create_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
-                different.then_some(new_outcome)
+                let different = outcome.result.result != result ||
+                    (outcome.result.result == InstructionResult::Revert &&
+                        outcome.output() != outcome.output());
+                different.then_some(outcome)
             },
         );
 
@@ -560,17 +549,16 @@ impl InspectorStackRefMut<'_> {
     ) -> &mut CreateOutcome {
         let result = outcome.result.result;
         call_inspectors!(
-            #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let new_outcome = inspector.eofcreate_end(ecx, call, outcome);
+                inspector.eofcreate_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
-                different.then_some(new_outcome)
+                let different = outcome.result.result != result ||
+                    (outcome.result.result == InstructionResult::Revert &&
+                        outcome.output() != outcome.output());
+                different.then_some(outcome)
             },
         );
 
@@ -579,7 +567,7 @@ impl InspectorStackRefMut<'_> {
 
     fn transact_inner(
         &mut self,
-        ecx: &mut FoundryEvm<FoundryEvmContext<'_>>,
+        ecx: &mut FoundryEvmContext<'_>,
         kind: TxKind,
         caller: Address,
         input: Bytes,
@@ -753,11 +741,11 @@ impl InspectorStackRefMut<'_> {
     }
 }
 
-impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
+impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut FoundryEvm<FoundryEvmContext<'_>>,
+        ecx: &mut FoundryEvmContext<'_>,
     ) {
         call_inspectors!(
             [&mut self.coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
@@ -765,7 +753,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         );
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvm<FoundryEvmContext<'_>>) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>) {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -778,23 +766,14 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         );
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut FoundryEvm<FoundryEvmContext<'_>>,
-    ) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>) {
         call_inspectors!(
             [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
         );
     }
 
-    fn log(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut FoundryEvm<FoundryEvmContext<'_>>,
-        log: &Log,
-    ) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>, log: Log) {
         call_inspectors!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| inspector.log(interpreter, ecx, log),
@@ -803,7 +782,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn call(
         &mut self,
-        ecx: &mut FoundryEvm<FoundryEvmContext<'_>>,
+        ecx: &mut FoundryEvmContext<'_>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
@@ -816,7 +795,6 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         }
 
         call_inspectors!(
-            #[ret]
             [&mut self.fuzzer, &mut self.tracer, &mut self.log_collector, &mut self.printer],
             |inspector| {
                 let mut out = None;
@@ -897,28 +875,26 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn call_end(
         &mut self,
-        ecx: &mut FoundryEvm<FoundryEvmContext<'_>>,
+        ecx: &mut FoundryEvmContext<'_>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
-    ) -> CallOutcome {
+    ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
-            return outcome;
+            return;
         }
 
-        let outcome = self.do_call_end(ecx, inputs, outcome);
+        self.do_call_end(ecx, inputs, outcome);
 
         if ecx.journaled_state.depth == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
-
-        outcome
     }
 
     fn create(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmContext<'_>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
@@ -931,7 +907,6 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         }
 
         call_inspectors!(
-            #[ret]
             [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
             |inspector| inspector.create(ecx, create).map(Some),
         );
@@ -957,28 +932,26 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn create_end(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmContext<'_>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
-            return outcome;
+            return;
         }
 
-        let outcome = self.do_create_end(ecx, call, outcome);
+        self.do_create_end(ecx, call, outcome);
 
         if ecx.journaled_state.depth == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
-
-        outcome
     }
 
     fn eofcreate(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmContext<'_>,
         create: &mut EOFCreateInputs,
     ) -> Option<CreateOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
@@ -991,7 +964,6 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         }
 
         call_inspectors!(
-            #[ret]
             [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
             |inspector| inspector.eofcreate(ecx, create).map(Some),
         );
@@ -1022,28 +994,26 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn eofcreate_end(
         &mut self,
-        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut FoundryEvmContext<'_>,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
-            return outcome;
+            return;
         }
 
-        let outcome = self.do_eofcreate_end(ecx, call, outcome);
+        self.do_eofcreate_end(ecx, call, outcome);
 
         if ecx.journaled_state.depth == 0 {
             self.top_level_frame_end(ecx, outcome.result.result);
         }
-
-        outcome
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.tracer, &mut self.printer], |inspector| {
-            Inspector::<&mut dyn DatabaseExt>::selfdestruct(inspector, contract, target, value)
+            inspector.selfdestruct(contract, target, value)
         });
     }
 }
@@ -1052,13 +1022,11 @@ impl InspectorExt for InspectorStackRefMut<'_> {
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut FoundryEvmContext<'_>,
-        inputs: &mut CreateInputs,
+        inputs: &CreateInputs,
     ) -> bool {
-        call_inspectors!(
-            #[ret]
-            [&mut self.cheatcodes],
-            |inspector| { inspector.should_use_create2_factory(ecx, inputs).then_some(true) },
-        );
+        call_inspectors!([&mut self.cheatcodes], |inspector| {
+            inspector.should_use_create2_factory(ecx, inputs).then_some(true)
+        },);
 
         false
     }
@@ -1078,7 +1046,7 @@ impl InspectorExt for InspectorStackRefMut<'_> {
     }
 }
 
-impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
+impl Inspector<FoundryEvmContext<'_>> for InspectorStack {
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>) {
         self.as_mut().step(interpreter, ecx)
@@ -1102,7 +1070,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         context: &mut FoundryEvmContext<'_>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
-    ) -> CallOutcome {
+    ) {
         self.as_mut().call_end(context, inputs, outcome)
     }
 
@@ -1119,7 +1087,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         context: &mut FoundryEvmContext<'_>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) {
         self.as_mut().create_end(context, call, outcome)
     }
 
@@ -1136,7 +1104,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         context: &mut FoundryEvmContext<'_>,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
+    ) {
         self.as_mut().eofcreate_end(context, call, outcome)
     }
 
@@ -1148,12 +1116,12 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>, log: Log) {
         self.as_mut().log(interpreter, ecx, log)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        Inspector::<&mut dyn DatabaseExt>::selfdestruct(&mut self.as_mut(), contract, target, value)
+        self.as_mut().selfdestruct(contract, target, value);
     }
 }
 
@@ -1161,7 +1129,7 @@ impl InspectorExt for InspectorStack {
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut FoundryEvmContext<'_>,
-        inputs: &mut CreateInputs,
+        inputs: &CreateInputs,
     ) -> bool {
         self.as_mut().should_use_create2_factory(ecx, inputs)
     }
