@@ -157,6 +157,9 @@ impl ScriptRunner {
             self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
         }
 
+        // set script address to be used by execution inspector
+        self.executor.set_script(address);
+
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
