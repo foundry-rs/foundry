@@ -1,6 +1,7 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_primitives::{Address, Uint, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
@@ -8,7 +9,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::primitives::{Bytecode, SignedAuthorization};
+use revm::primitives::{Bytecode, SignedAuthorization, SpecId};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -131,6 +132,21 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     let bytecode = Bytecode::new_eip7702(*auth.address());
     ccx.ecx.journaled_state.set_code(authority, bytecode);
     Ok(())
+}
+
+impl Cheatcode for attachBlobCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { blob } = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`attachBlob` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
+        let sidecar = sidecar.build().map_err(|e| format!("{e}"))?;
+        ccx.state.active_blob_sidecar = Some(sidecar);
+        Ok(Default::default())
+    }
 }
 
 impl Cheatcode for startBroadcast_0Call {

@@ -2236,6 +2236,10 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
+    /// Attach an EIP-4844 blob to the next call
+    #[cheatcode(group = Scripting)]
+    function attachBlob(bytes calldata blob) external;
+
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
     function getWallets() external returns (address[] memory wallets);
