@@ -12,7 +12,9 @@ use solar_parse::{
 };
 use std::borrow::Cow;
 
-// TODO(dani): bunch docs into `Comments` since misplaced docs get ignored
+// TODO(dani): bunch docs into `Comments` since misplaced docs get ignore
+
+// TODO(dani): multiple string literals don't get handled correctly "a" "b"
 
 /*
 - [x]
@@ -551,21 +553,15 @@ impl State<'_> {
                     parameters,
                     ..Default::default()
                 });
-                self.word(";");
-                self.hardbreak();
             }
             ast::ItemKind::Event(ast::ItemEvent { name, parameters, anonymous }) => {
                 self.print_function_like(FunctionLike {
                     kind: "event",
                     name: Some(*name),
                     parameters,
+                    anonymous: *anonymous,
                     ..Default::default()
                 });
-                if *anonymous {
-                    self.word(" anonymous");
-                }
-                self.word(";");
-                self.hardbreak();
             }
         }
     }
@@ -784,13 +780,13 @@ impl State<'_> {
 
         match *kind {
             ast::LitKind::Str(kind, _) => {
+                // TODO(dani): kind.prefix().len()
                 let prefix_len = match kind {
                     ast::StrKind::Str => 0,
                     ast::StrKind::Unicode => 7,
                     ast::StrKind::Hex => 3,
                 };
                 let quote_pos = span.lo() + prefix_len as u32;
-                let s = &s[prefix_len + 1..s.len() - 1];
                 self.print_str_lit(kind, quote_pos, s);
                 return;
             }
@@ -892,6 +888,7 @@ impl State<'_> {
 
     /// `s` should be the *unescaped contents of the string literal*.
     fn print_str_lit(&mut self, kind: ast::StrKind, quote_pos: BytePos, s: &str) {
+        self.maybe_print_comments(quote_pos);
         let s = self.str_lit_to_string(kind, quote_pos, s);
         self.word(s);
     }
@@ -908,6 +905,7 @@ impl State<'_> {
             config::QuoteStyle::Single => '\'',
             config::QuoteStyle::Preserve => self.char_at(quote_pos),
         };
+        debug_assert!(matches!(quote, '\"' | '\''), "{quote:?}");
         let s = solar_parse::interface::data_structures::fmt::from_fn(move |f| {
             if matches!(kind, ast::StrKind::Hex) {
                 match self.config.hex_underscore {
@@ -1018,27 +1016,23 @@ impl State<'_> {
 
     #[expect(unused_variables)]
     fn print_expr(&mut self, expr: &ast::Expr<'_>) {
-        let ast::Expr { span, kind } = expr;
-        if self.handle_span(*span) {
+        let ast::Expr { span, ref kind } = *expr;
+        if self.handle_span(span) {
             return;
         }
 
         match kind {
             ast::ExprKind::Array(exprs) => {
-                if exprs.is_empty() {
-                    self.word("[]");
-                } else {
-                    self.word("[");
-                    self.s.cbox(self.ind);
-                    self.zerobreak();
-                    for (pos, elem) in exprs.iter().delimited() {
-                        self.print_expr(elem);
-                        self.trailing_comma(pos.is_last);
-                    }
-                    self.s.offset(-self.ind);
-                    self.end();
-                    self.word("]");
+                self.word("[");
+                self.s.cbox(self.ind);
+                self.zerobreak();
+                for (pos, elem) in exprs.iter().delimited() {
+                    self.print_expr(elem);
+                    self.trailing_comma(pos.is_last);
                 }
+                self.s.offset(-self.ind);
+                self.end();
+                self.word("]");
             }
             ast::ExprKind::Assign(expr, bin_op, expr1) => todo!(),
             ast::ExprKind::Binary(expr, bin_op, expr1) => todo!(),
