@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["lint_file","try_lint_file"],"struct":["GeigerArgs","Visitor"]};
