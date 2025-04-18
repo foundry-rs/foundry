@@ -207,6 +207,18 @@ interface Vm {
         uint256 chainId;
     }
 
+    /// Information about a blockchain.
+    struct Chain {
+        /// The chain name.
+        string name;
+        /// The chain's Chain ID.
+        uint256 chainId;
+        /// The chain's alias. (i.e. what gets specified in `foundry.toml`).
+        string chainAlias;
+        /// A default RPC endpoint for this chain.
+        string rpcUrl;
+    }
+
     /// The storage accessed during an `AccountAccess`.
     struct StorageAccess {
         /// The account whose storage was accessed.
@@ -966,6 +978,14 @@ interface Vm {
     /// Returns all rpc urls and their aliases as structs.
     #[cheatcode(group = Testing, safety = Safe)]
     function rpcUrlStructs() external view returns (Rpc[] memory urls);
+
+    /// Returns a Chain struct for specific alias
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getChain(string calldata chainAlias) external view returns (Chain memory chain);
+
+    /// Returns a Chain struct for specific chainId
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getChain(uint256 chainId) external view returns (Chain memory chain);
 
     /// Suspends execution of the main thread for `duration` milliseconds.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -2838,6 +2858,16 @@ interface Vm {
     /// Randomly shuffles an array.
     #[cheatcode(group = Utilities)]
     function shuffle(uint256[] calldata array) external returns (uint256[] memory);
+
+    /// Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.
+    /// This allows type-safe access to the initcode payload that would be used for contract creation.
+    /// Example usage:
+    /// vm.interceptInitcode();
+    /// bytes memory initcode;
+    /// try new MyContract(param1, param2) { assert(false); }
+    /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
+    #[cheatcode(group = Utilities, safety = Unsafe)]
+    function interceptInitcode() external;
 }
 }
 

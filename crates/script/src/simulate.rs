@@ -168,7 +168,7 @@ impl PreSimulationState {
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
                 for (_, trace) in &mut traces {
-                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await?;
+                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
                     sh_println!("{}", render_trace_arena(trace))?;
                 }
             }

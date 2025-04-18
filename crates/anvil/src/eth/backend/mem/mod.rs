@@ -207,6 +207,7 @@ pub struct Backend {
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
+    print_traces: bool,
     odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
@@ -235,6 +236,7 @@ impl Backend {
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         print_logs: bool,
+        print_traces: bool,
         odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
@@ -339,6 +341,7 @@ impl Backend {
             active_state_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
+            print_traces,
             odyssey,
             prune_state_history_config,
             transaction_block_keeper,
@@ -611,7 +614,7 @@ impl Backend {
         fork_block_number: u64,
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
-        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
+        node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
 
         let mut env = self.env.read().clone();
         let (forked_db, client_fork_config) =
@@ -1095,6 +1098,10 @@ impl Backend {
         drop(evm);
         inspector.print_logs();
 
+        if self.print_traces {
+            inspector.print_traces();
+        }
+
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
     }
 
@@ -1135,6 +1142,7 @@ impl Backend {
             blob_gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
+            print_traces: self.print_traces,
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
         };
@@ -1218,6 +1226,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
+                    print_traces: self.print_traces,
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                 };
@@ -1464,12 +1473,15 @@ impl Backend {
         env
     }
 
-    /// Builds [`Inspector`] with the configured options
+    /// Builds [`Inspector`] with the configured options.
     fn build_inspector(&self) -> Inspector {
         let mut inspector = Inspector::default();
 
         if self.print_logs {
             inspector = inspector.with_log_collector();
+        }
+        if self.print_traces {
+            inspector = inspector.with_trace_printer();
         }
 
         inspector
@@ -1725,6 +1737,11 @@ impl Backend {
         };
         drop(evm);
         inspector.print_logs();
+
+        if self.print_traces {
+            inspector.into_print_traces();
+        }
+
         Ok((exit_reason, out, gas_used as u128, state))
     }
 
