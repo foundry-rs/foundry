@@ -3708,6 +3708,7 @@ dependencies = [
 name = "foundry-cheatcodes"
 version = "1.1.0"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-genesis",
@@ -3789,6 +3790,7 @@ dependencies = [
  "itertools 0.14.0",
  "rayon",
  "regex",
+ "rustls",
  "serde",
  "serde_json",
  "strsim",
