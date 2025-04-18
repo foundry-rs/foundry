@@ -14,8 +14,7 @@ contract Counter {
 
 contract AttachBlobTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    uint256 bobPk =
-        0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 bobPk = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     address bob = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     Counter public counter;
@@ -51,9 +50,7 @@ contract AttachBlobTest is DSTest {
         vm.signAndAttachDelegation(address(0), bobPk);
 
         vm.broadcast(bobPk);
-        vm.expectRevert(
-            "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible"
-        );
+        vm.expectRevert("both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible");
         counter.increment();
     }
 }
