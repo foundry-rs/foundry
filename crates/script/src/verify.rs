@@ -11,6 +11,7 @@ use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
+use futures::future::join_all;
 use semver::Version;
 
 /// State after we have broadcasted the script.
@@ -237,8 +238,8 @@ async fn verify_contracts(
         let num_verifications = future_verifications.len();
         let mut num_of_successful_verifications = 0;
         sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
-        for verification in future_verifications {
-            match verification.await {
+        for verification in join_all(future_verifications).await {
+            match verification {
                 Ok(_) => {
                     num_of_successful_verifications += 1;
                 }
