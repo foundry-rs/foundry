@@ -1425,7 +1425,7 @@ async fn derive_block_and_transactions(
 pub enum ForkChoice {
     /// Block number to fork from.
     ///
-    /// f a negative the the given value is subtracted from the `latest` block number.
+    /// f a negative the given value is subtracted from the `latest` block number.
     Block(i128),
     /// Transaction hash to fork from
     Transaction(TxHash),
