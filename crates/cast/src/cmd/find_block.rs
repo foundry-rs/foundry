@@ -45,7 +45,7 @@ impl FindBlockArgs {
             let mut high_block = last_block_num;
             let mut matching_block = None;
             while high_block > low_block && matching_block.is_none() {
-                // Get timestamp of middle block (this approach approach to avoids overflow)
+                // Get timestamp of middle block (this approach to avoids overflow)
                 let high_minus_low_over_2 = high_block
                     .checked_sub(low_block)
                     .ok_or_else(|| eyre::eyre!("unexpected underflow"))
