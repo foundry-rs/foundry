@@ -7,9 +7,11 @@ use std::{
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[track_caller]
-fn format(source: &str, config: FormatterConfig) -> String {
-    let _ = (source, config);
-    todo!();
+fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
+    match forge_fmt_2::format_source(source, Some(path), config) {
+        Ok(formatted) => formatted,
+        Err(e) => panic!("failed to format {path:?}: {e}"),
+    }
 }
 
 #[track_caller]
@@ -41,7 +43,8 @@ fn enable_tracing() {
 }
 
 fn tests_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
+    // Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fmt/testdata")
 }
 
 fn test_directory(base_name: &str) {
@@ -91,14 +94,20 @@ fn test_directory(base_name: &str) {
             .try_into()
             .unwrap_or_else(|err| panic!("invalid test config for {filename}: {err}"));
 
-        test_formatter(filename, config, &original, &lines.join("\n"));
+        test_formatter(&path, filename, config, &original, &lines.join("\n"));
     }
 }
 
-fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected_source: &str) {
+fn test_formatter(
+    path: &Path,
+    filename: &str,
+    config: FormatterConfig,
+    source: &str,
+    expected_source: &str,
+) {
     assert_eof(expected_source);
 
-    let source_formatted = format(source, config.clone());
+    let source_formatted = format(source, &path.with_file_name("original.sol"), config.clone());
     assert_eof(&source_formatted);
     similar_asserts::assert_eq!(
         PrettyString(&source_formatted),
@@ -106,7 +115,7 @@ fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expecte
         "{filename}: formatted source does not match expected source"
     );
 
-    let expected_formatted = format(expected_source, config);
+    let expected_formatted = format(expected_source, path, config);
     similar_asserts::assert_eq!(
         PrettyString(&expected_formatted),
         PrettyString(expected_source),
