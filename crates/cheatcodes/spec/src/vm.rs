@@ -2649,7 +2649,7 @@ interface Vm {
 
     /// Signs Human-Readable Typed Data with `privateKey` using the secp256k1 curve.
     #[cheatcode(group = Crypto)]
-    function signTypedData(uint256 privateKey,string calldata jsonData) external pure returns (uint8 v, bytes32 r,bytes32 s);
+    function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r,bytes32 s);
 
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
