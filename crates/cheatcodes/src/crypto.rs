@@ -11,11 +11,7 @@ use alloy_signer_local::{
     LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
-use ethers::{
-    core::types::H256,
-    signers::LocalWallet,
-    types::transaction::eip712::{Eip712, TypedData},
-};
+use alloy_dyn_abi::eip712::TypedData;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
@@ -60,7 +56,7 @@ impl Cheatcode for signTypedDataCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey, jsonData } = self;
         let typed_data: TypedData = serde_json::from_str(jsonData)?;
-        let digest = typed_data.encode_eip712()?;
+        let digest = typed_data.eip712_signing_hash()?;
         let sig = sign(&privateKey, digest)?;
         Ok(encode_full_sig(sig))
     }

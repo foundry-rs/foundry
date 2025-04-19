@@ -24,7 +24,7 @@ foundry-evm-traces.workspace = true
 foundry-wallets.workspace = true
 forge-script-sequence.workspace = true
 
-alloy-dyn-abi.workspace = true
+alloy-dyn-abi = { workspace = true, features = ["eip712"] }
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-genesis.workspace = true
@@ -62,4 +62,4 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
-ethers = "2.0.14"
+
