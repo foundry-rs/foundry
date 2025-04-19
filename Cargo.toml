@@ -314,6 +314,9 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 
 [patch.crates-io]
+solar-parse = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
+solar-sema = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

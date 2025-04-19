@@ -14,8 +14,6 @@ use std::borrow::Cow;
 
 // TODO(dani): bunch docs into `Comments` since misplaced docs get ignore
 
-// TODO(dani): multiple string literals don't get handled correctly "a" "b"
-
 /*
 - [x]
 /// Maximum line length where formatter will try to wrap the line
@@ -317,6 +315,13 @@ impl State<'_> {
         match self.sm.span_to_snippet(span) {
             Ok(s) => self.word(s),
             Err(e) => panic!("failed to print {span:?}: {e:#?}"),
+        }
+        // Drop comments that are included in the span.
+        while let Some(cmnt) = self.peek_comment() {
+            if cmnt.pos() >= span.hi() {
+                break;
+            }
+            let _ = self.next_comment().unwrap();
         }
     }
 }
@@ -631,7 +636,7 @@ impl State<'_> {
             self.nbsp();
             self.print_override(override_);
         }
-        for modifier in modifiers.iter() {
+        for modifier in modifiers {
             self.nbsp();
             self.print_modifier_call(modifier);
         }
@@ -776,27 +781,32 @@ impl State<'_> {
         if self.handle_span(span) {
             return;
         }
-        let s = symbol.as_str();
 
         match *kind {
-            ast::LitKind::Str(kind, _) => {
-                // TODO(dani): kind.prefix().len()
-                let prefix_len = match kind {
-                    ast::StrKind::Str => 0,
-                    ast::StrKind::Unicode => 7,
-                    ast::StrKind::Hex => 3,
-                };
-                let quote_pos = span.lo() + prefix_len as u32;
-                self.print_str_lit(kind, quote_pos, s);
+            ast::LitKind::Str(kind, ..) => {
+                self.s.cbox(self.ind);
+                for (pos, (span, symbol)) in lit.literals().delimited() {
+                    if !self.handle_span(span) {
+                        let quote_pos = span.lo() + kind.prefix().len() as u32;
+                        self.print_str_lit(kind, quote_pos, symbol.as_str());
+                    }
+                    if !pos.is_last {
+                        self.space();
+                    } else {
+                        self.neverbreak();
+                    }
+                }
+                self.s.offset(-self.ind);
+                self.end();
                 return;
             }
             ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
-                self.print_num_literal(s);
+                self.print_num_literal(symbol.as_str());
                 return;
             }
             _ => {}
         };
-        self.word(s.to_string());
+        self.word(symbol.to_string());
     }
 
     fn print_num_literal(&mut self, source: &str) {
@@ -895,11 +905,7 @@ impl State<'_> {
 
     /// `s` should be the *unescaped contents of the string literal*.
     fn str_lit_to_string(&self, kind: ast::StrKind, quote_pos: BytePos, s: &str) -> String {
-        let prefix = match kind {
-            ast::StrKind::Str => "",
-            ast::StrKind::Unicode => "unicode",
-            ast::StrKind::Hex => "hex",
-        };
+        let prefix = kind.prefix();
         let quote = match self.config.quote_style {
             config::QuoteStyle::Double => '\"',
             config::QuoteStyle::Single => '\'',
@@ -1079,10 +1085,15 @@ impl State<'_> {
     }
 
     fn print_call_args(&mut self, args: &ast::CallArgs<'_>) {
+        let ast::CallArgs { span, kind } = args;
+        if self.handle_span(*span) {
+            return;
+        }
+
         self.s.cbox(self.ind);
         self.word("(");
-        match args {
-            ast::CallArgs::Unnamed(exprs) => {
+        match kind {
+            ast::CallArgsKind::Unnamed(exprs) => {
                 self.zerobreak();
                 for (pos, expr) in exprs.iter().delimited() {
                     self.print_expr(expr);
@@ -1093,7 +1104,7 @@ impl State<'_> {
                 }
                 self.zerobreak();
             }
-            ast::CallArgs::Named(named_args) => {
+            ast::CallArgsKind::Named(named_args) => {
                 self.word("{");
                 self.braces_break();
                 for (pos, ast::NamedArg { name, value }) in named_args.iter().delimited() {
@@ -1170,7 +1181,7 @@ impl State<'_> {
         } else {
             self.s.cbox(self.ind);
             self.hardbreak();
-            for stmt in block.iter() {
+            for stmt in block {
                 self.print_stmt(stmt);
                 self.hardbreak();
             }
