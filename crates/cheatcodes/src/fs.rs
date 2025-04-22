@@ -15,6 +15,7 @@ use foundry_config::fs_permissions::FsAccessKind;
 use revm::interpreter::CreateInputs;
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
+use sha2::{Sha256,Digest};
 use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
