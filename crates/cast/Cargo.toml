@@ -62,7 +62,10 @@ serde_json.workspace = true
 serde.workspace = true
 
 # aws-kms
-aws-sdk-kms = { version = "1", default-features = false, optional = true }
+aws-sdk-kms = { workspace = true, default-features = false, optional = true }
+
+# gcp-kms
+gcloud-sdk = { version = "0.26.4", default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
@@ -94,4 +97,5 @@ default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
+gcp-kms = ["foundry-wallets/gcp-kms", "dep:gcloud-sdk"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
