@@ -71,6 +71,9 @@ impl InspectArgs {
         let project = modified_build_args.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
         let target_path = find_target_path(&project, &contract)?;
+        if modified_build_args.compiler.revive_opts.revive_compile.unwrap_or_default() {
+            check_revive_field(&field)?;
+        }
         let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
@@ -588,6 +591,22 @@ fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
     let eof = Eof::decode(bytecode).wrap_err("Failed to decode EOF")?;
 
     sh_println!("{}", pretty_eof(&eof)?)?;
+
+    Ok(())
+}
+
+fn check_revive_field(field: &ContractArtifactField) -> Result<()> {
+    let fields_revive_should_error = [
+        ContractArtifactField::GasEstimates,
+        ContractArtifactField::LegacyAssembly,
+        ContractArtifactField::Ewasm,
+        ContractArtifactField::Eof,
+        ContractArtifactField::EofInit,
+    ];
+
+    if fields_revive_should_error.contains(field) {
+        return Err(eyre::eyre!("Revive version of inspect does not support this field"));
+    }
 
     Ok(())
 }

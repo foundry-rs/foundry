@@ -16,6 +16,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
+  REVIVE_RELEASE_VERSION: v0.1.0-dev.12
+  DLRP_API_KEY: ${{ secrets.DLRP_API_KEY }}
+  ETH_RPC_VERSION: 0.4.0
+  SUBSTRATE_NODE_COMMIT_SHA: 6ce6110199a429ce449841fe7222a5ba96eafb5c
 
 jobs:
   matrices:
@@ -47,13 +51,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
     env:
-      ETH_RPC_URL: https://reth-ethereum.ithaca.xyz/rpc
+      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/${{ secrets.ALCHEMY_API_KEY }}
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          target: ${{ matrix.target }}
+          target: ${{ matrix.target }}, wasm32-unknown-unknown
+          components: rust-src
       - uses: taiki-e/install-action@nextest
 
       # External tests dependencies
@@ -73,7 +78,107 @@ jobs:
           python-version: 3.11
       - name: Install Vyper
         run: pip --version && pip install vyper==0.4.0
+      - name: Install Revive (Linux)
+        if: contains(matrix.runner_label, 'ubuntu')
+        run: |
+          ASSET_NAME="resolc-x86_64-unknown-linux-musl.tar.gz"
+          DOWNLOAD_URL="https://github.com/paritytech/revive/releases/download/${{ env.REVIVE_RELEASE_VERSION }}/$ASSET_NAME"
+          curl -L -o $ASSET_NAME $DOWNLOAD_URL
+          tar -xzf $ASSET_NAME
+          chmod +x resolc-x86_64-unknown-linux-musl
+          sudo mv resolc-x86_64-unknown-linux-musl /usr/local/bin/resolc
+      - name: Install Revive (Windows)
+        if: contains(matrix.runner_label, 'windows')
+        shell: powershell
+        run: |
+          $AssetName="resolc-x86_64-pc-windows-msvc.zip"
+          $DownloadUrl="https://github.com/paritytech/revive/releases/download/${{ env.REVIVE_RELEASE_VERSION }}/$AssetName"
+          Invoke-WebRequest -Uri $DownloadUrl -OutFile $AssetName
+          Expand-Archive -Path $AssetName -DestinationPath .
+          $InstallDir = "C:\Program Files\resolc"
+          if (!(Test-Path $InstallDir)) {
+              New-Item -ItemType Directory -Path $InstallDir | Out-Null
+          }
 
+          Move-Item -Path .\resolc-x86_64-pc-windows-msvc.exe -Destination "$InstallDir\resolc.exe" -Force
+          Unblock-File -Path "$InstallDir\resolc.exe"
+          echo "$InstallDir" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Install Revive (macOS)
+        if: contains(matrix.runner_label, 'macos')
+        run: |
+          ASSET_NAME="resolc-universal-apple-darwin.tar.gz"
+          DOWNLOAD_URL="https://github.com/paritytech/revive/releases/download/${{ env.REVIVE_RELEASE_VERSION }}/$ASSET_NAME"
+          curl -L -o $ASSET_NAME $DOWNLOAD_URL
+          tar -xzf $ASSET_NAME
+          chmod +x resolc-universal-apple-darwin
+          xattr -d com.apple.quarantine resolc-universal-apple-darwin || true
+          sudo mv resolc-universal-apple-darwin /usr/local/bin/resolc
+
+      - name: Cache substrate-node binary
+        id: cache-substrate
+        uses: actions/cache@v3
+        with:
+          path: polkadot-sdk/target/release/substrate-node
+          key: substrate-node-${{ matrix.runner_label }}-${{ env.SUBSTRATE_NODE_COMMIT_SHA }}
+
+      - name: Cache eth-rpc binary
+        id: cache-ethrpc
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin/eth-rpc
+          key: eth-rpc-${{ matrix.runner_label }}-${{ env.ETH_RPC_VERSION }}
+
+      - name: Install system deps (Linux)
+        if:
+          (steps.cache-substrate.outputs.cache-hit != 'true' || steps.cache-ethrpc.outputs.cache-hit != 'true')
+          && contains(matrix.runner_label, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install system deps (macOS)
+        if:
+          (steps.cache-substrate.outputs.cache-hit != 'true' || steps.cache-ethrpc.outputs.cache-hit != 'true')
+          && contains(matrix.runner_label, 'macos')
+        run: |
+          brew update
+          brew install protobuf
+
+      - name: Build substrate-node (if not cached)
+        if: steps.cache-substrate.outputs.cache-hit != 'true' && !contains(matrix.runner_label, 'windows')
+        run: |
+          git init polkadot-sdk
+          cd polkadot-sdk
+          git remote add origin https://github.com/paritytech/polkadot-sdk
+          git fetch --depth 1 origin ${{ env.SUBSTRATE_NODE_COMMIT_SHA }}
+          git checkout FETCH_HEAD
+          cargo build --release --bin substrate-node
+
+      - name: Add substrate-node to $PATH
+        run: echo "${{github.workspace}}/polkadot-sdk/target/release" >> $GITHUB_PATH
+
+      - name: Install eth-rpc proxy (if not cached)
+        if: steps.cache-ethrpc.outputs.cache-hit != 'true' && !contains(matrix.runner_label, 'windows')
+        run: cargo install pallet-revive-eth-rpc --version ${{env.ETH_RPC_VERSION}}
+        shell: bash
+
+      # Temporary hack to make the tests work on macOS.
+      # macOS has libusb 1.0.28, but our tests require 1.0.27.
+      # Without it, they fail, so this adds the old version of libusb.
+      - name: Install libusb 1.0.27 (macOS)
+        if: contains(matrix.runner_label, 'macos')
+        run: |
+          brew install autoconf automake libtool pkg-config
+          wget https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
+          tar -xvjf libusb-1.0.27.tar.bz2
+          cd libusb-1.0.27
+          ./configure --prefix=/usr/local
+          make
+          sudo make install
+
+      - name: Check Revive Version
+        run: |
+          resolc --version
       - name: Forge RPC cache
         uses: actions/cache@v3
         with:

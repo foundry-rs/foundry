@@ -25,11 +25,13 @@ static RETH_HOSTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 });
 
 // List of general purpose DRPC keys to rotate through
-static DRPC_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut keys = vec![
-        "Agc9NK9-6UzYh-vQDDM80Tv0A5UnBkUR8I3qssvAG40d",
-        "AjUPUPonSEInt2CZ_7A-ai3hMyxxBlsR8I4EssvAG40d",
-    ];
+static DRPC_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut keys = vec!["AgasqIYODEW_j_J0F91L8oETmhtHCXkR8JAVssvAG40d".to_owned()];
+    // Fetch secret from GitHub Actions environment variable
+    if let Ok(secret) = std::env::var("DLRP_API_KEY") {
+        keys.clear();
+        keys.push(secret);
+    }
 
     keys.shuffle(&mut rand::thread_rng());
 
@@ -175,7 +177,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
     } else {
         // DRPC for other networks used in tests.
         let idx = next_idx() % DRPC_KEYS.len();
-        let key = DRPC_KEYS[idx];
+        let key = &DRPC_KEYS[idx];
 
         let network = match chain {
             Optimism => "optimism",

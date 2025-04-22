@@ -2,7 +2,7 @@ use foundry_compilers::{
     apply_updates,
     artifacts::SolcLanguage,
     error::Result,
-    multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
+    multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage, SolidityCompiler},
     project::Preprocessor,
     solc::{SolcCompiler, SolcVersionedInput},
     Compiler, Language, ProjectPathsConfig,
@@ -110,7 +110,12 @@ impl Preprocessor<MultiCompiler> for TestOptimizerPreprocessor {
         // Preprocess only Solc compilers.
         let MultiCompilerInput::Solc(input) = input else { return Ok(()) };
 
-        let Some(solc) = &compiler.solc else { return Ok(()) };
+        let Some(solc) = (match &compiler.solidity {
+            SolidityCompiler::Solc(solc) => Some(solc),
+            _ => None,
+        }) else {
+            return Ok(());
+        };
 
         let paths = paths.clone().with_language::<SolcLanguage>();
         self.preprocess(solc, input, &paths, mocks)

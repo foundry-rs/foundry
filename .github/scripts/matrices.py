@@ -72,7 +72,7 @@ t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
 # t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu", "linux-aarch64")
 t_macos = Target("macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
 t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
-targets = [t_linux_x86, t_windows] if is_pr else [t_linux_x86, t_macos, t_windows]
+targets = [t_linux_x86, t_macos, t_windows] if is_pr else [t_linux_x86, t_macos, t_windows]
 
 config = [
     Case(
@@ -83,7 +83,7 @@ config = [
     ),
     Case(
         name="integration",
-        filter="kind(test) & !test(/\\b(issue|ext_integration)/)",
+        filter="kind(test) & !test(/\\b(issue|ext_integration)|polkadot_localnode/)",
         n_partitions=3,
         pr_cross_platform=True,
     ),
@@ -97,6 +97,12 @@ config = [
         name="integration / external",
         filter="package(=forge) & test(/\\bext_integration/)",
         n_partitions=2,
+        pr_cross_platform=False,
+    ),
+        Case(
+        name="integration / polkadot_localnode",
+        filter="(package(=cast) | package(=forge)) & test(/polkadot_localnode/)",
+        n_partitions=1,
         pr_cross_platform=False,
     ),
 ]

@@ -127,7 +127,7 @@ jobs:
       - forge-fmt
       - crate-checks
       - deny
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
