@@ -40,7 +40,12 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
     0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
 ];
 
+/// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
 const SUBMODULE_BRANCH_REGEX: &str = r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#;
+/// Regex used to parse `git submodule status` output.
+const SUBMODULE_STATUS_REGEX: &str = r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$";
+/// Capture the HEAD / default branch of the git repository from `git remote show origin`.
+const DEFAULT_BRANCH_REGEX: &str = r"HEAD branch: (.*)";
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -674,13 +679,15 @@ ignore them in the `.gitignore` file."
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
     }
 
+    /// Initializes the git submodules.
     pub fn submodule_init(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
+    /// Gets the default branch of the git repository.
     pub fn default_branch(&self, at: &Path) -> Result<String> {
         self.cmd_at(at).args(["remote", "show", "origin"]).get_stdout_lossy().map(|stdout| {
-            let re = regex::Regex::new(r"HEAD branch: (.*)")?;
+            let re = regex::Regex::new(DEFAULT_BRANCH_REGEX)?;
             let caps =
                 re.captures(&stdout).ok_or_else(|| eyre::eyre!("Could not find HEAD branch"))?;
             Ok(caps.get(1).unwrap().as_str().to_string())
@@ -746,7 +753,7 @@ impl FromStr for Submodule {
     type Err = eyre::Report;
 
     fn from_str(s: &str) -> Result<Self> {
-        let re = regex::Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$")?;
+        let re = regex::Regex::new(SUBMODULE_STATUS_REGEX)?;
 
         let caps = re.captures(s).ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
 
