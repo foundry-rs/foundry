@@ -142,7 +142,7 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
 }
 
 macro_rules! fmt_tests {
-    ($($dir:ident),+ $(,)?) => {
+    ($($(#[$attr:meta])* $dir:ident),+ $(,)?) => {
         #[test]
         fn all_dirs_are_declared() {
             test_all_dirs_are_declared(&[$(stringify!($dir)),*]);
@@ -151,6 +151,7 @@ macro_rules! fmt_tests {
         $(
             #[allow(non_snake_case)]
             #[test]
+            $(#[$attr])*
             fn $dir() {
                 test_directory(stringify!($dir));
             }
@@ -159,6 +160,7 @@ macro_rules! fmt_tests {
 }
 
 fmt_tests! {
+    #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions,
     BlockComments,
