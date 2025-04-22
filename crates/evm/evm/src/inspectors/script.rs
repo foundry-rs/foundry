@@ -1,4 +1,5 @@
 use alloy_primitives::Address;
+use foundry_common::sh_err;
 use revm::{
     interpreter::{opcode::ADDRESS, InstructionResult, Interpreter},
     Database, EvmContext, Inspector,
@@ -23,8 +24,7 @@ impl<DB: Database> Inspector<DB> for ScriptExecutionInspector {
             interpreter.contract.bytecode_address.unwrap_or_default() == self.script_address
         {
             // Log the reason for revert
-            tracing::error!(
-                target: "forge::script",
+            let _ = sh_err!(
                 "Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon."
             );
             // Set the instruction result to Revert to stop execution
