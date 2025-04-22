@@ -32,10 +32,9 @@ mod inspector;
 pub use inspector::Fuzzer;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[expect(clippy::large_enum_variant)]
 pub enum CounterExample {
     /// Call used as a counter example for fuzz tests.
-    Single(BaseCounterExample),
+    Single(Box<BaseCounterExample>),
     /// Original sequence size and sequence of calls used as a counter example for invariant tests.
     Sequence(usize, Vec<BaseCounterExample>),
 }

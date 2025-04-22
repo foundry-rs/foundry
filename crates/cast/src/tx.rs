@@ -25,7 +25,6 @@ use serde_json::value::RawValue;
 use std::fmt::Write;
 
 /// Different sender kinds used by [`CastTxBuilder`].
-#[expect(clippy::large_enum_variant)]
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
     /// accounts.
@@ -33,7 +32,7 @@ pub enum SenderKind<'a> {
     /// A reference to a signer.
     Signer(&'a WalletSigner),
     /// An owned signer.
-    OwnedSigner(WalletSigner),
+    OwnedSigner(Box<WalletSigner>),
 }
 
 impl SenderKind<'_> {
@@ -57,7 +56,7 @@ impl SenderKind<'_> {
         if let Some(from) = opts.from {
             Ok(from.into())
         } else if let Ok(signer) = opts.signer().await {
-            Ok(Self::OwnedSigner(signer))
+            Ok(Self::OwnedSigner(Box::new(signer)))
         } else {
             Ok(Address::ZERO.into())
         }
@@ -67,7 +66,7 @@ impl SenderKind<'_> {
     pub fn as_signer(&self) -> Option<&WalletSigner> {
         match self {
             Self::Signer(signer) => Some(signer),
-            Self::OwnedSigner(signer) => Some(signer),
+            Self::OwnedSigner(signer) => Some(&**signer),
             _ => None,
         }
     }
@@ -87,7 +86,7 @@ impl<'a> From<&'a WalletSigner> for SenderKind<'a> {
 
 impl From<WalletSigner> for SenderKind<'_> {
     fn from(signer: WalletSigner) -> Self {
-        Self::OwnedSigner(signer)
+        Self::OwnedSigner(Box::new(signer))
     }
 }
 

@@ -702,7 +702,7 @@ async fn test_reorg() {
         let to = accounts[i + 1].address();
         for j in 0..5 {
             let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
-            txs.push((TransactionData::JSON(tx), i as u64));
+            txs.push((TransactionData::JSON(Box::new(tx)), i as u64));
         }
     }
 
@@ -793,7 +793,7 @@ async fn test_reorg() {
     let res = api
         .anvil_reorg(ReorgOptions {
             depth: 1,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 10)],
+            tx_block_pairs: vec![(TransactionData::JSON(Box::default()), 10)],
         })
         .await;
     assert!(res.is_err());

@@ -123,36 +123,32 @@ impl FuzzedExecutor {
                         data.first_case.replace(case.case);
                     }
 
-                    if let Some(call_traces) = case.traces {
+                    if let Some(call_traces) = &case.traces {
                         if data.traces.len() == max_traces_to_collect {
                             data.traces.pop();
                         }
-                        data.traces.push(call_traces);
-                        data.breakpoints.replace(case.breakpoints);
+                        data.traces.push(call_traces.clone());
+                        data.breakpoints.replace(case.breakpoints.clone());
                     }
 
                     if show_logs {
-                        data.logs.extend(case.logs);
+                        data.logs.extend(case.logs.clone());
                     }
 
-                    HitMaps::merge_opt(&mut data.coverage, case.coverage);
+                    HitMaps::merge_opt(&mut data.coverage, case.coverage.clone());
 
-                    data.deprecated_cheatcodes = case.deprecated_cheatcodes;
+                    data.deprecated_cheatcodes = case.deprecated_cheatcodes.clone();
 
                     Ok(())
                 }
-                FuzzOutcome::CounterExample(CounterExampleOutcome {
-                    exit_reason: status,
-                    counterexample: outcome,
-                    ..
-                }) => {
+                FuzzOutcome::CounterExample(counter_example) => {
                     // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                     // since that input represents the last run case, which may not correspond with
                     // our failure - when a fuzz case fails, proptest will try to run at least one
                     // more case to find a minimal failure case.
-                    let reason = rd.maybe_decode(&outcome.1.result, Some(status));
-                    execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
-                    execution_data.borrow_mut().counterexample = outcome;
+                    let reason = rd.maybe_decode(&counter_example.counterexample.1.result, Some(counter_example.exit_reason));
+                    execution_data.borrow_mut().logs.extend(counter_example.counterexample.1.logs.clone());
+                    execution_data.borrow_mut().counterexample = counter_example.counterexample;
                     // HACK: we have to use an empty string here to denote `None`.
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
@@ -213,7 +209,7 @@ impl FuzzedExecutor {
                     };
 
                     result.counterexample = Some(CounterExample::Single(
-                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                        Box::new(BaseCounterExample::from_fuzz_call(calldata, args, call.traces)),
                     ));
                 }
             }
@@ -255,20 +251,20 @@ impl FuzzedExecutor {
 
         let success = self.executor.is_raw_call_mut_success(address, &mut call, false);
         if success {
-            Ok(FuzzOutcome::Case(CaseOutcome {
+            Ok(FuzzOutcome::Case(Box::new(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
                 deprecated_cheatcodes,
-            }))
+            })))
         } else {
-            Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {
+            Ok(FuzzOutcome::CounterExample(Box::new(CounterExampleOutcome {
                 exit_reason: call.exit_reason,
                 counterexample: (calldata, call),
                 breakpoints,
-            }))
+            })))
         }
     }
 

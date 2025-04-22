@@ -1615,7 +1615,7 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceCall`
     pub async fn debug_trace_call(
         &self,
-        request: WithOtherFields<TransactionRequest>,
+        request: Box<WithOtherFields<TransactionRequest>>,
         block_number: Option<BlockId>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace> {
@@ -1630,7 +1630,7 @@ impl EthApi {
         .or_zero_fees();
 
         let result: std::result::Result<GethTrace, BlockchainError> =
-            self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
+            self.backend.call_with_tracing(*request, fees, Some(block_request), opts).await;
         result
     }
 
@@ -2052,7 +2052,7 @@ impl EthApi {
                 let (tx_data, block_index) = pair;
 
                 let mut tx_req = match tx_data {
-                    TransactionData::JSON(req) => WithOtherFields::new(req),
+                    TransactionData::JSON(req) => WithOtherFields::new(*req),
                     TransactionData::Raw(bytes) => {
                         let mut data = bytes.as_ref();
                         let decoded = TypedTransaction::decode_2718(&mut data)

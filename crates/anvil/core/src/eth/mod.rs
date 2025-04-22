@@ -37,7 +37,6 @@ pub struct Params<T: Default> {
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
-#[expect(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[serde(rename = "web3_clientVersion", with = "empty_params")]
     Web3ClientVersion(()),
@@ -258,7 +257,7 @@ pub enum EthRequest {
     /// geth's `debug_traceCall`  endpoint
     #[serde(rename = "debug_traceCall")]
     DebugTraceCall(
-        WithOtherFields<TransactionRequest>,
+        Box<WithOtherFields<TransactionRequest>>,
         #[serde(default)] Option<BlockId>,
         #[serde(default)] GethDebugTracingCallOptions,
     ),
