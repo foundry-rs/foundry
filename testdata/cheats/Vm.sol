@@ -311,6 +311,7 @@ interface Vm {
     function getWallets() external returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function interceptInitcode() external;
+    function ipfsCidV0(string calldata filepath) external returns (bytes32 cid);
     function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external view returns (bool result);
     function isFile(string calldata path) external view returns (bool result);
