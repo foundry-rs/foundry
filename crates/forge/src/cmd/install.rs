@@ -276,6 +276,9 @@ impl Installer<'_> {
             std::iter::empty::<PathBuf>(),
         )?;
 
+        // sync submodules config with changes in .gitmodules, see <https://github.com/foundry-rs/foundry/issues/9611>
+        self.git.root(path).submodule_sync()?;
+
         if self.commit {
             self.git.add(Some(path))?;
         }
