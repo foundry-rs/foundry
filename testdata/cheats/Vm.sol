@@ -155,6 +155,7 @@ interface Vm {
     function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
     function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
+    function attachBlob(bytes calldata blob) external;
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
