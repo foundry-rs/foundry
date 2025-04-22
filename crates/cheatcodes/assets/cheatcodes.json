@@ -9743,17 +9743,17 @@
     {
       "func": {
         "id": "signTypedData",
-        "description": "",
-        "declaration": "function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "description": "Signs Human-Readable Typed Data with `privateKey` using the secp256k1 curve.",
+        "declaration": "function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "signTypedData(uint256,string)",
-        "selector": "0xa3f35987",
+        "signature": "signTypedData(string,uint256)",
+        "selector": "0x85f00b0d",
         "selectorBytes": [
-          163,
-          243,
-          89,
-          135
+          133,
+          240,
+          11,
+          13
         ]
       },
       "group": "crypto",
