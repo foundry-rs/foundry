@@ -18,7 +18,7 @@ forge-fmt-cmp() {
 
     forge fmt - --raw < "$in_f" > "$tmp/old.sol" || return 1
     "$forge_fmt_new" "$in_f" > "$tmp/new.sol" || return 1
-    echo -n "$(perl -pe 'chomp if eof' "$tmp/new.sol")" > "$tmp/new.sol" # chop last nl
+    # echo -n "$(perl -pe 'chomp if eof' "$tmp/new.sol")" > "$tmp/new.sol" # chop last nl
 
     bat --paging=never "$tmp/old.sol" "$tmp/new.sol" || return 1
 

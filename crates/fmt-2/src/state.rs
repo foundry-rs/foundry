@@ -72,16 +72,19 @@ pub contract_new_lines: bool,
 pub sort_imports: bool,
 */
 
-pub(super) struct State<'a> {
+pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
     ind: isize,
-    sm: &'a SourceMap,
+
+    sm: &'sess SourceMap,
     comments: Comments,
     config: FormatterConfig,
     inline_config: InlineConfig,
+
+    contract: Option<&'ast ast::ItemContract<'ast>>,
 }
 
-impl std::ops::Deref for State<'_> {
+impl std::ops::Deref for State<'_, '_> {
     type Target = pp::Printer;
 
     #[inline(always)]
@@ -90,7 +93,7 @@ impl std::ops::Deref for State<'_> {
     }
 }
 
-impl std::ops::DerefMut for State<'_> {
+impl std::ops::DerefMut for State<'_, '_> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.s
@@ -98,9 +101,9 @@ impl std::ops::DerefMut for State<'_> {
 }
 
 /// Generic methods.
-impl<'a> State<'a> {
+impl<'sess> State<'sess, '_> {
     pub(super) fn new(
-        sm: &'a SourceMap,
+        sm: &'sess SourceMap,
         config: FormatterConfig,
         inline_config: InlineConfig,
         comments: Comments,
@@ -112,6 +115,7 @@ impl<'a> State<'a> {
             comments,
             inline_config,
             config,
+            contract: None,
         }
     }
 
@@ -210,7 +214,7 @@ impl<'a> State<'a> {
 
     fn peek_comment<'b>(&'b self) -> Option<&'b Comment>
     where
-        'a: 'b,
+        'sess: 'b,
     {
         self.comments().peek()
     }
@@ -228,7 +232,7 @@ impl<'a> State<'a> {
     fn print_remaining_comments(&mut self) {
         // If there aren't any remaining comments, then we need to manually
         // make sure there is a line break at the end.
-        if self.peek_comment().is_none() {
+        if self.peek_comment().is_none() && !self.is_beginning_of_line() {
             self.hardbreak();
         }
         while let Some(cmnt) = self.next_comment() {
@@ -282,7 +286,7 @@ impl<'a> State<'a> {
 }
 
 /// Span to source.
-impl State<'_> {
+impl State<'_, '_> {
     fn char_at(&self, pos: BytePos) -> char {
         let res = self.sm.lookup_byte_offset(pos);
         res.sf.src[res.pos.to_usize()..].chars().next().unwrap()
@@ -343,15 +347,15 @@ struct FunctionLike<'a, 'b> {
 }
 
 /// Language-specific pretty printing.
-impl State<'_> {
-    pub fn print_source_unit(&mut self, source_unit: &ast::SourceUnit<'_>) {
+impl<'ast> State<'_, 'ast> {
+    pub fn print_source_unit(&mut self, source_unit: &'ast ast::SourceUnit<'ast>) {
         for item in source_unit.items.iter() {
             self.print_item(item);
         }
         self.print_remaining_comments();
     }
 
-    fn print_item(&mut self, item: &ast::Item<'_>) {
+    fn print_item(&mut self, item: &'ast ast::Item<'ast>) {
         let ast::Item { docs, span, kind } = item;
         self.print_docs(docs);
         self.maybe_print_comments(span.lo());
@@ -459,7 +463,9 @@ impl State<'_> {
                 self.word(";");
                 self.hardbreak();
             }
-            ast::ItemKind::Contract(ast::ItemContract { kind, name, layout, bases, body }) => {
+            ast::ItemKind::Contract(c @ ast::ItemContract { kind, name, layout, bases, body }) => {
+                self.contract = Some(c);
+
                 self.s.cbox(self.ind);
                 self.s.cbox(0);
                 self.word_nbsp(kind.to_str());
@@ -507,6 +513,8 @@ impl State<'_> {
                 self.end();
                 self.word("}");
                 self.hardbreak();
+
+                self.contract = None;
             }
             ast::ItemKind::Function(func) => self.print_function(func),
             ast::ItemKind::Variable(var) => self.print_var_def(var),
@@ -571,7 +579,7 @@ impl State<'_> {
         }
     }
 
-    fn print_function(&mut self, func: &ast::ItemFunction<'_>) {
+    fn print_function(&mut self, func: &'ast ast::ItemFunction<'ast>) {
         let ast::ItemFunction { kind, header, body, body_span } = func;
         let ast::FunctionHeader {
             name,
@@ -599,7 +607,7 @@ impl State<'_> {
         });
     }
 
-    fn print_function_like(&mut self, args: FunctionLike<'_, '_>) {
+    fn print_function_like(&mut self, args: FunctionLike<'ast, 'ast>) {
         let FunctionLike {
             kind,
             name,
@@ -639,11 +647,20 @@ impl State<'_> {
         for modifier in modifiers {
             self.nbsp();
 
-            // Add `()` in constructors when the modifier is a base contract.
-            // HACK: we can't really know for sure, so we assume that uppercase names are bases.
+            // Add `()` in functions when the modifier is a base contract.
+            // HACK: heuristics:
+            // 1. exactly matches the name of a base contract as declared in the `contract is`;
+            // this does not account for inheritance;
+            let is_contract_base = self.contract.is_some_and(|contract| {
+                contract.bases.iter().any(|contract_base| contract_base.name == modifier.name)
+            });
+            // 2. assume that title case names in constructors are bases.
+            // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
+            let is_constructor = args.kind == "constructor";
             // LEGACY: we are checking the beginning of the path, not the last segment.
-            let is_base_contract = args.kind == "constructor" &&
-                modifier.name.first().name.as_str().starts_with(char::is_uppercase);
+            let is_base_contract = is_contract_base ||
+                (is_constructor &&
+                    modifier.name.first().name.as_str().starts_with(char::is_uppercase));
 
             self.print_modifier_call(modifier, is_base_contract);
         }
@@ -665,13 +682,13 @@ impl State<'_> {
         }
     }
 
-    fn print_var_def(&mut self, var: &ast::VariableDefinition<'_>) {
+    fn print_var_def(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
         self.print_var(var);
         self.word(";");
         self.hardbreak();
     }
 
-    fn print_var(&mut self, var: &ast::VariableDefinition<'_>) {
+    fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
         let ast::VariableDefinition {
             span,
             ty,
@@ -720,7 +737,7 @@ impl State<'_> {
         }
     }
 
-    fn print_parameter_list(&mut self, parameters: &[ast::VariableDefinition<'_>]) {
+    fn print_parameter_list(&mut self, parameters: &'ast [ast::VariableDefinition<'ast>]) {
         if parameters.is_empty() {
             self.word("()");
             return;
@@ -741,7 +758,7 @@ impl State<'_> {
         self.end();
     }
 
-    fn print_docs(&mut self, docs: &ast::DocComments<'_>) {
+    fn print_docs(&mut self, docs: &'ast ast::DocComments<'ast>) {
         for &ast::DocComment { kind, span, symbol } in docs.iter() {
             self.maybe_print_comments(span.lo());
             self.word(match kind {
@@ -756,7 +773,7 @@ impl State<'_> {
         }
     }
 
-    fn print_ident_or_strlit(&mut self, value: &ast::IdentOrStrLit) {
+    fn print_ident_or_strlit(&mut self, value: &'ast ast::IdentOrStrLit) {
         match value {
             ast::IdentOrStrLit::Ident(ident) => self.print_ident(*ident),
             ast::IdentOrStrLit::StrLit(strlit) => self.print_ast_str_lit(strlit),
@@ -774,7 +791,7 @@ impl State<'_> {
         self.word(ident.to_string());
     }
 
-    fn print_path(&mut self, path: &ast::PathSlice) {
+    fn print_path(&mut self, path: &'ast ast::PathSlice) {
         for (pos, ident) in path.segments().iter().delimited() {
             self.print_ident(*ident);
             if !pos.is_last {
@@ -783,7 +800,7 @@ impl State<'_> {
         }
     }
 
-    fn print_lit(&mut self, lit: &ast::Lit) {
+    fn print_lit(&mut self, lit: &'ast ast::Lit) {
         let &ast::Lit { span, symbol, ref kind } = lit;
         if self.handle_span(span) {
             return;
@@ -899,7 +916,7 @@ impl State<'_> {
     }
 
     /// Prints a raw AST string literal, which is unescaped.
-    fn print_ast_str_lit(&mut self, strlit: &ast::StrLit) {
+    fn print_ast_str_lit(&mut self, strlit: &'ast ast::StrLit) {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
     }
 
@@ -938,7 +955,7 @@ impl State<'_> {
         format!("{prefix}{quote}{s}{quote}")
     }
 
-    fn print_ty(&mut self, ty: &ast::Type<'_>) {
+    fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
         if self.handle_span(ty.span) {
             return;
         }
@@ -998,7 +1015,7 @@ impl State<'_> {
         }
     }
 
-    fn print_override(&mut self, override_: &ast::Override<'_>) {
+    fn print_override(&mut self, override_: &'ast ast::Override<'ast>) {
         let ast::Override { span, paths } = override_;
         if self.handle_span(*span) {
             return;
@@ -1028,7 +1045,7 @@ impl State<'_> {
     /* --- Expressions --- */
 
     #[expect(unused_variables)]
-    fn print_expr(&mut self, expr: &ast::Expr<'_>) {
+    fn print_expr(&mut self, expr: &'ast ast::Expr<'ast>) {
         let ast::Expr { span, ref kind } = *expr;
         if self.handle_span(span) {
             return;
@@ -1084,7 +1101,11 @@ impl State<'_> {
     }
 
     // If `add_parens_if_empty` is true, then add parentheses `()` even if there are no arguments.
-    fn print_modifier_call(&mut self, modifier: &ast::Modifier<'_>, add_parens_if_empty: bool) {
+    fn print_modifier_call(
+        &mut self,
+        modifier: &'ast ast::Modifier<'ast>,
+        add_parens_if_empty: bool,
+    ) {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name);
         if !arguments.is_empty() || add_parens_if_empty {
@@ -1092,7 +1113,7 @@ impl State<'_> {
         }
     }
 
-    fn print_call_args(&mut self, args: &ast::CallArgs<'_>) {
+    fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>) {
         let ast::CallArgs { span, kind } = args;
         if self.handle_span(*span) {
             return;
@@ -1136,7 +1157,7 @@ impl State<'_> {
     /* --- Statements --- */
 
     #[expect(unused_variables)]
-    fn print_stmt(&mut self, stmt: &ast::Stmt<'_>) {
+    fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
         // TODO(dani)
         let ast::Stmt { docs, span, kind } = stmt;
         self.print_docs(docs);
@@ -1176,7 +1197,7 @@ impl State<'_> {
         }
     }
 
-    fn print_block(&mut self, block: &[ast::Stmt<'_>], span: Span) {
+    fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
         // TODO: attempt_single_line, attempt_omit_braces
         self.word("{");
         if block.is_empty() {
@@ -1201,7 +1222,7 @@ impl State<'_> {
         self.hardbreak();
     }
 
-    fn single_line_block(&self, block: &[ast::Stmt<'_>], span: Span) -> bool {
+    fn single_line_block(&self, block: &'ast [ast::Stmt<'_>], span: Span) -> bool {
         if block.len() != 1 {
             return false;
         }
@@ -1213,7 +1234,7 @@ impl State<'_> {
     }
 }
 
-fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+fn stmt_needs_semi<'ast>(stmt: &'ast ast::StmtKind<'ast>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. } |
         ast::StmtKind::Block { .. } |

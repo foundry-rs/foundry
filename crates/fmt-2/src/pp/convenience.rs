@@ -62,6 +62,7 @@ impl Printer {
     }
 
     pub fn is_exactly_one_empty_line(&self) -> bool {
+        // TODO(dani)
         self.is_beginning_of_line()
     }
 
