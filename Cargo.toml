@@ -314,6 +314,7 @@ url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
+sha="0.10"
 
 [patch.crates-io]
 ## alloy-core
