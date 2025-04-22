@@ -1916,7 +1916,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -3286,7 +3286,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "976dd42dc7e85965fe702eb8164f21f450704bdde31faefd6471dba214cb594e"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3405,7 +3405,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5520,7 +5520,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi 0.5.0",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5543,15 +5543,6 @@ name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
 dependencies = [
  "either",
 ]
@@ -5592,7 +5583,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7232,7 +7223,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7774,7 +7765,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7787,7 +7778,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8496,7 +8487,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "alloy-primitives 1.0.0",
  "bumpalo",
@@ -8514,7 +8505,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "strum 0.27.1",
 ]
@@ -8522,7 +8513,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8536,7 +8527,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8545,18 +8536,17 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "itoa",
  "lasso",
  "match_cfg",
  "normalize-path",
  "rayon",
- "scc",
  "scoped-tls",
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8564,7 +8554,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8574,12 +8564,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "alloy-primitives 1.0.0",
  "bitflags 2.9.0",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8594,7 +8584,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.2"
-source = "git+https://github.com/paradigmxyz/solar?branch=main#fd5c9977261254beac3b8e8dd8cea78a2ec40e8d"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#ea05097f9b46d549624c46df313a6409a4aa5849"
 dependencies = [
  "alloy-json-abi 1.0.0",
  "alloy-primitives 1.0.0",
@@ -8605,7 +8595,6 @@ dependencies = [
  "once_map",
  "paste",
  "rayon",
- "scc",
  "serde",
  "serde_json",
  "solar-ast",
@@ -8899,7 +8888,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "url",
  "zip",
 ]
@@ -9008,7 +8997,7 @@ dependencies = [
  "getrandom 0.3.2",
  "once_cell",
  "rustix 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
