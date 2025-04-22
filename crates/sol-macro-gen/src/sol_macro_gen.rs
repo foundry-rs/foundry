@@ -15,6 +15,7 @@ use eyre::{Context, OptionExt, Result};
 use foundry_common::fs;
 use proc_macro2::{Span, TokenStream};
 use std::{
+    env::temp_dir,
     fmt::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -82,14 +83,51 @@ impl MultiSolMacroGen {
     }
 
     fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
-        let input = instance.get_sol_input()?.normalize_json()?;
+        // TODO: in `get_sol_input` we currently can't handle unlinked bytecode: <https://github.com/alloy-rs/core/issues/926>
+        let input = match instance.get_sol_input() {
+            Ok(input) => input.normalize_json()?,
+            Err(error) => {
+                // TODO(mattsse): remove after <https://github.com/alloy-rs/core/issues/926>
+                if error.to_string().contains("expected bytecode, found unlinked bytecode") {
+                    // we attempt to do a little hack here until we have this properly supported by
+                    // removing the bytecode objects from the json file and using a tmpfile (very
+                    // hacky)
+                    let content = std::fs::read_to_string(&instance.path)?;
+                    let mut value = serde_json::from_str::<serde_json::Value>(&content)?;
+                    let obj = value.as_object_mut().expect("valid abi");
+
+                    // clear unlinked bytecode
+                    obj.remove("bytecode");
+                    obj.remove("deployedBytecode");
+
+                    let tmpdir = temp_dir();
+                    let mut tmp_file = tmpdir.join(instance.path.file_name().unwrap());
+                    std::fs::write(&tmp_file, serde_json::to_string(&value)?)?;
+
+                    // try again
+                    std::mem::swap(&mut tmp_file, &mut instance.path);
+                    let input = instance.get_sol_input()?.normalize_json()?;
+                    std::mem::swap(&mut tmp_file, &mut instance.path);
+                    input.normalize_json()?
+                } else {
+                    return Err(error)
+                }
+            }
+        };
 
         let SolInput { attrs: _, path: _, kind } = input;
 
         let tokens = match kind {
             SolInputKind::Sol(mut file) => {
-                let sol_attr: syn::Attribute = syn::parse_quote! {
-                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract, all_derives = #all_derives)]
+                let sol_attr: syn::Attribute = if all_derives {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract, all_derives = true, extra_derives(serde::Serialize,
+                    serde::Deserialize))]     }
+                } else {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract)]     }
                 };
                 file.attrs.push(sol_attr);
                 expand(file).wrap_err("failed to expand")?

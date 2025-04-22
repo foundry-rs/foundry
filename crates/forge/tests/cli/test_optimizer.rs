@@ -1300,3 +1300,114 @@ Compiling 1 files with [..]
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10312>
+forgetest_init!(preprocess_contract_with_constructor_args_struct, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    struct ConstructorArgs {
+        uint256 _number;
+    }
+
+    constructor(uint256 no) {
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_assert_constructor_revert() public {
+        Counter counter = new Counter(1);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // All 20 files should properly compile.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 20 files with [..]
+...
+
+"#]]);
+});
+
+// Test preprocessed contracts with decode internal fns.
+forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        create_counter(0);
+    }
+
+    function test_Increment() public {
+        create_counter(0);
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+
+    function create_counter(uint256 number) internal {
+        counter = new Counter();
+        counter.setNumber(number);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--decode-internal", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [..] CounterTest::test_Increment()
+    ├─ [0] VM::deployCode("src/Counter.sol:Counter")
+    │   ├─ [96345] → new Counter@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   │   └─ ← [Return] 481 bytes of code
+    │   └─ ← [Return] Counter: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    ├─ [..] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    ├─ [..] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [..] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [..] StdAssertions::assertEq(1, 1)
+    │   ├─ [0] VM::assertEq(1, 1) [staticcall]
+    │   │   └─ ← [Return]
+    │   └─ ← 
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});

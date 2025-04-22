@@ -35,6 +35,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
+    utils::install_crypto_provider();
     handler::install();
     utils::subscriber();
     utils::load_dotenv();

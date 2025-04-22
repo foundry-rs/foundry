@@ -784,7 +784,7 @@ pub struct TestCommand {
     /// The actual command we use to control the process.
     cmd: Command,
     // initial: Command,
-    current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
+    current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
     stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
     /// If true, command output is redacted.
     redact_output: bool,
