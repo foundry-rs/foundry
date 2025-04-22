@@ -2011,7 +2011,7 @@ interface Vm {
     /// Calculates the IPFS CID V0 of a file's content.
     #[cheatcode(group = Filesystem)]
     function ipfsCidV0(string calldata filepath) external  returns (bytes32 cid);
-    
+
     // ======== Environment Variables ========
 
     /// Sets environment variables.
