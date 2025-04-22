@@ -6,6 +6,8 @@ use std::{
 };
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
+// TODO(dani): add snapshot infra to automatically update the expected output
+
 #[track_caller]
 fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
     match forge_fmt_2::format_source(source, Some(path), config) {

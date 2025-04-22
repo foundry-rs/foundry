@@ -469,7 +469,7 @@ impl State<'_> {
                     self.word("is");
                     self.space();
                     for (pos, base) in bases.iter().delimited() {
-                        self.print_modifier_call(base);
+                        self.print_modifier_call(base, false);
                         if !pos.is_last {
                             self.word(",");
                             self.space();
@@ -638,7 +638,14 @@ impl State<'_> {
         }
         for modifier in modifiers {
             self.nbsp();
-            self.print_modifier_call(modifier);
+
+            // Add `()` in constructors when the modifier is a base contract.
+            // HACK: we can't really know for sure, so we assume that uppercase names are bases.
+            // LEGACY: we are checking the beginning of the path, not the last segment.
+            let is_base_contract = args.kind == "constructor" &&
+                modifier.name.first().name.as_str().starts_with(char::is_uppercase);
+
+            self.print_modifier_call(modifier, is_base_contract);
         }
         if !returns.is_empty() {
             self.nbsp();
@@ -1076,10 +1083,11 @@ impl State<'_> {
         }
     }
 
-    fn print_modifier_call(&mut self, modifier: &ast::Modifier<'_>) {
+    // If `add_parens_if_empty` is true, then add parentheses `()` even if there are no arguments.
+    fn print_modifier_call(&mut self, modifier: &ast::Modifier<'_>, add_parens_if_empty: bool) {
         let ast::Modifier { name, arguments } = modifier;
         self.print_path(name);
-        if !arguments.is_empty() {
+        if !arguments.is_empty() || add_parens_if_empty {
             self.print_call_args(arguments);
         }
     }
