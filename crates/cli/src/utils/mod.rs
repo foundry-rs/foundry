@@ -575,6 +575,10 @@ ignore them in the `.gitignore` file."
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
+    pub fn submodule_sync(self) -> Result<()> {
+        self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
+    }
+
     pub fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
