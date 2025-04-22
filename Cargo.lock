@@ -3778,7 +3778,6 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-transport",
- "anvil",
  "axum",
  "chrono",
  "clap",

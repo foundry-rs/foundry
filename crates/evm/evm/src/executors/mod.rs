@@ -663,6 +663,7 @@ impl Executor {
                 gas_price: 0,
                 gas_priority_fee: None,
                 gas_limit: self.gas_limit,
+                chain_id: Some(self.env().evm_env.cfg_env.chain_id),
                 ..self.env().tx.clone()
             },
         }

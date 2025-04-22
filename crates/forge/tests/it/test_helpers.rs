@@ -19,7 +19,7 @@ use foundry_test_utils::{
     fd_lock, init_tracing,
     rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
 };
-use revm::primitives::harfork::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
     env, fmt,
     io::Write,
