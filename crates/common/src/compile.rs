@@ -148,19 +148,20 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile<C: Compiler<CompilerContract = Contract> + Default>(
+    pub fn compile<C: Compiler<CompilerContract = Contract>>(
         mut self,
         project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C>>
     where
-        <C as Compiler>::Language: Default,
         TestOptimizerPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
 
+        // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            return Ok(ProjectCompileOutput::default());
+            // nothing to do here
+            std::process::exit(0);
         }
 
         // Taking is fine since we don't need these in `compile_with`.
