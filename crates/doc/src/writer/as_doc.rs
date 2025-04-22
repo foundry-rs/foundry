@@ -232,7 +232,7 @@ impl AsDoc for Document {
 
                                 let filtered_comments: Comments = (*comments)
                                     .iter()
-                                    .filter(|c| c.tag != CommentTag::Custom("variant".to_string()))
+                                    .filter(|c| c.tag != CommentTag::variant())
                                     .cloned()
                                     .collect::<Vec<_>>()
                                     .into();

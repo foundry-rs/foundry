@@ -46,10 +46,16 @@ impl CommentTag {
             }
             _ => {
                 warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
-                return None;
+                return None
             }
         };
         Some(tag)
+    }
+
+    /// Create a new instance of [CommentTag::Custom] with the `variant` tag.
+    #[must_use]
+    pub fn variant() -> Self {
+        Self::Custom("variant".to_string())
     }
 }
 

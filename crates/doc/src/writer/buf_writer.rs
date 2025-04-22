@@ -191,8 +191,7 @@ impl BufWriter {
         params: &EnumDefinition,
         comments: &Comments,
     ) -> fmt::Result {
-        let comments =
-            comments.include_tags(&[CommentTag::Param, CommentTag::Custom("variant".to_string())]);
+        let comments = comments.include_tags(&[CommentTag::Param, CommentTag::variant()]);
 
         // There is nothing to write.
         if comments.is_empty() {
