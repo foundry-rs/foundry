@@ -159,7 +159,12 @@ impl ProjectCompiler {
 
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            return Ok(ProjectCompileOutput::default());
+            return Ok(ProjectCompileOutput {
+                contracts: Default::default(),
+                errors: vec![],
+                sources: Default::default(),
+                compiler_version: None,
+            });
         }
 
         // Taking is fine since we don't need these in `compile_with`.
