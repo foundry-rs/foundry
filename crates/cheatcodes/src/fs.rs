@@ -588,6 +588,19 @@ impl Cheatcode for promptUintCall {
     }
 }
 
+impl Cheatcode for ipfsCidV0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let contents = fs::read(&self.filepath).unwrap();
+        let hash = Sha256::digest(&contents);
+        let mut multihash = Vec::with_capacity(2 + hash.len());
+        multihash.push(0x12);
+        multihash.push(0x20);
+        multihash.extend_from_slice(&hash);
+
+        Ok(multihash)
+    }
+}
+
 pub(super) fn write_file(state: &Cheatcodes, path: &Path, contents: &[u8]) -> Result {
     let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
     // write access to foundry.toml is not allowed
