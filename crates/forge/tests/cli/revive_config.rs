@@ -18,7 +18,7 @@ contract Foo {}
     cmd.args(["build", "--use", OTHER_SOLC_VERSION, "--revive"]).assert_success().stdout_eq(str![
         [r#"
 [COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] Finished [ELAPSED]
+[REVIVE_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]
