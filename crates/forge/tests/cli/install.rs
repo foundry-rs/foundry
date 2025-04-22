@@ -367,7 +367,7 @@ forgetest!(
         ));
         assert!(matches!(
             lock.get(&PathBuf::from("lib/solady")).unwrap(),
-            &DepIdentifier::Tag { .. }
+            &DepIdentifier::Rev { .. }
         ));
     }
 );
@@ -477,9 +477,8 @@ async fn uni_v4_core_sync_foundry_lock() {
     assert!(matches!(solmate, DepIdentifier::Rev { .. }));
     assert_eq!(solmate.rev(), submod_solmate.rev());
     let oz = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
-    assert!(matches!(oz, DepIdentifier::Tag { .. }));
+    assert!(matches!(oz, DepIdentifier::Rev { .. }));
     assert_eq!(oz.rev(), submod_oz.rev());
-    assert_eq!(oz.name(), "v5.0.2");
 
     // Commit the lockfile
     git.add(&PathBuf::from(FOUNDRY_LOCK)).unwrap();
@@ -495,7 +494,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     assert!(matches!(solmate, DepIdentifier::Rev { .. }));
     assert_eq!(solmate.rev(), submod_solmate.rev());
     let oz = lockfile_get(prj.root(), &PathBuf::from("lib/openzeppelin-contracts")).unwrap();
-    assert!(matches!(oz, DepIdentifier::Tag { .. }));
+    assert!(matches!(oz, DepIdentifier::Rev { .. }));
     assert_eq!(oz.rev(), submod_oz.rev());
 }
 
@@ -580,17 +579,14 @@ async fn correctly_sync_dep_with_multiple_version() {
     cmd.arg("install").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Tag { .. }));
+    assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
     assert_eq!(forge_std.rev(), submod_forge_std.rev());
-    assert_eq!(forge_std.name(), "v1.9.5");
 
     let solady = lockfile_get(prj.root(), &PathBuf::from("lib/solady")).unwrap();
-    assert!(matches!(solady, DepIdentifier::Tag { .. }));
+    assert!(matches!(solady, DepIdentifier::Rev { .. }));
     assert_eq!(solady.rev(), submod_solady.rev());
-    assert_eq!(solady.name(), "v0.1.1");
 
     let solday_v_245 = lockfile_get(prj.root(), &PathBuf::from("lib/solady-v0.0.245")).unwrap();
-    assert!(matches!(solday_v_245, DepIdentifier::Tag { .. }));
+    assert!(matches!(solday_v_245, DepIdentifier::Rev { .. }));
     assert_eq!(solday_v_245.rev(), submod_solday_v_245.rev());
-    assert_eq!(solday_v_245.name(), "v0.0.245");
 }

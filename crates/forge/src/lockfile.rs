@@ -104,26 +104,8 @@ impl<'a> Lockfile<'a> {
                             continue;
                         }
 
-                        // Find out if rev has a tag associated with it.
-                        let maybe_tag =
-                            git.tag_for_commit(rev, &git.root.join(rel_path)).or_else(|err| {
-                                // Ignore Err: No such file or directory as it is possible that lib/
-                                // dir has been cleaned.
-                                if err.to_string().contains("No such file or directory") {
-                                    return Ok(None)
-                                }
-                                Err(err)
-                            })?;
-
-                        let dep_id = if let Some(tag) = maybe_tag {
-                            DepIdentifier::Tag {
-                                name: tag,
-                                rev: rev.to_string(),
-                                r#override: false,
-                            }
-                        } else {
-                            DepIdentifier::Rev { rev: rev.to_string(), r#override: false }
-                        };
+                        let dep_id = DepIdentifier::Rev { rev: rev.to_string(), r#override: false };
+                        trace!(submodule=?rel_path, ?dep_id, "submodule dep_id");
                         e.insert(dep_id.clone());
                         out_of_sync.insert(rel_path.to_path_buf(), dep_id);
                     }
