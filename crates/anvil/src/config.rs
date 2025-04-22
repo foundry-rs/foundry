@@ -10,7 +10,7 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    hardfork::{ChainHardfork, OptimismHardfork},
+    hardfork::ChainHardfork,
     mem::{self, in_memory_db::MemDb},
     EthereumHardfork, FeeManager, PrecompileFactory,
 };
@@ -527,9 +527,9 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.enable_optimism {
-            return OptimismHardfork::default().into();
-        }
+        // if self.enable_optimism {
+        //     return OptimismHardfork::default().into();
+        // }
         EthereumHardfork::default().into()
     }
 

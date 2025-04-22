@@ -7,7 +7,7 @@ use revm::primitives::hardfork::SpecId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChainHardfork {
     Ethereum(EthereumHardfork),
-    Optimism(OptimismHardfork),
+    // Optimism(OptimismHardfork),
 }
 
 impl From<EthereumHardfork> for ChainHardfork {
@@ -16,11 +16,11 @@ impl From<EthereumHardfork> for ChainHardfork {
     }
 }
 
-impl From<OptimismHardfork> for ChainHardfork {
-    fn from(value: OptimismHardfork) -> Self {
-        Self::Optimism(value)
-    }
-}
+// impl From<OptimismHardfork> for ChainHardfork {
+//     fn from(value: OptimismHardfork) -> Self {
+//         Self::Optimism(value)
+//     }
+// }
 
 impl From<ChainHardfork> for SpecId {
     fn from(fork: ChainHardfork) -> Self {
@@ -166,54 +166,6 @@ impl<T: Into<BlockNumberOrTag>> From<T> for EthereumHardfork {
             _i if num < 17_034_870 => Self::Paris,
             _i if num < 19_426_587 => Self::Shanghai,
             _ => Self::Latest,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum OptimismHardfork {
-    Bedrock,
-    Regolith,
-    Canyon,
-    Ecotone,
-    Fjord,
-    Granite,
-    Holocene,
-    #[default]
-    Isthmus,
-}
-
-impl FromStr for OptimismHardfork {
-    type Err = eyre::Report;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.to_lowercase();
-        let hardfork = match s.as_str() {
-            "bedrock" => Self::Bedrock,
-            "regolith" => Self::Regolith,
-            "canyon" => Self::Canyon,
-            "ecotone" => Self::Ecotone,
-            "fjord" => Self::Fjord,
-            "granite" => Self::Granite,
-            "holocene" => Self::Holocene,
-            "isthmus" => Self::Isthmus,
-            _ => bail!("Unknown hardfork {s}"),
-        };
-        Ok(hardfork)
-    }
-}
-
-impl From<OptimismHardfork> for SpecId {
-    fn from(fork: OptimismHardfork) -> Self {
-        match fork {
-            OptimismHardfork::Bedrock => Self::BEDROCK,
-            OptimismHardfork::Regolith => Self::REGOLITH,
-            OptimismHardfork::Canyon => Self::CANYON,
-            OptimismHardfork::Ecotone => Self::ECOTONE,
-            OptimismHardfork::Fjord => Self::FJORD,
-            OptimismHardfork::Granite => Self::GRANITE,
-            OptimismHardfork::Holocene => Self::HOLOCENE,
-            OptimismHardfork::Isthmus => Self::ISTHMUS,
         }
     }
 }
