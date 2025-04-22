@@ -56,13 +56,7 @@ impl DisabledRange {
     }
 }
 
-/// An inline config. Keeps track of disabled ranges.
-///
-/// This is a list of Inline Config items for locations in a source file. This is
-/// usually acquired by parsing the comments for an `forgefmt:` items.
-///
-/// See [`Comments::parse_inline_config_items`](crate::Comments::parse_inline_config_items) for
-/// details.
+/// An inline config. Keeps track of ranges which should not be formatted.
 #[derive(Debug, Default)]
 pub struct InlineConfig {
     disabled_ranges: Vec<DisabledRange>,

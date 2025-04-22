@@ -64,9 +64,13 @@ pub fn format_source(source: &str, path: Option<&Path>, config: FormatterConfig)
         state.print_source_unit(&ast);
         Ok(state.s.eof())
     });
-    // TODO(dani): add a non-fatal error that returns the formatted source with the errors
-    sess.emitted_errors().unwrap()?;
-    Ok(res.unwrap())
+    match (res, sess.emitted_errors().unwrap()) {
+        (Ok(s), Ok(())) => Ok(s),
+        // TODO(dani): add a non-fatal error that returns the formatted source with the errors
+        (Ok(_s), Err(err)) => Err(err.into()),
+        (Err(_), Ok(_)) => unreachable!(),
+        (Err(_), Err(err)) => Err(err.into()),
+    }
 }
 
 fn parse_inline_config(sess: &Session, comments: &Comments, src: &str) -> InlineConfig {

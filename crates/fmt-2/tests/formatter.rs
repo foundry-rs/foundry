@@ -16,7 +16,8 @@ fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
 
 #[track_caller]
 fn assert_eof(content: &str) {
-    assert!(content.ends_with('\n') && !content.ends_with("\n\n"));
+    assert!(content.ends_with('\n'), "missing trailing newline");
+    assert!(!content.ends_with("\n\n"), "extra trailing newline");
 }
 
 #[derive(Eq)]

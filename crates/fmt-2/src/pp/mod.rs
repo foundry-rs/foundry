@@ -24,16 +24,18 @@ pub enum Breaks {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndentStyle {
     /// Vertically aligned under whatever column this block begins at.
-    ///
-    ///     fn demo(arg1: usize,
-    ///             arg2: usize) {}
+    /// ```ignore
+    /// fn demo(arg1: usize,
+    ///         arg2: usize) {}
+    /// ```
     Visual,
     /// Indented relative to the indentation level of the previous line.
-    ///
-    ///     fn demo(
-    ///         arg1: usize,
-    ///         arg2: usize,
-    ///     ) {}
+    /// ```ignore
+    /// fn demo(
+    ///     arg1: usize,
+    ///     arg2: usize,
+    /// ) {}
+    /// ```
     Block { offset: isize },
 }
 
