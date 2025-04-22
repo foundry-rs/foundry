@@ -29,6 +29,6 @@ import {Something2, Something3} from "someFile.sol";
 // This is a comment
 import {Something2, Something3} from "someFile.sol";
 
-import {symbol1 as alias, symbol2} from "File3.sol";
+import {symbol1 as alias0, symbol2} from "File3.sol";
 // comment inside group is treated as a separator for now
-import {symbol1 as alias, symbol2} from "File2.sol";
+import {symbol1 as alias0, symbol2} from "File2.sol";
