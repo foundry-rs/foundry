@@ -1036,6 +1036,7 @@ dependencies = [
  "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eips",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives 0.8.25",

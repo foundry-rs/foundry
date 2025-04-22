@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::executor::{new_evm_with_inspector_ref, AnvilEvm};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -39,6 +39,7 @@ use alloy_consensus::{
     Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
+use alloy_evm::Database;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -103,7 +104,7 @@ use revm::{
     interpreter::InstructionResult,
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::AccountInfo,
-    DatabaseCommit,
+    DatabaseCommit, Inspector,
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -1045,20 +1046,16 @@ impl Backend {
     #[expect(clippy::type_complexity)]
     fn new_evm_with_inspector_ref<'i, 'db>(
         &self,
-        db: &'db dyn DatabaseRef<Error = DatabaseError>,
-        env: Env,
-        inspector: &'i mut dyn revm::Inspector<
+        db: &'db mut dyn DatabaseRef<Error = DatabaseError>,
+        env: &Env,
+        inspector: &'i mut dyn Inspector<
             WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
         >,
-    ) -> revm::Evm<
-        '_,
-        &'i mut dyn revm::Inspector<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
-        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
-    > {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector, self.odyssey);
-        if let Some(factory) = &self.precompile_factory {
-            inject_precompiles(&mut evm, factory.precompiles());
-        }
+    ) -> AnvilEvm<'db, WrapDatabaseRef<&'db mut dyn DatabaseRef<Error = DatabaseError>>, &'db mut dyn Inspector<WrapDatabaseRef<&'db mut dyn DatabaseRef<Error = DatabaseError>>>> {
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        // if let Some(factory) = &self.precompile_factory {
+        //     inject_precompiles(&mut evm, factory.precompiles());
+        // }
         evm
     }
 

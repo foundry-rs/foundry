@@ -29,15 +29,8 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-core.workspace = true
 
-# evm support
-revm = { workspace = true, features = [
-    "std",
-    "serde",
-    "memory_limit",
-    "c-kzg",
-] }
-revm-inspectors.workspace = true
-op-revm.workspace = true
+# alloy
+alloy-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
@@ -62,6 +55,16 @@ alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-trie.workspace = true
 op-alloy-consensus = { workspace = true, features = ["serde"] }
+
+# revm
+revm = { workspace = true, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "c-kzg",
+] }
+revm-inspectors.workspace = true
+op-revm.workspace = true
 
 # axum related
 axum.workspace = true

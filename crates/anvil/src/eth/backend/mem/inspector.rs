@@ -1,8 +1,8 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::eth::macros::node_info;
 use alloy_primitives::{Address, Log, U256};
 use foundry_evm::{
+    backend::DatabaseError,
     call_inspectors,
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
@@ -10,14 +10,15 @@ use foundry_evm::{
         render_trace_arena_inner, CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig,
     },
 };
-use foundry_evm_core::evm::FoundryEvmContext;
 use revm::{
     interpreter::{
         interpreter::EthInterpreter, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
         EOFCreateInputs, Interpreter,
     },
-    Inspector,
+    Database, Inspector,
 };
+
+use crate::eth::{backend::executor::AnvilEvmContext, macros::node_info};
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -105,26 +106,29 @@ fn print_traces(tracer: TracingInspector) {
     node_info!("{}", render_trace_arena_inner(&traces, false, true));
 }
 
-impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
-    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>) {
+impl<D> Inspector<AnvilEvmContext<'_, D>, EthInterpreter> for AnvilInspector
+where
+    D: Database<Error = DatabaseError>,
+{
+    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.initialize_interp(interp, ecx);
         });
     }
 
-    fn step(&mut self, interp: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>) {
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step(interp, ecx);
         });
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>) {
+    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step_end(interp, ecx);
         });
     }
 
-    fn log(&mut self, interp: &mut Interpreter, ecx: &mut FoundryEvmContext<'_>, log: Log) {
+    fn log(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>, log: Log) {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log(interp, ecx, log);
         });
@@ -132,7 +136,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
 
     fn call(
         &mut self,
-        ecx: &mut FoundryEvmContext<'_>,
+        ecx: &mut AnvilEvmContext<'_, D>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| inspector
@@ -143,7 +147,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
 
     fn call_end(
         &mut self,
-        ecx: &mut FoundryEvmContext<'_>,
+        ecx: &mut AnvilEvmContext<'_, D>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
@@ -154,7 +158,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
 
     fn create(
         &mut self,
-        ecx: &mut FoundryEvmContext<'_>,
+        ecx: &mut AnvilEvmContext<'_, D>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if let Some(tracer) = &mut self.tracer {
@@ -167,7 +171,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
 
     fn create_end(
         &mut self,
-        ecx: &mut FoundryEvmContext<'_>,
+        ecx: &mut AnvilEvmContext<'_, D>,
         inputs: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -179,7 +183,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
     #[inline]
     fn eofcreate(
         &mut self,
-        ecx: &mut FoundryEvmContext<'_>,
+        ecx: &mut AnvilEvmContext<'_, D>,
         inputs: &mut EOFCreateInputs,
     ) -> Option<CreateOutcome> {
         if let Some(tracer) = &mut self.tracer {
@@ -193,7 +197,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
     #[inline]
     fn eofcreate_end(
         &mut self,
-        ecx: &mut FoundryEvmContext<'_>,
+        ecx: &mut AnvilEvmContext<'_, D>,
         inputs: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -205,7 +209,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for AnvilInspector {
     #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         if let Some(tracer) = &mut self.tracer {
-            Inspector::<FoundryEvmContext<'_>>::selfdestruct(tracer, contract, target, value);
+            Inspector::<AnvilEvmContext<'_, D>>::selfdestruct(tracer, contract, target, value);
         }
     }
 }

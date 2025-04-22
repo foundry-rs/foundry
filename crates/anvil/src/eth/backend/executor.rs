@@ -10,6 +10,7 @@ use crate::{
 };
 use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
 use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -18,13 +19,16 @@ use anvil_core::eth::{
     },
     trie,
 };
-use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env, EnvMut};
+use foundry_evm_core::evm::{FoundryEvm, FoundryEvmContext, FoundryPrecompiles};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, CfgEnv},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, EvmData, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
-    interpreter::InstructionResult,
+    handler::instructions::EthInstructions,
+    interpreter::{interpreter::EthInterpreter, InstructionResult},
     primitives::hardfork::SpecId,
+    Database, DatabaseRef, ExecuteCommitEvm, Inspector, Journal, JournalEntry,
 };
 use std::sync::Arc;
 
@@ -238,12 +242,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
-        if self.cfg_env.handler_cfg.is_optimism {
-            tx_env.optimism.enveloped_tx =
-                Some(alloy_rlp::encode(&tx.transaction.transaction).into());
-        }
 
-        EnvWithHandlerCfg::new_with_cfg_env(self.cfg_env.clone(), self.block_env.clone(), tx_env)
+        // TODO: support optimism
+        // if self.cfg_env.handler_cfg.is_optimism {
+        //     tx_env.optimism.enveloped_tx =
+        //         Some(alloy_rlp::encode(&tx.transaction.transaction).into());
+        // }
+
+        Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env)
     }
 }
 
@@ -314,10 +320,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         let exec_result = {
-            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
-            if let Some(factory) = &self.precompile_factory {
-                inject_precompiles(&mut evm, factory.precompiles());
-            }
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+            // if let Some(factory) = &self.precompile_factory {
+            //     inject_precompiles(&mut evm, factory.precompiles());
+            // }
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
@@ -402,36 +408,50 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     }
 }
 
+pub type AnvilEvmContext<'db, DB> = EthEvmContext<DB>;
+
+pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> =
+    Evm<AnvilEvmContext<'db, DB>, I, EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>, P>;
+
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn new_evm_with_inspector<DB: revm::Database>(
+pub fn new_evm_with_inspector<'db, DB>(
     db: DB,
-    env: EnvWithHandlerCfg,
-    inspector: &mut dyn revm::Inspector<DB>,
-    odyssey: bool,
-) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
-    let EnvWithHandlerCfg { env, handler_cfg } = env;
-
-    let mut handler = revm::Handler::new(handler_cfg);
-
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    if odyssey {
-        handler.append_handler_register_plain(odyssey_handler_register);
+    env: &Env,
+    inspector: &'db mut dyn Inspector<DB>,
+) -> AnvilEvm<'db, DB, &'db mut dyn Inspector<DB>>
+where
+    DB: Database<Error = DatabaseError>,
+{
+    Evm {
+        data: EvmData {
+            ctx: AnvilEvmContext {
+                journaled_state: {
+                    let mut journal = Journal::new(db);
+                    journal.set_spec_id(env.evm_env.cfg_env.spec);
+                    journal
+                },
+                block: env.evm_env.block_env.clone(),
+                cfg: env.evm_env.cfg_env.clone(),
+                tx: env.tx.clone(),
+                chain: (),
+                error: Ok(()),
+            },
+            inspector,
+        },
+        instruction: EthInstructions::default(),
+        precompiles: FoundryPrecompiles::new(),
     }
-
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
-
-    revm::Evm::new(context, handler)
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'a, DB>(
-    db: DB,
-    env: EnvWithHandlerCfg,
-    inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
-    odyssey: bool,
-) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
+pub fn new_evm_with_inspector_ref<'db, DB>(
+    db: &'db mut DB,
+    env: &Env,
+    inspector: &'db mut dyn Inspector<WrapDatabaseRef<&'db mut DB>>,
+) -> AnvilEvm<'db, WrapDatabaseRef<&'db mut DB>, &'db mut dyn Inspector<WrapDatabaseRef<&'db mut DB>>>
 where
-    DB: revm::DatabaseRef,
+    DB: Database<Error = DatabaseError> + DatabaseRef + 'db,
+    WrapDatabaseRef<&'db mut DB>: Database<Error = DatabaseError>,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, odyssey)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }
