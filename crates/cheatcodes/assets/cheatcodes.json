@@ -8098,6 +8098,26 @@
     },
     {
       "func": {
+        "id": "ipfsCidV0",
+        "description": "Calculates the IPFS CID V0 of a file's content.",
+        "declaration": "function ipfsCidV0(string calldata filepath) external returns (bytes32 cid);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ipfsCidV0(string)",
+        "selector": "0xcac92fa5",
+        "selectorBytes": [
+          202,
+          201,
+          47,
+          165
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "publicKeyP256",
         "description": "Derives secp256r1 public key from the provided `privateKey`.",
         "declaration": "function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);",
