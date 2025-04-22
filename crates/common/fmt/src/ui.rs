@@ -444,10 +444,7 @@ yParity              {}",
                     .pretty(),
                 self.authorization_list()
                     .as_ref()
-                    .map(|l| {
-                        let m = *l;
-                        m.iter().collect::<Vec<_>>()
-                    })
+                    .map(|l| l.iter().collect::<Vec<_>>())
                     .unwrap_or_default()
                     .pretty(),
                 self.chain_id().pretty(),
@@ -680,10 +677,7 @@ yParity              {}",
                     .pretty(),
                 self.authorization_list()
                     .as_ref()
-                    .map(|l| {
-                        let m = *l;
-                        m.iter().collect::<Vec<_>>()
-                    })
+                    .map(|l| l.iter().collect::<Vec<_>>())
                     .unwrap_or_default()
                     .pretty(),
                 self.block_hash.pretty(),
@@ -819,11 +813,18 @@ impl UIfmt for EthValue {
 
 impl UIfmt for SignedAuthorization {
     fn pretty(&self) -> String {
-        let signed_authorization = serde_json::to_string(self).unwrap();
-        let recover_authority = self.recover_authority().unwrap();
-        format!(
-            "{{recoverAuthority: {recover_authority}, signedAuthority: {signed_authorization}}}",
-        )
+        let signed_authorization = serde_json::to_string(self).unwrap_or("<invalid>".to_string());
+
+        match self.recover_authority() {
+            Ok(recover_authority) =>
+                format!(
+                    "{{recoverAuthority: {recover_authority}, signedAuthority: {signed_authorization}}}",
+                ),
+            Err(e) =>
+                format!(
+                    "{{recoverAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
+                )
+        }
     }
 }
 
@@ -989,6 +990,7 @@ requestsHash         {}",
 mod tests {
     use super::*;
     use alloy_primitives::B256;
+    use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
     use std::str::FromStr;
 
@@ -1491,5 +1493,21 @@ l1GasUsed            1600
 "#;
 
         assert_eq!(formatted.trim(), expected.trim());
+    }
+
+    #[test]
+    fn test_uifmt_for_signed_authorization() {
+        let inner = Authorization {
+            chain_id: U256::from(1),
+            address: "0x000000000000000000000000000000000000dead".parse::<Address>().unwrap(),
+            nonce: 42,
+        };
+        let signed_authorization =
+            SignedAuthorization::new_unchecked(inner, 1, U256::from(20), U256::from(30));
+
+        assert_eq!(
+            signed_authorization.pretty(),
+            r#"{recoverAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
+        );
     }
 }
